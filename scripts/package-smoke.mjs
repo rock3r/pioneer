@@ -16,6 +16,15 @@ function runNpm(args, options = {}) {
     : run("npm", args, options);
 }
 
+function environmentWithPath(value) {
+  return {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => name.toLowerCase() !== "path"),
+    ),
+    PATH: value,
+  };
+}
+
 async function findTarball(candidate) {
   const absolute = path.resolve(candidate);
   const entries = await readdir(absolute).catch(() => undefined);
@@ -91,7 +100,7 @@ try {
   const modelCommand = [path.join(packageRoot, "dist", "review-cli.js"), "models", "--json"];
   if (process.platform === "win32") {
     const unavailable = run(process.execPath, modelCommand, {
-      env: { ...process.env, PATH: fakeBin },
+      env: environmentWithPath(fakeBin),
     });
     if (
       unavailable.status !== 1 ||
@@ -124,10 +133,7 @@ if (args.includes("--version")) {
     await chmod(fakePi, 0o755);
 
     const listed = run(process.execPath, modelCommand, {
-      env: {
-        ...process.env,
-        PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
-      },
+      env: environmentWithPath(`${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`),
     });
     if (listed.status !== 0) throw new Error(`packaged model listing failed: ${listed.stderr}`);
     const catalog = JSON.parse(listed.stdout);
