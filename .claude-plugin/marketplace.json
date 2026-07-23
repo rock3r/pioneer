@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "pioneer",
+  "owner": {
+    "name": "Pioneer contributors"
+  },
+  "description": "Claude Code integration for sandboxed reviews through the local Pi coding agent.",
+  "plugins": [
+    {
+      "name": "pioneer",
+      "source": "./plugins/pioneer",
+      "description": "Delegate sandboxed code reviews to a locally installed Pi coding agent.",
+      "category": "Developer Tools",
+      "tags": ["code-review", "pi", "sandbox"]
+    }
+  ]
+}

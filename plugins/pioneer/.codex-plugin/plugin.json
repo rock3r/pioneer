@@ -1,0 +1,27 @@
+{
+  "name": "pioneer",
+  "version": "0.1.0",
+  "description": "Delegate sandboxed code reviews to a locally installed Pi coding agent.",
+  "author": {
+    "name": "Pioneer contributors"
+  },
+  "license": "UEL-1.0",
+  "keywords": ["code-review", "pi", "sandbox", "models"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Pioneer",
+    "composerIcon": "./assets/pioneer-mascot.png",
+    "logo": "./assets/pioneer-mascot.png",
+    "logoDark": "./assets/pioneer-mascot.png",
+    "shortDescription": "Run local Pi code reviews from Codex.",
+    "longDescription": "Ask a locally installed and configured Pi coding agent to review code with a selected provider model and thinking level. macOS and Linux reviews run inside a native operating-system sandbox.",
+    "developerName": "Pioneer contributors",
+    "category": "Developer Tools",
+    "capabilities": ["Code review", "Model selection", "Sandboxed execution"],
+    "defaultPrompt": [
+      "Ask Pi to review the current repository.",
+      "Have Pi review these changes using max thinking.",
+      "List my configured Pi models before reviewing."
+    ]
+  }
+}

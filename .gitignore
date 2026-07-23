@@ -1,0 +1,35 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+.DS_Store
+._*
+*.log
+
+.worktrees/
+.claude/worktrees/
+.claude/settings.local.json
+.plans/
+scratch/
+.evals/
+
+.agents/tasks/
+.agents/skills/*/tmp/
+.agents/skills/*-workspace/
+
+# Native/.NET build output
+native/**/bin/
+native/**/obj/
+.vs/
+*.user
+*.suo
+
+# Package/release artifacts
+release/
+*.tgz

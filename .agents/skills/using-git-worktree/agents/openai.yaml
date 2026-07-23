@@ -1,0 +1,4 @@
+interface:
+  display_name: "Using Git Worktrees"
+  short_description: "Create and validate isolated pioneer worktrees"
+  default_prompt: "Use $using-git-worktree to create an isolated workspace for this task."

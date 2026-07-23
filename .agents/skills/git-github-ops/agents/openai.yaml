@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git and GitHub Ops"
+  short_description: "Run safe git and GitHub workflows for pioneer"
+  default_prompt: "Use $git-github-ops to prepare this pioneer change for GitHub."

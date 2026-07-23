@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "pioneer",
+  "displayName": "Pioneer",
+  "version": "0.1.0",
+  "description": "Delegate sandboxed code reviews to a locally installed Pi coding agent.",
+  "author": {
+    "name": "Pioneer contributors"
+  },
+  "license": "UEL-1.0",
+  "keywords": ["code-review", "pi", "sandbox", "models"],
+  "skills": "./skills/"
+}

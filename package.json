@@ -1,0 +1,63 @@
+{
+  "name": "@rock3r/pioneer",
+  "version": "0.1.0",
+  "description": "Safely delegate reviews and isolated skill evals from coding agents to Pi",
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rock3r/pioneer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rock3r/pioneer/issues"
+  },
+  "homepage": "https://github.com/rock3r/pioneer#readme",
+  "keywords": [
+    "pi",
+    "pioneer",
+    "codex",
+    "claude-code",
+    "code-review",
+    "sandbox"
+  ],
+  "files": [
+    "dist/",
+    "LICENSE",
+    "README.md",
+    "plugins/pioneer/assets/pioneer-mascot.png"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json",
+    "eval": "npm run build --silent && node dist/eval-run-cli.js",
+    "review": "npm run build --silent && node dist/review-cli.js",
+    "sandbox:smoke": "npm run build --silent && node scripts/native-sandbox-smoke.mjs",
+    "windows:smoke": "npm run build --silent && node scripts/windows-contract-smoke.mjs",
+    "package:smoke": "node scripts/package-smoke.mjs",
+    "release:verify": "node scripts/verify-release-version.mjs",
+    "prepack": "npm run check"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.5",
+    "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "bin": {
+    "pioneer": "dist/review-cli.js",
+    "pioneer-eval": "dist/eval-run-cli.js"
+  }
+}

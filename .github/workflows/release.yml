@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-source:
+    name: verify source (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run release:verify -- ${{ github.ref_name }}
+      - if: runner.os == 'Windows'
+        run: npm run windows:smoke
+
+  native-sandbox:
+    name: release sandbox (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Install Linux sandbox prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y apparmor apparmor-utils bubblewrap
+      - name: Install narrow Ubuntu AppArmor profile when required
+        if: runner.os == 'Linux'
+        run: |
+          npm run build --silent
+          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = "1" ]; then
+            sudo node dist/eval-run-cli.js install-linux
+          fi
+      - run: npm run sandbox:smoke
+
+  windows-sandbox-prototype:
+    name: release Windows prototype
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet restore native/windows-appcontainer/Pioneer.WindowsSandbox.csproj
+      - run: dotnet build native/windows-appcontainer/Pioneer.WindowsSandbox.csproj -c Release --no-restore
+
+  pack:
+    name: build release tarball
+    needs: verify-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: mkdir release
+      - run: npm pack --pack-destination release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: release/*.tgz
+          if-no-files-found: error
+
+  verify-package:
+    name: verify tarball (${{ matrix.os }})
+    needs: pack
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: release
+      - run: npm run package:smoke -- release
+
+  publish:
+    name: publish npm and GitHub release
+    needs: [verify-source, native-sandbox, windows-sandbox-prototype, verify-package]
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install --global npm@11
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: release
+      - run: npm publish release/*.tgz --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: gh release create "${GITHUB_REF_NAME}" release/*.tgz --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}

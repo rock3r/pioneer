@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-and-package:
+    name: quality and package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm run package:smoke
+      - if: runner.os == 'Windows'
+        run: npm run windows:smoke
+
+  native-sandbox:
+    name: native sandbox (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Install Linux sandbox prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y apparmor apparmor-utils bubblewrap
+      - name: Install narrow Ubuntu AppArmor profile when required
+        if: runner.os == 'Linux'
+        run: |
+          npm run build --silent
+          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = "1" ]; then
+            sudo node dist/eval-run-cli.js install-linux
+          fi
+      - run: npm run sandbox:smoke
+
+  windows-sandbox-prototype:
+    name: Windows AppContainer prototype
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet restore native/windows-appcontainer/Pioneer.WindowsSandbox.csproj
+      - run: dotnet build native/windows-appcontainer/Pioneer.WindowsSandbox.csproj -c Release --no-restore

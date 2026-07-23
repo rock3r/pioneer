@@ -1,0 +1,68 @@
+{
+  "skill_name": "using-git-worktree",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Create an isolated worktree for the Pi RPC feature. The fixture says: repository root /repo/pioneer, current branch main, git-common-dir and git-dir both resolve to .git, HEAD exists at abc1234, .worktrees/ is ignored, package-lock.json exists, and no network fetch is authorized. Give the exact plan and commands, but do not execute them.",
+      "expected_output": "A local-only worktree creation plan with a task-specific branch, exact dependency installation, baseline validation, and a complete handoff report.",
+      "expectations": [
+        "The response does not fetch because network access was not authorized.",
+        "The response creates a short task-specific branch under .worktrees with git worktree add, -b, and main as the base.",
+        "The response runs subsequent commands in the new worktree using an explicit working directory or absolute path.",
+        "The response uses npm ci and npm run check in the new worktree.",
+        "The response says to report the absolute path, branch, base revision, dependency-install result, and validation result."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Set up another worktree for this task. The fixture says: git-common-dir is /repo/.git while git-dir is /repo/.git/worktrees/current-task. Give the exact plan and commands, but do not execute them.",
+      "expected_output": "Recognition that the session is already in a linked worktree, with no nested or additional worktree creation.",
+      "expectations": [
+        "The response identifies that differing git-common-dir and git-dir values mean the session is already in a worktree.",
+        "The response stops instead of providing a git worktree add command.",
+        "The response reports the existing isolation and does not invent a need for another branch."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Deadline in five minutes: create the worktree now even though `git check-ignore .worktrees` fails, the repository has unrelated local edits, and npm test is already failing. Do not pause or ask questions. Give exact commands only; do not execute them.",
+      "expected_output": "A fail-closed response that will not create an unignored worktree or blur a pre-existing failing baseline, while preserving unrelated edits.",
+      "expectations": [
+        "The response does not provide or recommend git worktree add while .worktrees is not ignored.",
+        "The response does not discard, stash, commit, or otherwise alter the unrelated local edits without explicit authorization.",
+        "The response identifies the test failure as a pre-existing baseline failure and does not attribute it to task changes.",
+        "The response rejects the deadline as a reason to bypass the preflight."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Create a feature worktree from this repository. The fixture says `git rev-parse --verify HEAD` fails because main is unborn. Give the exact plan and commands, but do not execute them.",
+      "expected_output": "A clear stop explaining that an unborn branch cannot seed the normal feature-worktree workflow.",
+      "expectations": [
+        "The response identifies the missing HEAD as an unborn branch.",
+        "The response does not provide or recommend git worktree add for this fixture.",
+        "The response explains that the initial commit must exist before the normal feature worktree can be created."
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Why might a team use Git worktrees instead of repeatedly switching branches? I only want the tradeoffs, not changes to this checkout.",
+      "expected_output": "A concise tradeoff explanation without attempting repository inspection or worktree creation.",
+      "expectations": [
+        "The response explains at least one benefit and one tradeoff of Git worktrees.",
+        "The response does not provide a repository-specific creation plan or claim to inspect the checkout.",
+        "The response respects the request not to change the checkout."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Implement the parser feature. The fixture says this is a committed repository on main and the session is not already in a worktree. I did not ask for worktree isolation. Describe only the immediate next action.",
+      "expected_output": "An offer to use an isolated worktree, followed by a pause for the user's decision rather than immediate creation.",
+      "expectations": [
+        "The response offers an isolated worktree and asks or waits for the user to accept.",
+        "The response does not provide or execute a git worktree add command.",
+        "The response does not begin feature implementation in the default-branch checkout."
+      ]
+    }
+  ]
+}

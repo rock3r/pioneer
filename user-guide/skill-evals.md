@@ -1,0 +1,99 @@
+# Skill evals
+
+Pioneer can prepare and execute the isolated actor half of a skill-creator-style evaluation. Each case gets a baseline arm and a with-skill arm. The actor can use public network services and explicitly granted tools, but it cannot read the source skill, eval definitions, answer keys, sibling arms, or unrelated host files.
+
+This is an advanced workflow. The harness deliberately does not choose an agent protocol, drive Pi RPC, grade outputs, or aggregate scores. Your controller owns those steps outside the actor sandbox.
+
+## Define cases
+
+Place an `evals/evals.json` file inside the skill directory:
+
+```json
+{
+  "skill_name": "example-skill",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Review the supplied parser fixture and report concrete bugs.",
+      "files": ["evals/files/parser.ts"],
+      "expected_output": "Controller-only grading guidance",
+      "expectations": ["Finds the off-by-one error"]
+    }
+  ]
+}
+```
+
+`id` must be an integer unique within the file. `prompt` is required. `files` is optional and contains paths below the skill directory. Controller-only fields such as `expected_output` and `expectations` may coexist in the source definition, but Pioneer never stages them into an actor run.
+
+The complete source skill must be free of symbolic links. Generated eval workspaces and `evals/` content are excluded from the with-skill copy.
+
+## Prepare a battery
+
+Choose a new output directory outside the source skill:
+
+```bash
+pioneer-eval prepare \
+  --skill /absolute/path/to/example-skill \
+  --evals /absolute/path/to/example-skill/evals/evals.json \
+  --output /absolute/path/to/new-eval-battery
+```
+
+The output directory must not already exist. The generated layout is:
+
+```text
+new-eval-battery/
+├── controller/
+│   └── manifest.json
+└── actor-runs/
+    └── eval-1/
+        ├── baseline/
+        │   ├── case.json
+        │   ├── fixtures/
+        │   ├── home/
+        │   ├── tmp/
+        │   └── work/
+        └── with-skill/
+            ├── case.json
+            ├── fixtures/
+            ├── home/
+            ├── tmp/
+            ├── work/
+            └── skills/example-skill/
+```
+
+`case.json` contains only the case ID, prompt, and staged fixture paths. The baseline arm has no candidate skill. The with-skill arm receives a sanitized copy.
+
+## Run an actor
+
+Run your agent adapter once for each arm:
+
+```bash
+pioneer-eval run \
+  --run-dir /absolute/path/to/new-eval-battery/actor-runs/eval-1/baseline \
+  --runtime-read /absolute/narrow/path/required/by/the/adapter \
+  --deny-read-probe /absolute/path/to/controller/answer-key \
+  -- your-agent-adapter --case case.json
+```
+
+Repeat with the `with-skill` directory. The command after `--` is passed as discrete arguments, not interpreted by a shell. `--runtime-read` is repeatable, read-only, and intended for narrow tool runtimes; home roots, filesystem roots, `/tmp`, `/var`, and similarly broad paths are rejected.
+
+`--deny-read-probe` is also repeatable. Use it for every controller-side answer key or sensitive reference whose invisibility you want the mandatory preflight to prove.
+
+When the actor executable is Pi, Pioneer adds fast-start and isolation flags automatically, including `--offline`, `--no-session`, `--no-approve`, and `--no-skills`. Driving Pi's RPC protocol and delivering `case.json` remains the adapter's job.
+
+## Mandatory security preflight
+
+Before the requested actor starts, every run proves that it cannot:
+
+- read or modify a controller-created outside sentinel;
+- inherit a host-only secret;
+- connect directly to a listening loopback service; or
+- read the explicit deny-read probes.
+
+If any probe fails, the actor never starts. There is no unsandboxed fallback.
+
+## Grade outside the sandbox
+
+Capture actor stdout and artifacts, then grade them from the trusted controller against the original expectations. Keep answer keys outside all actor directories. Compare baseline and with-skill results across the same cases and model settings; do not treat a single successful output as evidence that the skill improved behavior.
+
+For lower-level mechanics and the verified platform matrix, see [Isolated skill evals](../docs/EVALS.md).

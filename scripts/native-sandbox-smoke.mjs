@@ -1,0 +1,167 @@
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { resolveLinuxBwrapPath } from "../dist/eval-run/linux-install.js";
+import { startPublicEgressProxy } from "../dist/eval-run/public-egress-proxy.js";
+import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../dist/sandbox/launcher.js";
+import { startLinuxProxyBridge } from "../dist/sandbox/linux-proxy-bridge.js";
+
+if (process.platform !== "darwin" && process.platform !== "linux") {
+  throw new Error(`Native smoke test is unsupported on ${process.platform}`);
+}
+
+const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "pioneer-native-smoke-")));
+const source = path.join(root, "source");
+const scratch = path.join(root, "scratch");
+await Promise.all([
+  mkdir(path.join(source, ".idea"), { recursive: true }),
+  mkdir(path.join(source, ".vscode"), { recursive: true }),
+  mkdir(scratch),
+]);
+await Promise.all([
+  writeFile(path.join(source, ".idea", "marker.txt"), "idea-readable\n"),
+  writeFile(path.join(source, ".vscode", "marker.txt"), "vscode-readable\n"),
+  writeFile(path.join(source, "immutable.txt"), "unchanged\n"),
+]);
+
+const actor = String.raw`
+const fs = require("fs");
+const path = require("path");
+const [source, scratch] = process.argv.slice(1);
+const result = {
+  idea: fs.readFileSync(path.join(source, ".idea", "marker.txt"), "utf8").trim(),
+  vscode: fs.readFileSync(path.join(source, ".vscode", "marker.txt"), "utf8").trim(),
+};
+try { fs.writeFileSync(path.join(source, "immutable.txt"), "changed\n"); result.sourceWrite = "ALLOWED"; }
+catch (error) { result.sourceWrite = error.code; }
+fs.writeFileSync(path.join(scratch, "report.txt"), "scratch-ok\n");
+try { fs.readFileSync("/etc/hosts"); result.outsideRead = "ALLOWED"; }
+catch (error) { result.outsideRead = error.code; }
+try { fs.statSync("/etc/hosts"); result.outsideMetadata = "ALLOWED"; }
+catch (error) { result.outsideMetadata = error.code; }
+process.stdout.write(JSON.stringify(result));
+`;
+
+const runtimeCandidates =
+  process.platform === "darwin"
+    ? ["/System", "/usr", "/bin", "/sbin", "/opt/homebrew", "/private/etc/ssl"]
+    : ["/usr", "/bin", "/lib", "/lib64", "/etc/ssl/certs"];
+const policy = {
+  readOnlyPaths: [source, ...runtimeCandidates.filter(existsSync)],
+  writablePaths: [scratch],
+  network: "none",
+};
+const command = [process.execPath, "-e", actor, source, scratch];
+const linuxBwrap = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
+if (process.platform === "linux" && linuxBwrap === undefined) {
+  throw new Error("Linux sandbox smoke requires Bubblewrap");
+}
+const launch =
+  process.platform === "darwin"
+    ? buildMacosSandboxArgv(policy, command)
+    : buildLinuxSandboxArgv(policy, command, linuxBwrap);
+
+function capture(argv, environment) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(argv[0], argv.slice(1), {
+      encoding: "utf8",
+      env: environment,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk));
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.once("error", reject);
+    child.once("exit", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+try {
+  const completed = spawnSync(launch.argv[0], launch.argv.slice(1), {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...launch.environment },
+  });
+  if (completed.status !== 0) {
+    throw new Error(`sandbox actor failed (${completed.status}): ${completed.stderr}`);
+  }
+  const result = JSON.parse(completed.stdout);
+  const sourceContent = await readFile(path.join(source, "immutable.txt"), "utf8");
+  const scratchContent = await readFile(path.join(scratch, "report.txt"), "utf8");
+  const passed =
+    result.idea === "idea-readable" &&
+    result.vscode === "vscode-readable" &&
+    result.sourceWrite !== "ALLOWED" &&
+    result.outsideRead !== "ALLOWED" &&
+    result.outsideMetadata !== "ALLOWED" &&
+    sourceContent === "unchanged\n" &&
+    scratchContent === "scratch-ok\n";
+  if (!passed) throw new Error(`filesystem probe failed: ${JSON.stringify(result)}`);
+
+  const localServer = net.createServer((socket) => socket.end("unexpected"));
+  await new Promise((resolve, reject) => {
+    localServer.once("error", reject);
+    localServer.listen(0, "127.0.0.1", resolve);
+  });
+  const localAddress = localServer.address();
+  if (localAddress === null || typeof localAddress === "string") throw new Error("no local port");
+  const proxy = await startPublicEgressProxy("native-smoke-token".padEnd(32, "x"));
+  const bridge =
+    process.platform === "linux"
+      ? await startLinuxProxyBridge(proxy.url, path.join(root, "proxy.sock"))
+      : undefined;
+  try {
+    const networkActor = `
+const { spawnSync } = require("child_process");
+const net = require("net");
+const port = Number(process.argv[1]);
+const publicResult = spawnSync("/usr/bin/curl", ["-fsS", "--max-time", "15", "https://example.com/"], { env: process.env });
+const result = { publicStatus: publicResult.status, publicStderr: publicResult.stderr.toString("utf8").slice(-500), directConnected: false };
+const socket = net.connect({ host: "127.0.0.1", port });
+const timer = setTimeout(() => { socket.destroy(); process.stdout.write(JSON.stringify(result)); }, 1500);
+socket.once("connect", () => { result.directConnected = true; clearTimeout(timer); socket.destroy(); process.stdout.write(JSON.stringify(result)); });
+socket.once("error", () => { clearTimeout(timer); process.stdout.write(JSON.stringify(result)); });
+`;
+    const networkPolicy = {
+      ...policy,
+      network: "proxy",
+      proxyUrl: proxy.url,
+    };
+    const networkCommand = [process.execPath, "-e", networkActor, String(localAddress.port)];
+    const networkLaunch =
+      process.platform === "darwin"
+        ? buildMacosSandboxArgv(networkPolicy, networkCommand)
+        : buildLinuxSandboxArgv(networkPolicy, networkCommand, linuxBwrap, bridge.socketPath);
+    const networkCompleted = await capture(networkLaunch.argv, {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      ...(process.platform === "darwin"
+        ? {
+            OPENSSL_CONF: "/private/etc/ssl/openssl.cnf",
+            SSL_CERT_FILE: "/private/etc/ssl/cert.pem",
+          }
+        : {}),
+      ...networkLaunch.environment,
+    });
+    if (networkCompleted.status !== 0) {
+      throw new Error(
+        `network actor failed (${networkCompleted.status}): ${networkCompleted.stderr}`,
+      );
+    }
+    const networkResult = JSON.parse(networkCompleted.stdout);
+    const networkPassed =
+      networkResult.publicStatus === 0 && networkResult.directConnected === false;
+    process.stdout.write(
+      `${JSON.stringify({ platform: process.platform, passed: networkPassed, ...result, ...networkResult })}\n`,
+    );
+    if (!networkPassed) process.exitCode = 1;
+  } finally {
+    await bridge?.close();
+    await proxy.close();
+    await new Promise((resolve) => localServer.close(() => resolve()));
+  }
+} finally {
+  await rm(root, { recursive: true, force: true });
+}
