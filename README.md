@@ -1,8 +1,6 @@
 # Pioneer
 
-<p align="center">
-  <img src="plugins/pioneer/assets/pioneer-mascot.png" alt="Pioneer mascot: a cheerful Pi explorer holding a flag" width="420">
-</p>
+![Pioneer: a cheerful Pi explorer holding a flag in a jungle](plugins/pioneer/assets/pioneer-banner.jpg)
 
 Pioneer is a convenient, safety-conscious bridge for coding agents to delegate tasks to a locally installed and configured [Pi coding agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). Today it supports independent code reviews and isolated skill-eval runs. You choose any configured model and a thinking level up to `max`; Pioneer handles readiness checks, an isolated Pi home, path grants, and native sandboxing.
 
@@ -20,13 +18,13 @@ Pioneer invokes the native sandbox mechanisms directly. It does not depend on An
 
 ## Quick start
 
-Pioneer requires Node.js 22 or newer, npm, and a configured Pi installation. After the first public release, install the CLI with:
+Pioneer requires Node.js 22 or newer, npm, and a configured Pi installation. Install the CLI with:
 
 ```bash
 npm install -g @rock3r/pioneer
 ```
 
-Until that release is published, install from a trusted source checkout:
+To install from a trusted source checkout instead:
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
@@ -38,6 +36,7 @@ npm ci --ignore-scripts
 npm run build
 npm link
 pioneer-eval doctor
+pioneer models
 ```
 
 If an agent terminal hides Pi configuration, `doctor` reports that access denial separately from a genuinely unconfigured Pi installation. Its diagnosis never reads configuration contents; approve outer-terminal escalation when prompted, while Pioneer continues to sandbox the Pi actor.

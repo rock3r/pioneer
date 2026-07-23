@@ -44,9 +44,13 @@ Always excluded:
 
 Eval snapshots additionally exclude `skills`. Review snapshots retain configured skills because they can be relevant to code review.
 
-The copy rejects special files, broken links, and links escaping the Pi home. It is bounded to 100,000 entries and 1 GiB. Provider authentication should therefore be configured in Pi's agent directory, normally through `pi` and `/login`. Host API-key environment variables are intentionally not copied wholesale into sandboxed runs.
+The copy rejects special files, broken links, and links escaping the Pi home. Symlinked Pi launcher names directly under `bin/` are omitted instead: Pioneer launches the separately resolved host Pi executable, so copying those launchers is unnecessary and following an external managed-runtime link would weaken the snapshot boundary. Other agent-bin helpers remain subject to the normal link rules.
+
+The copy is bounded to 100,000 entries and 1 GiB. Provider authentication should therefore be configured in Pi's agent directory, normally through `pi` and `/login`. Host API-key environment variables are intentionally not copied wholesale into sandboxed runs.
 
 When Pi reports no configured models, readiness checks only filesystem access permissions on the agent directory and the known configuration filenames `auth.json`, `models-store.json`, and `settings.json`. It never opens or reads those files. A permission denial is reported as an outer-terminal sandbox problem rather than misleading the user to reconfigure Pi.
+
+When Pi reports that `models.json` could not be loaded, Pioneer rejects the entire catalog even if Pi also prints cached or built-in models. The stable diagnostic does not repeat Pi's raw provider-specific error text.
 
 Some policy sandboxes, including macOS Seatbelt configurations, allow metadata checks while withholding file contents. When Pi reports no models in such an environment, a recognized outer-agent sandbox indicator triggers the same conservative diagnosis. Only the indicator's variable name is reported, never its value. Callers can set `PIONEER_OUTER_SANDBOX=1` when their sandbox is not recognized automatically.
 

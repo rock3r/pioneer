@@ -32,7 +32,7 @@ Restart Codex or Claude Code after changing `PATH`.
 Open Pi and use `/login`, then verify:
 
 ```bash
-pi --offline --no-approve --list-models
+pioneer models
 ```
 
 Pioneer reads authentication from the selected Pi agent directory. It does not inherit arbitrary provider API-key variables from the host.
@@ -43,9 +43,21 @@ The diagnosis checks access bits and known filenames only; it never reads config
 
 ## Model missing or ambiguous
 
-Copy one of the qualified `provider/model` names printed in the error. Unqualified IDs are accepted only when exactly one configured provider exposes that ID. Pioneer never picks a near match or silently falls back.
+Run `pioneer models` and copy one of its qualified `provider/model` names. Unqualified IDs are accepted only when exactly one configured provider exposes that ID. Pioneer never picks a near match or silently falls back.
 
 If the wrong configuration is being inspected, set `PI_CODING_AGENT_DIR` or pass `--pi-home /absolute/path`.
+
+## Invalid `models.json`
+
+`PI_MODELS_CONFIG_INVALID` means Pi reported a load error even if it also printed built-in or cached models. Pioneer rejects that partial catalog so a broken custom provider cannot be mistaken for a missing model.
+
+Run Pi directly to see its detailed validation message:
+
+```bash
+pi --offline --no-approve --list-models
+```
+
+Fix every reported `models.json` error, then rerun `pioneer models`. Pioneer deliberately does not repeat Pi's raw configuration error because it may contain provider-specific details.
 
 ## Thinking level rejected
 

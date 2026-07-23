@@ -60,7 +60,7 @@ Plugin installation does not install the Pioneer CLI or Pi itself. This is delib
 
 ## Versioning
 
-The npm package and both plugin manifests use semantic version `0.1.0`. Bump all three together for every published release. Claude Code treats an explicit manifest version as its cache/update key; pushing changes without a version bump does not update existing installations.
+The npm package and both plugin manifests use the same semantic version. Bump all three together for every published release. Claude Code treats an explicit manifest version as its cache/update key; pushing changes without a version bump does not update existing installations.
 
 Keep the stable identifier `pioneer`. Change display text rather than renaming the identifier, because installed plugin settings and skill namespaces depend on it.
 

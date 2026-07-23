@@ -2,17 +2,25 @@
 
 ## List configured models
 
-Pioneer uses only models visible to the selected Pi agent directory:
+List the exact qualified names Pioneer can select:
 
 ```bash
-pi --offline --no-approve --list-models
+pioneer models
 ```
 
 If you use a prepared alternative Pi home:
 
 ```bash
-PI_CODING_AGENT_DIR=/absolute/pi-agent pi --offline --no-approve --list-models
+pioneer models --pi-home /absolute/pi-agent
 ```
+
+For machine-readable output:
+
+```bash
+pioneer models --json
+```
+
+Pioneer uses Pi's offline model catalog, so this command avoids optional startup network checks. It fails instead of returning a partial list when Pi reports that `models.json` is invalid.
 
 ## Select a model
 

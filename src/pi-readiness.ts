@@ -16,6 +16,11 @@ export const PI_NO_MODELS_ERROR = diagnosticMessage(
   "Pi is installed but has no available configured models. Run `pi`, use `/login` to configure a provider, then verify the result with `pi --offline --no-approve --list-models`.",
 );
 
+export const PI_MODELS_CONFIG_INVALID_ERROR = diagnosticMessage(
+  "PI_MODELS_CONFIG_INVALID",
+  "Pi reported that models.json could not be loaded. Run `pi --offline --no-approve --list-models`, fix every reported models.json error, then retry. Pioneer will not use a partial model catalog.",
+);
+
 export function piConfigSandboxError(agentDir: string, evidence: string): string {
   return diagnosticMessage(
     "PI_CONFIG_HIDDEN_BY_SANDBOX",
@@ -44,6 +49,7 @@ export interface PiReadiness {
   readonly version?: string;
   readonly modelCount: number;
   readonly resolvedModel?: string;
+  readonly models?: readonly PiConfiguredModel[];
   readonly errors: readonly string[];
 }
 
@@ -124,6 +130,12 @@ function configuredModels(output: string): readonly PiConfiguredModel[] | undefi
     models.push({ provider, id });
   }
   return models;
+}
+
+function hasInvalidModelsConfig(result: PiProbeResult): boolean {
+  return /(?:errors?\s+loading|failed\s+to\s+load)\s+models\.json/i.test(
+    `${result.stderr}\n${result.stdout}`,
+  );
 }
 
 function createRunner(
@@ -211,6 +223,15 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
 
   const version = versionResult.stdout.trim().split(/\r?\n/, 1)[0] || "unknown";
   const modelsResult = await runner(["--offline", "--no-approve", "--list-models"]);
+  if (hasInvalidModelsConfig(modelsResult)) {
+    return {
+      ready: false,
+      version,
+      modelCount: 0,
+      models: [],
+      errors: [PI_MODELS_CONFIG_INVALID_ERROR],
+    };
+  }
   if (modelsResult.exitCode !== 0) {
     return {
       ready: false,
@@ -259,18 +280,19 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
   if (options.requestedModel !== undefined) {
     const resolution = resolvePiModel(options.requestedModel, models);
     if (!resolution.ok) {
-      return { ready: false, version, modelCount, errors: [resolution.error] };
+      return { ready: false, version, modelCount, models, errors: [resolution.error] };
     }
     return {
       ready: true,
       version,
       modelCount,
       resolvedModel: resolution.qualifiedName,
+      models,
       errors: [],
     };
   }
 
-  return { ready: true, version, modelCount, errors: [] };
+  return { ready: true, version, modelCount, models, errors: [] };
 }
 
 export async function assertPiReady(options: PiReadinessOptions = {}): Promise<PiReadiness> {
