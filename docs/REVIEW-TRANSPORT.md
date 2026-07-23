@@ -45,6 +45,8 @@ Readiness runs before scratch creation. Pioneer requires:
 
 A qualified `provider/model` name is matched case-insensitively as a whole. An unqualified model ID is accepted only if exactly one configured provider exposes it. Missing or ambiguous requests fail with the sorted qualified model list.
 
+If Pi reports a `models.json` load failure, Pioneer rejects the partial catalog before model resolution. `pioneer models` exposes the same parsed catalog and readiness behavior as reviews.
+
 If Pi returns an empty model list, the controller performs metadata-only `access` checks on the selected Pi agent directory and known configuration filenames. `EACCES` or `EPERM` produces a client-neutral diagnostic explaining that the calling agent's outer terminal sandbox must be escalated or bypassed.
 
 Because policy sandboxes can make `access(2)` succeed while hiding file contents, a recognized outer-agent sandbox environment indicator produces the same conservative result when the model list is empty. Unknown callers can set `PIONEER_OUTER_SANDBOX=1`. The probe never reads configuration contents or reports environment values, and terminal escalation does not disable Pioneer's own review sandbox.

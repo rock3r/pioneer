@@ -43,6 +43,32 @@ pioneer review --source DIR --prompt TEXT
 
 Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout. Diagnostics and warnings use stderr.
 
+## `pioneer models`
+
+Lists the configured models visible to the same offline Pi readiness probe used by reviews:
+
+```text
+pioneer models [--pi-home DIR] [--json]
+```
+
+Human output contains one sorted, qualified `provider/model` name per line. `--json` emits a schema-versioned catalog:
+
+```json
+{
+  "schemaVersion": 1,
+  "piVersion": "0.81.1",
+  "models": [
+    {
+      "provider": "openrouter",
+      "id": "x-ai/grok-4.5",
+      "qualifiedName": "openrouter/x-ai/grok-4.5"
+    }
+  ]
+}
+```
+
+`--pi-home` selects an alternative Pi agent directory without copying it. The command fails nonzero with the same readiness diagnostic used by reviews. In particular, Pioneer refuses to return a partial catalog when Pi reports that `models.json` is invalid.
+
 ## `pioneer-eval doctor`
 
 Checks Pi, configured models, and strict platform sandbox dependencies. It prints schema-versioned JSON and exits nonzero when unsupported or unready. Human-readable entries in `errors` start with a stable diagnostic ID. Machine consumers should branch on `diagnostics[].id`, not prose.
@@ -72,6 +98,7 @@ The v1 diagnostic IDs are:
 | `PI_NOT_FOUND` | Pi is absent from `PATH` |
 | `PI_PROBE_FAILED` | Pi failed or timed out during readiness probing |
 | `PI_NO_MODELS` | Pi is visible but has no configured models |
+| `PI_MODELS_CONFIG_INVALID` | Pi reported that `models.json` could not be loaded; partial catalogs are rejected |
 | `PI_CONFIG_HIDDEN_BY_SANDBOX` | An outer agent sandbox hides Pi configuration or makes access metadata inconclusive |
 | `PI_MODEL_LIST_UNRECOGNIZED` | Pi returned an unsupported model-list format |
 | `EVAL_PLATFORM_UNSUPPORTED` | Strict eval isolation has no backend for the platform |

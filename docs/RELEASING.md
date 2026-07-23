@@ -37,7 +37,7 @@ Only the tarball that passed the matrix is published. A GitHub release and attac
    npm run check
    npm run package:smoke
    npm run sandbox:smoke
-   npm run release:verify -- v0.1.0
+   npm run release:verify -- v0.1.1
    ```
 
 4. Validate both plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).

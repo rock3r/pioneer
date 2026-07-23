@@ -11,6 +11,12 @@ export {
   prepareEvalBattery,
 } from "./eval-run/setup.js";
 export {
+  formatModelCatalog,
+  type ModelCatalogEntry,
+  type ModelCatalogJson,
+  modelCatalogJson,
+} from "./model-catalog-output.js";
+export {
   defaultPiAgentDir,
   type PiHomeMode,
   type PreparedPiHome,
@@ -27,6 +33,7 @@ export {
 export {
   assertPiReady,
   checkPiReadiness,
+  PI_MODELS_CONFIG_INVALID_ERROR,
   type PiConfigAccess,
   type PiConfigAccessProbe,
   type PiReadiness,

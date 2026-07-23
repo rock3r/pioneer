@@ -30,13 +30,13 @@ Pioneer uses the authentication stored by Pi. It does not ask Codex or Claude Co
 
 ## 2. Install Pioneer from source
 
-After a packaged CLI release is published, install it with:
+Install the packaged CLI with:
 
 ```bash
 npm install -g @rock3r/pioneer
 ```
 
-Until then, clone the repository, then build and link the trusted source checkout:
+To use a trusted source checkout instead, clone the repository, then build and link it:
 
 ```bash
 cd pioneer
@@ -51,9 +51,10 @@ Confirm both executables:
 command -v pioneer
 command -v pioneer-eval
 pioneer-eval doctor
+pioneer models
 ```
 
-Use the [CLI reference](../docs/CLI-REFERENCE.md) for complete syntax. The current executables do not expose dedicated `--help` subcommands.
+Use `pioneer --help`, `pioneer-eval --help`, or the [CLI reference](../docs/CLI-REFERENCE.md) for complete syntax.
 
 ## 3. Linux sandbox dependency
 

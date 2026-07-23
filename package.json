@@ -1,6 +1,6 @@
 {
   "name": "@rock3r/pioneer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Safely delegate reviews and isolated skill evals from coding agents to Pi",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -24,6 +24,7 @@
     "dist/",
     "LICENSE",
     "README.md",
+    "plugins/pioneer/assets/pioneer-banner.jpg",
     "plugins/pioneer/assets/pioneer-mascot.png"
   ],
   "publishConfig": {

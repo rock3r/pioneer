@@ -2,7 +2,17 @@
 
 All notable user-facing changes are recorded here. The project follows semantic versioning.
 
-## 0.1.0 - Unreleased
+## Unreleased
+
+## 0.1.1 - 2026-07-23
+
+- Make both CLI `--help` paths succeed without writing usage to stderr.
+- Add `pioneer models` with human-readable and schema-versioned JSON output.
+- Reject partial model catalogs when Pi reports an invalid `models.json`.
+- Support managed Pi installations whose agent-bin Pi launcher is an external symlink without weakening the general escaping-link rejection.
+- Replace the standalone README mascot with an optimized Pioneer banner.
+
+## 0.1.0 - 2026-07-23
 
 - Launch as Pioneer, with the `@rock3r/pioneer`, `pioneer`, and `pioneer-eval` distribution identities.
 - Add Pi-backed reviews for Codex and Claude Code with explicit model and thinking-level selection through `max`.

@@ -125,8 +125,38 @@ describe("Pi readiness", () => {
       ready: true,
       version: "0.81.1",
       modelCount: 2,
+      models: [
+        { provider: "openai", id: "gpt-5.5" },
+        { provider: "anthropic", id: "claude-opus" },
+      ],
       errors: [],
     });
+  });
+
+  it("rejects a partial catalog when Pi reports a broken models.json", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.81.1\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nopenai    gpt-5.5     400K     128K     yes       yes\n",
+        stderr:
+          'Warning: errors loading models.json: Failed to load models.json: Provider claude-code: "apiKey" is required when defining custom models.\n',
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+
+    expect(result).toMatchObject({
+      ready: false,
+      version: "0.81.1",
+      modelCount: 0,
+      models: [],
+    });
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain("[PI_MODELS_CONFIG_INVALID]");
+    expect(result.errors[0]).toContain("models.json");
+    expect(result.errors[0]).not.toContain("apiKey");
   });
 
   it("reports an unusable Pi installation without leaking unbounded output", async () => {

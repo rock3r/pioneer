@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -61,6 +61,21 @@ describe("prepareIsolatedPiHome", () => {
     await expect(
       prepareIsolatedPiHome({ sourceDir: source, destination, mode: "review" }),
     ).rejects.toThrow(/symbolic link/i);
+  });
+
+  it("omits a symlinked agent-bin Pi launcher because Pioneer launches host Pi", async () => {
+    const { root, source, destination } = await fixture();
+    const hostPi = path.join(root, "host-pi");
+    await writeFile(hostPi, "#!/bin/sh\n");
+    await mkdir(path.join(source, "bin"));
+    await symlink(hostPi, path.join(source, "bin", "pi"));
+
+    const prepared = await prepareIsolatedPiHome({
+      sourceDir: source,
+      destination,
+      mode: "review",
+    });
+    await expect(lstat(path.join(prepared.agentDir, "bin", "pi"))).rejects.toThrow();
   });
 
   it("preserves symbolic links whose targets stay inside the supplied Pi home", async () => {
