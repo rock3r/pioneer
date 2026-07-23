@@ -124,9 +124,9 @@ jobs:
         with:
           name: npm-package
           path: release
-      - run: npm publish release/*.tgz --access public
+      - run: npm publish ./release/*.tgz --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: gh release create "${GITHUB_REF_NAME}" release/*.tgz --generate-notes --verify-tag
+      - run: gh release create "${GITHUB_REF_NAME}" ./release/*.tgz --generate-notes --verify-tag
         env:
           GH_TOKEN: ${{ github.token }}
