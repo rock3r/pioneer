@@ -87,11 +87,26 @@ try {
   }
 
   const fakeBin = path.join(root, "fake-bin");
-  const fakePiScript = path.join(root, "fake-pi.mjs");
   await mkdir(fakeBin);
-  await writeFile(
-    fakePiScript,
-    `const args = process.argv.slice(2);
+  const modelCommand = [path.join(packageRoot, "dist", "review-cli.js"), "models", "--json"];
+  if (process.platform === "win32") {
+    const unavailable = run(process.execPath, modelCommand, {
+      env: { ...process.env, PATH: fakeBin },
+    });
+    if (
+      unavailable.status !== 1 ||
+      !unavailable.stderr.includes("[PI_NOT_FOUND]") ||
+      unavailable.stdout.length > 0
+    ) {
+      throw new Error(
+        `packaged Windows model listing did not expose PI_NOT_FOUND: ${unavailable.stderr}`,
+      );
+    }
+  } else {
+    const fakePiScript = path.join(root, "fake-pi.mjs");
+    await writeFile(
+      fakePiScript,
+      `const args = process.argv.slice(2);
 if (args.includes("--version")) {
   process.stdout.write("0.81.1\\n");
 } else if (args.includes("--list-models")) {
@@ -100,32 +115,29 @@ if (args.includes("--version")) {
   process.exitCode = 2;
 }
 `,
-  );
-  const fakePi =
-    process.platform === "win32" ? path.join(fakeBin, "pi.cmd") : path.join(fakeBin, "pi");
-  await writeFile(
-    fakePi,
-    process.platform === "win32"
-      ? `@"${process.execPath}" "${fakePiScript}" %*\r\n`
-      : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(fakePiScript)} "$@"\n`,
-  );
-  if (process.platform !== "win32") await chmod(fakePi, 0o755);
+    );
+    const fakePi = path.join(fakeBin, "pi");
+    await writeFile(
+      fakePi,
+      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(fakePiScript)} "$@"\n`,
+    );
+    await chmod(fakePi, 0o755);
 
-  const listed = run(
-    process.execPath,
-    [path.join(packageRoot, "dist", "review-cli.js"), "models", "--json"],
-    {
+    const listed = run(process.execPath, modelCommand, {
       env: {
         ...process.env,
         PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
       },
-    },
-  );
-  if (listed.status !== 0) throw new Error(`packaged model listing failed: ${listed.stderr}`);
-  const catalog = JSON.parse(listed.stdout);
-  const names = catalog.models.map((model) => model.qualifiedName);
-  if (catalog.schemaVersion !== 1 || names.join(",") !== "openrouter/x-ai/grok-4.5,xai/grok-4.5") {
-    throw new Error(`unexpected packaged model catalog: ${listed.stdout}`);
+    });
+    if (listed.status !== 0) throw new Error(`packaged model listing failed: ${listed.stderr}`);
+    const catalog = JSON.parse(listed.stdout);
+    const names = catalog.models.map((model) => model.qualifiedName);
+    if (
+      catalog.schemaVersion !== 1 ||
+      names.join(",") !== "openrouter/x-ai/grok-4.5,xai/grok-4.5"
+    ) {
+      throw new Error(`unexpected packaged model catalog: ${listed.stdout}`);
+    }
   }
   process.stdout.write(`packed artifact smoke passed: ${manifest.name}@${manifest.version}\n`);
 } finally {
