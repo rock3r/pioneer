@@ -32,6 +32,7 @@ export interface PreparedPiHome {
 const MAX_ENTRIES = 100_000;
 const MAX_BYTES = 1024 * 1024 * 1024;
 const ALWAYS_EXCLUDED = new Set(["sessions", "logs", ".npm", ".cache"]);
+const PI_LAUNCHER_NAMES = new Set(["pi", "pi.exe", "pi.cmd", "pi.bat"]);
 
 function isExcluded(name: string, mode: PiHomeMode): boolean {
   if (ALWAYS_EXCLUDED.has(name)) return true;
@@ -73,6 +74,11 @@ async function copyTree(
     const destinationPath = path.join(destination, entry.name);
     const entryStats = await lstat(sourcePath);
     if (entryStats.isSymbolicLink()) {
+      const relativeParent = path.relative(sourceRoot, source);
+      if (relativeParent === "bin" && PI_LAUNCHER_NAMES.has(entry.name.toLowerCase())) {
+        continue;
+      }
+
       let target: string;
       try {
         target = await realpath(sourcePath);

@@ -33,6 +33,11 @@ describe("Pi requested-model readiness", () => {
       version: "0.81.1",
       modelCount: 3,
       resolvedModel: "openai/gpt-5.5",
+      models: [
+        { provider: "openai", id: "gpt-5.5" },
+        { provider: "openrouter", id: "gpt-5.5" },
+        { provider: "anthropic", id: "claude-opus" },
+      ],
       errors: [],
     });
   });

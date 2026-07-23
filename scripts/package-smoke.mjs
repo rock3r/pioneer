@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -58,10 +58,14 @@ try {
       ? path.join(prefix, "node_modules", "@rock3r", "pioneer")
       : path.join(prefix, "lib", "node_modules", "@rock3r", "pioneer");
   const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
-  if (manifest.name !== "@rock3r/pioneer" || manifest.version !== "0.1.0") {
+  const sourceManifest = JSON.parse(
+    await readFile(path.join(process.cwd(), "package.json"), "utf8"),
+  );
+  if (manifest.name !== "@rock3r/pioneer" || manifest.version !== sourceManifest.version) {
     throw new Error(`unexpected installed package identity: ${manifest.name}@${manifest.version}`);
   }
   await access(path.join(packageRoot, "plugins", "pioneer", "assets", "pioneer-mascot.png"));
+  await access(path.join(packageRoot, "plugins", "pioneer", "assets", "pioneer-banner.jpg"));
 
   const shimSuffix = process.platform === "win32" ? ".cmd" : "";
   const shimRoot = process.platform === "win32" ? prefix : path.join(prefix, "bin");
@@ -80,6 +84,48 @@ try {
     if (helped.status !== 0 || !helped.stdout.includes("Usage:") || helped.stderr.length > 0) {
       throw new Error(`${script} did not expose successful packaged CLI help`);
     }
+  }
+
+  const fakeBin = path.join(root, "fake-bin");
+  const fakePiScript = path.join(root, "fake-pi.mjs");
+  await mkdir(fakeBin);
+  await writeFile(
+    fakePiScript,
+    `const args = process.argv.slice(2);
+if (args.includes("--version")) {
+  process.stdout.write("0.81.1\\n");
+} else if (args.includes("--list-models")) {
+  process.stdout.write("provider  model          context  max-out  thinking  images\\nopenrouter x-ai/grok-4.5 500K     4.1K     yes       yes\\nxai        grok-4.5      500K     500K     yes       yes\\n");
+} else {
+  process.exitCode = 2;
+}
+`,
+  );
+  const fakePi =
+    process.platform === "win32" ? path.join(fakeBin, "pi.cmd") : path.join(fakeBin, "pi");
+  await writeFile(
+    fakePi,
+    process.platform === "win32"
+      ? `@"${process.execPath}" "${fakePiScript}" %*\r\n`
+      : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(fakePiScript)} "$@"\n`,
+  );
+  if (process.platform !== "win32") await chmod(fakePi, 0o755);
+
+  const listed = run(
+    process.execPath,
+    [path.join(packageRoot, "dist", "review-cli.js"), "models", "--json"],
+    {
+      env: {
+        ...process.env,
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+      },
+    },
+  );
+  if (listed.status !== 0) throw new Error(`packaged model listing failed: ${listed.stderr}`);
+  const catalog = JSON.parse(listed.stdout);
+  const names = catalog.models.map((model) => model.qualifiedName);
+  if (catalog.schemaVersion !== 1 || names.join(",") !== "openrouter/x-ai/grok-4.5,xai/grok-4.5") {
+    throw new Error(`unexpected packaged model catalog: ${listed.stdout}`);
   }
   process.stdout.write(`packed artifact smoke passed: ${manifest.name}@${manifest.version}\n`);
 } finally {

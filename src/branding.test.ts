@@ -16,6 +16,7 @@ describe("Pioneer distribution identity", () => {
       pioneer: "dist/review-cli.js",
       "pioneer-eval": "dist/eval-run-cli.js",
     });
+    expect(packageManifest.files).toContain("plugins/pioneer/assets/pioneer-banner.jpg");
     expect(codexManifest.name).toBe("pioneer");
     expect(codexManifest.interface.displayName).toBe("Pioneer");
     expect(codexManifest.interface.composerIcon).toBe("./assets/pioneer-mascot.png");
@@ -30,5 +31,6 @@ describe("Pioneer distribution identity", () => {
     expect(claudeMarketplace.plugins[0].source).toBe("./plugins/pioneer");
     await access("plugins/pioneer/skills/pioneer/SKILL.md");
     await access("plugins/pioneer/assets/pioneer-mascot.png");
+    await access("plugins/pioneer/assets/pioneer-banner.jpg");
   });
 });

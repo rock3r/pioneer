@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import path from "node:path";
+import { formatModelCatalog, modelCatalogJson } from "./model-catalog-output.js";
+import { checkPiReadiness } from "./pi-readiness.js";
 import { runReview } from "./review/runner.js";
 import { isThinkingLevel } from "./thinking-level.js";
 
 const REVIEW_USAGE = `Usage:
   pioneer review --source DIR --prompt TEXT [--model PROVIDER/MODEL] [--thinking LEVEL]
     [--pi-home DIR] [--allow-read DIR] [--allow-write DIR]
-    [--network full|public|none] [--timeout-ms N] [--allow-unsandboxed-windows]`;
+    [--network full|public|none] [--timeout-ms N] [--allow-unsandboxed-windows]
+  pioneer models [--pi-home DIR] [--json]`;
 
 function usage(): never {
   throw new Error(REVIEW_USAGE);
@@ -30,6 +33,13 @@ function takeRepeated(args: string[], name: string): string[] {
   }
 }
 
+function takeFlag(args: string[], name: string): boolean {
+  const index = args.indexOf(name);
+  if (index < 0) return false;
+  args.splice(index, 1);
+  return true;
+}
+
 async function main(): Promise<void> {
   const cliArgs = process.argv.slice(2);
   if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
@@ -37,6 +47,25 @@ async function main(): Promise<void> {
     return;
   }
   const [subcommand, ...rawArgs] = cliArgs;
+  if (subcommand === "models") {
+    const args = [...rawArgs];
+    const piHomeSource = takeOption(args, "--pi-home");
+    const json = takeFlag(args, "--json");
+    if (args.length > 0) usage();
+    const environment =
+      piHomeSource === undefined
+        ? process.env
+        : { ...process.env, PI_CODING_AGENT_DIR: path.resolve(piHomeSource) };
+    const readiness = await checkPiReadiness({ environment });
+    if (!readiness.ready) throw new Error(readiness.errors.join("\n"));
+    const models = readiness.models ?? [];
+    process.stdout.write(
+      json
+        ? `${JSON.stringify(modelCatalogJson(readiness.version ?? "unknown", models), null, 2)}\n`
+        : formatModelCatalog(models),
+    );
+    return;
+  }
   if (subcommand !== "review") usage();
   const args = [...rawArgs];
   const sourceDir = takeOption(args, "--source");
