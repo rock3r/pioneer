@@ -1,16 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
@@ -22,6 +13,7 @@ import {
   type SandboxPolicy,
 } from "../sandbox/launcher.js";
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
+import { executableRuntimeRoot } from "../sandbox/runtime-paths.js";
 import { buildEvalSandboxConfig, type EvalRunSpec, validateEvalRunSpec } from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
 import { macosRuntimeReadPaths } from "./macos-runtime.js";
@@ -108,11 +100,7 @@ async function existingRuntimePaths(): Promise<string[]> {
             process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
           ];
   const result: string[] = [];
-  const nodeExecutable = await realpath(process.execPath);
-  const nodeRuntime =
-    process.platform === "darwin"
-      ? path.resolve(path.dirname(nodeExecutable), "..")
-      : path.dirname(nodeExecutable);
+  const nodeRuntime = await executableRuntimeRoot(process.execPath);
   for (const candidate of [...candidates, nodeRuntime]) {
     try {
       await access(candidate, constants.R_OK);

@@ -8,6 +8,7 @@ import { resolveLinuxBwrapPath } from "../dist/eval-run/linux-install.js";
 import { startPublicEgressProxy } from "../dist/eval-run/public-egress-proxy.js";
 import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../dist/sandbox/launcher.js";
 import { startLinuxProxyBridge } from "../dist/sandbox/linux-proxy-bridge.js";
+import { executableRuntimeRoot } from "../dist/sandbox/runtime-paths.js";
 
 if (process.platform !== "darwin" && process.platform !== "linux") {
   throw new Error(`Native smoke test is unsupported on ${process.platform}`);
@@ -49,8 +50,9 @@ const runtimeCandidates =
   process.platform === "darwin"
     ? ["/System", "/usr", "/bin", "/sbin", "/opt/homebrew", "/private/etc/ssl"]
     : ["/usr", "/bin", "/lib", "/lib64", "/etc/ssl/certs"];
+const nodeRuntime = await executableRuntimeRoot(process.execPath);
 const policy = {
-  readOnlyPaths: [source, ...runtimeCandidates.filter(existsSync)],
+  readOnlyPaths: [source, ...runtimeCandidates.filter(existsSync), nodeRuntime],
   writablePaths: [scratch],
   network: "none",
 };
