@@ -3,11 +3,13 @@ import path from "node:path";
 import { runReview } from "./review/runner.js";
 import { isThinkingLevel } from "./thinking-level.js";
 
-function usage(): never {
-  throw new Error(`Usage:
+const REVIEW_USAGE = `Usage:
   pioneer review --source DIR --prompt TEXT [--model PROVIDER/MODEL] [--thinking LEVEL]
     [--pi-home DIR] [--allow-read DIR] [--allow-write DIR]
-    [--network full|public|none] [--timeout-ms N] [--allow-unsandboxed-windows]`);
+    [--network full|public|none] [--timeout-ms N] [--allow-unsandboxed-windows]`;
+
+function usage(): never {
+  throw new Error(REVIEW_USAGE);
 }
 
 function takeOption(args: string[], name: string): string | undefined {
@@ -29,7 +31,12 @@ function takeRepeated(args: string[], name: string): string[] {
 }
 
 async function main(): Promise<void> {
-  const [, , subcommand, ...rawArgs] = process.argv;
+  const cliArgs = process.argv.slice(2);
+  if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
+    process.stdout.write(`${REVIEW_USAGE}\n`);
+    return;
+  }
+  const [subcommand, ...rawArgs] = cliArgs;
   if (subcommand !== "review") usage();
   const args = [...rawArgs];
   const sourceDir = takeOption(args, "--source");

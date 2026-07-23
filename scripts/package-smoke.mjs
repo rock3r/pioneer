@@ -71,9 +71,14 @@ try {
   ]);
 
   for (const script of ["review-cli.js", "eval-run-cli.js"]) {
-    const invoked = run(process.execPath, [path.join(packageRoot, "dist", script)]);
-    if (invoked.status !== 1 || !invoked.stderr.includes("Usage:")) {
+    const scriptPath = path.join(packageRoot, "dist", script);
+    const invoked = run(process.execPath, [scriptPath]);
+    if (invoked.status !== 1 || !invoked.stderr.includes("Usage:") || invoked.stdout.length > 0) {
       throw new Error(`${script} did not expose its packaged CLI usage contract`);
+    }
+    const helped = run(process.execPath, [scriptPath, "--help"]);
+    if (helped.status !== 0 || !helped.stdout.includes("Usage:") || helped.stderr.length > 0) {
+      throw new Error(`${script} did not expose successful packaged CLI help`);
     }
   }
   process.stdout.write(`packed artifact smoke passed: ${manifest.name}@${manifest.version}\n`);

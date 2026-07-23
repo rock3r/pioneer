@@ -7,12 +7,14 @@ import { runEvalCommand } from "./eval-run/runner.js";
 import { prepareEvalBattery } from "./eval-run/setup.js";
 import { checkPiReadiness } from "./pi-readiness.js";
 
-function usage(): never {
-  throw new Error(`Usage:
+const EVAL_USAGE = `Usage:
   pioneer-eval prepare --skill DIR --evals FILE --output DIR
   pioneer-eval doctor
   pioneer-eval install-linux
-  pioneer-eval run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] -- COMMAND [ARG ...]`);
+  pioneer-eval run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] -- COMMAND [ARG ...]`;
+
+function usage(): never {
+  throw new Error(EVAL_USAGE);
 }
 
 function takeOption(args: string[], name: string): string | undefined {
@@ -34,7 +36,12 @@ function takeRepeatedOption(args: string[], name: string): string[] {
 }
 
 async function main(): Promise<void> {
-  const [, , subcommand, ...rawArgs] = process.argv;
+  const cliArgs = process.argv.slice(2);
+  if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
+    process.stdout.write(`${EVAL_USAGE}\n`);
+    return;
+  }
+  const [subcommand, ...rawArgs] = cliArgs;
   if (subcommand === "prepare") {
     const args = [...rawArgs];
     const skillDir = takeOption(args, "--skill");
