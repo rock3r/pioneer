@@ -7,8 +7,8 @@ Releases publish one public npm CLI package and the matching Codex and Claude pl
 1. Publish the repository at `https://github.com/rock3r/pioneer` and set that URL as `origin`. npm provenance requires the repository URL in `package.json` to match exactly.
 2. Ensure the npm account or organization owns the `@rock3r` scope. The scoped package identity is `@rock3r/pioneer`; do not substitute the unrelated unscoped package.
 3. Create a protected GitHub environment named `npm` and require reviewer approval if desired.
-4. Bootstrap the first package publish with a short-lived granular `NPM_TOKEN` repository secret. The release workflow passes it only to `npm publish`.
-5. After the package exists, configure npm trusted publishing for GitHub repository `rock3r/pioneer`, workflow `release.yml`, environment `npm`, and the `npm publish` action. Remove `NPM_TOKEN`, disallow traditional publish tokens, and retain OIDC publishing with provenance.
+4. Configure npm trusted publishing for GitHub repository `rock3r/pioneer`, workflow `release.yml`, environment `npm`, and the `npm publish` action. The checked-in workflow uses OIDC and must not receive an `NPM_TOKEN`.
+5. Set package publishing access to require two-factor authentication and disallow traditional tokens. Retain the trusted relationship so GitHub Actions can publish with provenance.
 
 The workflow uses a GitHub-hosted Ubuntu runner, `id-token: write`, npm 11, and public access. It never publishes from a self-hosted runner.
 
