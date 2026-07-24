@@ -19,6 +19,8 @@ For every tag, `.github/workflows/release.yml` independently requires:
 - full lint, type, test, and build checks on Ubuntu, macOS, and Windows;
 - exact tag, npm package, Codex plugin, and Claude plugin version agreement;
 - plugin name/skill-path integrity and byte-for-byte root/plugin UEL agreement;
+- the minimum and tested-maximum Pi releases to pass the CLI compatibility smoke;
+- the checked-in Pi tested maximum to equal the official npm `latest`;
 - a real Seatbelt smoke battery on macOS;
 - a real Bubblewrap/AppArmor smoke battery on Linux;
 - Windows fail-closed CLI checks and an AppContainer prototype build;
@@ -26,23 +28,38 @@ For every tag, `.github/workflows/release.yml` independently requires:
 
 Only the tarball that passed the matrix is published. A GitHub release and attached tarball are created after npm accepts the package.
 
+## Refreshing Pi compatibility
+
+Before every release, follow [Pi compatibility](PI-COMPATIBILITY.md):
+
+1. Run `npm view @earendil-works/pi-coding-agent version`.
+2. Review upstream release notes and relevant source changes through that exact version.
+3. Update `testedMaximum` in `pi-compatibility.json`.
+4. Update the Pi endpoint matrices in both CI workflows.
+5. Run `npm run pi:compat:latest`.
+6. Install and run `npm run pi:compat:smoke -- VERSION` once for the minimum and once for the tested maximum.
+
+`npm run release:verify` rejects policy/workflow drift. The tagged release also performs the online freshness check, so publication stops if Pi releases a newer `latest` before Pioneer ships.
+
 ## Cutting a release
 
-1. Update `package.json` and both plugin manifests to the same semantic version.
-2. Update release-facing documentation and verify the UEL text is synchronized.
-3. Run locally:
+1. Refresh the Pi compatibility range and endpoint tests.
+2. Update `package.json` and both plugin manifests to the same semantic version.
+3. Update release-facing documentation and verify the UEL text is synchronized.
+4. Run locally:
 
    ```bash
    npm ci --ignore-scripts
    npm run check
    npm run package:smoke
+   npm run pi:compat:latest
    npm run sandbox:smoke
-   npm run release:verify -- v0.1.1
+   npm run release:verify -- v0.1.2
    ```
 
-4. Validate both plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).
-5. Run a real review through Codex and Claude Code.
-6. Commit and push the reviewed release candidate.
-7. Create and push an annotated `v<version>` tag. Pushing the tag is the publication trigger.
+5. Validate both plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).
+6. Run a real review through Codex and Claude Code.
+7. Commit and push the reviewed release candidate.
+8. Create and push an annotated `v<version>` tag. Pushing the tag is the publication trigger.
 
 Do not reuse or move a published version tag. If a release is defective, fix forward with a new patch version and deprecate the affected npm version when appropriate.

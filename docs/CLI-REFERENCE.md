@@ -14,6 +14,15 @@ npm run review -- review ...
 npm run eval -- doctor
 ```
 
+## Version output
+
+Both executables print the installed Pioneer package version without probing Pi:
+
+```bash
+pioneer --version
+pioneer-eval --version
+```
+
 ## `pioneer review`
 
 ```text
@@ -91,10 +100,14 @@ Checks Pi, configured models, and strict platform sandbox dependencies. It print
 }
 ```
 
-The v1 diagnostic IDs are:
+The v1 diagnostic IDs are listed below. Warning diagnostics use `severity: "warning"` and do not make `supported` false:
 
 | ID | Meaning |
 | --- | --- |
+| `PI_VERSION_TOO_OLD` | Pi is below the minimum supported version |
+| `PI_VERSION_UNRECOGNIZED` | `pi --version` did not return SemVer |
+| `PI_VERSION_UNTESTED` | Pi is newer than the tested maximum; execution continues with a warning |
+| `PI_CLI_INCOMPATIBLE` | Pi reports an in-range version but lacks a required project-trust option |
 | `PI_NOT_FOUND` | Pi is absent from `PATH` |
 | `PI_PROBE_FAILED` | Pi failed or timed out during readiness probing |
 | `PI_NO_MODELS` | Pi is visible but has no configured models |

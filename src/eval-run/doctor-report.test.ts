@@ -22,4 +22,28 @@ describe("doctor report", () => {
       ],
     });
   });
+
+  it("exposes Pi compatibility warnings as machine warnings", () => {
+    const warning = "[PI_VERSION_UNTESTED] Pi is newer than tested.";
+    const report = createDoctorReport(
+      "darwin",
+      {
+        ready: true,
+        version: "0.83.0",
+        modelCount: 1,
+        models: [{ provider: "openai", id: "gpt-5.5" }],
+        warning,
+        errors: [],
+      },
+      [],
+    );
+
+    expect(report.supported).toBe(true);
+    expect(report.warnings).toEqual([warning]);
+    expect(report.diagnostics).toContainEqual({
+      id: "PI_VERSION_UNTESTED",
+      severity: "warning",
+      message: "Pi is newer than tested.",
+    });
+  });
 });

@@ -25,6 +25,7 @@ export interface EvalRunResult {
   readonly signal: NodeJS.Signals | null;
   readonly stdout: string;
   readonly stderr: string;
+  readonly warning?: string;
 }
 
 export interface RunEvalOptions {
@@ -206,7 +207,7 @@ export async function runEvalCommand(
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
     ...(requestedModel === undefined ? {} : { requestedModel }),
   };
-  await assertPiReady(readinessOptions);
+  const readiness = await assertPiReady(readinessOptions);
   await assertStrictEvalReady();
   const validated = await validateEvalRunSpec({
     ...spec,
@@ -296,7 +297,7 @@ export async function runEvalCommand(
     if ((await readFile(deniedWritePath, "utf8")) !== OUTSIDE_SENTINEL_CONTENT) {
       throw new Error("Eval isolation probe failed closed: host sentinel was modified");
     }
-    return await sandboxAndCapture(
+    const result = await sandboxAndCapture(
       config,
       [process.execPath, launcherScript, launchSpec],
       validated.runDir,
@@ -304,6 +305,10 @@ export async function runEvalCommand(
       linuxBwrapPath,
       bridge?.socketPath,
     );
+    return {
+      ...result,
+      ...(readiness.warning === undefined ? {} : { warning: readiness.warning }),
+    };
   } finally {
     delete process.env.PIONEER_HOST_SECRET;
     await bridge?.close();

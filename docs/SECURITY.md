@@ -40,13 +40,16 @@ Always excluded:
 
 - sessions;
 - logs and `*.log` files;
-- `.npm` and `.cache` directories.
+- `.npm` and `.cache` directories;
+- root-level `tmp`, `.tmp`, and `temp` trees.
+
+Pi's managed `npm/`, `git/`, and nested `node_modules/` content is retained because configured extensions may require it at runtime; treating package code as disposable would produce incomplete or misleading reviews.
 
 Eval snapshots additionally exclude `skills`. Review snapshots retain configured skills because they can be relevant to code review.
 
 The copy rejects special files, broken links, and links escaping the Pi home. Symlinked Pi launcher names directly under `bin/` are omitted instead: Pioneer launches the separately resolved host Pi executable, so copying those launchers is unnecessary and following an external managed-runtime link would weaken the snapshot boundary. Other agent-bin helpers remain subject to the normal link rules.
 
-The copy is bounded to 100,000 entries and 1 GiB. Provider authentication should therefore be configured in Pi's agent directory, normally through `pi` and `/login`. Host API-key environment variables are intentionally not copied wholesale into sandboxed runs.
+The copy is bounded to 500,000 entries and 1 GiB after exclusions. Provider authentication should therefore be configured in Pi's agent directory, normally through `pi` and `/login`. Host API-key environment variables are intentionally not copied wholesale into sandboxed runs.
 
 When Pi reports no configured models, readiness checks only filesystem access permissions on the agent directory and the known configuration filenames `auth.json`, `models-store.json`, and `settings.json`. It never opens or reads those files. A permission denial is reported as an outer-terminal sandbox problem rather than misleading the user to reconfigure Pi.
 

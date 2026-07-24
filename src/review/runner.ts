@@ -49,6 +49,11 @@ export interface ReviewResult {
 const WINDOWS_WARNING =
   "Windows review execution is unsandboxed. Read-only behavior and path restrictions are instructions, not operating-system security boundaries.";
 
+function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
+  const present = warnings.filter((warning): warning is string => warning !== undefined);
+  return present.length === 0 ? undefined : present.join("\n");
+}
+
 function executableOnPath(name: string): string {
   if (name.includes(path.sep)) return path.resolve(name);
   for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
@@ -307,7 +312,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       return {
         report,
         sandboxed: false,
-        warning: WINDOWS_WARNING,
+        warning: combineWarnings(WINDOWS_WARNING, readiness.warning) ?? WINDOWS_WARNING,
         ...(model === undefined ? {} : { model }),
         ...(thinking === undefined ? {} : { thinking }),
       };
@@ -354,6 +359,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     return {
       report,
       sandboxed: true,
+      ...(readiness.warning === undefined ? {} : { warning: readiness.warning }),
       ...(model === undefined ? {} : { model }),
       ...(thinking === undefined ? {} : { thinking }),
     };

@@ -39,13 +39,13 @@ Pi uses its configured tools inside the granted source tree to inspect that scop
 
 Readiness runs before scratch creation. Pioneer requires:
 
-1. `pi --version` to succeed;
+1. `pi --version` to be semantic and at least `0.80.6`; versions newer than the tested maximum continue with a warning;
 2. `pi --offline --no-approve --list-models` to return at least one configured model;
 3. an explicitly requested model to resolve unambiguously.
 
 A qualified `provider/model` name is matched case-insensitively as a whole. An unqualified model ID is accepted only if exactly one configured provider exposes it. Missing or ambiguous requests fail with the sorted qualified model list.
 
-If Pi reports a `models.json` load failure, Pioneer rejects the partial catalog before model resolution. `pioneer models` exposes the same parsed catalog and readiness behavior as reviews.
+The supported range and its release procedure are defined in [Pi compatibility](PI-COMPATIBILITY.md). If Pi reports a `models.json` load failure, Pioneer rejects the partial catalog before model resolution. `pioneer models` exposes the same parsed catalog and readiness behavior as reviews.
 
 If Pi returns an empty model list, the controller performs metadata-only `access` checks on the selected Pi agent directory and known configuration filenames. `EACCES` or `EPERM` produces a client-neutral diagnostic explaining that the calling agent's outer terminal sandbox must be escalated or bypassed.
 

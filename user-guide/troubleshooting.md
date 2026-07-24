@@ -10,6 +10,10 @@ pioneer-eval doctor
 
 The command prints JSON and exits nonzero when Pi, configured models, or the strict native sandbox is unavailable.
 
+## Pi version is unsupported
+
+Run `pioneer --version` to identify Pioneer and `pi --version` to identify Pi. Pioneer requires Pi `0.80.6` or newer. Versions above the tested maximum continue with `PI_VERSION_UNTESTED`; use `pioneer-eval doctor` to see the warning in machine output. A non-semantic or in-range binary that lacks documented Pi flags should be replaced with an official Pi release.
+
 ## Pi is not installed
 
 Confirm the executable is visible to the same shell or agent process that launches Pioneer:
@@ -96,6 +100,10 @@ Pass every external reference explicitly with a canonical absolute path:
 ```
 
 Do not rely on a symbolic-link shortcut in the source tree. The sandbox resolves access at the real target, which is unavailable unless separately granted.
+
+## Pi home exceeds a snapshot limit
+
+Pioneer excludes sessions, logs, caches, and root temporary trees before enforcing a 500,000-entry and 1 GiB snapshot budget. It deliberately retains Pi's `npm/`, `git/`, and nested `node_modules/` package content because extensions may require those files. Remove genuinely stale Pi packages with Pi's own package commands, or pass `--pi-home` with a purpose-built compatible Pi home; do not delete authentication files or configured extension dependencies blindly.
 
 ## A writable grant is rejected
 

@@ -1,6 +1,6 @@
 {
   "name": "@rock3r/pioneer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Safely delegate reviews and isolated skill evals from coding agents to Pi",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -23,6 +23,7 @@
   "files": [
     "dist/",
     "LICENSE",
+    "pi-compatibility.json",
     "README.md",
     "plugins/pioneer/assets/pioneer-banner.jpg",
     "plugins/pioneer/assets/pioneer-mascot.png"
@@ -47,6 +48,8 @@
     "sandbox:smoke": "npm run build --silent && node scripts/native-sandbox-smoke.mjs",
     "windows:smoke": "npm run build --silent && node scripts/windows-contract-smoke.mjs",
     "package:smoke": "node scripts/package-smoke.mjs",
+    "pi:compat:latest": "node scripts/verify-pi-latest.mjs",
+    "pi:compat:smoke": "node scripts/pi-compatibility-smoke.mjs",
     "release:verify": "node scripts/verify-release-version.mjs",
     "prepack": "npm run check"
   },

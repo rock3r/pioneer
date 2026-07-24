@@ -5,6 +5,7 @@ import { installLinuxSandboxSupport } from "./eval-run/linux-install.js";
 import { strictEvalReadinessErrors } from "./eval-run/platform-readiness.js";
 import { runEvalCommand } from "./eval-run/runner.js";
 import { prepareEvalBattery } from "./eval-run/setup.js";
+import { PIONEER_VERSION } from "./package-metadata.js";
 import { checkPiReadiness } from "./pi-readiness.js";
 
 const EVAL_USAGE = `Usage:
@@ -37,6 +38,10 @@ function takeRepeatedOption(args: string[], name: string): string[] {
 
 async function main(): Promise<void> {
   const cliArgs = process.argv.slice(2);
+  if (cliArgs.length === 1 && (cliArgs[0] === "--version" || cliArgs[0] === "-v")) {
+    process.stdout.write(`${PIONEER_VERSION}\n`);
+    return;
+  }
   if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
     process.stdout.write(`${EVAL_USAGE}\n`);
     return;
@@ -98,6 +103,7 @@ async function main(): Promise<void> {
       { deniedReadProbePaths, ...(timeoutMs === undefined ? {} : { timeoutMs }) },
     );
     process.stdout.write(result.stdout);
+    if (result.warning !== undefined) process.stderr.write(`WARNING: ${result.warning}\n`);
     process.stderr.write(result.stderr);
     if (result.signal !== null) {
       process.stderr.write(`Eval actor terminated by ${result.signal}\n`);

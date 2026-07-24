@@ -17,13 +17,17 @@ export function createDoctorReport(
   strictErrors: readonly string[],
 ): DoctorReport {
   const errors = [...pi.errors, ...strictErrors];
+  const warnings = pi.warning === undefined ? [] : [pi.warning];
   return {
     schemaVersion: 1,
     platform,
     supported: pi.ready && errors.length === 0,
     pi: { version: pi.version ?? null, modelCount: pi.modelCount },
-    warnings: [],
+    warnings,
     errors,
-    diagnostics: errors.map((message) => parseDiagnostic(message)),
+    diagnostics: [
+      ...errors.map((message) => parseDiagnostic(message)),
+      ...warnings.map((message) => parseDiagnostic(message, "warning")),
+    ],
   };
 }

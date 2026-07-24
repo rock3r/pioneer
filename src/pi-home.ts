@@ -29,13 +29,15 @@ export interface PreparedPiHome {
   readonly environment: Readonly<Record<string, string>>;
 }
 
-const MAX_ENTRIES = 100_000;
+const MAX_ENTRIES = 500_000;
 const MAX_BYTES = 1024 * 1024 * 1024;
 const ALWAYS_EXCLUDED = new Set(["sessions", "logs", ".npm", ".cache"]);
+const ROOT_TRANSIENT_DIRECTORIES = new Set(["tmp", ".tmp", "temp"]);
 const PI_LAUNCHER_NAMES = new Set(["pi", "pi.exe", "pi.cmd", "pi.bat"]);
 
-function isExcluded(name: string, mode: PiHomeMode): boolean {
+function isExcluded(name: string, mode: PiHomeMode, atSourceRoot: boolean): boolean {
   if (ALWAYS_EXCLUDED.has(name)) return true;
+  if (atSourceRoot && ROOT_TRANSIENT_DIRECTORIES.has(name)) return true;
   if (name.endsWith("-debug.log") || name.endsWith(".log")) return true;
   return mode === "eval" && name === "skills";
 }
@@ -67,7 +69,7 @@ async function copyTree(
   if (!stats.isDirectory()) throw new Error(`Pi home source is not a directory: ${source}`);
   await mkdir(destination, { mode: 0o700 });
   for (const entry of await readdir(source, { withFileTypes: true })) {
-    if (isExcluded(entry.name, mode)) continue;
+    if (isExcluded(entry.name, mode, source === sourceRoot)) continue;
     budget.entries += 1;
     if (budget.entries > MAX_ENTRIES) throw new Error("Pi home exceeds the entry limit");
     const sourcePath = path.join(source, entry.name);

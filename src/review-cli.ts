@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { formatModelCatalog, modelCatalogJson } from "./model-catalog-output.js";
+import { PIONEER_VERSION } from "./package-metadata.js";
 import { checkPiReadiness } from "./pi-readiness.js";
 import { runReview } from "./review/runner.js";
 import { isThinkingLevel } from "./thinking-level.js";
@@ -42,6 +43,10 @@ function takeFlag(args: string[], name: string): boolean {
 
 async function main(): Promise<void> {
   const cliArgs = process.argv.slice(2);
+  if (cliArgs.length === 1 && (cliArgs[0] === "--version" || cliArgs[0] === "-v")) {
+    process.stdout.write(`${PIONEER_VERSION}\n`);
+    return;
+  }
   if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
     process.stdout.write(`${REVIEW_USAGE}\n`);
     return;
@@ -58,6 +63,9 @@ async function main(): Promise<void> {
         : { ...process.env, PI_CODING_AGENT_DIR: path.resolve(piHomeSource) };
     const readiness = await checkPiReadiness({ environment });
     if (!readiness.ready) throw new Error(readiness.errors.join("\n"));
+    if (readiness.warning !== undefined) {
+      process.stderr.write(`WARNING: ${readiness.warning}\n`);
+    }
     const models = readiness.models ?? [];
     process.stdout.write(
       json
