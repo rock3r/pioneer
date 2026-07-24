@@ -1,0 +1,17 @@
+{
+  "package": "@earendil-works/pi-coding-agent",
+  "minimum": "0.80.6",
+  "testedMaximum": "0.82.0",
+  "requiredThinkingLevels": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+  "requiredCliOptions": [
+    "--version",
+    "--mode",
+    "--no-session",
+    "--no-approve",
+    "--no-prompt-templates",
+    "--no-themes",
+    "--no-skills",
+    "--offline",
+    "--list-models"
+  ]
+}

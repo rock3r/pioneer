@@ -1,6 +1,6 @@
 {
   "name": "pioneer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Delegate sandboxed code reviews to a locally installed Pi coding agent.",
   "author": {
     "name": "Pioneer contributors"

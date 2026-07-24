@@ -5,6 +5,7 @@ import path from "node:path";
 import { diagnosticMessage } from "./diagnostics.js";
 import { defaultPiAgentDir } from "./pi-home.js";
 import { type PiConfiguredModel, resolvePiModel } from "./pi-model-selection.js";
+import { validatePiVersion } from "./pi-version-policy.js";
 
 export const PI_NOT_FOUND_ERROR = diagnosticMessage(
   "PI_NOT_FOUND",
@@ -50,6 +51,7 @@ export interface PiReadiness {
   readonly modelCount: number;
   readonly resolvedModel?: string;
   readonly models?: readonly PiConfiguredModel[];
+  readonly warning?: string;
   readonly errors: readonly string[];
 }
 
@@ -130,6 +132,10 @@ function configuredModels(output: string): readonly PiConfiguredModel[] | undefi
     models.push({ provider, id });
   }
   return models;
+}
+
+function lacksNoApproveOption(result: PiProbeResult): boolean {
+  return /unknown option[^\n]*--no-approve/i.test(`${result.stderr}\n${result.stdout}`);
 }
 
 function hasInvalidModelsConfig(result: PiProbeResult): boolean {
@@ -222,6 +228,12 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
   }
 
   const version = versionResult.stdout.trim().split(/\r?\n/, 1)[0] || "unknown";
+  const versionValidation = validatePiVersion(version);
+  if (versionValidation.error !== undefined) {
+    return { ready: false, version, modelCount: 0, errors: [versionValidation.error] };
+  }
+  const versionWarning =
+    versionValidation.warning === undefined ? {} : { warning: versionValidation.warning };
   const modelsResult = await runner(["--offline", "--no-approve", "--list-models"]);
   if (hasInvalidModelsConfig(modelsResult)) {
     return {
@@ -229,7 +241,22 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       version,
       modelCount: 0,
       models: [],
+      ...versionWarning,
       errors: [PI_MODELS_CONFIG_INVALID_ERROR],
+    };
+  }
+  if (lacksNoApproveOption(modelsResult)) {
+    return {
+      ready: false,
+      version,
+      modelCount: 0,
+      ...versionWarning,
+      errors: [
+        diagnosticMessage(
+          "PI_CLI_INCOMPATIBLE",
+          `Pi ${version} does not provide the required --no-approve project-trust control. Reinstall an official supported Pi release and verify that \`pi --help\` lists --no-approve.`,
+        ),
+      ],
     };
   }
   if (modelsResult.exitCode !== 0) {
@@ -237,6 +264,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       ready: false,
       version,
       modelCount: 0,
+      ...versionWarning,
       errors: [summarizeFailure(modelsResult)],
     };
   }
@@ -250,6 +278,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       ready: false,
       version,
       modelCount: 0,
+      ...versionWarning,
       errors: [
         configAccess.status === "denied" || sandboxIndicator !== undefined
           ? piConfigSandboxError(
@@ -267,6 +296,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       ready: false,
       version,
       modelCount: 0,
+      ...versionWarning,
       errors: [
         diagnosticMessage(
           "PI_MODEL_LIST_UNRECOGNIZED",
@@ -280,7 +310,14 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
   if (options.requestedModel !== undefined) {
     const resolution = resolvePiModel(options.requestedModel, models);
     if (!resolution.ok) {
-      return { ready: false, version, modelCount, models, errors: [resolution.error] };
+      return {
+        ready: false,
+        version,
+        modelCount,
+        models,
+        ...versionWarning,
+        errors: [resolution.error],
+      };
     }
     return {
       ready: true,
@@ -288,11 +325,12 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       modelCount,
       resolvedModel: resolution.qualifiedName,
       models,
+      ...versionWarning,
       errors: [],
     };
   }
 
-  return { ready: true, version, modelCount, models, errors: [] };
+  return { ready: true, version, modelCount, models, ...versionWarning, errors: [] };
 }
 
 export async function assertPiReady(options: PiReadinessOptions = {}): Promise<PiReadiness> {

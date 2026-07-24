@@ -4,7 +4,7 @@
 
 - Node.js 22 or newer;
 - npm;
-- the [Pi coding agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent);
+- Pi `0.80.6` or newer (versions through `0.82.0` are tested);
 - at least one provider configured in Pi;
 - macOS or Linux for enforced review and eval isolation.
 
@@ -23,6 +23,7 @@ Inside Pi, use `/login` and configure at least one provider. Confirm the result 
 
 ```bash
 pi --version
+# Pioneer rejects versions below its minimum and warns above its tested maximum.
 pi --offline --no-approve --list-models
 ```
 

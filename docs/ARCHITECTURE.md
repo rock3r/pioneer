@@ -59,7 +59,7 @@ Dependencies flow from adapters and orchestration toward validation and transpor
 
 1. Validate the prompt, source directory, reference grants, write grants, and requested thinking level.
 2. Refuse Windows unless the caller explicitly opts into unsandboxed review execution.
-3. Run `pi --version` and `pi --offline --no-approve --list-models` before creating the review scratch area. Reject an invalid `models.json` rather than using Pi's partial catalog. If Pi reports no models, use access-only filesystem probes to distinguish missing configuration from an outer agent sandbox that hides Pi's agent directory.
+3. Run `pi --version`, enforce the supported range, and run `pi --offline --no-approve --list-models` before creating the review scratch area. Reject an invalid `models.json` rather than using Pi's partial catalog. Newer-than-tested Pi versions continue with a warning; older or malformed versions fail before model discovery. If Pi reports no models, use access-only filesystem probes to distinguish missing configuration from an outer agent sandbox that hides Pi's agent directory.
 4. Resolve a requested qualified model exactly, or an unqualified model only when it is unique.
 5. Copy `PI_CODING_AGENT_DIR` (default `~/.pi/agent`) into a private writable run directory. Review copies include Pi skills; sessions, logs, caches, and symlinked agent-bin Pi launchers are excluded.
 6. Build an ephemeral `pi --mode rpc` command with offline startup, no session, no approval, no prompt-template discovery, and no theme discovery.

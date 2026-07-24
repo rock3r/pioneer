@@ -59,6 +59,40 @@ describe("Pi readiness", () => {
     expect(configAccessProbe).toHaveBeenCalledWith(configuredAgentDir);
   });
 
+  it("rejects an old Pi before probing models", async () => {
+    const runner = runnerWith([{ exitCode: 0, stdout: "0.80.5\n", stderr: "" }]);
+
+    const result = await checkPiReadiness({ runner });
+
+    expect(result).toMatchObject({
+      ready: false,
+      version: "0.80.5",
+      modelCount: 0,
+    });
+    expect(result.errors).toEqual([
+      "[PI_VERSION_TOO_OLD] Pi 0.80.5 is unsupported. Pioneer requires Pi 0.80.6 or newer. Update Pi and retry.",
+    ]);
+    expect(runner).toHaveBeenCalledOnce();
+  });
+
+  it("warns but remains ready for a newer untested Pi", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.83.0\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nopenai    gpt-5.5     400K     128K     yes       yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+
+    expect(result.ready).toBe(true);
+    expect(result.warning).toContain("[PI_VERSION_UNTESTED]");
+    expect(result.errors).toEqual([]);
+  });
+
   it("identifies an outer agent sandbox without reading Pi configuration", async () => {
     const runner = runnerWith([
       { exitCode: 0, stdout: "0.81.1\n", stderr: "" },
@@ -131,6 +165,20 @@ describe("Pi readiness", () => {
       ],
       errors: [],
     });
+  });
+
+  it("rejects a binary whose reported version does not match its CLI contract", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.81.1\n", stderr: "" },
+      { exitCode: 1, stdout: "", stderr: "Error: Unknown option: --no-approve\n" },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+
+    expect(result.ready).toBe(false);
+    expect(result.errors).toEqual([
+      "[PI_CLI_INCOMPATIBLE] Pi 0.81.1 does not provide the required --no-approve project-trust control. Reinstall an official supported Pi release and verify that `pi --help` lists --no-approve.",
+    ]);
   });
 
   it("rejects a partial catalog when Pi reports a broken models.json", async () => {

@@ -75,6 +75,7 @@ try {
   }
   await access(path.join(packageRoot, "plugins", "pioneer", "assets", "pioneer-mascot.png"));
   await access(path.join(packageRoot, "plugins", "pioneer", "assets", "pioneer-banner.jpg"));
+  await access(path.join(packageRoot, "pi-compatibility.json"));
 
   const shimSuffix = process.platform === "win32" ? ".cmd" : "";
   const shimRoot = process.platform === "win32" ? prefix : path.join(prefix, "bin");
@@ -92,6 +93,14 @@ try {
     const helped = run(process.execPath, [scriptPath, "--help"]);
     if (helped.status !== 0 || !helped.stdout.includes("Usage:") || helped.stderr.length > 0) {
       throw new Error(`${script} did not expose successful packaged CLI help`);
+    }
+    const versioned = run(process.execPath, [scriptPath, "--version"]);
+    if (
+      versioned.status !== 0 ||
+      versioned.stdout.trim() !== manifest.version ||
+      versioned.stderr.length > 0
+    ) {
+      throw new Error(`${script} did not expose its packaged version`);
     }
   }
 

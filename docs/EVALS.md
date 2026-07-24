@@ -77,7 +77,7 @@ The prepared output must not already exist and must be outside the source skill.
 
 `--runtime-read` accepts narrowly scoped, read-only tool runtimes. Filesystem roots, home roots, `/tmp`, `/var`, and other broad grants are rejected.
 
-The runner snapshots `PI_CODING_AGENT_DIR` (or `~/.pi/agent`) into the writable eval run. Sessions, logs, caches, and configured skills are excluded. `--pi-home DIR` selects another snapshot source; the source is validated and copied, never used in place.
+The runner snapshots `PI_CODING_AGENT_DIR` (or `~/.pi/agent`) into the writable eval run. Sessions, logs, caches, root temporary trees, and configured skills are excluded. Pi package content required by configured extensions is retained. `--pi-home DIR` selects another snapshot source; the source is validated and copied, never used in place.
 
 When the actor command is Pi, the runner adds `--offline`, `--no-session`, `--no-approve`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`, plus `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
 

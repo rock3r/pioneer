@@ -9,11 +9,18 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
   const source = path.join(root, "source-agent");
   const destination = path.join(root, "run", "pi");
   await mkdir(path.join(source, "skills", "review"), { recursive: true });
+  await mkdir(path.join(source, "skills", "review", "node_modules", "tmp"), { recursive: true });
   await mkdir(path.join(source, "sessions"));
+  await mkdir(path.join(source, "tmp", "package", "node_modules"), { recursive: true });
   await writeFile(path.join(source, "auth.json"), '{"openai":{"type":"api_key","key":"secret"}}');
   await writeFile(path.join(source, "models.json"), "{}");
   await writeFile(path.join(source, "skills", "review", "SKILL.md"), "review skill");
+  await writeFile(
+    path.join(source, "skills", "review", "node_modules", "tmp", "required.js"),
+    "runtime dependency",
+  );
   await writeFile(path.join(source, "sessions", "old.jsonl"), "history");
+  await writeFile(path.join(source, "tmp", "package", "node_modules", "transient.js"), "cache");
   await writeFile(path.join(source, "pi-debug.log"), "debug");
   return { root, source, destination };
 }
@@ -35,7 +42,16 @@ describe("prepareIsolatedPiHome", () => {
     await expect(
       readFile(path.join(prepared.agentDir, "skills", "review", "SKILL.md"), "utf8"),
     ).resolves.toBe("review skill");
+    await expect(
+      readFile(
+        path.join(prepared.agentDir, "skills", "review", "node_modules", "tmp", "required.js"),
+        "utf8",
+      ),
+    ).resolves.toBe("runtime dependency");
     await expect(readFile(path.join(prepared.agentDir, "sessions", "old.jsonl"))).rejects.toThrow();
+    await expect(
+      readFile(path.join(prepared.agentDir, "tmp", "package", "node_modules", "transient.js")),
+    ).rejects.toThrow();
     await expect(readFile(path.join(prepared.agentDir, "pi-debug.log"))).rejects.toThrow();
     expect(prepared.environment).toEqual({
       HOME: path.join(canonicalDestination, "home"),

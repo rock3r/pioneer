@@ -28,6 +28,25 @@ jobs:
       - if: runner.os == 'Windows'
         run: npm run windows:smoke
 
+  pi-compatibility:
+    name: release Pi compatibility (${{ matrix.pi }})
+    strategy:
+      fail-fast: false
+      matrix:
+        pi: ["0.80.6", "0.82.0"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run pi:compat:latest
+      - run: npm run build
+      - run: npm install --global @earendil-works/pi-coding-agent@${{ matrix.pi }}
+      - run: npm run pi:compat:smoke -- ${{ matrix.pi }}
+
   native-sandbox:
     name: release sandbox (${{ matrix.os }})
     strategy:
@@ -106,7 +125,7 @@ jobs:
 
   publish:
     name: publish npm and GitHub release
-    needs: [verify-source, native-sandbox, windows-sandbox-prototype, verify-package]
+    needs: [verify-source, pi-compatibility, native-sandbox, windows-sandbox-prototype, verify-package]
     runs-on: ubuntu-latest
     environment: npm
     permissions:
