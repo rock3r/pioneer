@@ -103,7 +103,7 @@ Do not rely on a symbolic-link shortcut in the source tree. The sandbox resolves
 
 ## Pi home exceeds a snapshot limit
 
-Pioneer excludes sessions, logs, caches, and root temporary trees before enforcing a 500,000-entry and 1 GiB snapshot budget. It deliberately retains Pi's `npm/`, `git/`, and nested `node_modules/` package content because extensions may require those files. Remove genuinely stale Pi packages with Pi's own package commands, or pass `--pi-home` with a purpose-built compatible Pi home; do not delete authentication files or configured extension dependencies blindly.
+Pioneer excludes sessions, logs, caches, and root temporary trees before enforcing a 500,000-entry and 1 GiB snapshot budget. It deliberately retains Pi's `npm/`, `git/`, and nested `node_modules/` package content because configured review skills may require those resources; optional extension discovery remains disabled. Remove genuinely stale Pi packages with Pi's own package commands, or pass `--pi-home` with a purpose-built compatible Pi home; do not delete authentication files or configured skill dependencies blindly.
 
 ## A writable grant is rejected
 

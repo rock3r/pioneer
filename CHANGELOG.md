@@ -7,6 +7,7 @@ All notable user-facing changes are recorded here. The project follows semantic 
 ## 0.1.3 - 2026-07-26
 
 - Refresh the tested Pi compatibility maximum to `0.82.1`.
+- Correct Pi compatibility and isolation guidance across the release and user documentation.
 - Make `pioneer doctor` the shared review/eval readiness command.
 - Unify eval preparation, execution, and Linux setup under `pioneer eval` and remove the separate `pioneer-eval` binary.
 - Disable optional Pi extension discovery for review and eval actors and restrict reviews to an allowlist of Pi's built-in inspection tools.

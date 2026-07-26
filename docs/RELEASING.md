@@ -7,7 +7,7 @@ Releases publish one public npm CLI package and the matching Codex and Claude pl
 1. Publish the repository at `https://github.com/rock3r/pioneer` and set that URL as `origin`. npm provenance requires the repository URL in `package.json` to match exactly.
 2. Ensure the npm account or organization owns the `@rock3r` scope. The scoped package identity is `@rock3r/pioneer`; do not substitute the unrelated unscoped package.
 3. Create a protected GitHub environment named `npm` and require reviewer approval if desired.
-4. Configure npm trusted publishing for GitHub repository `rock3r/pioneer`, workflow `release.yml`, environment `npm`, and the `npm publish` action. The checked-in workflow uses OIDC and must not receive an `NPM_TOKEN`.
+4. Configure npm trusted publishing for GitHub repository `rock3r/pioneer`, workflow `.github/workflows/release.yml`, and environment `npm`. The checked-in workflow uses OIDC and must not receive an `NPM_TOKEN`.
 5. Set package publishing access to require two-factor authentication and disallow traditional tokens. Retain the trusted relationship so GitHub Actions can publish with provenance.
 
 The workflow uses a GitHub-hosted Ubuntu runner, `id-token: write`, npm 11, and public access. It never publishes from a self-hosted runner.
@@ -26,7 +26,7 @@ For every tag, `.github/workflows/release.yml` independently requires:
 - Windows fail-closed CLI checks and an AppContainer prototype build;
 - one npm tarball built once, installed, and invoked on all three operating systems.
 
-Only the tarball that passed the matrix is published. A GitHub release and attached tarball are created after npm accepts the package. GitHub generates the release page notes from merged pull requests; [the changelog](../CHANGELOG.md) is the curated, versioned user-facing record.
+Only the tarball that passed the matrix is published. A GitHub release and attached tarball are created after npm accepts the package. GitHub generates the release page notes from commits and merged pull requests; [the changelog](../CHANGELOG.md) is the curated, versioned user-facing record.
 
 ## Refreshing Pi compatibility
 
@@ -38,6 +38,8 @@ Before every release, follow [Pi compatibility](PI-COMPATIBILITY.md):
 4. Update the Pi endpoint matrices in both CI workflows.
 5. Run `npm run pi:compat:latest`.
 6. Install and run `npm run pi:compat:smoke -- VERSION` once for the minimum and once for the tested maximum.
+
+Do not defer a newer Pi release to a later Pioneer release: review it, raise the tested maximum, update both endpoint matrices, and run the endpoint smokes before cutting the tag.
 
 `npm run release:verify` rejects policy/workflow drift. The tagged release also performs the online freshness check, so publication stops if Pi releases a newer `latest` before Pioneer ships.
 
