@@ -1,3 +1,5 @@
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -165,6 +167,53 @@ describe("Pi readiness", () => {
       ],
       errors: [],
     });
+  });
+
+  it("does not inherit outer-agent control state or provider secrets in Pi probe subprocesses", async () => {
+    const fixture = await mkdtemp(path.join(os.tmpdir(), "pioneer-pi-probe-"));
+    const executable = path.join(fixture, "fake-pi");
+    await writeFile(
+      executable,
+      `#!/bin/sh
+if [ -n "$OUTER_AGENT_PROJECT_ROOT" ] || [ -n "$OPENROUTER_API_KEY" ]; then
+  echo "Outer environment leaked" >&2
+  exit 91
+fi
+if [ -z "$HOME" ] || [ -z "$PI_CODING_AGENT_DIR" ]; then
+  echo "Required Pi configuration was stripped" >&2
+  exit 92
+fi
+if [ "$1" = "--version" ]; then
+  echo "0.81.1"
+  exit 0
+fi
+printf 'provider  model       context  max-out  thinking  images\\n'
+printf 'openrouter grok-4.5    500K     64K      yes       yes\\n'
+`,
+      { mode: 0o700 },
+    );
+    await chmod(executable, 0o700);
+
+    try {
+      await expect(
+        checkPiReadiness({
+          executable,
+          environment: {
+            PATH: process.env.PATH,
+            HOME: process.env.HOME,
+            PI_CODING_AGENT_DIR: configuredAgentDir,
+            OPENROUTER_API_KEY: "must-not-leak",
+            OUTER_AGENT_PROJECT_ROOT: "/outer/project",
+          },
+        }),
+      ).resolves.toMatchObject({
+        ready: true,
+        modelCount: 1,
+        models: [{ provider: "openrouter", id: "grok-4.5" }],
+      });
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
   });
 
   it("rejects a binary whose reported version does not match its CLI contract", async () => {
