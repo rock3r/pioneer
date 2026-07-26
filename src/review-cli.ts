@@ -53,7 +53,7 @@ async function main(): Promise<void> {
     process.stdout.write(`${PIONEER_VERSION}\n`);
     return;
   }
-  if (cliArgs.length === 1 && (cliArgs[0] === "--help" || cliArgs[0] === "-h")) {
+  if (cliArgs[0] !== "eval" && (cliArgs.includes("--help") || cliArgs.includes("-h"))) {
     process.stdout.write(`${REVIEW_USAGE}\n`);
     return;
   }

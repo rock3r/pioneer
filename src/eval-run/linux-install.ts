@@ -4,7 +4,7 @@ import { access, chmod, chown, copyFile, mkdir, realpath, writeFile } from "node
 
 export const LINUX_INSTALL_DIR = "/usr/local/libexec/pioneer";
 export const LINUX_BWRAP_INSTALL_PATH = `${LINUX_INSTALL_DIR}/bwrap`;
-export const LINUX_APPARMOR_PROFILE_PATH = "/etc/apparmor.d/pioneer-bwrap";
+export const LINUX_APPARMOR_PROFILE_PATH = "/etc/apparmor.d/pioneer-eval";
 
 export const LINUX_APPARMOR_PROFILE = `abi <abi/4.0>,
 include <tunables/global>

@@ -133,6 +133,16 @@ try {
   ) {
     throw new Error(`pioneer eval did not expose eval-scoped help`);
   }
+  for (const subcommand of ["review", "models", "doctor"]) {
+    const subcommandHelp = run(process.execPath, [primaryCli, subcommand, "--help"]);
+    if (
+      subcommandHelp.status !== 0 ||
+      !subcommandHelp.stdout.includes("Usage:") ||
+      subcommandHelp.stderr.length > 0
+    ) {
+      throw new Error(`pioneer ${subcommand} --help did not succeed on stdout`);
+    }
+  }
 
   const fakeBin = path.join(root, "fake-bin");
   await mkdir(fakeBin);
