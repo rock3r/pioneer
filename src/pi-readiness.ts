@@ -73,6 +73,17 @@ const OUTER_SANDBOX_INDICATORS = [
   "PIONEER_OUTER_SANDBOX",
 ] as const;
 
+const PI_READINESS_ENVIRONMENT_NAME =
+  /^(?:PATH|PATHEXT|HOME|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|SYSTEMROOT|WINDIR|COMSPEC|LANG|LC_ALL|TMPDIR|TMP|TEMP|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|OPENSSL_CONF|PI_CODING_AGENT_DIR)$/i;
+
+export function piReadinessEnvironment(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(environment).filter(([name]) => PI_READINESS_ENVIRONMENT_NAME.test(name)),
+  );
+}
+
 function errorCode(error: unknown): string {
   return (error as NodeJS.ErrnoException).code ?? "unknown";
 }
@@ -152,7 +163,11 @@ function createRunner(
   return async (args) =>
     await new Promise((resolve) => {
       const child = spawn(executable, args, {
-        env: { ...environment, NO_COLOR: "1", PI_TELEMETRY: "0" },
+        env: {
+          ...piReadinessEnvironment(environment),
+          NO_COLOR: "1",
+          PI_TELEMETRY: "0",
+        },
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
       });
