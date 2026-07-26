@@ -35,7 +35,7 @@ cd pioneer
 npm ci --ignore-scripts
 npm run build
 npm link
-pioneer-eval doctor
+pioneer doctor
 pioneer models
 ```
 
@@ -55,7 +55,7 @@ The report is Markdown on stdout. Pioneer resolves model names before creating r
 
 ## Install for your agent
 
-All integrations require `pi`, `pioneer`, and `pioneer-eval` on the agent's `PATH`. The plugin is a thin adapter: it does not bundle Pi, provider credentials, or a second implementation.
+All integrations require `pi` and `pioneer` on the agent's `PATH`. The plugin is a thin adapter: it does not bundle Pi, provider credentials, or a second implementation.
 
 ### Codex
 
@@ -89,7 +89,7 @@ If the agent supports Agent Skills, clone or download this repository and copy [
 cp -R /absolute/path/to/pioneer/plugins/pioneer/skills/pioneer /path/to/agent/skills/
 ```
 
-If the agent has no skill system, add [`SKILL.md`](plugins/pioneer/skills/pioneer/SKILL.md) to its project or system instructions, or have it invoke the `pioneer` and `pioneer-eval` CLIs directly. See the [complete plugin and generic-agent guide](user-guide/plugins.md).
+If the agent has no skill system, add [`SKILL.md`](plugins/pioneer/skills/pioneer/SKILL.md) to its project or system instructions, or have it invoke the `pioneer` CLI directly. See the [complete plugin and generic-agent guide](user-guide/plugins.md).
 
 ## Documentation
 

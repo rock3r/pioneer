@@ -32,7 +32,7 @@ The complete source skill must be free of symbolic links. Generated eval workspa
 Choose a new output directory outside the source skill:
 
 ```bash
-pioneer-eval prepare \
+pioneer eval prepare \
   --skill /absolute/path/to/example-skill \
   --evals /absolute/path/to/example-skill/evals/evals.json \
   --output /absolute/path/to/new-eval-battery
@@ -68,7 +68,7 @@ new-eval-battery/
 Run your agent adapter once for each arm:
 
 ```bash
-pioneer-eval run \
+pioneer eval run \
   --run-dir /absolute/path/to/new-eval-battery/actor-runs/eval-1/baseline \
   --runtime-read /absolute/narrow/path/required/by/the/adapter \
   --deny-read-probe /absolute/path/to/controller/answer-key \

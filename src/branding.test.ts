@@ -12,10 +12,7 @@ describe("Pioneer distribution identity", () => {
     const claudeMarketplace = await readJson(".claude-plugin/marketplace.json");
 
     expect(packageManifest.name).toBe("@rock3r/pioneer");
-    expect(packageManifest.bin).toEqual({
-      pioneer: "dist/review-cli.js",
-      "pioneer-eval": "dist/eval-run-cli.js",
-    });
+    expect(packageManifest.bin).toEqual({ pioneer: "dist/review-cli.js" });
     expect(packageManifest.files).toContain("plugins/pioneer/assets/pioneer-banner.jpg");
     expect(codexManifest.name).toBe("pioneer");
     expect(codexManifest.interface.displayName).toBe("Pioneer");
@@ -32,5 +29,16 @@ describe("Pioneer distribution identity", () => {
     await access("plugins/pioneer/skills/pioneer/SKILL.md");
     await access("plugins/pioneer/assets/pioneer-mascot.png");
     await access("plugins/pioneer/assets/pioneer-banner.jpg");
+  });
+
+  it("requires agent integrations to preserve review terminal evidence", async () => {
+    const skill = await readFile("plugins/pioneer/skills/pioneer/SKILL.md", "utf8");
+
+    expect(skill).toContain("run `pioneer doctor` before the first review");
+    expect(skill).toContain("exit status is zero");
+    expect(skill).toContain("stdout contains a non-empty report");
+    expect(skill).toContain("Preserve the command's exit status, stdout, and stderr");
+    expect(skill).toContain("does not use `fs.watch`");
+    expect(skill).toContain("not a semantic verdict");
   });
 });

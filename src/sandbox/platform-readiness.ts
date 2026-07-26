@@ -1,8 +1,8 @@
 import { constants } from "node:fs";
 import { access, readFile } from "node:fs/promises";
 import { diagnosticMessage } from "../diagnostics.js";
-import type { EvalPlatform } from "./isolation.js";
-import { LINUX_BWRAP_INSTALL_PATH, resolveLinuxBwrapPath } from "./linux-install.js";
+import type { EvalPlatform } from "../eval-run/isolation.js";
+import { LINUX_BWRAP_INSTALL_PATH, resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 
 export const WINDOWS_STRICT_ISOLATION_ERROR = diagnosticMessage(
   "WINDOWS_STRICT_ISOLATION_UNAVAILABLE",
@@ -18,7 +18,7 @@ async function executable(candidate: string): Promise<boolean> {
   }
 }
 
-export async function strictEvalReadinessErrors(
+export async function nativeSandboxReadinessErrors(
   platform: NodeJS.Platform = process.platform,
 ): Promise<string[]> {
   if (!(["darwin", "linux", "win32"] as NodeJS.Platform[]).includes(platform)) {
@@ -44,7 +44,7 @@ export async function strictEvalReadinessErrors(
     return [
       diagnosticMessage(
         "LINUX_USER_NAMESPACE_RESTRICTED",
-        "Ubuntu restricts capability-bearing unprivileged user namespaces. Run `npm run build`, then `sudo node dist/eval-run-cli.js install-linux`, to install the dedicated AppArmor-confined sandbox executables.",
+        "Ubuntu restricts capability-bearing unprivileged user namespaces. Run `npm run build`, then `sudo node dist/review-cli.js eval install-linux`, to install the dedicated AppArmor-confined sandbox executables.",
       ),
     ];
   }
@@ -59,9 +59,9 @@ export async function strictEvalReadinessErrors(
   return [];
 }
 
-export async function assertStrictEvalReady(
+export async function assertNativeSandboxReady(
   platform: EvalPlatform = process.platform as EvalPlatform,
 ): Promise<void> {
-  const errors = await strictEvalReadinessErrors(platform);
+  const errors = await nativeSandboxReadinessErrors(platform);
   if (errors.length > 0) throw new Error(errors.join("; "));
 }

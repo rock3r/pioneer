@@ -14,12 +14,12 @@ export const PI_NOT_FOUND_ERROR = diagnosticMessage(
 
 export const PI_NO_MODELS_ERROR = diagnosticMessage(
   "PI_NO_MODELS",
-  "Pi is installed but has no available configured models. Run `pi`, use `/login` to configure a provider, then verify the result with `pi --offline --no-approve --list-models`.",
+  "Pi is installed but has no available configured models without extensions. Run `pi`, use `/login` to configure a built-in provider, then verify the result with `pi --offline --no-approve --no-extensions --list-models`.",
 );
 
 export const PI_MODELS_CONFIG_INVALID_ERROR = diagnosticMessage(
   "PI_MODELS_CONFIG_INVALID",
-  "Pi reported that models.json could not be loaded. Run `pi --offline --no-approve --list-models`, fix every reported models.json error, then retry. Pioneer will not use a partial model catalog.",
+  "Pi reported that models.json could not be loaded. Run `pi --offline --no-approve --no-extensions --list-models`, fix every reported models.json error, then retry. Pioneer will not use a partial model catalog.",
 );
 
 export function piConfigSandboxError(agentDir: string, evidence: string): string {
@@ -234,7 +234,12 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
   }
   const versionWarning =
     versionValidation.warning === undefined ? {} : { warning: versionValidation.warning };
-  const modelsResult = await runner(["--offline", "--no-approve", "--list-models"]);
+  const modelsResult = await runner([
+    "--offline",
+    "--no-approve",
+    "--no-extensions",
+    "--list-models",
+  ]);
   if (hasInvalidModelsConfig(modelsResult)) {
     return {
       ready: false,
@@ -300,7 +305,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       errors: [
         diagnosticMessage(
           "PI_MODEL_LIST_UNRECOGNIZED",
-          "Pi returned an unrecognized model listing. Run `pi --offline --no-approve --list-models` and resolve any startup warnings before retrying.",
+          "Pi returned an unrecognized model listing. Run `pi --offline --no-approve --no-extensions --list-models` and resolve any startup warnings before retrying.",
         ),
       ],
     };

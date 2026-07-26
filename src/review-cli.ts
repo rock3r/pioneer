@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
+import { runDoctor } from "./doctor.js";
+import { runEvalCli } from "./eval-command.js";
 import { formatModelCatalog, modelCatalogJson } from "./model-catalog-output.js";
 import { PIONEER_VERSION } from "./package-metadata.js";
 import { checkPiReadiness } from "./pi-readiness.js";
@@ -10,7 +12,11 @@ const REVIEW_USAGE = `Usage:
   pioneer review --source DIR --prompt TEXT [--model PROVIDER/MODEL] [--thinking LEVEL]
     [--pi-home DIR] [--allow-read DIR] [--allow-write DIR]
     [--network full|public|none] [--timeout-ms N] [--allow-unsandboxed-windows]
-  pioneer models [--pi-home DIR] [--json]`;
+  pioneer doctor
+  pioneer models [--pi-home DIR] [--json]
+  pioneer eval prepare --skill DIR --evals FILE --output DIR
+  pioneer eval install-linux
+  pioneer eval run --run-dir DIR [options] -- COMMAND [ARG ...]`;
 
 function usage(): never {
   throw new Error(REVIEW_USAGE);
@@ -47,11 +53,22 @@ async function main(): Promise<void> {
     process.stdout.write(`${PIONEER_VERSION}\n`);
     return;
   }
-  if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
+  if (cliArgs.length === 1 && (cliArgs[0] === "--help" || cliArgs[0] === "-h")) {
     process.stdout.write(`${REVIEW_USAGE}\n`);
     return;
   }
   const [subcommand, ...rawArgs] = cliArgs;
+  if (subcommand === "eval") {
+    await runEvalCli(rawArgs, "pioneer eval");
+    return;
+  }
+  if (subcommand === "doctor") {
+    if (rawArgs.length > 0) usage();
+    const result = await runDoctor();
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (!result.supported) process.exitCode = 1;
+    return;
+  }
   if (subcommand === "models") {
     const args = [...rawArgs];
     const piHomeSource = takeOption(args, "--pi-home");

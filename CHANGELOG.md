@@ -4,6 +4,11 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Make `pioneer doctor` the shared review/eval readiness command.
+- Unify eval preparation, execution, and Linux setup under `pioneer eval` and remove the separate `pioneer-eval` binary.
+- Disable optional Pi extension discovery for review and eval actors and restrict reviews to an allowlist of Pi's built-in inspection tools.
+- Fail review transport with stable diagnostics when Pi settles without a report or exits before settling, and document stdout persistence and caller-side watcher boundaries.
+
 ## 0.1.2 - 2026-07-24
 
 - Add `pioneer --version` and `pioneer-eval --version`.

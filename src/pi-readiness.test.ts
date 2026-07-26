@@ -55,7 +55,12 @@ describe("Pi readiness", () => {
       modelCount: 0,
       errors: [PI_NO_MODELS_ERROR],
     });
-    expect(runner).toHaveBeenNthCalledWith(2, ["--offline", "--no-approve", "--list-models"]);
+    expect(runner).toHaveBeenNthCalledWith(2, [
+      "--offline",
+      "--no-approve",
+      "--no-extensions",
+      "--list-models",
+    ]);
     expect(configAccessProbe).toHaveBeenCalledWith(configuredAgentDir);
   });
 

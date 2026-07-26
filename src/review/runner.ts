@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
-import { assertStrictEvalReady } from "../eval-run/platform-readiness.js";
 import {
   resolveAnyTarget,
   resolvePublicTarget,
@@ -18,12 +17,14 @@ import { assertPiReady } from "../pi-readiness.js";
 import { optimizePiStartupCommand } from "../pi-startup.js";
 import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../sandbox/launcher.js";
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
+import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { isThinkingLevel, type ThinkingLevel } from "../thinking-level.js";
 import {
   buildReviewSandboxConfig,
   type ReviewNetworkMode,
   validateReviewPaths,
 } from "./isolation.js";
+import { completeReviewRpc } from "./rpc-outcome.js";
 
 export interface ReviewRequest {
   readonly sourceDir: string;
@@ -119,7 +120,7 @@ function assistantText(value: unknown): string | undefined {
   return text || undefined;
 }
 
-async function runRpc(
+export async function runReviewRpc(
   argv: readonly [string, ...string[]],
   cwd: string,
   environment: NodeJS.ProcessEnv,
@@ -227,20 +228,21 @@ async function runRpc(
       stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
     });
     child.once("error", (error) => finish(error));
-    child.once("exit", (code) => {
-      if (completed && report.trim()) finish();
-      else if (completed)
-        finish(
-          new Error(
-            `Pi settled without a review report (events: ${[...eventTypes].join(", ") || "none"}; diagnostics: ${diagnostics.join(", ") || "none"}; stderr: ${stderr.trim()})`,
-          ),
-        );
-      else if (!settled)
-        finish(
-          new Error(
-            `Pi exited before completing the review (exit ${code ?? "unknown"}): ${stderr.trim()}`,
-          ),
-        );
+    child.once("close", (code) => {
+      if (settled) return;
+      try {
+        report = completeReviewRpc({
+          completed,
+          report: finalReport ?? report,
+          exitCode: code,
+          eventTypes: [...eventTypes],
+          diagnostics,
+          stderr,
+        });
+        finish();
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
     });
     child.stdin.write(`${JSON.stringify({ id: "review", type: "prompt", message: prompt })}\n`);
     const timer = setTimeout(() => {
@@ -281,7 +283,10 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       request.thinking ??
       (request.model === undefined ? undefined : thinkingFromModelShorthand(request.model));
     if (thinking !== undefined) command.push("--thinking", thinking);
-    const optimized = optimizePiStartupCommand(command);
+    const optimized = optimizePiStartupCommand(command, {
+      disableExtensions: true,
+      tools: ["read", "bash", "grep", "find", "ls"],
+    });
     const environment = {
       ...optimized.environment,
       ...piHome.environment,
@@ -302,7 +307,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     ].join("\n\n");
     const timeoutMs = request.timeoutMs ?? 900_000;
     if (windows) {
-      const report = await runRpc(
+      const report = await runReviewRpc(
         optimized.command,
         paths.sourceDir,
         { ...process.env, ...environment },
@@ -317,7 +322,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
         ...(thinking === undefined ? {} : { thinking }),
       };
     }
-    await assertStrictEvalReady();
+    await assertNativeSandboxReady();
     const network = request.network ?? "full";
     if (network !== "none") {
       proxy = await startEgressProxy(
@@ -349,7 +354,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       process.platform === "darwin"
         ? buildMacosSandboxArgv(config, optimized.command)
         : buildLinuxSandboxArgv(config, optimized.command, bwrapPath ?? "", bridge?.socketPath);
-    const report = await runRpc(
+    const report = await runReviewRpc(
       launch.argv,
       paths.sourceDir,
       processEnvironment(launch.environment, environment),

@@ -8,6 +8,8 @@
     "--mode",
     "--no-session",
     "--no-approve",
+    "--no-extensions",
+    "--tools",
     "--no-prompt-templates",
     "--no-themes",
     "--no-skills",

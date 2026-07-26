@@ -9,12 +9,12 @@ Use the `pioneer` CLI to run an independent review through the operator's existi
 
 ## Preconditions
 
-1. Confirm `pioneer`, `pioneer-eval`, and `pi` are available on `PATH`.
-2. On macOS or Linux, run `pioneer-eval doctor` before the first review in a session.
+1. Confirm `pioneer` and `pi` are available on `PATH`.
+2. On macOS or Linux, run `pioneer doctor` before the first review in a session.
    - For an ordinary readiness failure, stop and present its instructions.
    - If diagnostic `PI_CONFIG_HIDDEN_BY_SANDBOX` is present, explain that the calling agent's outer sandbox is hiding Pi's configuration or made the metadata check inconclusive. Request explicit approval to rerun `doctor` and the review in an escalated or unsandboxed terminal. Do not read any Pi configuration file. Pioneer still applies its own native sandbox to the Pi review actor.
    - For other diagnostic IDs, stop and present their actionable prose. Do not infer a different failure from wording.
-3. On Windows, do not use `doctor` as a review readiness check because strict eval isolation is unsupported. Run `pi --version` and `pi --offline --no-approve --list-models` instead.
+3. On Windows, do not use `doctor` as a review readiness check because strict eval isolation is unsupported. Run `pi --version` and `pi --offline --no-approve --no-extensions --list-models` instead.
 4. If the user requested a model, preserve the exact name. Let Pioneer reject unavailable or ambiguous names and show the configured qualified model list.
 
 ## Review command
@@ -50,6 +50,10 @@ Windows review execution is not enforceably sandboxed. Never add `--allow-unsand
 
 ## Presenting results
 
+- Treat a review as transport-successful only when the command's exit status is zero and stdout contains a non-empty report. This is not a semantic verdict: a genuine no-findings result must still be a non-empty report that says so.
+- Preserve the command's exit status, stdout, and stderr in any shell or tool wrapper. Do not reduce the result to stdout alone. A capture such as `{"output":""}` is insufficient evidence of either success or failure.
+- Pioneer disables Pi extension discovery for reviews and enables only Pi's built-in inspection tools; `write` and `edit` are excluded, while the native sandbox keeps the source read-only. Do not assume subagents, MCP, or any other optional extension is installed.
+- Pioneer receives Pi events over process pipes. It does not use `fs.watch`, polling, or a `subagent-results` directory, so watcher fallback messages come from the calling agent runtime and cannot persist or deliver a Pioneer report.
 - Preserve concrete findings, file paths, line references, and severity from Pi's report.
 - Clearly distinguish Pi's findings from your own analysis.
 - If the command fails, report the actionable error instead of retrying with a different model, weaker Pioneer sandbox, or broader path grant. The one exception is the explicit outer-terminal access error above, which requires user-approved terminal escalation and does not weaken Pioneer's sandbox.

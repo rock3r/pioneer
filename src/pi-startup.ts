@@ -4,7 +4,9 @@ export interface OptimizedPiStartup {
 }
 
 export interface PiStartupOptions {
+  readonly disableExtensions?: boolean;
   readonly disableSkills?: boolean;
+  readonly tools?: readonly string[];
 }
 
 const PI_STARTUP_ENVIRONMENT = {
@@ -68,6 +70,15 @@ export function optimizePiStartupCommand(
     additions.push("--no-prompt-templates");
   }
   if (!hasAny(args, ["--no-themes", "--theme"])) additions.push("--no-themes");
+  if (options.disableExtensions && !hasAny(args, ["--no-extensions", "-ne"])) {
+    additions.push("--no-extensions");
+  }
+  if (
+    options.tools !== undefined &&
+    !hasAny(args, ["--tools", "-t", "--no-tools", "-nt", "--no-builtin-tools", "-nbt"])
+  ) {
+    additions.push("--tools", options.tools.join(","));
+  }
   if (options.disableSkills && !hasAny(args, ["--no-skills", "--skill"])) {
     additions.push("--no-skills");
   }

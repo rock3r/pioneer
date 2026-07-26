@@ -83,6 +83,8 @@ pioneer review \
 
 An explicit write grant is a real host capability. It must not overlap the source or a read-only grant.
 
+Pioneer does not persist the canonical report automatically. Its private scratch directory is removed after every run.
+
 ## Choose network scope
 
 - `--network full` is the default and permits public, LAN, and loopback destinations through the proxy.

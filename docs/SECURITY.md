@@ -17,7 +17,7 @@ Trusted controller responsibilities:
 - parse bounded Pi RPC output;
 - remove run-local state.
 
-Untrusted actor inputs include the source tree, reference directories, eval fixtures, Pi extensions and skills copied into a review snapshot, commands invoked by Pi, provider responses, and the final report.
+Untrusted actor inputs include the source tree, reference directories, eval fixtures, Pi skills copied into a review snapshot, commands invoked by Pi, provider responses, and the final report. Pi package content may be present in the copied home, but Pioneer disables extension discovery for review and eval actors.
 
 ## Filesystem policy
 
@@ -43,7 +43,7 @@ Always excluded:
 - `.npm` and `.cache` directories;
 - root-level `tmp`, `.tmp`, and `temp` trees.
 
-Pi's managed `npm/`, `git/`, and nested `node_modules/` content is retained because configured extensions may require it at runtime; treating package code as disposable would produce incomplete or misleading reviews.
+Pi's managed `npm/`, `git/`, and nested `node_modules/` content is retained because configured review skills may refer to package resources. Pioneer nevertheless starts review and eval actors with extension discovery disabled; review completion never depends on an optional extension.
 
 Eval snapshots additionally exclude `skills`. Review snapshots retain configured skills because they can be relevant to code review.
 
@@ -103,7 +103,7 @@ Review isolation is not enforced. The caller must explicitly pass `--allow-unsan
 
 ## Residual risks
 
-- Pi extensions and review skills execute inside the sandbox but can still alter the review, exfiltrate any granted content through permitted networking, or write to explicit writable grants.
+- Review skills execute inside the sandbox and can still alter the review, exfiltrate any granted content through permitted networking, or write to explicit writable grants. Optional Pi extensions are not discovered by Pioneer actors.
 - `full` review networking intentionally permits proxy access to LAN and loopback services.
 - A writable reference path is a real host write capability. Grant it sparingly.
 - Proxy-unaware tools cannot use Linux networking.
