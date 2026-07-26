@@ -76,15 +76,19 @@ try {
   await access(path.join(packageRoot, "plugins", "pioneer", "assets", "pioneer-mascot.png"));
   await access(path.join(packageRoot, "plugins", "pioneer", "assets", "pioneer-banner.jpg"));
   await access(path.join(packageRoot, "pi-compatibility.json"));
+  const legacyEvalCliPresent = await access(path.join(packageRoot, "dist", "eval-run-cli.js")).then(
+    () => true,
+    () => false,
+  );
+  if (legacyEvalCliPresent) {
+    throw new Error(`packed artifact retained the removed pioneer-eval entry point`);
+  }
 
   const shimSuffix = process.platform === "win32" ? ".cmd" : "";
   const shimRoot = process.platform === "win32" ? prefix : path.join(prefix, "bin");
-  await Promise.all([
-    access(path.join(shimRoot, `pioneer${shimSuffix}`)),
-    access(path.join(shimRoot, `pioneer-eval${shimSuffix}`)),
-  ]);
+  await access(path.join(shimRoot, `pioneer${shimSuffix}`));
 
-  for (const script of ["review-cli.js", "eval-run-cli.js"]) {
+  for (const script of ["review-cli.js"]) {
     const scriptPath = path.join(packageRoot, "dist", script);
     const invoked = run(process.execPath, [scriptPath]);
     if (invoked.status !== 1 || !invoked.stderr.includes("Usage:") || invoked.stdout.length > 0) {
@@ -101,6 +105,42 @@ try {
       versioned.stderr.length > 0
     ) {
       throw new Error(`${script} did not expose its packaged version`);
+    }
+  }
+
+  const primaryCli = path.join(packageRoot, "dist", "review-cli.js");
+  const primaryHelp = run(process.execPath, [primaryCli, "--help"]);
+  if (
+    primaryHelp.status !== 0 ||
+    !primaryHelp.stdout.includes("pioneer eval prepare") ||
+    !primaryHelp.stdout.includes("pioneer doctor")
+  ) {
+    throw new Error(`primary CLI did not advertise unified review/eval commands`);
+  }
+  const evalVersion = run(process.execPath, [primaryCli, "eval", "--version"]);
+  if (
+    evalVersion.status !== 0 ||
+    evalVersion.stdout.trim() !== manifest.version ||
+    evalVersion.stderr.length > 0
+  ) {
+    throw new Error(`pioneer eval did not route through the primary CLI`);
+  }
+  const evalHelp = run(process.execPath, [primaryCli, "eval", "--help"]);
+  if (
+    evalHelp.status !== 0 ||
+    !evalHelp.stdout.includes("pioneer eval prepare") ||
+    evalHelp.stdout.includes("pioneer review")
+  ) {
+    throw new Error(`pioneer eval did not expose eval-scoped help`);
+  }
+  for (const subcommand of ["review", "models", "doctor"]) {
+    const subcommandHelp = run(process.execPath, [primaryCli, subcommand, "--help"]);
+    if (
+      subcommandHelp.status !== 0 ||
+      !subcommandHelp.stdout.includes("Usage:") ||
+      subcommandHelp.stderr.length > 0
+    ) {
+      throw new Error(`pioneer ${subcommand} --help did not succeed on stdout`);
     }
   }
 

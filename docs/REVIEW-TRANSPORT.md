@@ -33,14 +33,14 @@ The CLI prints only the report to stdout. Errors and the Windows warning go to s
 - “Review commit `abc123` against its first parent.”
 - “Review the implementation under `src/auth` against `docs/auth-design.md`.”
 
-Pi uses its configured tools inside the granted source tree to inspect that scope.
+Pi uses its allowlisted built-in inspection tools inside the granted source tree. The native sandbox keeps that source read-only.
 
 ## Readiness and model resolution
 
 Readiness runs before scratch creation. Pioneer requires:
 
 1. `pi --version` to be semantic and at least `0.80.6`; versions newer than the tested maximum continue with a warning;
-2. `pi --offline --no-approve --list-models` to return at least one configured model;
+2. `pi --offline --no-approve --no-extensions --list-models` to return at least one configured model;
 3. an explicitly requested model to resolve unambiguously.
 
 A qualified `provider/model` name is matched case-insensitively as a whole. An unqualified model ID is accepted only if exactly one configured provider exposes it. Missing or ambiguous requests fail with the sorted qualified model list.
@@ -60,12 +60,14 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 - `--offline`;
 - `--no-session`;
 - `--no-approve`;
+- `--no-extensions`;
+- `--tools read,bash,grep,find,ls`;
 - `--no-prompt-templates`;
 - `--no-themes`;
 - `PI_OFFLINE=1`;
 - `PI_TELEMETRY=0`.
 
-Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running.
+Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion depends only on Pi's built-in RPC mode and built-in inspection tools. `write` and `edit` are excluded; `bash` remains available for Git inspection inside the read-only native sandbox. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
 
 ## RPC framing and completion
 
@@ -75,9 +77,11 @@ The controller writes one LF-delimited request:
 {"id":"review","type":"prompt","message":"..."}
 ```
 
-Stdout is treated as JSONL protocol data. Malformed JSON terminates the process and fails the review. The collector accepts text deltas and final assistant messages from current Pi event variants, including `message_update`, `message_end`, `turn_end`, and `agent_end`. A successful review completes only after `agent_settled` and a non-empty assistant report.
+Stdout is treated as JSONL protocol data. Malformed JSON terminates the process and fails the review. The collector accepts text deltas and final assistant messages from current Pi event variants, including `message_update`, `message_end`, `turn_end`, and `agent_end`. After the child process and its stdio pipes close, a successful review requires `agent_settled`, a non-empty assistant report, exit code zero, and no terminating signal.
 
 The process is killed on timeout, malformed output, protocol rejection, or output overflow. No shell participates in the RPC launch.
+
+`[REVIEW_REPORT_MISSING]` means Pi settled but emitted no non-empty assistant report. `[REVIEW_RPC_INCOMPLETE]` means the process ended before `agent_settled`. `[REVIEW_PROCESS_FAILED]` means Pi settled with a report but then exited nonzero or by signal. All are non-zero terminal failures written to stderr. Provider or assistant diagnostics are included in the bounded error context when Pi supplies them.
 
 ## Path and network construction
 
@@ -89,4 +93,6 @@ Networking is one of `full`, `public`, or `none`; see [SECURITY.md](SECURITY.md)
 
 The report is Pi's final assistant text with surrounding whitespace removed. Pioneer does not rewrite severity, validate file references, or convert the report to JSON. Calling agents should present it as Pi's independent review and may separately add their own analysis.
 
-Proxy servers, Linux bridges, copied Pi state, and scratch data are removed in `finally` cleanup. A persistent report requires an explicit `--allow-write` directory and a prompt telling Pi to write there; stdout remains the canonical returned result.
+Proxy servers, Linux bridges, copied Pi state, and scratch data are removed in `finally` cleanup. Pioneer does not persist a completed report automatically. Redirect the canonical stdout result to a file when persistence is required; use an explicit `--allow-write` directory only when Pi itself must create additional artifacts.
+
+Pioneer receives RPC events through the Pi child process's stdout pipe. It does not use filesystem watchers, polling, or a `subagent-results` directory. Any `fs.watch` fallback reported by a calling agent runtime is outside Pioneer and cannot be the mechanism that delivers the report.

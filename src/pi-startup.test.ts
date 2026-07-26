@@ -60,4 +60,25 @@ describe("Pi startup optimization", () => {
       optimizePiStartupCommand(["pi", "--mode", "rpc"], { disableSkills: true }).command,
     ).toContain("--no-skills");
   });
+
+  it("can disable optional extensions and allow only built-in inspection tools", () => {
+    expect(
+      optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+        disableExtensions: true,
+        tools: ["read", "bash", "grep", "find", "ls"],
+      }).command,
+    ).toEqual([
+      "pi",
+      "--offline",
+      "--no-session",
+      "--no-approve",
+      "--no-prompt-templates",
+      "--no-themes",
+      "--no-extensions",
+      "--tools",
+      "read,bash,grep,find,ls",
+      "--mode",
+      "rpc",
+    ]);
+  });
 });

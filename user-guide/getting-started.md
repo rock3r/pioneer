@@ -24,7 +24,7 @@ Inside Pi, use `/login` and configure at least one provider. Confirm the result 
 ```bash
 pi --version
 # Pioneer rejects versions below its minimum and warns above its tested maximum.
-pi --offline --no-approve --list-models
+pi --offline --no-approve --no-extensions --list-models
 ```
 
 Pioneer uses the authentication stored by Pi. It does not ask Codex or Claude Code for provider credentials.
@@ -46,16 +46,15 @@ npm run build
 npm link
 ```
 
-Confirm both executables:
+Confirm the CLI and Pi:
 
 ```bash
 command -v pioneer
-command -v pioneer-eval
-pioneer-eval doctor
+pioneer doctor
 pioneer models
 ```
 
-Use `pioneer --help`, `pioneer-eval --help`, or the [CLI reference](../docs/CLI-REFERENCE.md) for complete syntax.
+Use `pioneer --help`, `pioneer eval --help`, or the [CLI reference](../docs/CLI-REFERENCE.md) for complete syntax.
 
 ## 3. Linux sandbox dependency
 
@@ -63,15 +62,15 @@ Install Bubblewrap using your distribution package manager. On Debian or Ubuntu:
 
 ```bash
 sudo apt-get install bubblewrap
-pioneer-eval doctor
+pioneer doctor
 ```
 
 Ubuntu may restrict unprivileged user namespaces with AppArmor. If `doctor` requests the dedicated setup:
 
 ```bash
 npm run build
-sudo node dist/eval-run-cli.js install-linux
-pioneer-eval doctor
+sudo node dist/review-cli.js eval install-linux
+pioneer doctor
 ```
 
 This installs a narrow root-owned Bubblewrap copy and AppArmor profile; it does not disable the restriction globally.

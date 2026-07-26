@@ -13,11 +13,11 @@ import {
   type SandboxPolicy,
 } from "../sandbox/launcher.js";
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
+import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { executableRuntimeRoot } from "../sandbox/runtime-paths.js";
 import { buildEvalSandboxConfig, type EvalRunSpec, validateEvalRunSpec } from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
 import { macosRuntimeReadPaths } from "./macos-runtime.js";
-import { assertStrictEvalReady } from "./platform-readiness.js";
 import { startPublicEgressProxy } from "./public-egress-proxy.js";
 
 export interface EvalRunResult {
@@ -208,7 +208,7 @@ export async function runEvalCommand(
     ...(requestedModel === undefined ? {} : { requestedModel }),
   };
   const readiness = await assertPiReady(readinessOptions);
-  await assertStrictEvalReady();
+  await assertNativeSandboxReady();
   const validated = await validateEvalRunSpec({
     ...spec,
     runtimeReadPaths: [...(spec.runtimeReadPaths ?? []), ...(await existingRuntimePaths())],
@@ -231,7 +231,10 @@ export async function runEvalCommand(
   await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
   await writeFile(probeScript, PROBE_SOURCE, { flag: "wx", mode: 0o500 });
   await writeFile(launcherScript, LAUNCHER_SOURCE, { flag: "wx", mode: 0o500 });
-  const optimizedPi = optimizePiStartupCommand(validated.command, { disableSkills: true });
+  const optimizedPi = optimizePiStartupCommand(validated.command, {
+    disableExtensions: true,
+    disableSkills: true,
+  });
   await writeFile(
     launchSpec,
     JSON.stringify({

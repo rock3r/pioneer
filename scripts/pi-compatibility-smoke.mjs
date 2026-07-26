@@ -48,7 +48,7 @@ try {
       throw new Error(`Pi ${expectedVersion} lacks thinking level ${level}`);
     }
   }
-  const models = run("pi", ["--offline", "--no-approve", "--list-models"], {
+  const models = run("pi", ["--offline", "--no-approve", "--no-extensions", "--list-models"], {
     env: environment,
   });
   if (models.status !== 0 || /unknown option/i.test(`${models.stdout}\n${models.stderr}`)) {

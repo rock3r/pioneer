@@ -61,12 +61,12 @@ Review `full` mode uses the same mediation but permits public, LAN, and loopback
 ## Prepare and run a battery
 
 ```bash
-npm run eval -- prepare \
+npm run pioneer -- eval prepare \
   --skill /path/to/skill \
   --evals /path/to/skill/evals/evals.json \
   --output /path/to/new-eval-battery
 
-npm run eval -- run \
+npm run pioneer -- eval run \
   --run-dir /path/to/battery/actor-runs/eval-1/with-skill \
   --runtime-read /absolute/path/to/a/required/tool-runtime \
   --deny-read-probe /path/to/controller/answer-key \
@@ -77,7 +77,7 @@ The prepared output must not already exist and must be outside the source skill.
 
 `--runtime-read` accepts narrowly scoped, read-only tool runtimes. Filesystem roots, home roots, `/tmp`, `/var`, and other broad grants are rejected.
 
-The runner snapshots `PI_CODING_AGENT_DIR` (or `~/.pi/agent`) into the writable eval run. Sessions, logs, caches, root temporary trees, and configured skills are excluded. Pi package content required by configured extensions is retained. `--pi-home DIR` selects another snapshot source; the source is validated and copied, never used in place.
+The runner snapshots `PI_CODING_AGENT_DIR` (or `~/.pi/agent`) into the writable eval run. Sessions, logs, caches, root temporary trees, and configured skills are excluded. Pi package content is retained, but optional extension discovery is disabled for Pi eval actors. `--pi-home DIR` selects another snapshot source; the source is validated and copied, never used in place.
 
 When the actor command is Pi, the runner adds `--offline`, `--no-session`, `--no-approve`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`, plus `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
 
@@ -88,7 +88,7 @@ Pi/model readiness is checked before actor artifacts are created. Qualified `pro
 On macOS, no privileged setup is required:
 
 ```bash
-npm run eval -- doctor
+npm run pioneer -- doctor
 npm run sandbox:smoke
 ```
 
@@ -96,7 +96,7 @@ On Linux, install Bubblewrap. Node is already a project requirement:
 
 ```bash
 sudo apt-get install bubblewrap
-npm run eval -- doctor
+npm run pioneer -- doctor
 npm run sandbox:smoke
 ```
 
@@ -104,8 +104,8 @@ Bubblewrap normally runs without administrator privileges. Ubuntu 24.04 and newe
 
 ```bash
 npm run build
-sudo node dist/eval-run-cli.js install-linux
-npm run eval -- doctor
+sudo node dist/review-cli.js eval install-linux
+npm run pioneer -- doctor
 ```
 
 The installer copies only `/usr/bin/bwrap` to `/usr/local/libexec/pioneer/bwrap`, makes it root-owned mode 0755, and loads an AppArmor profile granting `userns` only to that fixed executable. There is no seccomp helper, global sysctl change, or package-owned compatibility directory.

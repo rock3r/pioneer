@@ -2,7 +2,7 @@
 
 ## Purpose and current scope
 
-Pioneer is a local task-delegation bridge from coding agents to the operator's installed Pi coding agent. It currently supports code reviews and isolated skill-eval runs. It reuses Pi's configured providers, authentication, models, tools, and skills while placing the Pi process behind an operating-system boundary on macOS and Linux.
+Pioneer is a local task-delegation bridge from coding agents to the operator's installed Pi coding agent. It currently supports code reviews and isolated skill-eval runs. It reuses Pi's configured providers, authentication, models, and review skills while placing the Pi process behind an operating-system boundary on macOS and Linux. Review execution uses an allowlist of Pi's built-in inspection tools and does not discover optional extensions.
 
 The current product surface is:
 
@@ -42,7 +42,8 @@ The plugin contains instructions only. The CLI owns all policy, validation, Pi s
 
 | Area | Main modules | Responsibility |
 | --- | --- | --- |
-| CLI adapters | `src/review-cli.ts`, `src/eval-run-cli.ts` | Parse argv, print results, set exit status |
+| CLI adapters | `src/review-cli.ts`, `src/eval-command.ts` | Expose the unified CLI, print results, and set exit status |
+| Shared diagnostics | `src/doctor.ts`, `src/doctor-report.ts`, `src/sandbox/platform-readiness.ts` | Check Pi and native sandbox readiness for reviews and evals |
 | Pi readiness | `src/pi-readiness.ts`, `src/pi-model-selection.ts` | Detect Pi, enumerate configured models, resolve exact requests |
 | Pi preparation | `src/pi-home.ts`, `src/pi-startup.ts` | Copy the Pi agent directory and apply fast, ephemeral startup flags |
 | Review orchestration | `src/review/runner.ts` | Validate, prepare, sandbox, run RPC, collect the final report, clean up |
@@ -59,14 +60,15 @@ Dependencies flow from adapters and orchestration toward validation and transpor
 
 1. Validate the prompt, source directory, reference grants, write grants, and requested thinking level.
 2. Refuse Windows unless the caller explicitly opts into unsandboxed review execution.
-3. Run `pi --version`, enforce the supported range, and run `pi --offline --no-approve --list-models` before creating the review scratch area. Reject an invalid `models.json` rather than using Pi's partial catalog. Newer-than-tested Pi versions continue with a warning; older or malformed versions fail before model discovery. If Pi reports no models, use access-only filesystem probes to distinguish missing configuration from an outer agent sandbox that hides Pi's agent directory. Readiness uses an allowlisted runtime environment and does not inherit provider secrets or outer-agent control state.
+3. Run `pi --version`, enforce the supported range, and run `pi --offline --no-approve --no-extensions --list-models` before creating the review scratch area. Reject an invalid `models.json` rather than using Pi's partial catalog. Newer-than-tested Pi versions continue with a warning; older or malformed versions fail before model discovery. If Pi reports no models, use access-only filesystem probes to distinguish missing configuration from an outer agent sandbox that hides Pi's agent directory. Readiness uses an allowlisted runtime environment and does not inherit provider secrets or outer-agent control state.
 4. Resolve a requested qualified model exactly, or an unqualified model only when it is unique.
 5. Copy `PI_CODING_AGENT_DIR` (default `~/.pi/agent`) into a private writable run directory. Review copies include Pi skills; sessions, logs, caches, and symlinked agent-bin Pi launchers are excluded.
-6. Build an ephemeral `pi --mode rpc` command with offline startup, no session, no approval, no prompt-template discovery, and no theme discovery.
+6. Build an ephemeral `pi --mode rpc` command with offline startup, no session, no approval, no extension discovery, no prompt-template discovery, no theme discovery, and an allowlist of Pi's built-in inspection tools. The allowlist excludes `write` and `edit`; the native sandbox makes the source read-only even when Pi uses `bash` for Git inspection.
 7. Start an authenticated loopback proxy when networking is enabled.
 8. Compile the native sandbox policy and start Pi without a shell, using a narrow actor environment on every platform.
 9. Send one JSONL prompt request and collect bounded RPC events until `agent_settled`, failure, or timeout.
-10. Return Pi's final Markdown report and remove the proxy, bridge, Pi snapshot, and scratch directory in `finally` cleanup.
+10. Wait for the child process and its stdio pipes to close, then succeed only with exit code zero and a non-empty final report.
+11. Return Pi's final Markdown report and remove the proxy, bridge, Pi snapshot, and scratch directory in `finally` cleanup.
 
 See [REVIEW-TRANSPORT.md](REVIEW-TRANSPORT.md) for the RPC contract and [SECURITY.md](SECURITY.md) for the trust boundaries.
 

@@ -7,7 +7,6 @@ The plugin is a thin adapter. Install and configure Pi, then install the Pioneer
 ```bash
 command -v pi
 command -v pioneer
-command -v pioneer-eval
 ```
 
 No provider authentication is stored in either plugin manifest.
@@ -88,10 +87,9 @@ Restart the agent or begin a fresh session after installation. Confirm that its 
 ```bash
 command -v pi
 command -v pioneer
-command -v pioneer-eval
 ```
 
-If the agent does not support skills, add [`plugins/pioneer/skills/pioneer/SKILL.md`](../plugins/pioneer/skills/pioneer/SKILL.md) to its project or system instructions. At minimum, instruct it to run `pioneer-eval doctor` before the first macOS/Linux delegation, preserve requested model and thinking values exactly, and never opt into unsandboxed Windows execution without explicit approval.
+If the agent does not support skills, add [`plugins/pioneer/skills/pioneer/SKILL.md`](../plugins/pioneer/skills/pioneer/SKILL.md) to its project or system instructions. At minimum, instruct it to run `pioneer doctor` before the first macOS/Linux delegation, preserve requested model and thinking values exactly, preserve exit status plus stdout and stderr, and never opt into unsandboxed Windows execution without explicit approval.
 
 An agent can also invoke Pioneer directly without installing the skill. Use the examples in [Reviewing code](reviewing-code.md) and [Skill evals](skill-evals.md).
 
@@ -99,8 +97,8 @@ An agent can also invoke Pioneer directly without installing the skill. Use the 
 
 Before a review, the skill:
 
-1. checks for Pi and both Pioneer executables;
-2. runs `pioneer-eval doctor` on macOS or Linux;
+1. checks for Pi and Pioneer;
+2. runs `pioneer doctor` on macOS or Linux;
 3. preserves an exact requested model and thinking level;
 4. makes every extra path or network grant explicit;
 5. refuses to silently weaken isolation, substitute a model, or enable unsandboxed Windows execution.

@@ -2,25 +2,23 @@
 
 ## Executables
 
-After building and linking the source checkout, two executables are available:
+After building and linking the source checkout, one executable is available:
 
-- `pioneer` — synchronous code reviews;
-- `pioneer-eval` — readiness, eval preparation, strict actor execution, and Linux setup.
+- `pioneer` — review readiness, model discovery, synchronous code reviews, and isolated eval workflows.
 
 The repository npm scripts build first:
 
 ```bash
-npm run review -- review ...
-npm run eval -- doctor
+npm run pioneer -- review ...
+npm run pioneer -- doctor
 ```
 
 ## Version output
 
-Both executables print the installed Pioneer package version without probing Pi:
+The CLI prints the installed Pioneer package version without probing Pi:
 
 ```bash
 pioneer --version
-pioneer-eval --version
 ```
 
 ## `pioneer review`
@@ -52,6 +50,8 @@ pioneer review --source DIR --prompt TEXT
 
 Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout. Diagnostics and warnings use stderr.
 
+Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report, `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling, and `[REVIEW_PROCESS_FAILED]` when a settled Pi process with a report exits nonzero or by signal.
+
 ## `pioneer models`
 
 Lists the configured models visible to the same offline Pi readiness probe used by reviews:
@@ -78,7 +78,7 @@ Human output contains one sorted, qualified `provider/model` name per line. `--j
 
 `--pi-home` selects an alternative Pi agent directory without copying it. The command fails nonzero with the same readiness diagnostic used by reviews. In particular, Pioneer refuses to return a partial catalog when Pi reports that `models.json` is invalid.
 
-## `pioneer-eval doctor`
+## `pioneer doctor`
 
 Checks Pi, configured models, and strict platform sandbox dependencies. It prints schema-versioned JSON and exits nonzero when unsupported or unready. Human-readable entries in `errors` start with a stable diagnostic ID. Machine consumers should branch on `diagnostics[].id`, not prose.
 
@@ -125,23 +125,23 @@ When Pi reports zero models, `doctor` checks only whether the terminal may acces
 Since some policy sandboxes make metadata access look successful while hiding file contents, recognized sandbox environment indicators also select the conservative escalation diagnostic. Set `PIONEER_OUTER_SANDBOX=1` to identify an otherwise unknown outer sandbox. Pioneer reports the variable name but not its value.
 
 ```bash
-pioneer-eval doctor
+pioneer doctor
 ```
 
 Windows always reports strict eval execution as unsupported.
 
-## `pioneer-eval prepare`
+## `pioneer eval prepare`
 
 ```text
-pioneer-eval prepare --skill DIR --evals FILE --output DIR
+pioneer eval prepare --skill DIR --evals FILE --output DIR
 ```
 
 The output must not exist and must be outside the source skill. The command rejects symlinks in the skill, parses `evals.json`, and creates controller metadata plus baseline/with-skill actor directories.
 
-## `pioneer-eval run`
+## `pioneer eval run`
 
 ```text
-pioneer-eval run --run-dir DIR
+pioneer eval run --run-dir DIR
   [--pi-home DIR]
   [--runtime-read PATH]...
   [--deny-read-probe PATH]...
@@ -153,13 +153,13 @@ The command after `--` is executed as discrete argv in the strict sandbox. The r
 
 When the actor executable is Pi, fast-start flags are added automatically and skills are disabled. Runtime read paths must be narrow and are mounted read-only. Eval networking is always public-only.
 
-## `pioneer-eval install-linux`
+## `pioneer eval install-linux`
 
 On Ubuntu systems with restricted unprivileged user namespaces:
 
 ```bash
 npm run build
-sudo node dist/eval-run-cli.js install-linux
+sudo node dist/review-cli.js eval install-linux
 ```
 
 The command must run as root. It installs a root-owned copy of `/usr/bin/bwrap` at `/usr/local/libexec/pioneer/bwrap` and loads one AppArmor profile granting `userns` only to that executable. It does not change a global sysctl.

@@ -5,14 +5,14 @@
 On macOS or Linux:
 
 ```bash
-pioneer-eval doctor
+pioneer doctor
 ```
 
-The command prints JSON and exits nonzero when Pi, configured models, or the strict native sandbox is unavailable.
+The command prints JSON and exits nonzero when Pi, configured models, or the native sandbox shared by reviews and evals is unavailable.
 
 ## Pi version is unsupported
 
-Run `pioneer --version` to identify Pioneer and `pi --version` to identify Pi. Pioneer requires Pi `0.80.6` or newer. Versions above the tested maximum continue with `PI_VERSION_UNTESTED`; use `pioneer-eval doctor` to see the warning in machine output. A non-semantic or in-range binary that lacks documented Pi flags should be replaced with an official Pi release.
+Run `pioneer --version` to identify Pioneer and `pi --version` to identify Pi. Pioneer requires Pi `0.80.6` or newer. Versions above the tested maximum continue with `PI_VERSION_UNTESTED`; use `pioneer doctor` to see the warning in machine output. A non-semantic or in-range binary that lacks documented Pi flags should be replaced with an official Pi release.
 
 ## Pi is not installed
 
@@ -58,7 +58,7 @@ If the wrong configuration is being inspected, set `PI_CODING_AGENT_DIR` or pass
 Run Pi directly to see its detailed validation message:
 
 ```bash
-pi --offline --no-approve --list-models
+pi --offline --no-approve --no-extensions --list-models
 ```
 
 Fix every reported `models.json` error, then rerun `pioneer models`. Pioneer deliberately does not repeat Pi's raw configuration error because it may contain provider-specific details.
@@ -79,8 +79,8 @@ If `doctor` still reports Ubuntu's AppArmor user-namespace restriction, run the 
 
 ```bash
 npm run build
-sudo node dist/eval-run-cli.js install-linux
-pioneer-eval doctor
+sudo node dist/review-cli.js eval install-linux
+pioneer doctor
 ```
 
 Do not disable the global user-namespace restriction. See [Linux sandbox setup](../docs/EVALS.md#setup) for exactly what the installer changes.
@@ -115,7 +115,7 @@ Strict eval runs are unsupported. Reviews require `--allow-unsandboxed-windows`,
 
 ## Plugin is installed but does not trigger
 
-Verify that `pioneer`, `pioneer-eval`, and `pi` are on the environment inherited by the client. Reinstall or update the plugin from its marketplace, then start a new Codex task or reload/restart Claude Code.
+Verify that `pioneer` and `pi` are on the environment inherited by the client. Reinstall or update the plugin from its marketplace, then start a new Codex task or reload/restart Claude Code.
 
 You can also invoke the Claude skill directly as `/pioneer:pioneer`. For Codex, ask explicitly: “Use the Pioneer skill to have Pi review this repository.”
 
@@ -128,3 +128,13 @@ The default is 900,000 ms (15 minutes). Retry with a larger positive integer onl
 ```
 
 Timeout cleanup kills Pi and removes the private run state.
+
+## Review completed without a report
+
+Pioneer exits nonzero with `[REVIEW_REPORT_MISSING]` if Pi reaches `agent_settled` without a non-empty assistant report. It exits nonzero with `[REVIEW_RPC_INCOMPLETE]` if Pi ends before settling, and with `[REVIEW_PROCESS_FAILED]` if Pi settles with a report but exits nonzero or by signal. A successful no-findings review still prints a non-empty report; exit zero alone is transport success, not a semantic verdict.
+
+The report exists only on stdout unless the caller redirects it to a file. The private Pi home and scratch directory are always removed after the run.
+
+Inspect the command's exit status and stderr as well as stdout. A wrapper result such as `{"output":""}` has discarded the evidence needed to distinguish failure from success.
+
+Pioneer reads Pi RPC events from a process pipe and does not watch `subagent-results`. An `fs.watch` to polling fallback is emitted by the calling agent runtime and does not participate in Pioneer report delivery.

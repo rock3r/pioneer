@@ -5,7 +5,7 @@ import path from "node:path";
 
 if (process.platform !== "win32") throw new Error("Windows contract smoke requires Windows");
 
-const doctor = spawnSync(process.execPath, ["dist/eval-run-cli.js", "doctor"], {
+const doctor = spawnSync(process.execPath, ["dist/review-cli.js", "doctor"], {
   encoding: "utf8",
   shell: false,
 });

@@ -22,7 +22,7 @@ The private scratch and copied Pi home are deleted when the review finishes. Red
 
 By default, Pioneer copies `PI_CODING_AGENT_DIR`, or `~/.pi/agent` when the variable is unset, into the private run area. This gives the actor the authentication and provider configuration Pi expects without mounting your live agent directory.
 
-Review snapshots include configured Pi skills. Eval snapshots deliberately exclude skills, sessions, logs, and caches. Both modes exclude root temporary trees and cap the copied tree at 500,000 entries and 1 GiB. Pi-managed package directories and nested `node_modules` are retained because configured extensions may need them.
+Review snapshots include configured Pi skills. Eval snapshots deliberately exclude skills, sessions, logs, and caches. Both modes exclude root temporary trees and cap the copied tree at 500,000 entries and 1 GiB. Pi-managed package directories and nested `node_modules` are retained for skill resources, but Pioneer disables optional extension discovery for both review and eval actors.
 
 Use `--pi-home /absolute/path` to select a prepared source directory. Pioneer still validates and copies it; it never points the actor directly at the original.
 

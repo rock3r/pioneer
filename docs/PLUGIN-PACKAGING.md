@@ -70,6 +70,6 @@ Keep the stable identifier `pioneer`. Change display text rather than renaming t
 2. Keep both manifest versions equal and keep the plugin-local UEL text synchronized with the root license.
 3. Validate the Codex plugin and repo marketplace plus the Claude marketplace and plugin.
 4. Run `npm run check` and `npm run sandbox:smoke` on macOS and Linux.
-5. Confirm `pioneer-eval doctor` against a configured Pi installation.
+5. Confirm `pioneer doctor` and `pioneer eval --help` against a configured Pi installation.
 6. Test a real review through each agent client.
 7. Tag only after the plugin payload, CLI documentation, and UEL license are final.

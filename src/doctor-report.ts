@@ -1,5 +1,5 @@
-import { type Diagnostic, parseDiagnostic } from "../diagnostics.js";
-import type { PiReadiness } from "../pi-readiness.js";
+import { type Diagnostic, parseDiagnostic } from "./diagnostics.js";
+import type { PiReadiness } from "./pi-readiness.js";
 
 export interface DoctorReport {
   readonly schemaVersion: 1;
