@@ -51,7 +51,7 @@ pioneer review \
   --thinking max
 ```
 
-The report is Markdown on stdout. Pioneer resolves model names before creating run state and fails early—with the configured model list—when a requested model is missing or ambiguous.
+The report is Markdown on stdout. Pass `--report /absolute/path/report.md` when the controller should atomically persist the verified final report without granting Pi write access to that path. Pioneer resolves model names before creating run state and fails early—with the configured model list—when a requested model is missing or ambiguous.
 
 ## Install for your agent
 

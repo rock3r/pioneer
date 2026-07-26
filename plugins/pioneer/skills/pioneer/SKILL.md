@@ -38,7 +38,7 @@ Use repeated grants when the review needs more context:
 --allow-write /absolute/output/path
 ```
 
-The source and `--allow-read` directories remain read-only. `--allow-write` is exceptional: use it only when the user explicitly needs a persistent report or generated artifact. Pi always receives a private writable scratch directory automatically.
+The source and `--allow-read` directories remain read-only. `--allow-write` is exceptional and is not required for a final review report: use `--report /absolute/path/report.md` instead. Pioneer writes that report atomically from the controller only after the review succeeds; Pi never receives write access to it.
 
 Networking defaults to `full`, which permits public, LAN, and loopback destinations through the authenticated proxy. Use `--network public` when LAN access is unnecessary, or `--network none` for an offline review.
 
@@ -52,6 +52,7 @@ Windows review execution is not enforceably sandboxed. Never add `--allow-unsand
 
 - Treat a review as transport-successful only when the command's exit status is zero and stdout contains a non-empty report. This is not a semantic verdict: a genuine no-findings result must still be a non-empty report that says so.
 - Preserve the command's exit status, stdout, and stderr in any shell or tool wrapper. Do not reduce the result to stdout alone. A capture such as `{"output":""}` is insufficient evidence of either success or failure.
+- If a terminal tool returns a session ID without an exit code, the review is still running. Preserve that session ID and poll it until a terminal result includes an exit code; do not report the outer orchestration cell as the review result.
 - Pioneer disables Pi extension discovery for reviews and enables only Pi's built-in inspection tools; `write` and `edit` are excluded, while the native sandbox keeps the source read-only. Do not assume subagents, MCP, or any other optional extension is installed.
 - Pioneer receives Pi events over process pipes. It does not use `fs.watch`, polling, or a `subagent-results` directory, so watcher fallback messages come from the calling agent runtime and cannot persist or deliver a Pioneer report.
 - Preserve concrete findings, file paths, line references, and severity from Pi's report.

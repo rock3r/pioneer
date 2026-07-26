@@ -21,7 +21,7 @@ const result = await runReview({
 });
 ```
 
-`ReviewResult` contains the Markdown `report`, optional effective `model` and `thinking`, a `sandboxed` boolean, and an optional Windows warning.
+`ReviewResult` contains the Markdown `report`, optional effective `model` and `thinking`, a `sandboxed` boolean, an optional Windows warning, and an optional `reportWriteError` when transport succeeds but requested report persistence fails.
 
 The CLI prints only the report to stdout. Errors and the Windows warning go to stderr.
 
@@ -93,6 +93,6 @@ Networking is one of `full`, `public`, or `none`; see [SECURITY.md](SECURITY.md)
 
 The report is Pi's final assistant text with surrounding whitespace removed. Pioneer does not rewrite severity, validate file references, or convert the report to JSON. Calling agents should present it as Pi's independent review and may separately add their own analysis.
 
-Proxy servers, Linux bridges, copied Pi state, and scratch data are removed in `finally` cleanup. Pioneer does not persist a completed report automatically. Redirect the canonical stdout result to a file when persistence is required; use an explicit `--allow-write` directory only when Pi itself must create additional artifacts.
+Proxy servers, Linux bridges, copied Pi state, and scratch data are removed in `finally` cleanup. Pioneer prints the canonical report to stdout. When persistence is required, `--report /absolute/path/report.md` atomically creates a controller-owned report only after the strict completion contract passes; a persistence error preserves stdout but exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. Use an explicit `--allow-write` directory only when Pi itself must create additional artifacts.
 
 Pioneer receives RPC events through the Pi child process's stdout pipe. It does not use filesystem watchers, polling, or a `subagent-results` directory. Any `fs.watch` fallback reported by a calling agent runtime is outside Pioneer and cannot be the mechanism that delivers the report.

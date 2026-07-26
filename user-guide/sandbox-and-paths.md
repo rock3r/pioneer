@@ -16,7 +16,7 @@ Pioneer treats the review actor as untrusted. On macOS and Linux, it starts from
 
 Pioneer canonicalizes grants before launch. It rejects a source grant that is a symbolic link, grants that overlap with conflicting access, and unsafe broad eval runtime grants. An explicit writable path is a real host capability, so grant the narrowest directory that meets the request.
 
-The private scratch and copied Pi home are deleted when the review finishes. Redirect stdout if you only need to preserve the final Markdown report; that does not require giving Pi another writable path.
+The private scratch and copied Pi home are deleted when the review finishes. Use `--report /absolute/path/report.md` when you need Pioneer to preserve the final Markdown report; that does not require giving Pi another writable path.
 
 ## Isolated Pi home
 
