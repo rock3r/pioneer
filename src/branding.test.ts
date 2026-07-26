@@ -41,4 +41,12 @@ describe("Pioneer distribution identity", () => {
     expect(skill).toContain("does not use `fs.watch`");
     expect(skill).toContain("not a semantic verdict");
   });
+
+  it("routes CI and release sandbox setup through the unified CLI", async () => {
+    for (const workflow of [".github/workflows/ci.yml", ".github/workflows/release.yml"]) {
+      const source = await readFile(workflow, "utf8");
+      expect(source).toContain("dist/review-cli.js eval install-linux");
+      expect(source).not.toContain("dist/eval-run-cli.js");
+    }
+  });
 });
