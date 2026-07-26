@@ -15,7 +15,9 @@ describe("review report output", () => {
     await writeReviewReport(target, "No findings.");
 
     expect(await readFile(target, "utf8")).toBe("No findings.\n");
-    expect((await stat(target)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(target)).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("never overwrites an existing report target", async () => {
