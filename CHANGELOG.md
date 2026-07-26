@@ -4,7 +4,9 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
-- Add controller-owned atomic review report output with `pioneer review --report FILE`, and expand packaged validation of review completion failures.
+## 0.1.4 - 2026-07-26
+
+- Add controller-owned atomic review report output with `pioneer review --report FILE`, including persistence-failure handling and packaged validation of review completion failures.
 
 ## 0.1.3 - 2026-07-26
 
