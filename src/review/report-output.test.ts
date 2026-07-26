@@ -1,7 +1,20 @@
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const removeTemporary = vi.hoisted(() =>
+  vi.fn(async (...args: Parameters<typeof import("node:fs/promises").rm>) => {
+    const { rm } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    return rm(...args);
+  }),
+);
+
+vi.mock("node:fs/promises", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:fs/promises")>()),
+  rm: removeTemporary,
+}));
+
 import { writeReviewReport } from "./report-output.js";
 import { persistReviewReport } from "./runner.js";
 
@@ -28,6 +41,16 @@ describe("review report output", () => {
     await expect(writeReviewReport(target, "replacement")).rejects.toThrow(/already exists/i);
 
     expect(await readFile(target, "utf8")).toBe("existing\n");
+  });
+
+  it("does not turn a published report into a failure when temp cleanup fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    removeTemporary.mockRejectedValueOnce(new Error("temporary cleanup failed"));
+
+    await expect(writeReviewReport(target, "No findings.")).resolves.toBeUndefined();
+
+    expect(await readFile(target, "utf8")).toBe("No findings.\n");
   });
 
   it("preserves a valid report when optional persistence fails", async () => {
