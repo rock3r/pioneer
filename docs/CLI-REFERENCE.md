@@ -50,7 +50,7 @@ pioneer review --source DIR --prompt TEXT
 
 Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout. Diagnostics and warnings use stderr.
 
-Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report and `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling.
+Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report, `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling, and `[REVIEW_PROCESS_FAILED]` when a settled Pi process with a report exits nonzero or by signal.
 
 ## `pioneer models`
 

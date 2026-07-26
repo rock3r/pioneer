@@ -8,6 +8,7 @@ describe("review RPC completion", () => {
         completed: true,
         report: "  No findings.  ",
         exitCode: 0,
+        signal: null,
         eventTypes: ["message_end", "agent_settled"],
         diagnostics: [],
         stderr: "",
@@ -21,6 +22,7 @@ describe("review RPC completion", () => {
         completed: true,
         report: " \n ",
         exitCode: 0,
+        signal: null,
         eventTypes: ["agent_settled"],
         diagnostics: ["assistant stopReason=error: OAuth refresh failed"],
         stderr: "",
@@ -36,12 +38,29 @@ describe("review RPC completion", () => {
         completed: false,
         report: "",
         exitCode: 2,
+        signal: null,
         eventTypes: ["response"],
         diagnostics: [],
         stderr: "provider failed",
       }),
     ).toThrow(
       "[REVIEW_RPC_INCOMPLETE] Pi exited before completing the review (exit 2; events: response; diagnostics: none; stderr: provider failed)",
+    );
+  });
+
+  it("rejects a report when the settled Pi process exits nonzero", () => {
+    expect(() =>
+      completeReviewRpc({
+        completed: true,
+        report: "Partial report",
+        exitCode: 2,
+        signal: null,
+        eventTypes: ["message_end", "agent_settled"],
+        diagnostics: [],
+        stderr: "provider cleanup failed",
+      }),
+    ).toThrow(
+      "[REVIEW_PROCESS_FAILED] Pi exited unsuccessfully after settling (exit 2; signal: none; events: message_end, agent_settled; diagnostics: none; stderr: provider cleanup failed)",
     );
   });
 });

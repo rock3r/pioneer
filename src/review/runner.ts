@@ -229,13 +229,14 @@ export async function runReviewRpc(
       stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
     });
     child.once("error", (error) => finish(error));
-    child.once("close", (code) => {
+    child.once("close", (code, signal) => {
       if (settled) return;
       try {
         report = completeReviewRpc({
           completed,
           report: finalReport ?? report,
           exitCode: code,
+          signal,
           eventTypes: [...eventTypes],
           diagnostics,
           stderr,

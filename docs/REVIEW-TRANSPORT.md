@@ -77,11 +77,11 @@ The controller writes one LF-delimited request:
 {"id":"review","type":"prompt","message":"..."}
 ```
 
-Stdout is treated as JSONL protocol data. Malformed JSON terminates the process and fails the review. The collector accepts text deltas and final assistant messages from current Pi event variants, including `message_update`, `message_end`, `turn_end`, and `agent_end`. After the child process and its stdio pipes close, a successful review requires both `agent_settled` and a non-empty assistant report.
+Stdout is treated as JSONL protocol data. Malformed JSON terminates the process and fails the review. The collector accepts text deltas and final assistant messages from current Pi event variants, including `message_update`, `message_end`, `turn_end`, and `agent_end`. After the child process and its stdio pipes close, a successful review requires `agent_settled`, a non-empty assistant report, exit code zero, and no terminating signal.
 
 The process is killed on timeout, malformed output, protocol rejection, or output overflow. No shell participates in the RPC launch.
 
-`[REVIEW_REPORT_MISSING]` means Pi settled but emitted no non-empty assistant report. `[REVIEW_RPC_INCOMPLETE]` means the process ended before `agent_settled`. Both are non-zero terminal failures written to stderr. Provider or assistant diagnostics are included in the bounded error context when Pi supplies them.
+`[REVIEW_REPORT_MISSING]` means Pi settled but emitted no non-empty assistant report. `[REVIEW_RPC_INCOMPLETE]` means the process ended before `agent_settled`. `[REVIEW_PROCESS_FAILED]` means Pi settled with a report but then exited nonzero or by signal. All are non-zero terminal failures written to stderr. Provider or assistant diagnostics are included in the bounded error context when Pi supplies them.
 
 ## Path and network construction
 

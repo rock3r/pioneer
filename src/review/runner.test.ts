@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { runReviewRpc } from "./runner.js";
 
-function fakePiRpc(events: readonly unknown[]): readonly [string, ...string[]] {
+function fakePiRpc(events: readonly unknown[], exitCode = 0): readonly [string, ...string[]] {
   const source = `
 process.stdin.once("data", () => {
   for (const event of ${JSON.stringify(events)}) {
     process.stdout.write(JSON.stringify(event) + "\\n");
   }
+  process.exitCode = ${exitCode};
 });
 `;
   return [process.execPath, "-e", source];
@@ -41,5 +42,26 @@ describe("review RPC runner", () => {
         1_000,
       ),
     ).rejects.toThrow("[REVIEW_REPORT_MISSING]");
+  });
+
+  it("rejects a settled report when Pi exits nonzero", async () => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc(
+          [
+            {
+              type: "message_end",
+              message: { role: "assistant", content: "Partial report" },
+            },
+            { type: "agent_settled" },
+          ],
+          2,
+        ),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+      ),
+    ).rejects.toThrow("[REVIEW_PROCESS_FAILED]");
   });
 });

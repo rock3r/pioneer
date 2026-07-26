@@ -4,6 +4,7 @@ interface ReviewRpcOutcome {
   readonly completed: boolean;
   readonly report: string;
   readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
   readonly eventTypes: readonly string[];
   readonly diagnostics: readonly string[];
   readonly stderr: string;
@@ -19,8 +20,18 @@ function stderrSummary(stderr: string): string {
 
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
   const report = outcome.report.trim();
-  if (outcome.completed && report) return report;
   const context = `events: ${summary(outcome.eventTypes)}; diagnostics: ${summary(outcome.diagnostics)}; stderr: ${stderrSummary(outcome.stderr)}`;
+  if (outcome.completed && report && outcome.exitCode === 0 && outcome.signal === null) {
+    return report;
+  }
+  if (outcome.completed && report) {
+    throw new Error(
+      diagnosticMessage(
+        "REVIEW_PROCESS_FAILED",
+        `Pi exited unsuccessfully after settling (exit ${outcome.exitCode ?? "unknown"}; signal: ${outcome.signal ?? "none"}; ${context})`,
+      ),
+    );
+  }
   if (outcome.completed) {
     throw new Error(
       diagnosticMessage("REVIEW_REPORT_MISSING", `Pi settled without a review report (${context})`),
