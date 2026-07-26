@@ -11,7 +11,7 @@ import { isThinkingLevel } from "./thinking-level.js";
 const REVIEW_USAGE = `Usage:
   pioneer review --source DIR --prompt TEXT [--model PROVIDER/MODEL] [--thinking LEVEL]
     [--pi-home DIR] [--allow-read DIR] [--allow-write DIR]
-    [--network full|public|none] [--timeout-ms N] [--allow-unsandboxed-windows]
+    [--report FILE] [--network full|public|none] [--timeout-ms N] [--allow-unsandboxed-windows]
   pioneer doctor
   pioneer models [--pi-home DIR] [--json]
   pioneer eval prepare --skill DIR --evals FILE --output DIR
@@ -100,6 +100,7 @@ async function main(): Promise<void> {
   const piHomeSource = takeOption(args, "--pi-home");
   const allowReadPaths = takeRepeated(args, "--allow-read");
   const allowWritePaths = takeRepeated(args, "--allow-write");
+  const reportPath = takeOption(args, "--report");
   const networkText = takeOption(args, "--network") ?? "full";
   const timeoutText = takeOption(args, "--timeout-ms");
   const unsafeIndex = args.indexOf("--allow-unsandboxed-windows");
@@ -120,6 +121,7 @@ async function main(): Promise<void> {
     prompt,
     allowReadPaths,
     allowWritePaths,
+    ...(reportPath === undefined ? {} : { reportPath }),
     network: networkText as "full" | "public" | "none",
     allowUnsandboxedWindows,
     ...(model === undefined ? {} : { model }),
@@ -129,6 +131,10 @@ async function main(): Promise<void> {
   });
   if (result.warning) process.stderr.write(`WARNING: ${result.warning}\n`);
   process.stdout.write(`${result.report}\n`);
+  if (result.reportWriteError !== undefined) {
+    process.stderr.write(`${result.reportWriteError}\n`);
+    process.exitCode = 1;
+  }
 }
 
 main().catch((error: unknown) => {

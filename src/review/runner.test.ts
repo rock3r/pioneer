@@ -7,7 +7,7 @@ process.stdin.once("data", () => {
   for (const event of ${JSON.stringify(events)}) {
     process.stdout.write(JSON.stringify(event) + "\\n");
   }
-  process.exitCode = ${exitCode};
+  if (${exitCode} !== 0) process.stdout.end(() => process.exit(${exitCode}));
 });
 `;
   return [process.execPath, "-e", source];
@@ -63,5 +63,11 @@ describe("review RPC runner", () => {
         1_000,
       ),
     ).rejects.toThrow("[REVIEW_PROCESS_FAILED]");
+  });
+
+  it("rejects a process that exits before Pi settles", async () => {
+    await expect(
+      runReviewRpc(fakePiRpc([], 2), process.cwd(), process.env, "Review the source", 1_000),
+    ).rejects.toThrow("[REVIEW_RPC_INCOMPLETE]");
   });
 });

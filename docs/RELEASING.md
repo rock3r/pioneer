@@ -61,7 +61,7 @@ Do not defer a newer Pi release to a later Pioneer release: review it, raise the
    ```
 
 6. Validate both plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).
-7. Run a real review through Codex and Claude Code.
+7. Run a real review through Codex and Claude Code. For each client, preserve the nested terminal session until it returns an exit code, then record the exit code and stdout/stderr byte counts. An intermediate empty output with a session ID is not a completed review. Use `--report /absolute/path/report.md` when a durable final report artifact is needed.
 8. Commit and push the reviewed release candidate.
 9. Create and push an annotated `v<version>` tag. Pushing the tag is the publication trigger.
 

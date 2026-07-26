@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { diagnosticMessage } from "../diagnostics.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import {
@@ -24,6 +25,7 @@ import {
   type ReviewNetworkMode,
   validateReviewPaths,
 } from "./isolation.js";
+import { writeReviewReport } from "./report-output.js";
 import { completeReviewRpc } from "./rpc-outcome.js";
 
 export interface ReviewRequest {
@@ -34,6 +36,7 @@ export interface ReviewRequest {
   readonly piHomeSource?: string;
   readonly allowReadPaths?: readonly string[];
   readonly allowWritePaths?: readonly string[];
+  readonly reportPath?: string;
   readonly network?: ReviewNetworkMode;
   readonly allowUnsandboxedWindows?: boolean;
   readonly timeoutMs?: number;
@@ -45,6 +48,7 @@ export interface ReviewResult {
   readonly thinking?: ThinkingLevel;
   readonly sandboxed: boolean;
   readonly warning?: string;
+  readonly reportWriteError?: string;
 }
 
 const WINDOWS_WARNING =
@@ -103,6 +107,22 @@ export function reviewProcessEnvironment(
     base.OPENSSL_CONF = "/private/etc/ssl/openssl.cnf";
   }
   return { ...base, ...sandboxEnvironment, ...piEnvironment };
+}
+
+export async function persistReviewReport(
+  report: string,
+  reportPath: string | undefined,
+): Promise<string | undefined> {
+  if (reportPath === undefined) return undefined;
+  try {
+    await writeReviewReport(reportPath, report);
+    return undefined;
+  } catch (error) {
+    return diagnosticMessage(
+      "REVIEW_REPORT_WRITE_FAILED",
+      `Pioneer received a review report but could not persist it at ${reportPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function assistantText(value: unknown): string | undefined {
@@ -316,12 +336,14 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
         prompt,
         timeoutMs,
       );
+      const reportWriteError = await persistReviewReport(report, paths.reportPath);
       return {
         report,
         sandboxed: false,
         warning: combineWarnings(WINDOWS_WARNING, readiness.warning) ?? WINDOWS_WARNING,
         ...(model === undefined ? {} : { model }),
         ...(thinking === undefined ? {} : { thinking }),
+        ...(reportWriteError === undefined ? {} : { reportWriteError }),
       };
     }
     await assertNativeSandboxReady();
@@ -363,12 +385,14 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       prompt,
       timeoutMs,
     );
+    const reportWriteError = await persistReviewReport(report, paths.reportPath);
     return {
       report,
       sandboxed: true,
       ...(readiness.warning === undefined ? {} : { warning: readiness.warning }),
       ...(model === undefined ? {} : { model }),
       ...(thinking === undefined ? {} : { thinking }),
+      ...(reportWriteError === undefined ? {} : { reportWriteError }),
     };
   } finally {
     await bridge?.close();

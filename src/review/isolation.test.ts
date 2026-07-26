@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -44,6 +44,68 @@ describe("review path grants", () => {
     await expect(
       validateReviewPaths({ sourceDir: source, allowReadPaths: [path.parse(root).root] }),
     ).rejects.toThrow(/broad/i);
+  });
+
+  it("accepts an absolute report target outside every actor-visible grant", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const reference = path.join(root, "reference");
+    const output = path.join(root, "output");
+    const reports = path.join(root, "reports");
+    await Promise.all([source, reference, output, reports].map((entry) => mkdir(entry)));
+
+    const result = await validateReviewPaths({
+      sourceDir: source,
+      allowReadPaths: [reference],
+      allowWritePaths: [output],
+      reportPath: path.join(reports, "review.md"),
+    });
+
+    expect(result.reportPath).toBe(path.join(await realpath(reports), "review.md"));
+  });
+
+  it("rejects report targets that are relative or actor-visible", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const output = path.join(root, "output");
+    await Promise.all([source, output].map((entry) => mkdir(entry)));
+
+    await expect(
+      validateReviewPaths({ sourceDir: source, reportPath: "review.md" }),
+    ).rejects.toThrow(/absolute/i);
+    await expect(
+      validateReviewPaths({ sourceDir: source, reportPath: path.join(source, "review.md") }),
+    ).rejects.toThrow(/actor-visible/i);
+    await expect(
+      validateReviewPaths({
+        sourceDir: source,
+        allowWritePaths: [output],
+        reportPath: path.join(output, "review.md"),
+      }),
+    ).rejects.toThrow(/actor-visible/i);
+  });
+
+  it("rejects existing targets, symlink parents, and missing parents", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const reports = path.join(root, "reports");
+    const linkedReports = path.join(root, "linked-reports");
+    await Promise.all([mkdir(source), mkdir(reports)]);
+    await writeFile(path.join(reports, "existing.md"), "existing\n");
+    await symlink(reports, linkedReports);
+
+    await expect(
+      validateReviewPaths({ sourceDir: source, reportPath: path.join(reports, "existing.md") }),
+    ).rejects.toThrow(/already exists/i);
+    await expect(
+      validateReviewPaths({ sourceDir: source, reportPath: path.join(linkedReports, "report.md") }),
+    ).rejects.toThrow(/symbolic link/i);
+    await expect(
+      validateReviewPaths({
+        sourceDir: source,
+        reportPath: path.join(root, "missing", "report.md"),
+      }),
+    ).rejects.toThrow(/parent does not exist/i);
   });
 });
 

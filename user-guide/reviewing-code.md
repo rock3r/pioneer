@@ -62,14 +62,16 @@ Pi cannot see arbitrary neighboring directories. Grant each required directory e
 
 ## Persist a report
 
-The canonical result is stdout. Redirect it outside the sandbox when you only need a report file:
+The canonical result is stdout. Use `--report` when Pioneer should atomically persist the verified final report outside the sandbox:
 
 ```bash
 pioneer review \
   --source "$PWD" \
   --prompt "Review the working tree." \
-  > /absolute/path/to/review.md
+  --report /absolute/path/to/review.md
 ```
+
+The report target must be an absolute path that does not exist yet and is outside every source, reference, and writable grant. Pioneer writes it only after Pi settles, exits zero, and returns a non-empty report. Stdout still receives the same Markdown. If persistence fails, Pioneer preserves that stdout report but exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`.
 
 Use `--allow-write` only when Pi itself must create artifacts during the review:
 
@@ -83,7 +85,7 @@ pioneer review \
 
 An explicit write grant is a real host capability. It must not overlap the source or a read-only grant.
 
-Pioneer does not persist the canonical report automatically. Its private scratch directory is removed after every run.
+Without `--report`, Pioneer does not persist the canonical report automatically. Its private scratch directory is removed after every run.
 
 ## Choose network scope
 

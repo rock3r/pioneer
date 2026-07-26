@@ -107,7 +107,7 @@ Pioneer excludes sessions, logs, caches, and root temporary trees before enforci
 
 ## A writable grant is rejected
 
-Writable grants must not overlap the source or any read-only grant. Create a dedicated artifact directory and grant only that directory. For the final report alone, redirect stdout instead of granting a write capability.
+Writable grants must not overlap the source or any read-only grant. Create a dedicated artifact directory and grant only that directory. For the final report alone, use `--report /absolute/path/report.md` instead of granting a write capability.
 
 ## Windows refuses to start
 
@@ -133,7 +133,7 @@ Timeout cleanup kills Pi and removes the private run state.
 
 Pioneer exits nonzero with `[REVIEW_REPORT_MISSING]` if Pi reaches `agent_settled` without a non-empty assistant report. It exits nonzero with `[REVIEW_RPC_INCOMPLETE]` if Pi ends before settling, and with `[REVIEW_PROCESS_FAILED]` if Pi settles with a report but exits nonzero or by signal. A successful no-findings review still prints a non-empty report; exit zero alone is transport success, not a semantic verdict.
 
-The report exists only on stdout unless the caller redirects it to a file. The private Pi home and scratch directory are always removed after the run.
+The report is always printed to stdout. With `--report /absolute/path/report.md`, Pioneer also writes the verified final report atomically; the target must not already exist and cannot be actor-visible. If that persistence fails, stdout still contains the verified report but Pioneer exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. The private Pi home and scratch directory are always removed after the run.
 
 Inspect the command's exit status and stderr as well as stdout. A wrapper result such as `{"output":""}` has discarded the evidence needed to distinguish failure from success.
 

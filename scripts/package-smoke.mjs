@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { access, chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", shell: false, ...options });
@@ -113,9 +114,29 @@ try {
   if (
     primaryHelp.status !== 0 ||
     !primaryHelp.stdout.includes("pioneer eval prepare") ||
-    !primaryHelp.stdout.includes("pioneer doctor")
+    !primaryHelp.stdout.includes("pioneer doctor") ||
+    !primaryHelp.stdout.includes("--report FILE")
   ) {
     throw new Error(`primary CLI did not advertise unified review/eval commands`);
+  }
+  const invalidReportPath = run(process.execPath, [
+    primaryCli,
+    "review",
+    "--source",
+    process.cwd(),
+    "--prompt",
+    "Review",
+    "--report",
+    "relative.md",
+  ]);
+  if (
+    invalidReportPath.status !== 1 ||
+    !invalidReportPath.stderr.includes("Review report path is not absolute") ||
+    invalidReportPath.stdout.length > 0
+  ) {
+    throw new Error(
+      `packaged review CLI did not reject a relative report path: ${invalidReportPath.stderr || invalidReportPath.stdout}`,
+    );
   }
   const evalVersion = run(process.execPath, [primaryCli, "eval", "--version"]);
   if (
@@ -142,6 +163,84 @@ try {
     ) {
       throw new Error(`pioneer ${subcommand} --help did not succeed on stdout`);
     }
+  }
+
+  const fakeRpc = path.join(root, "fake-rpc.mjs");
+  await writeFile(
+    fakeRpc,
+    `process.stdin.once("data", () => {
+  process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: "Packed report" } }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n");
+});
+`,
+  );
+  const fakeMissingRpc = path.join(root, "fake-missing-rpc.mjs");
+  await writeFile(
+    fakeMissingRpc,
+    `process.stdin.once("data", () => {
+  process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n");
+});
+`,
+  );
+  const fakeFailedRpc = path.join(root, "fake-failed-rpc.mjs");
+  await writeFile(
+    fakeFailedRpc,
+    `process.stdin.once("data", () => {
+  process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: "Failed report" } }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n");
+  process.stdout.end(() => process.exit(2));
+});
+`,
+  );
+  const fakeIncompleteRpc = path.join(root, "fake-incomplete-rpc.mjs");
+  await writeFile(
+    fakeIncompleteRpc,
+    `process.stdin.once("data", () => {
+  process.exit(2);
+});
+`,
+  );
+  const packagedRunner = pathToFileURL(path.join(packageRoot, "dist", "review", "runner.js")).href;
+  const packagedReportOutput = pathToFileURL(
+    path.join(packageRoot, "dist", "review", "report-output.js"),
+  ).href;
+  const packagedReportPath = path.join(root, "packaged-report.md");
+  const rpcContract = run(process.execPath, [
+    "--input-type=module",
+    "--eval",
+    `import { readFile } from "node:fs/promises";
+import { runReviewRpc } from ${JSON.stringify(packagedRunner)};
+import { writeReviewReport } from ${JSON.stringify(packagedReportOutput)};
+const report = await runReviewRpc([process.execPath, ${JSON.stringify(fakeRpc)}], process.cwd(), process.env, "Review", 1000);
+if (report !== "Packed report") throw new Error("packaged report was not returned");
+for (const [fixture, diagnostic] of [
+  [${JSON.stringify(fakeMissingRpc)}, "[REVIEW_REPORT_MISSING]"],
+  [${JSON.stringify(fakeFailedRpc)}, "[REVIEW_PROCESS_FAILED]"],
+  [${JSON.stringify(fakeIncompleteRpc)}, "[REVIEW_RPC_INCOMPLETE]"],
+]) {
+  try {
+    await runReviewRpc([process.execPath, fixture], process.cwd(), process.env, "Review", 1000);
+    throw new Error("packaged terminal failure was accepted");
+  } catch (error) {
+    if (!String(error).includes(diagnostic)) throw error;
+  }
+}
+await writeReviewReport(${JSON.stringify(packagedReportPath)}, "Packed report");
+if (await readFile(${JSON.stringify(packagedReportPath)}, "utf8") !== "Packed report\\n") {
+  throw new Error("packaged report writer did not persist the report");
+}
+try {
+  await writeReviewReport(${JSON.stringify(packagedReportPath)}, "replacement");
+  throw new Error("packaged report writer overwrote an existing target");
+} catch (error) {
+  if (!String(error).includes("already exists")) throw error;
+}
+`,
+  ]);
+  if (rpcContract.status !== 0) {
+    throw new Error(
+      `packaged review RPC contract failed: ${rpcContract.stderr || rpcContract.stdout}`,
+    );
   }
 
   const fakeBin = path.join(root, "fake-bin");

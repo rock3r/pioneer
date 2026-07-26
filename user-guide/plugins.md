@@ -89,7 +89,7 @@ command -v pi
 command -v pioneer
 ```
 
-If the agent does not support skills, add [`plugins/pioneer/skills/pioneer/SKILL.md`](../plugins/pioneer/skills/pioneer/SKILL.md) to its project or system instructions. At minimum, instruct it to run `pioneer doctor` before the first macOS/Linux delegation, preserve requested model and thinking values exactly, preserve exit status plus stdout and stderr, and never opt into unsandboxed Windows execution without explicit approval.
+If the agent does not support skills, add [`plugins/pioneer/skills/pioneer/SKILL.md`](../plugins/pioneer/skills/pioneer/SKILL.md) to its project or system instructions. At minimum, instruct it to run `pioneer doctor` before the first macOS/Linux delegation, preserve requested model and thinking values exactly, poll any returned terminal session ID until an exit code is available, preserve exit status plus stdout and stderr, and never opt into unsandboxed Windows execution without explicit approval.
 
 An agent can also invoke Pioneer directly without installing the skill. Use the examples in [Reviewing code](reviewing-code.md) and [Skill evals](skill-evals.md).
 

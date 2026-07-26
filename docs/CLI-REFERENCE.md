@@ -30,6 +30,7 @@ pioneer review --source DIR --prompt TEXT
   [--pi-home DIR]
   [--allow-read DIR]...
   [--allow-write DIR]...
+  [--report FILE]
   [--network full|public|none]
   [--timeout-ms N]
   [--allow-unsandboxed-windows]
@@ -44,11 +45,12 @@ pioneer review --source DIR --prompt TEXT
 | `--pi-home DIR` | `PI_CODING_AGENT_DIR` or `~/.pi/agent` | Source Pi agent directory to copy into the run |
 | `--allow-read DIR` | none | Additional read-only directory; repeatable |
 | `--allow-write DIR` | none | Additional writable directory; repeatable and forbidden from overlapping read grants |
+| `--report FILE` | none | Absolute controller-owned output path for the final report; must not exist and must not be visible to the review actor |
 | `--network MODE` | `full` | Proxy destination policy |
 | `--timeout-ms N` | `900000` | Positive integer review timeout |
 | `--allow-unsandboxed-windows` | false | Required acknowledgement for instruction-only Windows reviews |
 
-Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout. Diagnostics and warnings use stderr.
+Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout. When `--report` is set, Pioneer additionally creates that file atomically only after the same success contract passes. If persistence fails, stdout still contains the verified report but Pioneer exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`; diagnostics and warnings use stderr.
 
 Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report, `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling, and `[REVIEW_PROCESS_FAILED]` when a settled Pi process with a report exits nonzero or by signal.
 

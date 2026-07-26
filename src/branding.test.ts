@@ -38,6 +38,7 @@ describe("Pioneer distribution identity", () => {
     expect(skill).toContain("exit status is zero");
     expect(skill).toContain("stdout contains a non-empty report");
     expect(skill).toContain("Preserve the command's exit status, stdout, and stderr");
+    expect(skill).toContain("session ID");
     expect(skill).toContain("does not use `fs.watch`");
     expect(skill).toContain("not a semantic verdict");
   });
