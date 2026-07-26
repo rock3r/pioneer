@@ -79,7 +79,7 @@ Repeat with the `with-skill` directory. The command after `--` is passed as disc
 
 `--deny-read-probe` is also repeatable. Use it for every controller-side answer key or sensitive reference whose invisibility you want the mandatory preflight to prove.
 
-When the actor executable is Pi, Pioneer adds fast-start and isolation flags automatically, including `--offline`, `--no-session`, `--no-approve`, and `--no-skills`. Driving Pi's RPC protocol and delivering `case.json` remains the adapter's job.
+When the actor executable is Pi, Pioneer adds fast-start and isolation flags automatically: `--offline`, `--no-session`, `--no-approve`, `--no-extensions`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`. Driving Pi's RPC protocol and delivering `case.json` remains the adapter's job.
 
 ## Mandatory security preflight
 

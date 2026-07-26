@@ -4,7 +4,7 @@
 
 - Node.js 22 or newer;
 - npm;
-- Pi `0.80.6` or newer (versions through `0.82.0` are tested);
+- Pi `0.80.6` or newer (versions through `0.82.1` are tested);
 - at least one provider configured in Pi;
 - macOS or Linux for enforced review and eval isolation.
 

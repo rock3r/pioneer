@@ -79,7 +79,7 @@ The prepared output must not already exist and must be outside the source skill.
 
 The runner snapshots `PI_CODING_AGENT_DIR` (or `~/.pi/agent`) into the writable eval run. Sessions, logs, caches, root temporary trees, and configured skills are excluded. Pi package content is retained, but optional extension discovery is disabled for Pi eval actors. `--pi-home DIR` selects another snapshot source; the source is validated and copied, never used in place.
 
-When the actor command is Pi, the runner adds `--offline`, `--no-session`, `--no-approve`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`, plus `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
+When the actor command is Pi, the runner adds `--offline`, `--no-session`, `--no-approve`, `--no-extensions`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`, plus `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
 
 Pi/model readiness is checked before actor artifacts are created. Qualified `provider/model` names must match exactly; an unqualified ID must be unique. Missing or ambiguous requests fail with the configured qualified model list. Thinking levels include `xhigh` and `max`.
 
