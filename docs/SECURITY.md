@@ -59,7 +59,9 @@ Some policy sandboxes, including macOS Seatbelt configurations, allow metadata c
 
 ## Environment policy
 
-Review actors receive only the controller-selected runtime variables, Pi's isolated `HOME`, `TMPDIR`, and `PI_CODING_AGENT_DIR`, proxy variables, and minimal locale/path settings. Eval actors receive an even narrower broker environment. A mandatory eval probe verifies that a controller-only secret is absent.
+Pi readiness probes receive an allowlist of runtime, home-directory, certificate, temporary-directory, and `PI_CODING_AGENT_DIR` variables. Provider secrets, coding-agent control state, and other ambient host variables are not inherited. Pi authentication and provider configuration should come from the selected Pi agent directory.
+
+Review actors receive only the controller-selected runtime variables, Pi's isolated `HOME`, `TMPDIR`, and `PI_CODING_AGENT_DIR`, proxy variables, and minimal locale/path settings. This narrow environment applies on Windows too, even though Windows review filesystem isolation remains instruction-only. Eval actors receive an even narrower broker environment. A mandatory eval probe verifies that a controller-only secret is absent.
 
 Neither debug output nor errors should contain Pi credentials, proxy tokens, prompts, or full environment dumps.
 

@@ -7,6 +7,7 @@ import {
   type PiConfigAccessProbe,
   type PiProbeRunner,
   piConfigSandboxError,
+  piReadinessEnvironment,
 } from "./pi-readiness.js";
 
 function runnerWith(results: readonly Awaited<ReturnType<PiProbeRunner>>[]): PiProbeRunner {
@@ -170,6 +171,24 @@ describe("Pi readiness", () => {
       ],
       errors: [],
     });
+  });
+
+  it("does not inherit outer-agent control state or provider secrets in Pi probe subprocesses", () => {
+    const environment = piReadinessEnvironment({
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      PI_CODING_AGENT_DIR: configuredAgentDir,
+      OPENROUTER_API_KEY: "must-not-leak",
+      OUTER_AGENT_PROJECT_ROOT: "/outer/project",
+    });
+
+    expect(environment).toMatchObject({
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      PI_CODING_AGENT_DIR: configuredAgentDir,
+    });
+    expect(environment).not.toHaveProperty("OPENROUTER_API_KEY");
+    expect(environment).not.toHaveProperty("OUTER_AGENT_PROJECT_ROOT");
   });
 
   it("rejects a binary whose reported version does not match its CLI contract", async () => {

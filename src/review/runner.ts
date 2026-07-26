@@ -87,13 +87,14 @@ async function piRuntimePaths(executable: string): Promise<string[]> {
   return [...new Set(paths.filter(existsSync))];
 }
 
-function processEnvironment(
+export function reviewProcessEnvironment(
   sandboxEnvironment: Readonly<Record<string, string>>,
   piEnvironment: Readonly<Record<string, string>>,
+  runtimeEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): NodeJS.ProcessEnv {
   const base = Object.fromEntries(
-    ["PATH", "LANG", "LC_ALL"].flatMap((name) => {
-      const value = process.env[name];
+    ["PATH", "PATHEXT", "LANG", "LC_ALL", "SystemRoot", "WINDIR", "ComSpec"].flatMap((name) => {
+      const value = runtimeEnvironment[name];
       return value === undefined ? [] : [[name, value]];
     }),
   );
@@ -310,7 +311,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       const report = await runReviewRpc(
         optimized.command,
         paths.sourceDir,
-        { ...process.env, ...environment },
+        reviewProcessEnvironment({}, environment),
         prompt,
         timeoutMs,
       );
@@ -357,7 +358,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     const report = await runReviewRpc(
       launch.argv,
       paths.sourceDir,
-      processEnvironment(launch.environment, environment),
+      reviewProcessEnvironment(launch.environment, environment),
       prompt,
       timeoutMs,
     );
