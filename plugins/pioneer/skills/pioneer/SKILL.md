@@ -56,6 +56,7 @@ Windows review execution is not enforceably sandboxed. Never add `--allow-unsand
 - Pioneer disables Pi extension discovery for reviews and enables only Pi's built-in inspection tools; `write` and `edit` are excluded, while the native sandbox keeps the source read-only. Do not assume subagents, MCP, or any other optional extension is installed.
 - Pioneer receives Pi events over process pipes. It does not use `fs.watch`, polling, or a `subagent-results` directory, so watcher fallback messages come from the calling agent runtime and cannot persist or deliver a Pioneer report.
 - Preserve concrete findings, file paths, line references, and severity from Pi's report.
+- If Pioneer exits with `[REVIEW_REPORT_WRITE_FAILED]`, preserve and present the non-empty stdout Markdown report together with the persistence diagnostic; Pi's review completed, but the requested durable copy did not.
 - Clearly distinguish Pi's findings from your own analysis.
 - If the command fails, report the actionable error instead of retrying with a different model, weaker Pioneer sandbox, or broader path grant. The one exception is the explicit outer-terminal access error above, which requires user-approved terminal escalation and does not weaken Pioneer's sandbox.
 - Never print copied Pi credentials, the isolated Pi home, proxy credentials, or the full process environment.

@@ -8,6 +8,8 @@ export async function writeReviewReport(target: string, report: string): Promise
     `.${path.basename(target)}.${crypto.randomUUID()}.tmp`,
   );
   let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let published = false;
+  let failure: unknown;
   try {
     handle = await open(temporary, "wx", 0o600);
     await handle.writeFile(`${report}\n`, "utf8");
@@ -22,8 +24,21 @@ export async function writeReviewReport(target: string, report: string): Promise
       }
       throw error;
     }
-  } finally {
+    published = true;
+  } catch (error) {
+    failure = error;
+  }
+  try {
     await handle?.close();
+  } catch (error) {
+    failure ??= error;
+  }
+  try {
     await rm(temporary, { force: true });
+  } catch (error) {
+    if (!published) failure ??= error;
+  }
+  if (failure !== undefined) {
+    throw failure;
   }
 }

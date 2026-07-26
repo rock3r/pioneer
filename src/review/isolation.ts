@@ -1,4 +1,5 @@
-import { lstat, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, lstat, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { SandboxPolicy } from "../sandbox/launcher.js";
@@ -77,6 +78,11 @@ async function canonicalReportPath(candidate: string): Promise<string> {
   }
   if (!parentStats.isDirectory())
     throw new Error(`Review report parent is not a directory: ${parent}`);
+  try {
+    await access(parent, constants.W_OK);
+  } catch {
+    throw new Error(`Review report parent is not writable: ${parent}`);
+  }
   const canonicalParent = await realpath(parent);
   const reportPath = path.join(canonicalParent, path.basename(absolute));
   try {
