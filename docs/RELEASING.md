@@ -26,7 +26,7 @@ For every tag, `.github/workflows/release.yml` independently requires:
 - Windows fail-closed CLI checks and an AppContainer prototype build;
 - one npm tarball built once, installed, and invoked on all three operating systems.
 
-Only the tarball that passed the matrix is published. A GitHub release and attached tarball are created after npm accepts the package.
+Only the tarball that passed the matrix is published. A GitHub release and attached tarball are created after npm accepts the package. GitHub generates the release page notes from merged pull requests; [the changelog](../CHANGELOG.md) is the curated, versioned user-facing record.
 
 ## Refreshing Pi compatibility
 
@@ -45,8 +45,9 @@ Before every release, follow [Pi compatibility](PI-COMPATIBILITY.md):
 
 1. Refresh the Pi compatibility range and endpoint tests.
 2. Update `package.json` and both plugin manifests to the same semantic version.
-3. Update release-facing documentation and verify the UEL text is synchronized.
-4. Run locally:
+3. Update `CHANGELOG.md`: move every applicable entry from `Unreleased` into a new `## <version> - YYYY-MM-DD` section, then leave an empty `Unreleased` heading for the next release.
+4. Update other release-facing documentation and verify the UEL text is synchronized.
+5. Run locally:
 
    ```bash
    npm ci --ignore-scripts
@@ -54,12 +55,12 @@ Before every release, follow [Pi compatibility](PI-COMPATIBILITY.md):
    npm run package:smoke
    npm run pi:compat:latest
    npm run sandbox:smoke
-   npm run release:verify -- v0.1.2
+   npm run release:verify -- v0.1.3
    ```
 
-5. Validate both plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).
-6. Run a real review through Codex and Claude Code.
-7. Commit and push the reviewed release candidate.
-8. Create and push an annotated `v<version>` tag. Pushing the tag is the publication trigger.
+6. Validate both plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).
+7. Run a real review through Codex and Claude Code.
+8. Commit and push the reviewed release candidate.
+9. Create and push an annotated `v<version>` tag. Pushing the tag is the publication trigger.
 
 Do not reuse or move a published version tag. If a release is defective, fix forward with a new patch version and deprecate the affected npm version when appropriate.
