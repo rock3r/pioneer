@@ -121,9 +121,11 @@ export function npmCliCommand(
 
 export function systemNpmCliPaths(platform = process.platform): readonly string[] {
   if (platform === "win32") return [];
-  const paths = ["/opt/homebrew", "/usr/local", "/usr"].map((prefix) =>
-    path.join(prefix, "lib", "node_modules", "npm", "bin", "npm-cli.js"),
-  );
+  const paths = [
+    "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+    "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+    "/usr/lib/node_modules/npm/bin/npm-cli.js",
+  ];
   return platform === "linux" ? [...paths, "/usr/share/nodejs/npm/bin/npm-cli.js"] : paths;
 }
 
