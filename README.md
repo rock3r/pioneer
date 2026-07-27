@@ -24,6 +24,13 @@ Pioneer requires Node.js 22 or newer, npm, and a configured Pi installation. Pi 
 npm install -g @rock3r/pioneer
 ```
 
+Pioneer checks for a newer npm release in the background at most once per day and reports it after your command finishes. Check or install one manually with:
+
+```bash
+pioneer check-update
+pioneer update --changelog --yes
+```
+
 To install from a trusted source checkout instead:
 
 ```bash

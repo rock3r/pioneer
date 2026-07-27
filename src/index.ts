@@ -57,3 +57,19 @@ export {
 } from "./review/isolation.js";
 export { type ReviewRequest, type ReviewResult, runReview } from "./review/runner.js";
 export { isThinkingLevel, THINKING_LEVELS, type ThinkingLevel } from "./thinking-level.js";
+export {
+  checkForUpdate,
+  fetchLatestVersionFromNpm,
+  fileUpdateStateStore,
+  isNewerVersion,
+  npmCliCommand,
+  PIONEER_PACKAGE_NAME,
+  PIONEER_PACKAGE_REGISTRY,
+  runTrustedNpm,
+  trustedNpmEnvironment,
+  type UpdateCheckOptions,
+  type UpdateCheckResult,
+  type UpdateCheckState,
+  type UpdateStateStore,
+  updateCachePath,
+} from "./update-check.js";

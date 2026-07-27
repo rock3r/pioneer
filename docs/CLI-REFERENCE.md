@@ -21,6 +21,25 @@ The CLI prints the installed Pioneer package version without probing Pi:
 pioneer --version
 ```
 
+## Package updates
+
+Normal Pioneer commands begin a best-effort npm update check without delaying command startup. The check runs at most once every 24 hours, caches the newest published version, and prints an update notice to stderr only after the requested command finishes. A failed background check is silent and never changes that command's exit status.
+
+Force a check now:
+
+```bash
+pioneer check-update
+```
+
+To update a global npm installation, Pioneer first forces the same check. When a newer version is available, it asks whether to print that release's changelog and whether to install it. The installation is delegated to npm as `npm install --global @rock3r/pioneer@VERSION`.
+
+```bash
+pioneer update
+pioneer update --changelog --yes
+```
+
+`--changelog` answers yes to the changelog prompt; `--yes` (or `-y`) answers yes to the installation prompt. Use both flags in non-interactive automation.
+
 ## `pioneer review`
 
 ```text
