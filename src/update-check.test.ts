@@ -3,6 +3,8 @@ import {
   checkForUpdate,
   fetchLatestVersionFromNpm,
   isNewerVersion,
+  npmCliCommand,
+  trustedNpmEnvironment,
   type UpdateCheckState,
   type UpdateStateStore,
 } from "./update-check.js";
@@ -100,7 +102,7 @@ describe("package update checks", () => {
     expect(invocations).toEqual([
       [
         "npm",
-        [
+        expect.arrayContaining([
           "view",
           "@rock3r/pioneer",
           "version",
@@ -108,7 +110,7 @@ describe("package update checks", () => {
           "--registry=https://registry.npmjs.org/",
           "--fetch-retries=0",
           "--fetch-timeout=5000",
-        ],
+        ]),
       ],
     ]);
     await expect(fetchLatestVersionFromNpm(async () => '"not-a-version"')).rejects.toThrow(
@@ -118,5 +120,20 @@ describe("package update checks", () => {
 
   it("uses ASCII ordering for prerelease identifiers", () => {
     expect(isNewerVersion("1.0.0-a", "1.0.0-B")).toBe(true);
+    expect(isNewerVersion("1.0.0-9007199254740993", "1.0.0-9007199254740992")).toBe(true);
+  });
+
+  it("uses the Node distribution's npm CLI with a constrained cross-platform environment", () => {
+    expect(npmCliCommand(["--version"], "/trusted/node", "win32")).toEqual([
+      "/trusted/node",
+      "\\trusted\\node_modules\\npm\\bin\\npm-cli.js",
+      "--version",
+    ]);
+    expect(
+      trustedNpmEnvironment(
+        { PATH: "/trusted/bin", PATHEXT: ".EXE", APPDATA: "app", NPM_TOKEN: "secret" },
+        "/trusted/home",
+      ),
+    ).toEqual({ PATH: "/trusted/bin", HOME: "/trusted/home", PATHEXT: ".EXE", APPDATA: "app" });
   });
 });

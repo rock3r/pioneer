@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { constants } from "node:fs";
+import { access, mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 export const PIONEER_PACKAGE_NAME = "@rock3r/pioneer";
@@ -60,19 +61,91 @@ function parseVersion(value: string): SemanticVersion | undefined {
 function compareIdentifiers(left: string, right: string): number {
   const leftNumber = /^\d+$/.test(left);
   const rightNumber = /^\d+$/.test(right);
-  if (leftNumber && rightNumber) return Number(left) - Number(right);
+  if (leftNumber && rightNumber) {
+    if (left.length !== right.length) return left.length - right.length;
+    return left < right ? -1 : left > right ? 1 : 0;
+  }
   if (leftNumber) return -1;
   if (rightNumber) return 1;
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-export function trustedNpmEnvironment(): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: homedir() };
-  for (const name of ["LANG", "LC_ALL", "TMPDIR", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"]) {
-    const value = process.env[name];
+export function trustedNpmEnvironment(
+  source: NodeJS.ProcessEnv = process.env,
+  home = homedir(),
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { PATH: source.PATH, HOME: home };
+  for (const name of [
+    "LANG",
+    "LC_ALL",
+    "TMPDIR",
+    "SSL_CERT_FILE",
+    "NODE_EXTRA_CA_CERTS",
+    "PATHEXT",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "SYSTEMROOT",
+    "COMSPEC",
+    "TMP",
+    "TEMP",
+  ]) {
+    const value = source[name];
     if (value !== undefined) environment[name] = value;
   }
   return environment;
+}
+
+export function npmCliCommand(
+  args: readonly string[],
+  nodeExecutable = process.execPath,
+  platform = process.platform,
+): readonly [string, ...string[]] {
+  const pathApi = platform === "win32" ? path.win32 : path;
+  const nodeDirectory = pathApi.dirname(nodeExecutable);
+  const npmCliPath =
+    platform === "win32"
+      ? pathApi.join(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js")
+      : pathApi.join(nodeDirectory, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js");
+  return [nodeExecutable, npmCliPath, ...args];
+}
+
+async function trustedNpmCommand(args: readonly string[]): Promise<readonly [string, ...string[]]> {
+  const [nodeExecutable, npmCliPath, ...nodeArgs] = npmCliCommand(args);
+  if (npmCliPath === undefined) throw new Error("The npm CLI path is unavailable");
+  try {
+    await access(npmCliPath, constants.R_OK);
+    return [nodeExecutable, npmCliPath, ...nodeArgs];
+  } catch {
+    if (process.platform === "win32") {
+      throw new Error("The npm CLI bundled with the running Node distribution is unavailable");
+    }
+  }
+  for (const directory of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) {
+    const executable = path.join(directory, "npm");
+    try {
+      await access(executable, constants.X_OK);
+      return [executable, ...args];
+    } catch {}
+  }
+  throw new Error("A trusted npm executable is unavailable");
+}
+
+async function withIsolatedNpmConfig<T>(
+  run: (configArguments: readonly [string, string]) => Promise<T>,
+): Promise<T> {
+  const directory = await mkdtemp(path.join(tmpdir(), "pioneer-npm-config-"));
+  const userConfig = path.join(directory, "user.npmrc");
+  const globalConfig = path.join(directory, "global.npmrc");
+  try {
+    await Promise.all([
+      writeFile(userConfig, "", { encoding: "utf8", mode: 0o600 }),
+      writeFile(globalConfig, "", { encoding: "utf8", mode: 0o600 }),
+    ]);
+    return await run([`--userconfig=${userConfig}`, `--globalconfig=${globalConfig}`]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 export function isNewerVersion(candidate: string, current: string): boolean {
@@ -169,34 +242,72 @@ export function fileUpdateStateStore(cachePath = updateCachePath()): UpdateState
   };
 }
 
-function runNpm(command: string, args: readonly string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+function runNpm(_command: string, args: readonly string[]): Promise<string> {
+  return withIsolatedNpmConfig((configArguments) =>
+    runNpmWithConfig([...args, ...configArguments]),
+  );
+}
+
+function runNpmWithConfig(args: readonly string[]): Promise<string> {
+  return trustedNpmCommand(args).then(
+    ([executable, ...commandArgs]) =>
+      new Promise<string>((resolve, reject) => {
+        const child = spawn(executable, commandArgs, {
+          cwd: homedir(),
+          env: trustedNpmEnvironment(),
+          shell: false,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stdoutBytes = 0;
+        const timer = setTimeout(() => child.kill(), NPM_CHECK_TIMEOUT_MS);
+        child.stdout.on("data", (chunk: Buffer) => {
+          stdoutBytes += chunk.length;
+          if (stdoutBytes <= MAX_NPM_OUTPUT_BYTES) stdout += chunk.toString("utf8");
+        });
+        child.on("error", (error) => {
+          clearTimeout(timer);
+          reject(new Error(`Could not start npm for an update check: ${error.message}`));
+        });
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          if (stdoutBytes > MAX_NPM_OUTPUT_BYTES) {
+            reject(new Error("npm update check returned too much output"));
+          } else if (code !== 0) {
+            reject(new Error("npm update check failed"));
+          } else {
+            resolve(stdout);
+          }
+        });
+      }),
+  );
+}
+
+export async function runTrustedNpm(
+  args: readonly string[],
+  stdio: "inherit" | "pipe",
+): Promise<void> {
+  await withIsolatedNpmConfig((configArguments) =>
+    runTrustedNpmWithConfig([...args, ...configArguments], stdio),
+  );
+}
+
+async function runTrustedNpmWithConfig(
+  args: readonly string[],
+  stdio: "inherit" | "pipe",
+): Promise<void> {
+  const [executable, ...commandArgs] = await trustedNpmCommand(args);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(executable, commandArgs, {
       cwd: homedir(),
       env: trustedNpmEnvironment(),
       shell: false,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio,
     });
-    let stdout = "";
-    let stdoutBytes = 0;
-    const timer = setTimeout(() => child.kill(), NPM_CHECK_TIMEOUT_MS);
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdoutBytes += chunk.length;
-      if (stdoutBytes <= MAX_NPM_OUTPUT_BYTES) stdout += chunk.toString("utf8");
-    });
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(new Error(`Could not start npm for an update check: ${error.message}`));
-    });
+    child.on("error", (error) => reject(new Error(`Could not start npm: ${error.message}`)));
     child.on("close", (code) => {
-      clearTimeout(timer);
-      if (stdoutBytes > MAX_NPM_OUTPUT_BYTES) {
-        reject(new Error("npm update check returned too much output"));
-      } else if (code !== 0) {
-        reject(new Error("npm update check failed"));
-      } else {
-        resolve(stdout);
-      }
+      if (code === 0) resolve();
+      else reject(new Error(`npm exited with status ${code ?? "unknown"}`));
     });
   });
 }
