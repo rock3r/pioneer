@@ -1,5 +1,7 @@
+import path from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 import { PIONEER_VERSION } from "./package-metadata.js";
 import {
   checkForUpdate,
@@ -83,7 +85,30 @@ async function fetchChangelog(version: string): Promise<string> {
 }
 
 function installWithNpm(args: readonly string[]): Promise<void> {
-  return runTrustedNpm(args, "inherit");
+  const prefix = installedNpmPrefix();
+  return runTrustedNpm(prefix === undefined ? args : [...args, `--prefix=${prefix}`], "inherit");
+}
+
+export function installedNpmPrefix(
+  modulePath = fileURLToPath(import.meta.url),
+  platform = process.platform,
+): string | undefined {
+  const pathApi = platform === "win32" ? path.win32 : path;
+  const distDirectory = pathApi.dirname(modulePath);
+  const packageDirectory = pathApi.dirname(distDirectory);
+  const scopeDirectory = pathApi.dirname(packageDirectory);
+  const nodeModulesDirectory = pathApi.dirname(scopeDirectory);
+  if (
+    pathApi.basename(distDirectory) !== "dist" ||
+    pathApi.basename(packageDirectory) !== "pioneer" ||
+    pathApi.basename(scopeDirectory) !== "@rock3r" ||
+    pathApi.basename(nodeModulesDirectory) !== "node_modules"
+  ) {
+    return undefined;
+  }
+  const packageRoot = pathApi.dirname(nodeModulesDirectory);
+  const prefix = platform === "win32" ? packageRoot : pathApi.dirname(packageRoot);
+  return pathApi.isAbsolute(prefix) ? prefix : undefined;
 }
 
 function defaultDependencies(): UpdateCommandDependencies {

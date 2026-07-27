@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { runUpdateCommand } from "./update-command.js";
+import { installedNpmPrefix, runUpdateCommand } from "./update-command.js";
 
 describe("pioneer update", () => {
+  it("preserves the prefix of a globally installed package", () => {
+    expect(
+      installedNpmPrefix(
+        "/Users/example/.npm-global/lib/node_modules/@rock3r/pioneer/dist/update-command.js",
+      ),
+    ).toBe("/Users/example/.npm-global");
+    expect(installedNpmPrefix("/workspace/src/update-command.ts")).toBeUndefined();
+    expect(
+      installedNpmPrefix(
+        "C:\\Users\\example\\npm-global\\node_modules\\@rock3r\\pioneer\\dist\\update-command.js",
+        "win32",
+      ),
+    ).toBe("C:\\Users\\example\\npm-global");
+  });
+
   it("prints the requested changelog and delegates the install to npm", async () => {
     const output: string[] = [];
     const prompts: string[] = [];

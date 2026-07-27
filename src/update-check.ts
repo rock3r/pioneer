@@ -73,8 +73,18 @@ function compareIdentifiers(left: string, right: string): number {
 export function trustedNpmEnvironment(
   source: NodeJS.ProcessEnv = process.env,
   home = homedir(),
+  nodeExecutable = process.execPath,
+  platform = process.platform,
 ): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { PATH: source.PATH, HOME: home };
+  const pathApi = platform === "win32" ? path.win32 : path;
+  const systemRoot = source.SYSTEMROOT ?? "C:\\Windows";
+  const trustedPath =
+    platform === "win32"
+      ? [pathApi.dirname(nodeExecutable), pathApi.join(systemRoot, "System32")].join(
+          pathApi.delimiter,
+        )
+      : [pathApi.dirname(nodeExecutable), "/usr/bin", "/bin"].join(pathApi.delimiter);
+  const environment: NodeJS.ProcessEnv = { PATH: trustedPath, HOME: home };
   for (const name of [
     "LANG",
     "LC_ALL",
@@ -110,6 +120,13 @@ export function npmCliCommand(
   return [nodeExecutable, npmCliPath, ...args];
 }
 
+export function systemNpmCliPaths(platform = process.platform): readonly string[] {
+  if (platform === "win32") return [];
+  return ["/opt/homebrew", "/usr/local", "/usr"].map((prefix) =>
+    path.join(prefix, "lib", "node_modules", "npm", "bin", "npm-cli.js"),
+  );
+}
+
 async function trustedNpmCommand(args: readonly string[]): Promise<readonly [string, ...string[]]> {
   const [nodeExecutable, npmCliPath, ...nodeArgs] = npmCliCommand(args);
   if (npmCliPath === undefined) throw new Error("The npm CLI path is unavailable");
@@ -121,18 +138,17 @@ async function trustedNpmCommand(args: readonly string[]): Promise<readonly [str
       throw new Error("The npm CLI bundled with the running Node distribution is unavailable");
     }
   }
-  for (const directory of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) {
-    const executable = path.join(directory, "npm");
+  for (const systemNpmCliPath of systemNpmCliPaths()) {
     try {
-      await access(executable, constants.X_OK);
-      return [executable, ...args];
+      await access(systemNpmCliPath, constants.R_OK);
+      return [nodeExecutable, systemNpmCliPath, ...args];
     } catch {}
   }
   throw new Error("A trusted npm executable is unavailable");
 }
 
-async function withIsolatedNpmConfig<T>(
-  run: (configArguments: readonly [string, string]) => Promise<T>,
+export async function withIsolatedNpmConfig<T>(
+  run: (configArguments: readonly [string, string], cwd: string) => Promise<T>,
 ): Promise<T> {
   const directory = await mkdtemp(path.join(tmpdir(), "pioneer-npm-config-"));
   const userConfig = path.join(directory, "user.npmrc");
@@ -142,7 +158,7 @@ async function withIsolatedNpmConfig<T>(
       writeFile(userConfig, "", { encoding: "utf8", mode: 0o600 }),
       writeFile(globalConfig, "", { encoding: "utf8", mode: 0o600 }),
     ]);
-    return await run([`--userconfig=${userConfig}`, `--globalconfig=${globalConfig}`]);
+    return await run([`--userconfig=${userConfig}`, `--globalconfig=${globalConfig}`], directory);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -243,17 +259,17 @@ export function fileUpdateStateStore(cachePath = updateCachePath()): UpdateState
 }
 
 function runNpm(_command: string, args: readonly string[]): Promise<string> {
-  return withIsolatedNpmConfig((configArguments) =>
-    runNpmWithConfig([...args, ...configArguments]),
+  return withIsolatedNpmConfig((configArguments, cwd) =>
+    runNpmWithConfig([...args, ...configArguments], cwd),
   );
 }
 
-function runNpmWithConfig(args: readonly string[]): Promise<string> {
+function runNpmWithConfig(args: readonly string[], cwd: string): Promise<string> {
   return trustedNpmCommand(args).then(
     ([executable, ...commandArgs]) =>
       new Promise<string>((resolve, reject) => {
         const child = spawn(executable, commandArgs, {
-          cwd: homedir(),
+          cwd,
           env: trustedNpmEnvironment(),
           shell: false,
           stdio: ["ignore", "pipe", "pipe"],
@@ -287,19 +303,20 @@ export async function runTrustedNpm(
   args: readonly string[],
   stdio: "inherit" | "pipe",
 ): Promise<void> {
-  await withIsolatedNpmConfig((configArguments) =>
-    runTrustedNpmWithConfig([...args, ...configArguments], stdio),
+  await withIsolatedNpmConfig((configArguments, cwd) =>
+    runTrustedNpmWithConfig([...args, ...configArguments], stdio, cwd),
   );
 }
 
 async function runTrustedNpmWithConfig(
   args: readonly string[],
   stdio: "inherit" | "pipe",
+  cwd: string,
 ): Promise<void> {
   const [executable, ...commandArgs] = await trustedNpmCommand(args);
   await new Promise<void>((resolve, reject) => {
     const child = spawn(executable, commandArgs, {
-      cwd: homedir(),
+      cwd,
       env: trustedNpmEnvironment(),
       shell: false,
       stdio,

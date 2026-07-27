@@ -1,12 +1,16 @@
+import { access, readFile } from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   checkForUpdate,
   fetchLatestVersionFromNpm,
   isNewerVersion,
   npmCliCommand,
+  systemNpmCliPaths,
   trustedNpmEnvironment,
   type UpdateCheckState,
   type UpdateStateStore,
+  withIsolatedNpmConfig,
 } from "./update-check.js";
 
 function store(
@@ -133,7 +137,38 @@ describe("package update checks", () => {
       trustedNpmEnvironment(
         { PATH: "/trusted/bin", PATHEXT: ".EXE", APPDATA: "app", NPM_TOKEN: "secret" },
         "/trusted/home",
+        "/trusted/node",
+        "linux",
       ),
-    ).toEqual({ PATH: "/trusted/bin", HOME: "/trusted/home", PATHEXT: ".EXE", APPDATA: "app" });
+    ).toEqual({
+      PATH: "/trusted:/usr/bin:/bin",
+      HOME: "/trusted/home",
+      PATHEXT: ".EXE",
+      APPDATA: "app",
+    });
+    expect(systemNpmCliPaths("darwin")).toEqual([
+      "/opt/homebrew/lib/node_modules/npm/bin/npm-cli.js",
+      "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+      "/usr/lib/node_modules/npm/bin/npm-cli.js",
+    ]);
+  });
+
+  it("runs npm from its private configuration directory", async () => {
+    let workingDirectory = "";
+
+    await withIsolatedNpmConfig(async (configArguments, cwd) => {
+      workingDirectory = cwd;
+      const [userConfigArgument, globalConfigArgument] = configArguments;
+      const userConfig = userConfigArgument.slice("--userconfig=".length);
+      const globalConfig = globalConfigArgument.slice("--globalconfig=".length);
+
+      expect(path.dirname(userConfig)).toBe(cwd);
+      expect(path.dirname(globalConfig)).toBe(cwd);
+      await expect(readFile(userConfig, "utf8")).resolves.toBe("");
+      await expect(readFile(globalConfig, "utf8")).resolves.toBe("");
+      await expect(access(path.join(cwd, ".npmrc"))).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    await expect(access(workingDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
