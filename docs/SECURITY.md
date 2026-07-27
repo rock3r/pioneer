@@ -104,6 +104,12 @@ Review isolation is not enforced. The caller must explicitly pass `--allow-unsan
 - Reviews default to a 15-minute timeout; eval actors default to five minutes.
 - Cleanup runs even after failure or timeout.
 
+## Package updates
+
+Pioneer checks only the fixed `@rock3r/pioneer` npm package name, with fixed npm arguments, bounded output, and a five-second timeout. Normal checks are best-effort: they run in parallel with the requested command, do not affect its result, and cache both successful and failed check times for 24 hours. The cache contains only a timestamp and the public package version.
+
+`pioneer update` always performs a fresh version check and never changes an installation without confirmation or `--yes`. If requested, it retrieves bounded GitHub release notes for the selected public version before delegating the global install to npm as discrete argv. Neither update path reads Pi configuration or forwards credentials.
+
 ## Residual risks
 
 - Review skills execute inside the sandbox and can still alter the review, exfiltrate any granted content through permitted networking, or write to explicit writable grants. Optional Pi extensions are not discovered by Pioneer actors.

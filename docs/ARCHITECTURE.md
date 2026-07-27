@@ -42,7 +42,8 @@ The plugin contains instructions only. The CLI owns all policy, validation, Pi s
 
 | Area | Main modules | Responsibility |
 | --- | --- | --- |
-| CLI adapters | `src/review-cli.ts`, `src/eval-command.ts` | Expose the unified CLI, print results, and set exit status |
+| CLI adapters | `src/review-cli.ts`, `src/eval-command.ts`, `src/update-command.ts` | Expose the unified CLI, print results, and set exit status |
+| Package updates | `src/update-check.ts`, `src/update-command.ts` | Query npm asynchronously, cache the latest result, and delegate explicit global updates to npm |
 | Shared diagnostics | `src/doctor.ts`, `src/doctor-report.ts`, `src/sandbox/platform-readiness.ts` | Check Pi and native sandbox readiness for reviews and evals |
 | Pi readiness | `src/pi-readiness.ts`, `src/pi-model-selection.ts` | Detect Pi, enumerate configured models, resolve exact requests |
 | Pi preparation | `src/pi-home.ts`, `src/pi-startup.ts` | Copy the Pi agent directory and apply fast, ephemeral startup flags |
@@ -55,6 +56,10 @@ The plugin contains instructions only. The CLI owns all policy, validation, Pi s
 | Public API | `src/index.ts` | Export the supported TypeScript surface |
 
 Dependencies flow from adapters and orchestration toward validation and transport helpers. Plugin files do not duplicate policy.
+
+## Package update lifecycle
+
+Normal Pioneer commands start a background npm version check without delaying command startup. A successful result is cached in the operator's cache directory for 24 hours; when it identifies a newer version, Pioneer reports it only after the requested command completes. `pioneer check-update` bypasses that cooldown, while `pioneer update` bypasses it and delegates an explicitly approved update to npm. Update checking is independent of Pi readiness and the actor sandbox.
 
 ## Review lifecycle
 

@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Add a throttled background npm update notice plus `pioneer check-update` and npm-delegated `pioneer update` commands with interactive or scripted changelog/install choices.
+
 ## 0.1.4 - 2026-07-26
 
 - Add controller-owned atomic review report output with `pioneer review --report FILE`, including persistence-failure handling and packaged validation of review completion failures.
