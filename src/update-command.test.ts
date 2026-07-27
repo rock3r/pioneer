@@ -6,6 +6,7 @@ describe("pioneer update", () => {
     expect(
       installedNpmPrefix(
         "/Users/example/.npm-global/lib/node_modules/@rock3r/pioneer/dist/update-command.js",
+        "darwin",
       ),
     ).toBe("/Users/example/.npm-global");
     expect(installedNpmPrefix("/workspace/src/update-command.ts")).toBeUndefined();

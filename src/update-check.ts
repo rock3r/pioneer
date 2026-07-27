@@ -77,13 +77,12 @@ export function trustedNpmEnvironment(
   platform = process.platform,
 ): NodeJS.ProcessEnv {
   const pathApi = platform === "win32" ? path.win32 : path;
+  const pathDelimiter = platform === "win32" ? ";" : ":";
   const systemRoot = source.SYSTEMROOT ?? "C:\\Windows";
   const trustedPath =
     platform === "win32"
-      ? [pathApi.dirname(nodeExecutable), pathApi.join(systemRoot, "System32")].join(
-          pathApi.delimiter,
-        )
-      : [pathApi.dirname(nodeExecutable), "/usr/bin", "/bin"].join(pathApi.delimiter);
+      ? [pathApi.dirname(nodeExecutable), pathApi.join(systemRoot, "System32")].join(pathDelimiter)
+      : [pathApi.dirname(nodeExecutable), "/usr/bin", "/bin"].join(pathDelimiter);
   const environment: NodeJS.ProcessEnv = { PATH: trustedPath, HOME: home };
   for (const name of [
     "LANG",
