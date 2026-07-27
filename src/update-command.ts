@@ -86,7 +86,7 @@ async function fetchChangelog(version: string): Promise<string> {
 
 function installWithNpm(args: readonly string[]): Promise<void> {
   const prefix = installedNpmPrefix();
-  return runTrustedNpm(prefix === undefined ? args : [...args, `--prefix=${prefix}`], "inherit");
+  return runTrustedNpm(prefix === undefined ? args : [...args, `--prefix=${prefix}`]);
 }
 
 export function installedNpmPrefix(
@@ -107,6 +107,7 @@ export function installedNpmPrefix(
     return undefined;
   }
   const packageRoot = pathApi.dirname(nodeModulesDirectory);
+  if (platform !== "win32" && pathApi.basename(packageRoot) !== "lib") return undefined;
   const prefix = platform === "win32" ? packageRoot : pathApi.dirname(packageRoot);
   return pathApi.isAbsolute(prefix) ? prefix : undefined;
 }

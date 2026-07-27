@@ -121,9 +121,10 @@ export function npmCliCommand(
 
 export function systemNpmCliPaths(platform = process.platform): readonly string[] {
   if (platform === "win32") return [];
-  return ["/opt/homebrew", "/usr/local", "/usr"].map((prefix) =>
+  const paths = ["/opt/homebrew", "/usr/local", "/usr"].map((prefix) =>
     path.join(prefix, "lib", "node_modules", "npm", "bin", "npm-cli.js"),
   );
+  return platform === "linux" ? [...paths, "/usr/share/nodejs/npm/bin/npm-cli.js"] : paths;
 }
 
 async function trustedNpmCommand(args: readonly string[]): Promise<readonly [string, ...string[]]> {
@@ -298,27 +299,20 @@ function runNpmWithConfig(args: readonly string[], cwd: string): Promise<string>
   );
 }
 
-export async function runTrustedNpm(
-  args: readonly string[],
-  stdio: "inherit" | "pipe",
-): Promise<void> {
+export async function runTrustedNpm(args: readonly string[]): Promise<void> {
   await withIsolatedNpmConfig((configArguments, cwd) =>
-    runTrustedNpmWithConfig([...args, ...configArguments], stdio, cwd),
+    runTrustedNpmWithConfig([...args, ...configArguments], cwd),
   );
 }
 
-async function runTrustedNpmWithConfig(
-  args: readonly string[],
-  stdio: "inherit" | "pipe",
-  cwd: string,
-): Promise<void> {
+async function runTrustedNpmWithConfig(args: readonly string[], cwd: string): Promise<void> {
   const [executable, ...commandArgs] = await trustedNpmCommand(args);
   await new Promise<void>((resolve, reject) => {
     const child = spawn(executable, commandArgs, {
       cwd,
       env: trustedNpmEnvironment(),
       shell: false,
-      stdio,
+      stdio: "inherit",
     });
     child.on("error", (error) => reject(new Error(`Could not start npm: ${error.message}`)));
     child.on("close", (code) => {

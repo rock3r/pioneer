@@ -151,6 +151,7 @@ describe("package update checks", () => {
       "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
       "/usr/lib/node_modules/npm/bin/npm-cli.js",
     ]);
+    expect(systemNpmCliPaths("linux")).toContain("/usr/share/nodejs/npm/bin/npm-cli.js");
   });
 
   it("runs npm from its private configuration directory", async () => {

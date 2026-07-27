@@ -12,6 +12,12 @@ describe("pioneer update", () => {
     expect(installedNpmPrefix("/workspace/src/update-command.ts")).toBeUndefined();
     expect(
       installedNpmPrefix(
+        "/workspace/node_modules/@rock3r/pioneer/dist/update-command.js",
+        "darwin",
+      ),
+    ).toBeUndefined();
+    expect(
+      installedNpmPrefix(
         "C:\\Users\\example\\npm-global\\node_modules\\@rock3r\\pioneer\\dist\\update-command.js",
         "win32",
       ),
