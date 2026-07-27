@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 export const PIONEER_PACKAGE_NAME = "@rock3r/pioneer";
+export const PIONEER_PACKAGE_REGISTRY = "https://registry.npmjs.org/";
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1_000;
 const NPM_CHECK_TIMEOUT_MS = 5_000;
 const MAX_NPM_OUTPUT_BYTES = 8 * 1_024;
@@ -62,7 +63,16 @@ function compareIdentifiers(left: string, right: string): number {
   if (leftNumber && rightNumber) return Number(left) - Number(right);
   if (leftNumber) return -1;
   if (rightNumber) return 1;
-  return left.localeCompare(right);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function trustedNpmEnvironment(): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: homedir() };
+  for (const name of ["LANG", "LC_ALL", "TMPDIR", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS"]) {
+    const value = process.env[name];
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
 }
 
 export function isNewerVersion(candidate: string, current: string): boolean {
@@ -161,7 +171,12 @@ export function fileUpdateStateStore(cachePath = updateCachePath()): UpdateState
 
 function runNpm(command: string, args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { shell: false, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      cwd: homedir(),
+      env: trustedNpmEnvironment(),
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stdoutBytes = 0;
     const timer = setTimeout(() => child.kill(), NPM_CHECK_TIMEOUT_MS);
@@ -192,6 +207,7 @@ export async function fetchLatestVersionFromNpm(run: NpmCommandRunner = runNpm):
     PIONEER_PACKAGE_NAME,
     "version",
     "--json",
+    `--registry=${PIONEER_PACKAGE_REGISTRY}`,
     "--fetch-retries=0",
     "--fetch-timeout=5000",
   ]);
@@ -236,7 +252,13 @@ export async function checkForUpdate(options: UpdateCheckOptions): Promise<Updat
       updateAvailable: isNewerVersion(latestVersion, options.currentVersion),
     };
   } catch (error) {
-    await store.write({ schemaVersion: 1, checkedAt: now }).catch(() => undefined);
+    await store
+      .write({
+        schemaVersion: 1,
+        checkedAt: now,
+        ...(cached?.latestVersion === undefined ? {} : { latestVersion: cached.latestVersion }),
+      })
+      .catch(() => undefined);
     throw error;
   }
 }

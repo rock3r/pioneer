@@ -1,8 +1,15 @@
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { PIONEER_VERSION } from "./package-metadata.js";
-import { checkForUpdate, PIONEER_PACKAGE_NAME, type UpdateCheckResult } from "./update-check.js";
+import {
+  checkForUpdate,
+  PIONEER_PACKAGE_NAME,
+  PIONEER_PACKAGE_REGISTRY,
+  trustedNpmEnvironment,
+  type UpdateCheckResult,
+} from "./update-check.js";
 
 const RELEASE_API_URL = "https://api.github.com/repos/rock3r/pioneer/releases/tags/";
 const MAX_CHANGELOG_BYTES = 1_024 * 1_024;
@@ -79,7 +86,12 @@ async function fetchChangelog(version: string): Promise<string> {
 
 function installWithNpm(args: readonly string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("npm", args, { shell: false, stdio: "inherit" });
+    const child = spawn("npm", args, {
+      cwd: homedir(),
+      env: trustedNpmEnvironment(),
+      shell: false,
+      stdio: "inherit",
+    });
     child.on("error", (error) => reject(new Error(`Could not start npm: ${error.message}`)));
     child.on("close", (code) => {
       if (code === 0) resolve();
@@ -130,5 +142,6 @@ export async function runUpdateCommand(
     "install",
     "--global",
     `${PIONEER_PACKAGE_NAME}@${result.latestVersion}`,
+    `--registry=${PIONEER_PACKAGE_REGISTRY}`,
   ]);
 }

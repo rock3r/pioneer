@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkForUpdate,
   fetchLatestVersionFromNpm,
+  isNewerVersion,
   type UpdateCheckState,
   type UpdateStateStore,
 } from "./update-check.js";
@@ -71,19 +72,21 @@ describe("package update checks", () => {
   });
 
   it("records a failed check time so normal startup does not retry on every invocation", async () => {
-    const cache = store(undefined);
+    const cache = store({ schemaVersion: 1, checkedAt: 1_000, latestVersion: "0.2.0" });
 
     await expect(
       checkForUpdate({
         currentVersion: "0.1.4",
-        now: 12_345,
+        now: 86_401_000,
         store: cache,
         lookup: async () => {
           throw new Error("registry unavailable");
         },
       }),
     ).rejects.toThrow("registry unavailable");
-    expect(cache.writes).toEqual([{ schemaVersion: 1, checkedAt: 12_345 }]);
+    expect(cache.writes).toEqual([
+      { schemaVersion: 1, checkedAt: 86_401_000, latestVersion: "0.2.0" },
+    ]);
   });
 
   it("uses fixed npm argv and rejects malformed registry output", async () => {
@@ -102,6 +105,7 @@ describe("package update checks", () => {
           "@rock3r/pioneer",
           "version",
           "--json",
+          "--registry=https://registry.npmjs.org/",
           "--fetch-retries=0",
           "--fetch-timeout=5000",
         ],
@@ -110,5 +114,9 @@ describe("package update checks", () => {
     await expect(fetchLatestVersionFromNpm(async () => '"not-a-version"')).rejects.toThrow(
       "valid semantic version",
     );
+  });
+
+  it("uses ASCII ordering for prerelease identifiers", () => {
+    expect(isNewerVersion("1.0.0-a", "1.0.0-B")).toBe(true);
   });
 });

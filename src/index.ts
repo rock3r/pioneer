@@ -63,6 +63,8 @@ export {
   fileUpdateStateStore,
   isNewerVersion,
   PIONEER_PACKAGE_NAME,
+  PIONEER_PACKAGE_REGISTRY,
+  trustedNpmEnvironment,
   type UpdateCheckOptions,
   type UpdateCheckResult,
   type UpdateCheckState,

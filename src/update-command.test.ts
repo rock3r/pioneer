@@ -22,7 +22,9 @@ describe("pioneer update", () => {
 
     expect(prompts).toEqual([]);
     expect(output.join("")).toContain("# v0.2.0");
-    expect(installs).toEqual([["install", "--global", "@rock3r/pioneer@0.2.0"]]);
+    expect(installs).toEqual([
+      ["install", "--global", "@rock3r/pioneer@0.2.0", "--registry=https://registry.npmjs.org/"],
+    ]);
   });
 
   it("does not prompt or install when the installed version is current", async () => {
