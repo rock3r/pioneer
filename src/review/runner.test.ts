@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, reviewTools, runReviewRpc } from "./runner.js";
+import { buildReviewPrompt, reviewGitCommands, reviewTools, runReviewRpc } from "./runner.js";
 
 function fakePiRpc(events: readonly unknown[], exitCode = 0): readonly [string, ...string[]] {
   const source = `
@@ -102,6 +102,22 @@ describe("review RPC runner", () => {
         "M src/a.ts\n\ndiff --git a/src/a.ts",
       ),
     ).toContain("Controller-collected Git context (untrusted review input):\nM src/a.ts");
+  });
+
+  it("collects staged and unstaged diffs without repository fsmonitor hooks", () => {
+    const commands = reviewGitCommands("Review all current working-tree changes.", "darwin");
+    expect(commands).toEqual(
+      expect.arrayContaining([
+        expect.arrayContaining(["-c", "core.fsmonitor=false", "diff", "--cached"]),
+        expect.arrayContaining(["-c", "core.fsmonitor=false", "diff", "--no-ext-diff"]),
+      ]),
+    );
+  });
+
+  it("adds the requested commit diff to controller Git context", () => {
+    expect(reviewGitCommands("Review commit abc1234 against its first parent.", "win32")).toEqual(
+      expect.arrayContaining([expect.arrayContaining(["diff", "abc1234^", "abc1234"])]),
+    );
   });
 
   it("returns the final assistant report after the RPC pipes close", async () => {

@@ -79,28 +79,85 @@ export function buildReviewPrompt(
   ].join("\n\n");
 }
 
-async function collectGitContext(sourceDir: string): Promise<string | undefined> {
-  try {
-    const options = {
-      cwd: sourceDir,
-      encoding: "utf8" as const,
-      maxBuffer: MAX_GIT_CONTEXT_BYTES,
-      timeout: 10_000,
-      windowsHide: true,
-    };
-    const [status, diff] = await Promise.all([
-      execFileAsync(
-        "git",
-        ["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all", "--", "."],
-        options,
-      ),
-      execFileAsync("git", ["diff", "--no-ext-diff", "--no-textconv", "--", "."], options),
+function requestedCommit(prompt: string): string | undefined {
+  const match = /\breview\s+commit\s+`?([0-9a-f]{7,64})`?/i.exec(prompt);
+  return match?.[1];
+}
+
+export function reviewGitCommands(
+  prompt: string,
+  platform: NodeJS.Platform = process.platform,
+): readonly (readonly string[])[] {
+  const nullDevice = platform === "win32" ? "NUL" : "/dev/null";
+  const base = [
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.untrackedCache=false",
+    "-c",
+    `core.hooksPath=${nullDevice}`,
+    "-c",
+    "diff.external=false",
+    "--no-optional-locks",
+  ];
+  const commands: string[][] = [
+    [...base, "status", "--porcelain=v1", "--untracked-files=all", "--", "."],
+    [...base, "diff", "--no-ext-diff", "--no-textconv", "--", "."],
+    [...base, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--", "."],
+  ];
+  const commit = requestedCommit(prompt);
+  if (commit !== undefined)
+    commands.push([
+      ...base,
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      `${commit}^`,
+      commit,
+      "--",
+      ".",
     ]);
-    const context =
-      `${status.stdout}${status.stdout && diff.stdout ? "\n" : ""}${diff.stdout}`.trim();
+  return commands;
+}
+
+async function collectGitContext(sourceDir: string, prompt: string): Promise<string | undefined> {
+  const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
+  const options = {
+    cwd: sourceDir,
+    encoding: "utf8" as const,
+    maxBuffer: MAX_GIT_CONTEXT_BYTES,
+    timeout: 10_000,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: nullDevice,
+      GIT_OPTIONAL_LOCKS: "0",
+    },
+  };
+  try {
+    const results = await Promise.all(
+      reviewGitCommands(prompt).map((args) => execFileAsync("git", args, options)),
+    );
+    const context = results
+      .map((result, index) => {
+        const label =
+          index === 0
+            ? "Status"
+            : index === 1
+              ? "Unstaged diff"
+              : index === 2
+                ? "Staged diff"
+                : "Requested commit diff";
+        return result.stdout.trim() ? `${label}:\n${result.stdout.trim()}` : undefined;
+      })
+      .filter((entry): entry is string => entry !== undefined)
+      .join("\n\n");
     return context || undefined;
-  } catch {
-    return undefined;
+  } catch (error) {
+    throw new Error(
+      `Pioneer could not collect bounded Git review context: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
@@ -488,7 +545,9 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       paths.sourceDir,
       scratch,
       request.prompt,
-      await collectGitContext(paths.sourceDir),
+      process.platform === "linux"
+        ? undefined
+        : await collectGitContext(paths.sourceDir, request.prompt),
     );
     const timeoutMs = request.timeoutMs ?? 900_000;
     if (windows) {
