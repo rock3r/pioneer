@@ -80,8 +80,27 @@ export function buildReviewPrompt(
 }
 
 function requestedCommit(prompt: string): string | undefined {
-  const match = /\breview\s+commit\s+`?([0-9a-f]{7,64})`?/i.exec(prompt);
+  const match = /\b([0-9a-f]{7,64})\b/i.exec(prompt);
   return match?.[1];
+}
+
+function trustedGitExecutable(): string {
+  if (process.platform === "win32") {
+    const root = process.env.ProgramFiles;
+    if (root === undefined || !path.win32.isAbsolute(root))
+      throw new Error(
+        "Pioneer requires Git for Windows read-only reviews, but ProgramFiles is unavailable",
+      );
+    const candidate = path.win32.join(root, "Git", "cmd", "git.exe");
+    if (!existsSync(candidate))
+      throw new Error(
+        "Pioneer requires Git for Windows read-only reviews, but the trusted Git executable is unavailable",
+      );
+    return candidate;
+  }
+  const candidate = "/usr/bin/git";
+  if (!existsSync(candidate)) throw new Error("Pioneer requires the system Git executable");
+  return candidate;
 }
 
 export function reviewGitCommands(
@@ -137,7 +156,7 @@ async function collectGitContext(sourceDir: string, prompt: string): Promise<str
   };
   try {
     const results = await Promise.all(
-      reviewGitCommands(prompt).map((args) => execFileAsync("git", args, options)),
+      reviewGitCommands(prompt).map((args) => execFileAsync(trustedGitExecutable(), args, options)),
     );
     const context = results
       .map((result, index) => {

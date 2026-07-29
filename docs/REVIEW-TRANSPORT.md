@@ -27,7 +27,7 @@ The CLI prints only the report to stdout. Errors and the Windows warning go to s
 
 ## Target semantics
 
-`--source` grants a directory to Pi and sets it as the working directory. Pioneer does not currently collect a Git diff, resolve a base ref, or impose staged/unstaged semantics. Put the intended scope in the prompt, for example:
+`--source` grants a directory to Pi and sets it as the working directory. Linux Pi can inspect Git directly inside its PID namespace. On macOS and opt-in Windows, Pioneer’s controller supplies bounded source-scoped Git status plus staged and unstaged diffs. A hexadecimal commit ID in the prompt also adds that commit’s first-parent diff. Put the intended scope in the prompt, for example:
 
 - “Review all current working-tree changes.”
 - “Review commit `abc123` against its first parent.”

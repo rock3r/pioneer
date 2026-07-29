@@ -115,7 +115,7 @@ describe("review RPC runner", () => {
   });
 
   it("adds the requested commit diff to controller Git context", () => {
-    expect(reviewGitCommands("Review commit abc1234 against its first parent.", "win32")).toEqual(
+    expect(reviewGitCommands("Please review abc1234.", "win32")).toEqual(
       expect.arrayContaining([expect.arrayContaining(["diff", "abc1234^", "abc1234"])]),
     );
   });
