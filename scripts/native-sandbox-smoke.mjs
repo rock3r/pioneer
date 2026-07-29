@@ -106,12 +106,16 @@ try {
   if (process.platform === "darwin") {
     const forkActor = `
 const { spawn } = require("node:child_process");
-try {
-  spawn("/usr/bin/true");
-  process.exitCode = 2;
-} catch (error) {
+const finish = (error) => {
   process.stdout.write(error && error.code === "EPERM" ? "fork-denied" : String(error));
   process.exitCode = error && error.code === "EPERM" ? 0 : 1;
+};
+try {
+  const child = spawn("/usr/bin/true");
+  child.once("error", finish);
+  child.once("spawn", () => { process.exitCode = 2; });
+} catch (error) {
+  finish(error);
 }
 `;
     const noForkLaunch = buildMacosSandboxArgv({ ...policy, allowProcessFork: false }, [
