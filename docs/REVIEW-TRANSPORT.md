@@ -67,7 +67,7 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 - `PI_OFFLINE=1`;
 - `PI_TELEMETRY=0`.
 
-Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion depends only on Pi's built-in RPC mode and built-in inspection tools. `write` and `edit` are excluded. macOS reviews use only `read` and their Seatbelt policy denies process creation, so an untrusted inspection request cannot detach a descendant from the controller-owned process tree. Linux reviews retain `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
+Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion depends only on Pi's built-in RPC mode and built-in inspection tools. `write` and `edit` are excluded. macOS and opt-in Windows reviews use only `read`, so untrusted inspection input cannot request a child process; macOS also denies process creation in Seatbelt. Linux reviews retain `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
 
 ## RPC framing and completion
 

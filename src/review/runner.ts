@@ -55,6 +55,10 @@ const WINDOWS_WARNING =
   "Windows review execution is unsandboxed. Read-only behavior and path restrictions are instructions, not operating-system security boundaries.";
 const PIPE_CLOSE_GRACE_MS = 1_000;
 
+export function reviewTools(platform: NodeJS.Platform = process.platform): readonly string[] {
+  return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read"];
+}
+
 function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
   const present = warnings.filter((warning): warning is string => warning !== undefined);
   return present.length === 0 ? undefined : present.join("\n");
@@ -421,7 +425,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     if (thinking !== undefined) command.push("--thinking", thinking);
     const optimized = optimizePiStartupCommand(command, {
       disableExtensions: true,
-      tools: process.platform === "darwin" ? ["read"] : ["read", "bash", "grep", "find", "ls"],
+      tools: reviewTools(),
     });
     const environment = {
       ...optimized.environment,

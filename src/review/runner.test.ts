@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runReviewRpc } from "./runner.js";
+import { reviewTools, runReviewRpc } from "./runner.js";
 
 function fakePiRpc(events: readonly unknown[], exitCode = 0): readonly [string, ...string[]] {
   const source = `
@@ -87,6 +87,12 @@ process.stdin.once("data", () => {
 }
 
 describe("review RPC runner", () => {
+  it("limits macOS and Windows reviews to the built-in read tool", () => {
+    expect(reviewTools("darwin")).toEqual(["read"]);
+    expect(reviewTools("win32")).toEqual(["read"]);
+    expect(reviewTools("linux")).toEqual(["read", "bash", "grep", "find", "ls"]);
+  });
+
   it("returns the final assistant report after the RPC pipes close", async () => {
     await expect(
       runReviewRpc(
