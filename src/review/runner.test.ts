@@ -112,6 +112,8 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review the implementation against the design document.")).toBe(
       false,
     );
+    expect(requiresGitInspection("Review locking against main thread starvation.")).toBe(false);
+    expect(requiresGitInspection("Compare these approaches...carefully.")).toBe(false);
   });
 
   it("returns the final assistant report after the RPC pipes close", async () => {
