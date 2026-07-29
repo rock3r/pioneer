@@ -67,7 +67,7 @@ Dependencies flow from adapters and orchestration toward validation and transpor
 7. Start an authenticated loopback proxy when networking is enabled.
 8. Compile the native sandbox policy and start Pi without a shell, using a narrow actor environment on every platform.
 9. Send one JSONL prompt request and collect bounded RPC events until `agent_settled`, failure, or timeout.
-10. Wait for the child process and its stdio pipes to close, then succeed only with exit code zero and a non-empty final report.
+10. Wait for the child process and its stdio pipes to close on every terminal path, including timeout and protocol failure. Only then report completion; success additionally requires exit code zero and a non-empty final report.
 11. Optionally persist Pi's verified final Markdown report through a controller-owned atomic write, return it, and remove the proxy, bridge, Pi snapshot, and scratch directory in `finally` cleanup. Persistence errors preserve the report but make the CLI fail nonzero.
 
 See [REVIEW-TRANSPORT.md](REVIEW-TRANSPORT.md) for the RPC contract and [SECURITY.md](SECURITY.md) for the trust boundaries.

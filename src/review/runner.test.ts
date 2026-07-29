@@ -13,6 +13,22 @@ process.stdin.once("data", () => {
   return [process.execPath, "-e", source];
 }
 
+function neverSettlingPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    "process.stdin.once('data', () => setInterval(() => {}, 1_000));",
+  ];
+}
+
+function rejectedPromptPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    "process.stdin.once('data', () => process.stdout.write(JSON.stringify({ type: 'response', success: false, error: 'provider rejected' }) + '\\n'));",
+  ];
+}
+
 describe("review RPC runner", () => {
   it("returns the final assistant report after the RPC pipes close", async () => {
     await expect(
@@ -69,5 +85,19 @@ describe("review RPC runner", () => {
     await expect(
       runReviewRpc(fakePiRpc([], 2), process.cwd(), process.env, "Review the source", 1_000),
     ).rejects.toThrow("[REVIEW_RPC_INCOMPLETE]");
+  });
+
+  it("waits for the timed-out Pi child to close before reporting its final termination state", async () => {
+    await expect(
+      runReviewRpc(neverSettlingPi(), process.cwd(), process.env, "Review the source", 10),
+    ).rejects.toThrow(/\[REVIEW_TIMEOUT\].*exit .*signal SIGKILL/s);
+  });
+
+  it("includes the final child termination state for a rejected prompt", async () => {
+    await expect(
+      runReviewRpc(rejectedPromptPi(), process.cwd(), process.env, "Review the source", 1_000),
+    ).rejects.toThrow(
+      /Pi RPC rejected the review prompt: provider rejected .*exit .*signal SIGKILL/s,
+    );
   });
 });
