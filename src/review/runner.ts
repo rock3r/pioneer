@@ -125,6 +125,19 @@ export function reviewGitEnvironment(
   };
 }
 
+function pathIsContained(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+export function gitRepositoryIsContained(
+  sourceDir: string,
+  worktreeDir: string,
+  gitDir: string,
+): boolean {
+  return worktreeDir === sourceDir && pathIsContained(sourceDir, gitDir);
+}
+
 export function reviewGitCommands(
   prompt: string,
   platform: NodeJS.Platform = process.platform,
@@ -174,6 +187,15 @@ async function collectGitContext(sourceDir: string, prompt: string): Promise<str
     const executable = trustedGitExecutable();
     const probe = await execFileAsync(executable, ["rev-parse", "--is-inside-work-tree"], options);
     if (probe.stdout.trim() !== "true") return undefined;
+    const [worktree, gitDir] = await Promise.all([
+      execFileAsync(executable, ["rev-parse", "--show-toplevel"], options),
+      execFileAsync(executable, ["rev-parse", "--absolute-git-dir"], options),
+    ]);
+    const [canonicalWorktree, canonicalGitDir] = await Promise.all([
+      realpath(worktree.stdout.trim()),
+      realpath(gitDir.stdout.trim()),
+    ]);
+    if (!gitRepositoryIsContained(sourceDir, canonicalWorktree, canonicalGitDir)) return undefined;
     const results = await Promise.all(
       reviewGitCommands(prompt).map((args) => execFileAsync(executable, args, options)),
     );

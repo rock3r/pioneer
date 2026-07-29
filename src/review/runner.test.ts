@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildReviewPrompt,
+  gitRepositoryIsContained,
   reviewGitCommands,
   reviewGitEnvironment,
   reviewTools,
@@ -135,6 +136,12 @@ describe("review RPC runner", () => {
       reviewGitEnvironment({ PATH: "/usr/bin", GIT_DIR: "/other/.git", GIT_WORK_TREE: "/other" }),
     ).toMatchObject({ PATH: "/usr/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0" });
     expect(reviewGitEnvironment({ GIT_DIR: "/other/.git" }).GIT_DIR).toBeUndefined();
+  });
+
+  it("only collects Git context when the worktree and Git directory stay inside the source grant", () => {
+    expect(gitRepositoryIsContained("/source", "/source", "/source/.git")).toBe(true);
+    expect(gitRepositoryIsContained("/source", "/source/subdir", "/source/.git")).toBe(false);
+    expect(gitRepositoryIsContained("/source", "/source", "/private/repository/.git")).toBe(false);
   });
 
   it("returns the final assistant report after the RPC pipes close", async () => {
