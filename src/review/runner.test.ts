@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, reviewTools, runReviewRpc } from "./runner.js";
+import { buildReviewPrompt, requiresGitInspection, reviewTools, runReviewRpc } from "./runner.js";
 
 function fakePiRpc(events: readonly unknown[], exitCode = 0): readonly [string, ...string[]] {
   const source = `
@@ -95,6 +95,13 @@ describe("review RPC runner", () => {
 
   it("does not inject controller-collected repository data into read-only reviews", () => {
     expect(buildReviewPrompt("/repo", "/scratch", "Review changes")).not.toContain("Git context");
+  });
+
+  it("recognizes Git-target requests that macOS and Windows cannot inspect", () => {
+    expect(requiresGitInspection("Review only the staged changes.")).toBe(true);
+    expect(requiresGitInspection("Inspect commit abc1234.")).toBe(true);
+    expect(requiresGitInspection("Compare this branch with origin/main.")).toBe(true);
+    expect(requiresGitInspection("Review the source for correctness.")).toBe(false);
   });
 
   it("returns the final assistant report after the RPC pipes close", async () => {

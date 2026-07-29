@@ -16,7 +16,7 @@ The Codex and Claude plugins translate the request into the same `pioneer review
 
 Pioneer grants a source directory. On Linux, Pi can inspect the requested Git state directly inside
 the native sandbox. macOS and opt-in Windows provide read-only source inspection without
-controller-side Git execution. Make the desired scope explicit:
+controller-side Git execution, so explicit Git-target requests fail closed there. Make the desired scope explicit:
 
 ### Working tree
 

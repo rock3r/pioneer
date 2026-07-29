@@ -59,6 +59,10 @@ export function reviewTools(platform: NodeJS.Platform = process.platform): reado
   return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read"];
 }
 
+export function requiresGitInspection(prompt: string): boolean {
+  return /\b(?:staged|unstaged|working[-\s]tree|commit|branch|merge base|diff)\b/i.test(prompt);
+}
+
 export function buildReviewPrompt(
   sourceDir: string,
   scratchDir: string,
@@ -413,6 +417,10 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   const windows = process.platform === "win32";
   if (windows && request.allowUnsandboxedWindows !== true)
     throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
+  if (process.platform !== "linux" && requiresGitInspection(request.prompt))
+    throw new Error(
+      "Git-target reviews require Linux, where Pioneer can inspect Git inside Bubblewrap. macOS and Windows support source-only reviews.",
+    );
   const piHomeSource = request.piHomeSource ?? defaultPiAgentDir();
   const readiness = await assertPiReady({
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },

@@ -127,7 +127,7 @@ Read [AGENTS.md](AGENTS.md) before changing production code. The smoke test is a
 ## Current boundaries
 
 - Reviews are synchronous and return free-form Markdown.
-- Linux reviews can inspect Git inside Bubblewrap. macOS and opt-in Windows provide read-only source inspection without controller-side Git execution.
+- Linux reviews can inspect Git inside Bubblewrap. macOS and opt-in Windows provide read-only source inspection without controller-side Git execution, and fail closed for explicit Git-target requests.
 - Windows cannot enforce source immutability and requires `--allow-unsandboxed-windows` after explicit user approval.
 - The eval harness prepares and isolates baseline and with-skill actors; automated grading remains separate work.
 
