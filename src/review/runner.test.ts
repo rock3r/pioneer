@@ -100,9 +100,11 @@ describe("review RPC runner", () => {
   it("recognizes Git-target requests that macOS and Windows cannot inspect", () => {
     expect(requiresGitInspection("Review only the staged changes.")).toBe(true);
     expect(requiresGitInspection("Inspect commit abc1234.")).toBe(true);
+    expect(requiresGitInspection("Review commit `abc123` against its first parent.")).toBe(true);
     expect(requiresGitInspection("Compare this branch with origin/main.")).toBe(true);
     expect(requiresGitInspection("Review the source for correctness.")).toBe(false);
     expect(requiresGitInspection("Review the diff parser's branch selection.")).toBe(false);
+    expect(requiresGitInspection("Review commit message handling.")).toBe(false);
   });
 
   it("returns the final assistant report after the RPC pipes close", async () => {
