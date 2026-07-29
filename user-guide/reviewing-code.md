@@ -14,10 +14,9 @@ The Codex and Claude plugins translate the request into the same `pioneer review
 
 ## Describe the review target
 
-Pioneer grants a source directory. On Linux, Pi inspects the requested Git state directly inside
-the native sandbox. On macOS and opt-in Windows, Pioneer supplies bounded staged and unstaged Git
-context only when the source is the repository root and its Git directory remains inside that source
-grant. Make the desired scope explicit:
+Pioneer grants a source directory. On Linux, Pi can inspect the requested Git state directly inside
+the native sandbox. macOS and opt-in Windows provide read-only source inspection without
+controller-side Git execution. Make the desired scope explicit:
 
 ### Working tree
 

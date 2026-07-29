@@ -27,7 +27,7 @@ The CLI prints only the report to stdout. Errors and the Windows warning go to s
 
 ## Target semantics
 
-`--source` grants a directory to Pi and sets it as the working directory. Linux Pi can inspect Git directly inside its PID namespace. On macOS and opt-in Windows, Pioneer’s controller supplies bounded source-scoped Git status plus staged and unstaged diffs. A hexadecimal commit ID in the prompt also adds that commit’s first-parent diff. Put the intended scope in the prompt, for example:
+`--source` grants a directory to Pi and sets it as the working directory. Linux Pi can inspect Git directly inside its PID namespace. macOS and opt-in Windows provide read-only source inspection without controller-side Git execution. Put the intended scope in the prompt, for example:
 
 - “Review all current working-tree changes.”
 - “Review commit `abc123` against its first parent.”
@@ -67,7 +67,7 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 - `PI_OFFLINE=1`;
 - `PI_TELEMETRY=0`.
 
-Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion depends only on Pi's built-in RPC mode and built-in inspection tools. `write` and `edit` are excluded. macOS and opt-in Windows reviews use only `read`, so untrusted inspection input cannot request a child process; macOS also denies process creation in Seatbelt. Pioneer collects bounded, source-scoped working-tree Git status and diff data in its controller and supplies it as untrusted review context on those platforms. Linux reviews retain `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
+Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion depends only on Pi's built-in RPC mode and built-in inspection tools. `write` and `edit` are excluded. macOS and opt-in Windows reviews use only `read`, so untrusted inspection input cannot request a child process; macOS also denies process creation in Seatbelt. Pioneer does not execute Git in its controller on those platforms. Linux reviews retain `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
 
 ## RPC framing and completion
 

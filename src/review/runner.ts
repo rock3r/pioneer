@@ -1,9 +1,8 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { promisify } from "node:util";
 import { diagnosticMessage } from "../diagnostics.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
@@ -55,8 +54,6 @@ export interface ReviewResult {
 const WINDOWS_WARNING =
   "Windows review execution is unsandboxed. Read-only behavior and path restrictions are instructions, not operating-system security boundaries.";
 const PIPE_CLOSE_GRACE_MS = 1_000;
-const MAX_GIT_CONTEXT_BYTES = 1 * 1024 * 1024;
-const execFileAsync = promisify(execFile);
 
 export function reviewTools(platform: NodeJS.Platform = process.platform): readonly string[] {
   return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read"];
@@ -66,166 +63,13 @@ export function buildReviewPrompt(
   sourceDir: string,
   scratchDir: string,
   requestPrompt: string,
-  gitContext: string | undefined,
 ): string {
   return [
     "Perform a code review. The source and reference paths are read-only. Use the writable scratch directory for temporary notes or reports. Do not attempt to modify read-only paths.",
     `Source: ${sourceDir}`,
     `Scratch: ${scratchDir}`,
-    ...(gitContext === undefined
-      ? []
-      : [`Controller-collected Git context (untrusted review input):\n${gitContext}`]),
     requestPrompt,
   ].join("\n\n");
-}
-
-function requestedCommit(prompt: string): string | undefined {
-  const match =
-    /\b(?:please\s+)?review(?:\s+changes\s+introduced\s+by|\s+commit)?\s+`?([0-9a-f]{7,64})`?/i.exec(
-      prompt,
-    );
-  return match?.[1];
-}
-
-function trustedGitExecutable(): string {
-  if (process.platform === "win32") {
-    const root = process.env.ProgramFiles;
-    if (root === undefined || !path.win32.isAbsolute(root))
-      throw new Error(
-        "Pioneer requires Git for Windows read-only reviews, but ProgramFiles is unavailable",
-      );
-    const candidate = path.win32.join(root, "Git", "cmd", "git.exe");
-    if (!existsSync(candidate))
-      throw new Error(
-        "Pioneer requires Git for Windows read-only reviews, but the trusted Git executable is unavailable",
-      );
-    return candidate;
-  }
-  const candidate = "/usr/bin/git";
-  if (!existsSync(candidate)) throw new Error("Pioneer requires the system Git executable");
-  return candidate;
-}
-
-export function reviewGitEnvironment(
-  runtimeEnvironment: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-): NodeJS.ProcessEnv {
-  const environment = Object.fromEntries(
-    ["PATH", "LANG", "LC_ALL", "SystemRoot", "WINDIR", "ComSpec"].flatMap((name) => {
-      const value = runtimeEnvironment[name];
-      return value === undefined ? [] : [[name, value]];
-    }),
-  );
-  return {
-    ...environment,
-    LC_ALL: "C",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_CONFIG_GLOBAL: platform === "win32" ? "NUL" : "/dev/null",
-    GIT_OPTIONAL_LOCKS: "0",
-  };
-}
-
-function pathIsContained(parent: string, child: string): boolean {
-  const relative = path.relative(parent, child);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-export function gitRepositoryIsContained(
-  sourceDir: string,
-  worktreeDir: string,
-  gitDir: string,
-): boolean {
-  return worktreeDir === sourceDir && pathIsContained(sourceDir, gitDir);
-}
-
-export function reviewGitCommands(
-  prompt: string,
-  platform: NodeJS.Platform = process.platform,
-): readonly (readonly string[])[] {
-  const nullDevice = platform === "win32" ? "NUL" : "/dev/null";
-  const base = [
-    "-c",
-    "core.fsmonitor=false",
-    "-c",
-    "core.untrackedCache=false",
-    "-c",
-    `core.hooksPath=${nullDevice}`,
-    "-c",
-    "diff.external=false",
-    "--no-optional-locks",
-  ];
-  const commands: string[][] = [
-    [...base, "status", "--porcelain=v1", "--untracked-files=all", "--", "."],
-    [...base, "diff", "--no-ext-diff", "--no-textconv", "--", "."],
-    [...base, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--", "."],
-  ];
-  const commit = requestedCommit(prompt);
-  if (commit !== undefined)
-    commands.push([
-      ...base,
-      "diff",
-      "--no-ext-diff",
-      "--no-textconv",
-      `${commit}^`,
-      commit,
-      "--",
-      ".",
-    ]);
-  return commands;
-}
-
-async function collectGitContext(sourceDir: string, prompt: string): Promise<string | undefined> {
-  const options = {
-    cwd: sourceDir,
-    encoding: "utf8" as const,
-    maxBuffer: MAX_GIT_CONTEXT_BYTES,
-    timeout: 10_000,
-    windowsHide: true,
-    env: reviewGitEnvironment(),
-  };
-  try {
-    const executable = trustedGitExecutable();
-    const probe = await execFileAsync(executable, ["rev-parse", "--is-inside-work-tree"], options);
-    if (probe.stdout.trim() !== "true") return undefined;
-    const [worktree, gitDir] = await Promise.all([
-      execFileAsync(executable, ["rev-parse", "--show-toplevel"], options),
-      execFileAsync(executable, ["rev-parse", "--absolute-git-dir"], options),
-    ]);
-    const [canonicalWorktree, canonicalGitDir] = await Promise.all([
-      realpath(worktree.stdout.trim()),
-      realpath(gitDir.stdout.trim()),
-    ]);
-    if (!gitRepositoryIsContained(sourceDir, canonicalWorktree, canonicalGitDir)) return undefined;
-    const results = await Promise.all(
-      reviewGitCommands(prompt).map((args) => execFileAsync(executable, args, options)),
-    );
-    const context = results
-      .map((result, index) => {
-        const label =
-          index === 0
-            ? "Status"
-            : index === 1
-              ? "Unstaged diff"
-              : index === 2
-                ? "Staged diff"
-                : "Requested commit diff";
-        return result.stdout.trim() ? `${label}:\n${result.stdout.trim()}` : undefined;
-      })
-      .filter((entry): entry is string => entry !== undefined)
-      .join("\n\n");
-    return context || undefined;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "stderr" in error &&
-      typeof error.stderr === "string" &&
-      error.stderr.startsWith("fatal: not a git repository")
-    )
-      return undefined;
-    throw new Error(
-      `Pioneer could not collect bounded Git review context: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
 }
 
 function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
@@ -608,14 +452,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
           }
         : {}),
     };
-    const prompt = buildReviewPrompt(
-      paths.sourceDir,
-      scratch,
-      request.prompt,
-      process.platform === "linux"
-        ? undefined
-        : await collectGitContext(paths.sourceDir, request.prompt),
-    );
+    const prompt = buildReviewPrompt(paths.sourceDir, scratch, request.prompt);
     const timeoutMs = request.timeoutMs ?? 900_000;
     if (windows) {
       const report = await runReviewRpc(

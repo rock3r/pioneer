@@ -1,12 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildReviewPrompt,
-  gitRepositoryIsContained,
-  reviewGitCommands,
-  reviewGitEnvironment,
-  reviewTools,
-  runReviewRpc,
-} from "./runner.js";
+import { buildReviewPrompt, reviewTools, runReviewRpc } from "./runner.js";
 
 function fakePiRpc(events: readonly unknown[], exitCode = 0): readonly [string, ...string[]] {
   const source = `
@@ -100,48 +93,8 @@ describe("review RPC runner", () => {
     expect(reviewTools("linux")).toEqual(["read", "bash", "grep", "find", "ls"]);
   });
 
-  it("supplies controller-collected Git context to read-only reviews", () => {
-    expect(
-      buildReviewPrompt(
-        "/repo",
-        "/scratch",
-        "Review changes",
-        "M src/a.ts\n\ndiff --git a/src/a.ts",
-      ),
-    ).toContain("Controller-collected Git context (untrusted review input):\nM src/a.ts");
-  });
-
-  it("collects staged and unstaged diffs without repository fsmonitor hooks", () => {
-    const commands = reviewGitCommands("Review all current working-tree changes.", "darwin");
-    expect(commands).toEqual(
-      expect.arrayContaining([
-        expect.arrayContaining(["-c", "core.fsmonitor=false", "diff", "--cached"]),
-        expect.arrayContaining(["-c", "core.fsmonitor=false", "diff", "--no-ext-diff"]),
-      ]),
-    );
-  });
-
-  it("adds the requested commit diff to controller Git context", () => {
-    expect(reviewGitCommands("Please review abc1234.", "win32")).toEqual(
-      expect.arrayContaining([expect.arrayContaining(["diff", "abc1234^", "abc1234"])]),
-    );
-  });
-
-  it("does not treat incidental hexadecimal text as a commit target", () => {
-    expect(reviewGitCommands("Discuss deadbeef in the review summary.", "darwin")).toHaveLength(3);
-  });
-
-  it("does not inherit caller-selected Git repositories", () => {
-    expect(
-      reviewGitEnvironment({ PATH: "/usr/bin", GIT_DIR: "/other/.git", GIT_WORK_TREE: "/other" }),
-    ).toMatchObject({ PATH: "/usr/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0" });
-    expect(reviewGitEnvironment({ GIT_DIR: "/other/.git" }).GIT_DIR).toBeUndefined();
-  });
-
-  it("only collects Git context when the worktree and Git directory stay inside the source grant", () => {
-    expect(gitRepositoryIsContained("/source", "/source", "/source/.git")).toBe(true);
-    expect(gitRepositoryIsContained("/source", "/source/subdir", "/source/.git")).toBe(false);
-    expect(gitRepositoryIsContained("/source", "/source", "/private/repository/.git")).toBe(false);
+  it("does not inject controller-collected repository data into read-only reviews", () => {
+    expect(buildReviewPrompt("/repo", "/scratch", "Review changes")).not.toContain("Git context");
   });
 
   it("returns the final assistant report after the RPC pipes close", async () => {
