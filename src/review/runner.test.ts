@@ -107,6 +107,8 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review changes against main.")).toBe(true);
     expect(requiresGitInspection("Compare main...feature.")).toBe(true);
     expect(requiresGitInspection("Compare feature...main.")).toBe(true);
+    expect(requiresGitInspection("Review main..feature.")).toBe(true);
+    expect(requiresGitInspection("Compare origin/main..HEAD.")).toBe(true);
     expect(requiresGitInspection("Review the source for correctness.")).toBe(false);
     expect(requiresGitInspection("Review the diff parser's branch selection.")).toBe(false);
     expect(requiresGitInspection("Review commit message handling.")).toBe(false);
