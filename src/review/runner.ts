@@ -141,6 +141,14 @@ function assistantText(value: unknown): string | undefined {
   return text || undefined;
 }
 
+function processOutcomeContext(
+  exitCode: number | null,
+  signal: NodeJS.Signals | null,
+  stderr: string,
+): string {
+  return `exit ${exitCode ?? "unknown"}; signal ${signal ?? "none"}; stderr: ${stderr.trim() || "none"}`;
+}
+
 export async function runReviewRpc(
   argv: readonly [string, ...string[]],
   cwd: string,
@@ -161,14 +169,22 @@ export async function runReviewRpc(
     let finalReport: string | undefined;
     let settled = false;
     let completed = false;
+    let terminalFailure: Error | undefined;
+    let timedOut = false;
+    let timer: NodeJS.Timeout | undefined;
     const eventTypes = new Set<string>();
     const diagnostics: string[] = [];
     const finish = (error?: Error): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       if (error) reject(error);
       else resolve(report.trim());
+    };
+    const terminate = (error: Error): void => {
+      if (terminalFailure !== undefined || timedOut) return;
+      terminalFailure = error;
+      child.kill("SIGKILL");
     };
     const consume = (): void => {
       for (;;) {
@@ -181,20 +197,18 @@ export async function runReviewRpc(
         try {
           event = JSON.parse(line);
         } catch {
-          finish(new Error("Pi RPC returned malformed JSONL"));
-          child.kill("SIGKILL");
+          terminate(new Error("Pi RPC returned malformed JSONL"));
           return;
         }
         if (typeof event !== "object" || event === null) continue;
         const record = event as Record<string, unknown>;
         if (typeof record.type === "string") eventTypes.add(record.type);
         if (record.type === "response" && record.success === false) {
-          finish(
+          terminate(
             new Error(
               `Pi RPC rejected the review prompt: ${String(record.error ?? "unknown error")}`,
             ),
           );
-          child.kill("SIGKILL");
           return;
         }
         if (record.type === "message_update") {
@@ -239,18 +253,37 @@ export async function runReviewRpc(
       }
     };
     child.stdout.on("data", (chunk: Buffer) => {
+      if (terminalFailure !== undefined || timedOut) return;
       stdout += chunk.toString("utf8");
       if (stdout.length > 4 * 1024 * 1024) {
-        finish(new Error("Pi RPC output exceeded 4 MiB"));
-        child.kill("SIGKILL");
+        terminate(new Error("Pi RPC output exceeded 4 MiB"));
       } else consume();
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
     });
-    child.once("error", (error) => finish(error));
+    child.once("error", (error) => {
+      terminalFailure ??= error;
+    });
     child.once("close", (code, signal) => {
       if (settled) return;
+      if (timedOut) {
+        finish(
+          new Error(
+            diagnosticMessage(
+              "REVIEW_TIMEOUT",
+              `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr)})`,
+            ),
+          ),
+        );
+        return;
+      }
+      if (terminalFailure !== undefined) {
+        finish(
+          new Error(`${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`),
+        );
+        return;
+      }
       try {
         report = completeReviewRpc({
           completed,
@@ -267,9 +300,9 @@ export async function runReviewRpc(
       }
     });
     child.stdin.write(`${JSON.stringify({ id: "review", type: "prompt", message: prompt })}\n`);
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
+      timedOut = true;
       child.kill("SIGKILL");
-      finish(new Error(`Pi review timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
 }
