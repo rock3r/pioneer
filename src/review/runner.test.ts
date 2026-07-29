@@ -29,6 +29,63 @@ function rejectedPromptPi(): readonly [string, ...string[]] {
   ];
 }
 
+function pipeHoldingDescendantPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+const { spawn } = require("node:child_process");
+process.stdin.once("data", () => {
+  spawn(process.execPath, ["-e", "setInterval(() => {}, 1_000)"], { stdio: "inherit" });
+  process.stdout.write(JSON.stringify({ type: "started" }) + "\\n");
+  setInterval(() => {}, 1_000);
+});
+`,
+  ];
+}
+
+function earlyExitPipeHoldingDescendantPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+const { spawn } = require("node:child_process");
+process.stdin.once("data", () => {
+  const descendant = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 1_500)"], {
+    detached: true,
+    stdio: "inherit",
+  });
+  descendant.unref();
+  process.stdout.write(JSON.stringify({ type: "started" }) + "\\n");
+  setTimeout(() => process.exit(0), 20);
+});
+`,
+  ];
+}
+
+function settledPipeHoldingDescendantPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+const { spawn } = require("node:child_process");
+process.stdin.once("data", () => {
+  const descendant = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 1_500)"], {
+    detached: true,
+    stdio: "inherit",
+  });
+  descendant.unref();
+  process.stdout.write(JSON.stringify({
+    type: "message_end",
+    message: { role: "assistant", content: "No findings." },
+  }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n");
+  setTimeout(() => process.exit(0), 20);
+});
+`,
+  ];
+}
+
 describe("review RPC runner", () => {
   it("returns the final assistant report after the RPC pipes close", async () => {
     await expect(
@@ -90,14 +147,79 @@ describe("review RPC runner", () => {
   it("waits for the timed-out Pi child to close before reporting its final termination state", async () => {
     await expect(
       runReviewRpc(neverSettlingPi(), process.cwd(), process.env, "Review the source", 10),
-    ).rejects.toThrow(/\[REVIEW_TIMEOUT\].*exit .*signal SIGKILL/s);
+    ).rejects.toThrow(/\[REVIEW_TIMEOUT\].*exit .*signal (?:SIGKILL|none)/s);
   });
 
   it("includes the final child termination state for a rejected prompt", async () => {
     await expect(
       runReviewRpc(rejectedPromptPi(), process.cwd(), process.env, "Review the source", 1_000),
     ).rejects.toThrow(
-      /Pi RPC rejected the review prompt: provider rejected .*exit .*signal SIGKILL/s,
+      /Pi RPC rejected the review prompt: provider rejected .*exit .*signal (?:SIGKILL|none)/s,
     );
   });
+
+  it("terminates the isolated child tree when Pioneer receives SIGINT", async () => {
+    const review = runReviewRpc(
+      neverSettlingPi(),
+      process.cwd(),
+      process.env,
+      "Review the source",
+      1_000,
+    );
+    setTimeout(() => process.emit("SIGINT"), 10);
+    await expect(review).rejects.toThrow("Pi review interrupted by SIGINT");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "kills a pipe-holding descendant instead of waiting for it after timeout",
+    async () => {
+      const started = performance.now();
+      await expect(
+        runReviewRpc(
+          pipeHoldingDescendantPi(),
+          process.cwd(),
+          process.env,
+          "Review the source",
+          100,
+        ),
+      ).rejects.toThrow("[REVIEW_TIMEOUT]");
+      expect(performance.now() - started).toBeLessThan(500);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "bounds an escaped descendant after the direct child exits before timeout",
+    async () => {
+      const started = performance.now();
+      await expect(
+        runReviewRpc(
+          earlyExitPipeHoldingDescendantPi(),
+          process.cwd(),
+          process.env,
+          "Review the source",
+          100,
+        ),
+      ).rejects.toThrow("[REVIEW_RPC_INCOMPLETE]");
+      expect(performance.now() - started).toBeLessThan(1_400);
+    },
+    3_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "returns a settled report when an escaped descendant retains an output pipe",
+    async () => {
+      const started = performance.now();
+      const review = runReviewRpc(
+        settledPipeHoldingDescendantPi(),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        500,
+      );
+      setTimeout(() => process.emit("SIGINT"), 250);
+      await expect(review).resolves.toBe("No findings.");
+      expect(performance.now() - started).toBeLessThan(1_400);
+    },
+    5_000,
+  );
 });

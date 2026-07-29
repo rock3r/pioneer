@@ -53,6 +53,7 @@ export interface ReviewResult {
 
 const WINDOWS_WARNING =
   "Windows review execution is unsandboxed. Read-only behavior and path restrictions are instructions, not operating-system security boundaries.";
+const PIPE_CLOSE_GRACE_MS = 1_000;
 
 function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
   const present = warnings.filter((warning): warning is string => warning !== undefined);
@@ -149,6 +150,41 @@ function processOutcomeContext(
   return `exit ${exitCode ?? "unknown"}; signal ${signal ?? "none"}; stderr: ${stderr.trim() || "none"}`;
 }
 
+function terminateProcessTree(child: ReturnType<typeof spawn>): void {
+  if (process.platform === "win32" && child.pid !== undefined) {
+    const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+    if (systemRoot === undefined || !path.win32.isAbsolute(systemRoot)) {
+      child.kill("SIGKILL");
+      return;
+    }
+    const taskkill = path.win32.join(systemRoot, "System32", "taskkill.exe");
+    let fallbackUsed = false;
+    const fallback = (): void => {
+      if (fallbackUsed) return;
+      fallbackUsed = true;
+      child.kill("SIGKILL");
+    };
+    const killer = spawn(taskkill, ["/pid", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.once("error", fallback);
+    killer.once("exit", (code) => {
+      if (code !== 0) fallback();
+    });
+    return;
+  }
+  if (process.platform !== "win32" && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch {
+      // The child may have already exited; the direct signal below is still safe.
+    }
+  }
+  child.kill("SIGKILL");
+}
+
 export async function runReviewRpc(
   argv: readonly [string, ...string[]],
   cwd: string,
@@ -162,6 +198,7 @@ export async function runReviewRpc(
       env: environment,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
     let stdout = "";
     let stderr = "";
@@ -171,21 +208,43 @@ export async function runReviewRpc(
     let completed = false;
     let terminalFailure: Error | undefined;
     let timedOut = false;
+    let childExited = false;
     let timer: NodeJS.Timeout | undefined;
+    let pipeCloseTimer: NodeJS.Timeout | undefined;
+    let onSigint: (() => void) | undefined;
+    let onSigterm: (() => void) | undefined;
     const eventTypes = new Set<string>();
     const diagnostics: string[] = [];
     const finish = (error?: Error): void => {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
+      if (pipeCloseTimer !== undefined) clearTimeout(pipeCloseTimer);
+      if (onSigint !== undefined) process.off("SIGINT", onSigint);
+      if (onSigterm !== undefined) process.off("SIGTERM", onSigterm);
       if (error) reject(error);
       else resolve(report.trim());
     };
     const terminate = (error: Error): void => {
       if (terminalFailure !== undefined || timedOut) return;
       terminalFailure = error;
-      child.kill("SIGKILL");
+      terminateProcessTree(child);
     };
+    const schedulePipeCloseFallback = (): void => {
+      if (pipeCloseTimer !== undefined) return;
+      pipeCloseTimer = setTimeout(() => {
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }, PIPE_CLOSE_GRACE_MS);
+    };
+    onSigint = () => {
+      if (!childExited) terminate(new Error("Pi review interrupted by SIGINT"));
+    };
+    onSigterm = () => {
+      if (!childExited) terminate(new Error("Pi review interrupted by SIGTERM"));
+    };
+    process.once("SIGINT", onSigint);
+    process.once("SIGTERM", onSigterm);
     const consume = (): void => {
       for (;;) {
         const newline = stdout.indexOf("\n");
@@ -265,6 +324,14 @@ export async function runReviewRpc(
     child.once("error", (error) => {
       terminalFailure ??= error;
     });
+    child.once("exit", () => {
+      childExited = true;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      schedulePipeCloseFallback();
+    });
     child.once("close", (code, signal) => {
       if (settled) return;
       if (timedOut) {
@@ -302,7 +369,8 @@ export async function runReviewRpc(
     child.stdin.write(`${JSON.stringify({ id: "review", type: "prompt", message: prompt })}\n`);
     timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      terminateProcessTree(child);
+      if (childExited) schedulePipeCloseFallback();
     }, timeoutMs);
   });
 }
