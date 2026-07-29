@@ -106,6 +106,25 @@ function trustedGitExecutable(): string {
   return candidate;
 }
 
+export function reviewGitEnvironment(
+  runtimeEnvironment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const environment = Object.fromEntries(
+    ["PATH", "LANG", "LC_ALL", "SystemRoot", "WINDIR", "ComSpec"].flatMap((name) => {
+      const value = runtimeEnvironment[name];
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
+  return {
+    ...environment,
+    LC_ALL: "C",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: platform === "win32" ? "NUL" : "/dev/null",
+    GIT_OPTIONAL_LOCKS: "0",
+  };
+}
+
 export function reviewGitCommands(
   prompt: string,
   platform: NodeJS.Platform = process.platform,
@@ -143,23 +162,20 @@ export function reviewGitCommands(
 }
 
 async function collectGitContext(sourceDir: string, prompt: string): Promise<string | undefined> {
-  const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
   const options = {
     cwd: sourceDir,
     encoding: "utf8" as const,
     maxBuffer: MAX_GIT_CONTEXT_BYTES,
     timeout: 10_000,
     windowsHide: true,
-    env: {
-      ...process.env,
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: nullDevice,
-      GIT_OPTIONAL_LOCKS: "0",
-    },
+    env: reviewGitEnvironment(),
   };
   try {
+    const executable = trustedGitExecutable();
+    const probe = await execFileAsync(executable, ["rev-parse", "--is-inside-work-tree"], options);
+    if (probe.stdout.trim() !== "true") return undefined;
     const results = await Promise.all(
-      reviewGitCommands(prompt).map((args) => execFileAsync(trustedGitExecutable(), args, options)),
+      reviewGitCommands(prompt).map((args) => execFileAsync(executable, args, options)),
     );
     const context = results
       .map((result, index) => {
@@ -177,6 +193,13 @@ async function collectGitContext(sourceDir: string, prompt: string): Promise<str
       .join("\n\n");
     return context || undefined;
   } catch (error) {
+    if (
+      error instanceof Error &&
+      "stderr" in error &&
+      typeof error.stderr === "string" &&
+      error.stderr.startsWith("fatal: not a git repository")
+    )
+      return undefined;
     throw new Error(
       `Pioneer could not collect bounded Git review context: ${error instanceof Error ? error.message : String(error)}`,
     );

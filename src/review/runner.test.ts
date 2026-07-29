@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, reviewGitCommands, reviewTools, runReviewRpc } from "./runner.js";
+import {
+  buildReviewPrompt,
+  reviewGitCommands,
+  reviewGitEnvironment,
+  reviewTools,
+  runReviewRpc,
+} from "./runner.js";
 
 function fakePiRpc(events: readonly unknown[], exitCode = 0): readonly [string, ...string[]] {
   const source = `
@@ -122,6 +128,13 @@ describe("review RPC runner", () => {
 
   it("does not treat incidental hexadecimal text as a commit target", () => {
     expect(reviewGitCommands("Discuss deadbeef in the review summary.", "darwin")).toHaveLength(3);
+  });
+
+  it("does not inherit caller-selected Git repositories", () => {
+    expect(
+      reviewGitEnvironment({ PATH: "/usr/bin", GIT_DIR: "/other/.git", GIT_WORK_TREE: "/other" }),
+    ).toMatchObject({ PATH: "/usr/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0" });
+    expect(reviewGitEnvironment({ GIT_DIR: "/other/.git" }).GIT_DIR).toBeUndefined();
   });
 
   it("returns the final assistant report after the RPC pipes close", async () => {
