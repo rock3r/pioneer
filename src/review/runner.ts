@@ -209,6 +209,7 @@ export async function runReviewRpc(
     let terminalFailure: Error | undefined;
     let timedOut = false;
     let childExited = false;
+    let containmentLost = false;
     let timer: NodeJS.Timeout | undefined;
     let pipeCloseTimer: NodeJS.Timeout | undefined;
     let onSigint: (() => void) | undefined;
@@ -233,6 +234,7 @@ export async function runReviewRpc(
     const schedulePipeCloseFallback = (): void => {
       if (pipeCloseTimer !== undefined) return;
       pipeCloseTimer = setTimeout(() => {
+        containmentLost = true;
         child.stdout.destroy();
         child.stderr.destroy();
       }, PIPE_CLOSE_GRACE_MS);
@@ -351,6 +353,17 @@ export async function runReviewRpc(
         );
         return;
       }
+      if (containmentLost) {
+        finish(
+          new Error(
+            diagnosticMessage(
+              "REVIEW_PROCESS_CONTAINMENT_FAILED",
+              "Pi exited but a descendant retained its RPC output pipe; Pioneer could not prove that the review process tree stopped.",
+            ),
+          ),
+        );
+        return;
+      }
       try {
         report = completeReviewRpc({
           completed,
@@ -408,7 +421,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     if (thinking !== undefined) command.push("--thinking", thinking);
     const optimized = optimizePiStartupCommand(command, {
       disableExtensions: true,
-      tools: ["read", "bash", "grep", "find", "ls"],
+      tools: process.platform === "darwin" ? ["read"] : ["read", "bash", "grep", "find", "ls"],
     });
     const environment = {
       ...optimized.environment,
@@ -477,7 +490,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     });
     const launch =
       process.platform === "darwin"
-        ? buildMacosSandboxArgv(config, optimized.command)
+        ? buildMacosSandboxArgv({ ...config, allowProcessFork: false }, optimized.command)
         : buildLinuxSandboxArgv(config, optimized.command, bwrapPath ?? "", bridge?.socketPath);
     const report = await runReviewRpc(
       launch.argv,

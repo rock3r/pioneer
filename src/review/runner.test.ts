@@ -199,14 +199,14 @@ describe("review RPC runner", () => {
           "Review the source",
           100,
         ),
-      ).rejects.toThrow("[REVIEW_RPC_INCOMPLETE]");
+      ).rejects.toThrow("[REVIEW_PROCESS_CONTAINMENT_FAILED]");
       expect(performance.now() - started).toBeLessThan(1_400);
     },
     3_000,
   );
 
   it.skipIf(process.platform === "win32")(
-    "returns a settled report when an escaped descendant retains an output pipe",
+    "rejects a settled report when an escaped descendant retains an output pipe",
     async () => {
       const started = performance.now();
       const review = runReviewRpc(
@@ -217,7 +217,7 @@ describe("review RPC runner", () => {
         500,
       );
       setTimeout(() => process.emit("SIGINT"), 250);
-      await expect(review).resolves.toBe("No findings.");
+      await expect(review).rejects.toThrow("[REVIEW_PROCESS_CONTAINMENT_FAILED]");
       expect(performance.now() - started).toBeLessThan(1_400);
     },
     5_000,
