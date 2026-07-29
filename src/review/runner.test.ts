@@ -120,6 +120,10 @@ describe("review RPC runner", () => {
     );
   });
 
+  it("does not treat incidental hexadecimal text as a commit target", () => {
+    expect(reviewGitCommands("Discuss deadbeef in the review summary.", "darwin")).toHaveLength(3);
+  });
+
   it("returns the final assistant report after the RPC pipes close", async () => {
     await expect(
       runReviewRpc(

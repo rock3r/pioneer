@@ -80,7 +80,10 @@ export function buildReviewPrompt(
 }
 
 function requestedCommit(prompt: string): string | undefined {
-  const match = /\b([0-9a-f]{7,64})\b/i.exec(prompt);
+  const match =
+    /\b(?:please\s+)?review(?:\s+changes\s+introduced\s+by|\s+commit)?\s+`?([0-9a-f]{7,64})`?/i.exec(
+      prompt,
+    );
   return match?.[1];
 }
 
