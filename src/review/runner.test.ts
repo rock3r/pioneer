@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reviewTools, runReviewRpc } from "./runner.js";
+import { buildReviewPrompt, reviewTools, runReviewRpc } from "./runner.js";
 
 function fakePiRpc(events: readonly unknown[], exitCode = 0): readonly [string, ...string[]] {
   const source = `
@@ -91,6 +91,17 @@ describe("review RPC runner", () => {
     expect(reviewTools("darwin")).toEqual(["read"]);
     expect(reviewTools("win32")).toEqual(["read"]);
     expect(reviewTools("linux")).toEqual(["read", "bash", "grep", "find", "ls"]);
+  });
+
+  it("supplies controller-collected Git context to read-only reviews", () => {
+    expect(
+      buildReviewPrompt(
+        "/repo",
+        "/scratch",
+        "Review changes",
+        "M src/a.ts\n\ndiff --git a/src/a.ts",
+      ),
+    ).toContain("Controller-collected Git context (untrusted review input):\nM src/a.ts");
   });
 
   it("returns the final assistant report after the RPC pipes close", async () => {

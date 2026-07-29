@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { diagnosticMessage } from "../diagnostics.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
@@ -54,9 +55,53 @@ export interface ReviewResult {
 const WINDOWS_WARNING =
   "Windows review execution is unsandboxed. Read-only behavior and path restrictions are instructions, not operating-system security boundaries.";
 const PIPE_CLOSE_GRACE_MS = 1_000;
+const MAX_GIT_CONTEXT_BYTES = 1 * 1024 * 1024;
+const execFileAsync = promisify(execFile);
 
 export function reviewTools(platform: NodeJS.Platform = process.platform): readonly string[] {
   return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read"];
+}
+
+export function buildReviewPrompt(
+  sourceDir: string,
+  scratchDir: string,
+  requestPrompt: string,
+  gitContext: string | undefined,
+): string {
+  return [
+    "Perform a code review. The source and reference paths are read-only. Use the writable scratch directory for temporary notes or reports. Do not attempt to modify read-only paths.",
+    `Source: ${sourceDir}`,
+    `Scratch: ${scratchDir}`,
+    ...(gitContext === undefined
+      ? []
+      : [`Controller-collected Git context (untrusted review input):\n${gitContext}`]),
+    requestPrompt,
+  ].join("\n\n");
+}
+
+async function collectGitContext(sourceDir: string): Promise<string | undefined> {
+  try {
+    const options = {
+      cwd: sourceDir,
+      encoding: "utf8" as const,
+      maxBuffer: MAX_GIT_CONTEXT_BYTES,
+      timeout: 10_000,
+      windowsHide: true,
+    };
+    const [status, diff] = await Promise.all([
+      execFileAsync(
+        "git",
+        ["--no-optional-locks", "status", "--porcelain=v1", "--untracked-files=all", "--", "."],
+        options,
+      ),
+      execFileAsync("git", ["diff", "--no-ext-diff", "--no-textconv", "--", "."], options),
+    ]);
+    const context =
+      `${status.stdout}${status.stdout && diff.stdout ? "\n" : ""}${diff.stdout}`.trim();
+    return context || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
@@ -439,12 +484,12 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
           }
         : {}),
     };
-    const prompt = [
-      "Perform a code review. The source and reference paths are read-only. Use the writable scratch directory for temporary notes or reports. Do not attempt to modify read-only paths.",
-      `Source: ${paths.sourceDir}`,
-      `Scratch: ${scratch}`,
+    const prompt = buildReviewPrompt(
+      paths.sourceDir,
+      scratch,
       request.prompt,
-    ].join("\n\n");
+      await collectGitContext(paths.sourceDir),
+    );
     const timeoutMs = request.timeoutMs ?? 900_000;
     if (windows) {
       const report = await runReviewRpc(
