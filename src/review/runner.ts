@@ -60,7 +60,9 @@ export function reviewTools(platform: NodeJS.Platform = process.platform): reado
 }
 
 export function requiresGitInspection(prompt: string): boolean {
-  return /\b(?:staged|unstaged|working[-\s]tree|commit|branch|merge base|diff)\b/i.test(prompt);
+  return /\b(?:review|inspect|compare)\b[^.]*\b(?:staged|unstaged|working[-\s]tree|commit\s+[0-9a-f]{7,64}|this\s+branch|branch\s+(?:against|with|compared)|merge\s+base|(?:the\s+)?diff(?:\s*(?:$|[.?!])|\s+(?:against|between|of|from)\b))/i.test(
+    prompt,
+  );
 }
 
 export function buildReviewPrompt(
