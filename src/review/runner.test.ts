@@ -99,6 +99,7 @@ describe("review RPC runner", () => {
 
   it("recognizes Git-target requests that macOS and Windows cannot inspect", () => {
     expect(requiresGitInspection("Review only the staged changes.")).toBe(true);
+    expect(requiresGitInspection("Review the current changes.")).toBe(true);
     expect(requiresGitInspection("Inspect commit abc1234.")).toBe(true);
     expect(requiresGitInspection("Review commit `abc123` against its first parent.")).toBe(true);
     expect(requiresGitInspection("Compare this branch with origin/main.")).toBe(true);
