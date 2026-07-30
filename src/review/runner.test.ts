@@ -125,6 +125,9 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review the untracked changes.")).toBe(true);
     expect(requiresGitInspection("Review the current changes.")).toBe(true);
     expect(requiresGitInspection("Review the code. Focus on the current changes.")).toBe(true);
+    expect(
+      requiresGitInspection("Review the code. Focus on the current working-tree changes."),
+    ).toBe(true);
     expect(requiresGitInspection("Inspect commit abc1234.")).toBe(true);
     expect(requiresGitInspection("Review commit 1234567.")).toBe(true);
     expect(requiresGitInspection("Review commit `deadbeef`.")).toBe(true);
