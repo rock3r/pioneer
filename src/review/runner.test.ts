@@ -109,6 +109,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review changes introduced by abc1234.")).toBe(true);
     expect(requiresGitInspection("Please review abc1234.")).toBe(true);
     expect(requiresGitInspection("Review changes since origin/main.")).toBe(true);
+    expect(requiresGitInspection("Review changes since main.")).toBe(true);
     expect(requiresGitInspection("Compare this branch with origin/main.")).toBe(true);
     expect(requiresGitInspection("Review branch feature.")).toBe(true);
     expect(requiresGitInspection("Review branch feature for regressions.")).toBe(true);
