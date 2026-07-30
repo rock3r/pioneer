@@ -129,6 +129,8 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review commit `deadbeef`.")).toBe(true);
     expect(requiresGitInspection("Review commit HEAD~1.")).toBe(true);
     expect(requiresGitInspection("Review the last commit.")).toBe(true);
+    expect(requiresGitInspection("Review the last commit carefully.")).toBe(true);
+    expect(requiresGitInspection("Inspect the last commit, focusing on regressions.")).toBe(true);
     expect(requiresGitInspection("Review tag v1.2.3.")).toBe(true);
     expect(requiresGitInspection("Review tag latest.")).toBe(true);
     expect(requiresGitInspection("Inspect tag stable for regressions.")).toBe(true);
