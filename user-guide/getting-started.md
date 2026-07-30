@@ -87,7 +87,7 @@ The live test proves that editor directories are readable, source writes fail, s
 
 ## 5. Run the first review
 
-From a repository you want reviewed:
+On Linux, run a Git-target review from a repository you want reviewed:
 
 ```bash
 pioneer review \
@@ -96,6 +96,15 @@ pioneer review \
 ```
 
 The review may take several minutes. A successful command prints Pi's Markdown report to stdout and removes its temporary Pi home and scratch area.
+
+On macOS and opt-in Windows, use a source-only prompt instead. Git-target prompts such as
+working-tree changes, commits, tags, or branch comparisons fail closed on those platforms:
+
+```bash
+pioneer review \
+  --source "$PWD" \
+  --prompt "Review the implementation under src for concrete correctness, security, and regression findings with file and line references."
+```
 
 ## 6. Install an agent integration
 

@@ -13,6 +13,7 @@ The TypeScript API is:
 ```ts
 import { runReview } from "@rock3r/pioneer";
 
+// On Linux, this reviews the current Git changes.
 const result = await runReview({
   sourceDir: "/absolute/repository",
   prompt: "Review the current changes",
@@ -27,7 +28,7 @@ The CLI prints only the report to stdout. Errors and the Windows warning go to s
 
 ## Target semantics
 
-`--source` grants a directory to Pi and sets it as the working directory. Pioneer does not currently collect a Git diff, resolve a base ref, or impose staged/unstaged semantics. Put the intended scope in the prompt, for example:
+`--source` grants a directory to Pi and sets it as the working directory. Linux Pi can inspect Git directly inside its PID namespace. macOS and opt-in Windows provide read-only source inspection without controller-side Git execution and reject explicit Git-target requests rather than report on an unverified scope. On those platforms, use a source-only prompt such as `Review the implementation under src/auth for correctness.` Put the intended Linux Git scope in the prompt, for example:
 
 - “Review all current working-tree changes.”
 - “Review commit `abc123` against its first parent.”
@@ -61,13 +62,13 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 - `--no-session`;
 - `--no-approve`;
 - `--no-extensions`;
-- `--tools read,bash,grep,find,ls`;
+- Linux: `--tools read,bash,grep,find,ls`; macOS and opt-in Windows: `--tools read,ls`;
 - `--no-prompt-templates`;
 - `--no-themes`;
 - `PI_OFFLINE=1`;
 - `PI_TELEMETRY=0`.
 
-Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion depends only on Pi's built-in RPC mode and built-in inspection tools. `write` and `edit` are excluded; `bash` remains available for Git inspection inside the read-only native sandbox. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
+Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion depends only on Pi's built-in RPC mode and built-in inspection tools. `write` and `edit` are excluded. macOS and opt-in Windows reviews use `read` and `ls`, so source discovery remains available without allowing Pi to request a child process; macOS also denies process creation in Seatbelt. Pioneer does not execute Git in its controller on those platforms. Linux reviews retain `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
 
 ## RPC framing and completion
 
@@ -77,11 +78,11 @@ The controller writes one LF-delimited request:
 {"id":"review","type":"prompt","message":"..."}
 ```
 
-Stdout is treated as JSONL protocol data. Malformed JSON requests process termination and fails the review. The collector accepts text deltas and final assistant messages from current Pi event variants, including `message_update`, `message_end`, `turn_end`, and `agent_end`. Pioneer does not resolve any terminal outcome merely because Pi emits `agent_settled`: it waits for the child process and its stdio pipes to close, including after timeout or protocol failure. A successful review additionally requires `agent_settled`, a non-empty assistant report, exit code zero, and no terminating signal.
+Stdout is treated as JSONL protocol data. Malformed JSON requests process termination and fails the review. The collector accepts text deltas and final assistant messages from current Pi event variants, including `message_update`, `message_end`, `turn_end`, and `agent_end`. Pioneer does not resolve any terminal outcome merely because Pi emits `agent_settled`: it waits for the child process and its stdio pipes to close, including after timeout or protocol failure. A successful review additionally requires `agent_settled`, a non-empty assistant report, exit code zero, no terminating signal, and proof that the RPC pipes closed without forced disconnection.
 
-The process is killed on timeout, malformed output, protocol rejection, or output overflow. Those failures are reported only after close, with the final child exit status, signal, and bounded stderr context. No shell participates in the RPC launch.
+The process is killed on timeout, malformed output, protocol rejection, or output overflow. On macOS and Linux, Pioneer puts the RPC launcher in its own process group and kills that group; Windows invokes the canonical system `taskkill.exe /T` and falls back to direct termination if that utility cannot run or reports failure. macOS reviews deny process creation, so all review activity remains in the controller-owned Pi process. While the direct child is running, Pioneer also forwards `SIGINT` and `SIGTERM` to that tree before returning the interrupted outcome. Whenever the direct child exits, Pioneer starts a bounded grace period for inherited output pipes. A pipe still held after that period is force-closed only to release controller resources, and the review fails with `[REVIEW_PROCESS_CONTAINMENT_FAILED]`; Pioneer never returns its report as a successful review when it cannot prove the process tree stopped. Failures are reported only after this cleanup, with the final child exit status, signal, and bounded stderr context. No shell participates in the RPC launch.
 
-`[REVIEW_REPORT_MISSING]` means Pi settled but emitted no non-empty assistant report. `[REVIEW_RPC_INCOMPLETE]` means the process ended before `agent_settled`. `[REVIEW_PROCESS_FAILED]` means Pi settled with a report but then exited nonzero or by signal. All are non-zero terminal failures written to stderr. Provider or assistant diagnostics are included in the bounded error context when Pi supplies them.
+`[REVIEW_REPORT_MISSING]` means Pi settled but emitted no non-empty assistant report. `[REVIEW_RPC_INCOMPLETE]` means the process ended before `agent_settled`. `[REVIEW_PROCESS_FAILED]` means Pi settled with a report but then exited nonzero or by signal. `[REVIEW_PROCESS_CONTAINMENT_FAILED]` means a descendant retained the RPC pipe after the direct child exited, so Pioneer could not prove that the process tree stopped. All are non-zero terminal failures written to stderr. Provider or assistant diagnostics are included in the bounded error context when Pi supplies them.
 
 ## Path and network construction
 

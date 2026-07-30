@@ -53,6 +53,62 @@ export interface ReviewResult {
 
 const WINDOWS_WARNING =
   "Windows review execution is unsandboxed. Read-only behavior and path restrictions are instructions, not operating-system security boundaries.";
+const PIPE_CLOSE_GRACE_MS = 1_000;
+
+export function reviewTools(platform: NodeJS.Platform = process.platform): readonly string[] {
+  return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read", "ls"];
+}
+
+export function requiresGitInspection(prompt: string): boolean {
+  return (
+    /\b(?:review|inspect|compare)\b[^.]*\b(?:(?:staged|unstaged|untracked)\s+(?:changes|files)|working[-\s]tree|current\s+changes|changes\s+between\s+(?:(?:main\b(?!\s+thread\b)|master\b|HEAD\b|origin\/[0-9a-z._/-]+)\s+and\s+[0-9a-z._/-]+|[0-9a-z._/-]+\s+and\s+(?:main\b(?!\s+thread\b)|master\b|HEAD\b|origin\/[0-9a-z._/-]+))|commit\s+(?:`[0-9a-f]{6,64}`|`?(?=[0-9a-f]{6,64}`?\b)(?=[0-9a-f`]*\d)[0-9a-f]{6,64}`?|HEAD(?:[~^]\d*)?\b)|changes\s+introduced\s+by\s+`?(?=[0-9a-f]{6,64}`?\b)(?=[0-9a-f`]*\d)(?=[0-9a-f`]*[a-f])[0-9a-f]{6,64}`?|`?(?=[0-9a-f]{6,64}`?\b)(?=[0-9a-f`]*\d)(?=[0-9a-f`]*[a-f])[0-9a-f]{6,64}`?|this\s+branch(?!\s+of\b)|branch\s+(?:against|with|compared|`?[0-9a-z._-]+\/[0-9a-z._/-]+`?)|merge\s+base|(?:the\s+)?diff(?:\s*(?:$|[.?!])|\s+(?:against|between|of|from)\b)|against\s+origin\/|(?:changes|commit|branch|diff)\b[^.]*\b(?:against\s+(?:HEAD\b|main\b(?!\s+thread\b)|master\b)|since\s+origin\/)|(?:main|master|HEAD|origin\/[0-9a-z._/-]+)\.{2,3}[0-9a-z._/-]+|[0-9a-z._/-]+\.{2,3}(?:main|master|HEAD|origin\/[0-9a-z._/-]+))/i.test(
+      prompt,
+    ) ||
+    /\b(?:review|inspect|compare)\s+(?:the\s+)?branch\s+(?!(?:to|logic|selection|handling|coverage)\b)`?[0-9a-z._-]+`?\b/i.test(
+      prompt,
+    ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\bcommit\s+(?!(?:message|facade|headers|handling)\b)`?[0-9a-z._/-]+(?:[~^]\d*)?`?/i.test(
+      prompt,
+    ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\bchanges\b[^.]*\bsince\s+(?:HEAD\b|main\b(?!\s+thread\b)|master\b)/i.test(
+      prompt,
+    ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\btag\s+(?!(?:parser|handling|logic|selection|coverage|implementation)(?=\s|$|[.,?!:'"]))(?:`[0-9a-z._/-]+`|[0-9a-z._/-]+)/i.test(
+      prompt,
+    ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\b(?:changes|diff)\s+against\s+(?:`[0-9a-z._/-]+`|[0-9a-z._/-]+)(?=$|[.?!])/i.test(
+      prompt,
+    ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\b(?:the\s+)?(?:last|latest|previous)\s+commit(?!\s+(?:message|facade|headers|handling)\b)/i.test(
+      prompt,
+    ) ||
+    /\b(?:[Rr]eview|[Ii]nspect|[Cc]ompare)\s+(?:[Tt]he\s+)?HEAD(?:[~^]\d*)?(?=$|[.?!]|\s+(?:for|against|with)\b)/.test(
+      prompt,
+    ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\bchanges\b[^.]*\bsince\s+`[0-9a-z._/-]+`/i.test(prompt) ||
+    /\b(?:review|inspect|compare)\s+(?:the\s+)?origin\/[0-9a-z._/-]+/i.test(prompt) ||
+    /\bfocus\s+on\s+(?:the\s+)?(?:current(?:\s+working[-\s]tree)?\s+changes|working[-\s]tree|(?:staged|unstaged|untracked)\s+(?:changes|files)|(?:pull\s+request|PR)\s*#?\s*\d+|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+\b)/i.test(
+      prompt,
+    ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\b(?:pull\s+request|PR)\s*#?\s*\d+\b/i.test(prompt) ||
+    /\b(?:review|inspect|compare)\b[^.]*\bhttps?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+\b/i.test(
+      prompt,
+    )
+  );
+}
+
+export function buildReviewPrompt(
+  sourceDir: string,
+  scratchDir: string,
+  requestPrompt: string,
+): string {
+  return [
+    "Perform a code review. The source and reference paths are read-only. Use the writable scratch directory for temporary notes or reports. Do not attempt to modify read-only paths.",
+    `Source: ${sourceDir}`,
+    `Scratch: ${scratchDir}`,
+    requestPrompt,
+  ].join("\n\n");
+}
 
 function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
   const present = warnings.filter((warning): warning is string => warning !== undefined);
@@ -149,6 +205,41 @@ function processOutcomeContext(
   return `exit ${exitCode ?? "unknown"}; signal ${signal ?? "none"}; stderr: ${stderr.trim() || "none"}`;
 }
 
+function terminateProcessTree(child: ReturnType<typeof spawn>): void {
+  if (process.platform === "win32" && child.pid !== undefined) {
+    const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+    if (systemRoot === undefined || !path.win32.isAbsolute(systemRoot)) {
+      child.kill("SIGKILL");
+      return;
+    }
+    const taskkill = path.win32.join(systemRoot, "System32", "taskkill.exe");
+    let fallbackUsed = false;
+    const fallback = (): void => {
+      if (fallbackUsed) return;
+      fallbackUsed = true;
+      child.kill("SIGKILL");
+    };
+    const killer = spawn(taskkill, ["/pid", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    killer.once("error", fallback);
+    killer.once("exit", (code) => {
+      if (code !== 0) fallback();
+    });
+    return;
+  }
+  if (process.platform !== "win32" && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch {
+      // The child may have already exited; the direct signal below is still safe.
+    }
+  }
+  child.kill("SIGKILL");
+}
+
 export async function runReviewRpc(
   argv: readonly [string, ...string[]],
   cwd: string,
@@ -162,6 +253,7 @@ export async function runReviewRpc(
       env: environment,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
     let stdout = "";
     let stderr = "";
@@ -171,21 +263,47 @@ export async function runReviewRpc(
     let completed = false;
     let terminalFailure: Error | undefined;
     let timedOut = false;
+    let childExited = false;
+    let acceptRpcEvents = true;
+    let containmentLost = false;
     let timer: NodeJS.Timeout | undefined;
+    let pipeCloseTimer: NodeJS.Timeout | undefined;
+    let onSigint: (() => void) | undefined;
+    let onSigterm: (() => void) | undefined;
     const eventTypes = new Set<string>();
     const diagnostics: string[] = [];
     const finish = (error?: Error): void => {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
+      if (pipeCloseTimer !== undefined) clearTimeout(pipeCloseTimer);
+      if (onSigint !== undefined) process.off("SIGINT", onSigint);
+      if (onSigterm !== undefined) process.off("SIGTERM", onSigterm);
       if (error) reject(error);
       else resolve(report.trim());
     };
     const terminate = (error: Error): void => {
       if (terminalFailure !== undefined || timedOut) return;
       terminalFailure = error;
-      child.kill("SIGKILL");
+      terminateProcessTree(child);
     };
+    const schedulePipeCloseFallback = (): void => {
+      if (pipeCloseTimer !== undefined) return;
+      pipeCloseTimer = setTimeout(() => {
+        containmentLost = true;
+        terminateProcessTree(child);
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }, PIPE_CLOSE_GRACE_MS);
+    };
+    onSigint = () => {
+      if (!childExited) terminate(new Error("Pi review interrupted by SIGINT"));
+    };
+    onSigterm = () => {
+      if (!childExited) terminate(new Error("Pi review interrupted by SIGTERM"));
+    };
+    process.once("SIGINT", onSigint);
+    process.once("SIGTERM", onSigterm);
     const consume = (): void => {
       for (;;) {
         const newline = stdout.indexOf("\n");
@@ -253,7 +371,7 @@ export async function runReviewRpc(
       }
     };
     child.stdout.on("data", (chunk: Buffer) => {
-      if (terminalFailure !== undefined || timedOut) return;
+      if (!acceptRpcEvents || terminalFailure !== undefined || timedOut) return;
       stdout += chunk.toString("utf8");
       if (stdout.length > 4 * 1024 * 1024) {
         terminate(new Error("Pi RPC output exceeded 4 MiB"));
@@ -264,6 +382,17 @@ export async function runReviewRpc(
     });
     child.once("error", (error) => {
       terminalFailure ??= error;
+    });
+    child.once("exit", () => {
+      childExited = true;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      schedulePipeCloseFallback();
+      setImmediate(() => {
+        acceptRpcEvents = false;
+      });
     });
     child.once("close", (code, signal) => {
       if (settled) return;
@@ -281,6 +410,17 @@ export async function runReviewRpc(
       if (terminalFailure !== undefined) {
         finish(
           new Error(`${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`),
+        );
+        return;
+      }
+      if (containmentLost) {
+        finish(
+          new Error(
+            diagnosticMessage(
+              "REVIEW_PROCESS_CONTAINMENT_FAILED",
+              "Pi exited but a descendant retained its RPC output pipe; Pioneer could not prove that the review process tree stopped.",
+            ),
+          ),
         );
         return;
       }
@@ -302,7 +442,8 @@ export async function runReviewRpc(
     child.stdin.write(`${JSON.stringify({ id: "review", type: "prompt", message: prompt })}\n`);
     timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      terminateProcessTree(child);
+      if (childExited) schedulePipeCloseFallback();
     }, timeoutMs);
   });
 }
@@ -315,6 +456,10 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   const windows = process.platform === "win32";
   if (windows && request.allowUnsandboxedWindows !== true)
     throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
+  if (process.platform !== "linux" && requiresGitInspection(request.prompt))
+    throw new Error(
+      "Git-target reviews require Linux, where Pioneer can inspect Git inside Bubblewrap. macOS and Windows support source-only reviews.",
+    );
   const piHomeSource = request.piHomeSource ?? defaultPiAgentDir();
   const readiness = await assertPiReady({
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -340,7 +485,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     if (thinking !== undefined) command.push("--thinking", thinking);
     const optimized = optimizePiStartupCommand(command, {
       disableExtensions: true,
-      tools: ["read", "bash", "grep", "find", "ls"],
+      tools: reviewTools(),
     });
     const environment = {
       ...optimized.environment,
@@ -354,12 +499,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
           }
         : {}),
     };
-    const prompt = [
-      "Perform a code review. The source and reference paths are read-only. Use the writable scratch directory for temporary notes or reports. Do not attempt to modify read-only paths.",
-      `Source: ${paths.sourceDir}`,
-      `Scratch: ${scratch}`,
-      request.prompt,
-    ].join("\n\n");
+    const prompt = buildReviewPrompt(paths.sourceDir, scratch, request.prompt);
     const timeoutMs = request.timeoutMs ?? 900_000;
     if (windows) {
       const report = await runReviewRpc(
@@ -409,7 +549,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     });
     const launch =
       process.platform === "darwin"
-        ? buildMacosSandboxArgv(config, optimized.command)
+        ? buildMacosSandboxArgv({ ...config, allowProcessFork: false }, optimized.command)
         : buildLinuxSandboxArgv(config, optimized.command, bwrapPath ?? "", bridge?.socketPath);
     const report = await runReviewRpc(
       launch.argv,

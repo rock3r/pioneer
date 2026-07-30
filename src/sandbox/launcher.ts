@@ -6,6 +6,7 @@ export interface SandboxPolicy {
   readonly writablePaths: readonly string[];
   readonly network: "proxy" | "none";
   readonly proxyUrl?: string;
+  readonly allowProcessFork?: boolean;
 }
 
 export interface SandboxLaunch {
@@ -73,7 +74,7 @@ export function buildMacosSandboxArgv(
     "(version 1)",
     "(deny default)",
     "(allow process-exec)",
-    "(allow process-fork)",
+    ...(policy.allowProcessFork === false ? [] : ["(allow process-fork)"]),
     "(allow process-info* (target same-sandbox))",
     "(allow signal (target same-sandbox))",
     "(allow mach-priv-task-port (target same-sandbox))",

@@ -103,6 +103,37 @@ try {
     scratchContent === "scratch-ok\n";
   if (!passed) throw new Error(`filesystem probe failed: ${JSON.stringify(result)}`);
 
+  if (process.platform === "darwin") {
+    const forkActor = `
+const { spawn } = require("node:child_process");
+const finish = (error) => {
+  process.stdout.write(error && error.code === "EPERM" ? "fork-denied" : String(error));
+  process.exitCode = error && error.code === "EPERM" ? 0 : 1;
+};
+try {
+  const child = spawn("/usr/bin/true");
+  child.once("error", finish);
+  child.once("spawn", () => { process.exitCode = 2; });
+} catch (error) {
+  finish(error);
+}
+`;
+    const noForkLaunch = buildMacosSandboxArgv({ ...policy, allowProcessFork: false }, [
+      process.execPath,
+      "-e",
+      forkActor,
+    ]);
+    const noForkCompleted = spawnSync(noForkLaunch.argv[0], noForkLaunch.argv.slice(1), {
+      encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...noForkLaunch.environment },
+    });
+    if (noForkCompleted.status !== 0 || noForkCompleted.stdout !== "fork-denied") {
+      throw new Error(
+        `process containment probe failed (${noForkCompleted.status}): ${noForkCompleted.stdout}${noForkCompleted.stderr}`,
+      );
+    }
+  }
+
   const localServer = net.createServer((socket) => socket.end("unexpected"));
   await new Promise((resolve, reject) => {
     localServer.once("error", reject);

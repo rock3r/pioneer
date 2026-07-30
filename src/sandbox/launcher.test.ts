@@ -53,6 +53,14 @@ describe("direct sandbox launchers", () => {
     expect(linux.argv).toContain("--unshare-net");
   });
 
+  it("can prohibit child-process creation for a controller-owned review", () => {
+    const launch = buildMacosSandboxArgv({ ...policy, allowProcessFork: false }, [
+      "/usr/bin/node",
+      "actor.mjs",
+    ]);
+    expect(launch.profile).not.toContain("(allow process-fork)");
+  });
+
   it.each([
     "http://127.0.0.1",
     "http://127.0.0.1:0",

@@ -48,7 +48,7 @@ pioneer models
 
 If an agent terminal hides Pi configuration, `doctor` reports that access denial separately from a genuinely unconfigured Pi installation. Its diagnosis never reads configuration contents; approve outer-terminal escalation when prompted, while Pioneer continues to sandbox the Pi actor.
 
-Run a review from the repository to inspect:
+On Linux, run a review from the repository to inspect the current Git changes:
 
 ```bash
 pioneer review \
@@ -59,6 +59,8 @@ pioneer review \
 ```
 
 The report is Markdown on stdout. Pass `--report /absolute/path/report.md` when the controller should atomically persist the verified final report without granting Pi write access to that path. Pioneer resolves model names before creating run state and fails early—with the configured model list—when a requested model is missing or ambiguous.
+
+On macOS and opt-in Windows, use a source-only prompt such as `Review the implementation under src/auth for correctness and regressions.` Explicit Git-target prompts fail closed because those platforms do not grant Pi Git execution.
 
 ## Install for your agent
 
@@ -127,7 +129,7 @@ Read [AGENTS.md](AGENTS.md) before changing production code. The smoke test is a
 ## Current boundaries
 
 - Reviews are synchronous and return free-form Markdown.
-- Pioneer grants a source tree but does not precompute a diff; the prompt defines the review target.
+- Linux reviews can inspect Git inside Bubblewrap. macOS and opt-in Windows provide read-only source inspection without controller-side Git execution, and fail closed for explicit Git-target requests.
 - Windows cannot enforce source immutability and requires `--allow-unsandboxed-windows` after explicit user approval.
 - The eval harness prepares and isolates baseline and with-skill actors; automated grading remains separate work.
 

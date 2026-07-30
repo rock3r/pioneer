@@ -131,7 +131,7 @@ Timeout cleanup kills Pi and removes the private run state.
 
 ## Review completed without a report
 
-Pioneer exits nonzero with `[REVIEW_REPORT_MISSING]` if Pi reaches `agent_settled` without a non-empty assistant report. It exits nonzero with `[REVIEW_RPC_INCOMPLETE]` if Pi ends before settling, and with `[REVIEW_PROCESS_FAILED]` if Pi settles with a report but exits nonzero or by signal. A successful no-findings review still prints a non-empty report; exit zero alone is transport success, not a semantic verdict.
+Pioneer exits nonzero with `[REVIEW_REPORT_MISSING]` if Pi reaches `agent_settled` without a non-empty assistant report. It exits nonzero with `[REVIEW_RPC_INCOMPLETE]` if Pi ends before settling, with `[REVIEW_PROCESS_FAILED]` if Pi settles with a report but exits nonzero or by signal, and with `[REVIEW_PROCESS_CONTAINMENT_FAILED]` if an inherited RPC pipe prevents Pioneer from proving the process tree stopped. A successful no-findings review still prints a non-empty report; exit zero alone is transport success, not a semantic verdict.
 
 The report is always printed to stdout. With `--report /absolute/path/report.md`, Pioneer also writes the verified final report atomically; the target must not already exist and cannot be actor-visible. If that persistence fails, stdout still contains the verified report but Pioneer exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. The private Pi home and scratch directory are always removed after the run.
 
