@@ -67,6 +67,9 @@ export function requiresGitInspection(prompt: string): boolean {
     /\b(?:review|inspect|compare)\s+(?:the\s+)?branch\s+(?!(?:to|logic|selection|handling|coverage)\b)`?[0-9a-z._-]+`?\b/i.test(
       prompt,
     ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\bcommit\s+(?!(?:message|facade|headers|handling)\b)`?[0-9a-z._/-]+(?:[~^]\d*)?`?/i.test(
+      prompt,
+    ) ||
     /\b(?:review|inspect|compare)\b[^.]*\bchanges\b[^.]*\bsince\s+(?:HEAD\b|main\b(?!\s+thread\b)|master\b)/i.test(
       prompt,
     ) ||

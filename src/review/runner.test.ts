@@ -136,6 +136,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review commit 1234567.")).toBe(true);
     expect(requiresGitInspection("Review commit `deadbeef`.")).toBe(true);
     expect(requiresGitInspection("Review commit HEAD~1.")).toBe(true);
+    expect(requiresGitInspection("Review commit `main~1`. ")).toBe(true);
     expect(requiresGitInspection("Review HEAD.")).toBe(true);
     expect(requiresGitInspection("Review origin/main.")).toBe(true);
     expect(requiresGitInspection("Review origin/main for regressions.")).toBe(true);
