@@ -165,6 +165,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review main..feature.")).toBe(true);
     expect(requiresGitInspection("Compare origin/main..HEAD.")).toBe(true);
     expect(requiresGitInspection("Review the source for correctness.")).toBe(false);
+    expect(requiresGitInspection("Review the source. PR #42 is background context.")).toBe(false);
     expect(requiresGitInspection("Review the staged rollout implementation.")).toBe(false);
     expect(requiresGitInspection("Review the tag parser.")).toBe(false);
     expect(requiresGitInspection("Review the tag parser's behavior.")).toBe(false);

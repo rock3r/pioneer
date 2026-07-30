@@ -87,7 +87,7 @@ export function requiresGitInspection(prompt: string): boolean {
     /\bfocus\s+on\s+(?:the\s+)?(?:current(?:\s+working[-\s]tree)?\s+changes|working[-\s]tree|(?:staged|unstaged|untracked)\s+(?:changes|files))/i.test(
       prompt,
     ) ||
-    /\b(?:pull\s+request|PR)\s*#?\s*\d+\b/i.test(prompt)
+    /\b(?:review|inspect|compare)\b[^.]*\b(?:pull\s+request|PR)\s*#?\s*\d+\b/i.test(prompt)
   );
 }
 
