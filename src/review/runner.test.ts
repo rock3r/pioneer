@@ -179,6 +179,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review changes against main thread starvation.")).toBe(false);
     expect(requiresGitInspection("Review changes against masterful scheduling.")).toBe(false);
     expect(requiresGitInspection("Review changes against headless rendering.")).toBe(false);
+    expect(requiresGitInspection("Review head for allocation issues.")).toBe(false);
     expect(requiresGitInspection("Please review ticket 123456.")).toBe(false);
     expect(requiresGitInspection("Compare these approaches...carefully.")).toBe(false);
   });
