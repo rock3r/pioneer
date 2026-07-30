@@ -76,7 +76,9 @@ export function requiresGitInspection(prompt: string): boolean {
     /\b(?:review|inspect|compare)\b[^.]*\b(?:changes|diff)\s+against\s+(?:`[0-9a-z._/-]+`|[0-9a-z._/-]+)(?=$|[.?!])/i.test(
       prompt,
     ) ||
-    /\b(?:review|inspect|compare)\b[^.]*\b(?:the\s+)?last\s+commit\b/i.test(prompt)
+    /\b(?:review|inspect|compare)\s+(?:the\s+)?last\s+commit(?=\s*(?:$|[.?!])|\s+(?:for|against|with)\b)/i.test(
+      prompt,
+    )
   );
 }
 
