@@ -118,6 +118,8 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Compare origin/main..HEAD.")).toBe(true);
     expect(requiresGitInspection("Review the source for correctness.")).toBe(false);
     expect(requiresGitInspection("Review the diff parser's branch selection.")).toBe(false);
+    expect(requiresGitInspection("Review control-flow branch logic.")).toBe(false);
+    expect(requiresGitInspection("Inspect the branch to the retry path.")).toBe(false);
     expect(requiresGitInspection("Review commit message handling.")).toBe(false);
     expect(requiresGitInspection("Review commit facade handling.")).toBe(false);
     expect(requiresGitInspection("Review the implementation against the design document.")).toBe(
