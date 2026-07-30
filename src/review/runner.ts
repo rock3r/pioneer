@@ -64,7 +64,7 @@ export function requiresGitInspection(prompt: string): boolean {
     /\b(?:review|inspect|compare)\b[^.]*\b(?:staged|unstaged|working[-\s]tree|current\s+changes|commit\s+`?(?=[0-9a-f]{6,64}`?\b)(?=[0-9a-f`]*\d)[0-9a-f]{6,64}`?|changes\s+introduced\s+by\s+`?(?=[0-9a-f]{6,64}`?\b)(?=[0-9a-f`]*\d)(?=[0-9a-f`]*[a-f])[0-9a-f]{6,64}`?|`?(?=[0-9a-f]{6,64}`?\b)(?=[0-9a-f`]*\d)(?=[0-9a-f`]*[a-f])[0-9a-f]{6,64}`?|this\s+branch|branch\s+(?:against|with|compared|`?[0-9a-z._-]+\/[0-9a-z._/-]+`?)|merge\s+base|(?:the\s+)?diff(?:\s*(?:$|[.?!])|\s+(?:against|between|of|from)\b)|against\s+origin\/|(?:changes|commit|branch|diff)\b[^.]*\b(?:against\s+(?:HEAD\b|main\b(?!\s+thread\b)|master\b)|since\s+origin\/)|(?:main|master|HEAD|origin\/[0-9a-z._/-]+)\.{2,3}[0-9a-z._/-]+|[0-9a-z._/-]+\.{2,3}(?:main|master|HEAD|origin\/[0-9a-z._/-]+))/i.test(
       prompt,
     ) ||
-    /\b(?:review|inspect|compare)\s+(?:the\s+)?branch\s+(?!(?:to|logic|selection|handling|coverage)\b)`?[0-9a-z._-]+`?\s*(?:[.?!]|$)/i.test(
+    /\b(?:review|inspect|compare)\s+(?:the\s+)?branch\s+(?!(?:to|logic|selection|handling|coverage)\b)`?[0-9a-z._-]+`?\b/i.test(
       prompt,
     )
   );
