@@ -61,7 +61,7 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 - `--no-session`;
 - `--no-approve`;
 - `--no-extensions`;
-- Linux: `--tools read,bash,grep,find,ls`; macOS and opt-in Windows: `--tools read,grep,find,ls`;
+- Linux: `--tools read,bash,grep,find,ls`; macOS and opt-in Windows: `--tools read,ls`;
 - `--no-prompt-templates`;
 - `--no-themes`;
 - `PI_OFFLINE=1`;

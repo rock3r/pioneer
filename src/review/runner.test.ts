@@ -87,9 +87,9 @@ process.stdin.once("data", () => {
 }
 
 describe("review RPC runner", () => {
-  it("allows source discovery without granting macOS or Windows a shell", () => {
-    expect(reviewTools("darwin")).toEqual(["read", "grep", "find", "ls"]);
-    expect(reviewTools("win32")).toEqual(["read", "grep", "find", "ls"]);
+  it("allows source discovery without granting macOS or Windows process tools", () => {
+    expect(reviewTools("darwin")).toEqual(["read", "ls"]);
+    expect(reviewTools("win32")).toEqual(["read", "ls"]);
     expect(reviewTools("linux")).toEqual(["read", "bash", "grep", "find", "ls"]);
   });
 

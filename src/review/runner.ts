@@ -56,9 +56,7 @@ const WINDOWS_WARNING =
 const PIPE_CLOSE_GRACE_MS = 1_000;
 
 export function reviewTools(platform: NodeJS.Platform = process.platform): readonly string[] {
-  return platform === "linux"
-    ? ["read", "bash", "grep", "find", "ls"]
-    : ["read", "grep", "find", "ls"];
+  return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read", "ls"];
 }
 
 export function requiresGitInspection(prompt: string): boolean {
