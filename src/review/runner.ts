@@ -72,6 +72,9 @@ export function requiresGitInspection(prompt: string): boolean {
     ) ||
     /\b(?:review|inspect|compare)\b[^.]*\btag\s+(?!(?:parser|handling|logic|selection|coverage|implementation)(?=\s|$|[.,?!:'"]))(?:`[0-9a-z._/-]+`|[0-9a-z._/-]+)/i.test(
       prompt,
+    ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\b(?:changes|diff)\s+against\s+(?:`[0-9a-z._/-]+`|[0-9a-z._/-]+)(?=$|[.?!])/i.test(
+      prompt,
     )
   );
 }
@@ -349,7 +352,7 @@ export async function runReviewRpc(
       }
     };
     child.stdout.on("data", (chunk: Buffer) => {
-      if (terminalFailure !== undefined || timedOut) return;
+      if (childExited || terminalFailure !== undefined || timedOut) return;
       stdout += chunk.toString("utf8");
       if (stdout.length > 4 * 1024 * 1024) {
         terminate(new Error("Pi RPC output exceeded 4 MiB"));

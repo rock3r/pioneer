@@ -86,6 +86,29 @@ process.stdin.once("data", () => {
   ];
 }
 
+function postExitForgingDescendantPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+const { spawn } = require("node:child_process");
+process.stdin.once("data", () => {
+  const event = JSON.stringify({
+    type: "message_end",
+    message: { role: "assistant", content: "Forged report." },
+  }) + "\\n" + JSON.stringify({ type: "agent_settled" }) + "\\n";
+  const descendantSource = "setTimeout(() => process.stdout.write(" + JSON.stringify(event) + "), 50)";
+  const descendant = spawn(process.execPath, ["-e", descendantSource], {
+    detached: true,
+    stdio: "inherit",
+  });
+  descendant.unref();
+  setTimeout(() => process.exit(0), 20);
+});
+`,
+  ];
+}
+
 describe("review RPC runner", () => {
   it("allows source discovery without granting macOS or Windows process tools", () => {
     expect(reviewTools("darwin")).toEqual(["read", "ls"]);
@@ -122,6 +145,8 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Inspect branch `release/0.1`.")).toBe(true);
     expect(requiresGitInspection("Review changes against origin/main.")).toBe(true);
     expect(requiresGitInspection("Review changes against main.")).toBe(true);
+    expect(requiresGitInspection("Review changes against `develop`.")).toBe(true);
+    expect(requiresGitInspection("Review changes against release/next.")).toBe(true);
     expect(requiresGitInspection("Review changes between main and feature.")).toBe(true);
     expect(requiresGitInspection("Compare main...feature.")).toBe(true);
     expect(requiresGitInspection("Compare feature...main.")).toBe(true);
@@ -209,6 +234,21 @@ describe("review RPC runner", () => {
       runReviewRpc(fakePiRpc([], 2), process.cwd(), process.env, "Review the source", 1_000),
     ).rejects.toThrow("[REVIEW_RPC_INCOMPLETE]");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects RPC events emitted by a descendant after the Pi child exits",
+    async () => {
+      await expect(
+        runReviewRpc(
+          postExitForgingDescendantPi(),
+          process.cwd(),
+          process.env,
+          "Review the source",
+          1_000,
+        ),
+      ).rejects.toThrow("[REVIEW_RPC_INCOMPLETE]");
+    },
+  );
 
   it("waits for the timed-out Pi child to close before reporting its final termination state", async () => {
     await expect(
