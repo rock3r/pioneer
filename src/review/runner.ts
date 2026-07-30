@@ -69,7 +69,8 @@ export function requiresGitInspection(prompt: string): boolean {
     ) ||
     /\b(?:review|inspect|compare)\b[^.]*\bchanges\s+since\s+(?:HEAD\b|main\b(?!\s+thread\b)|master\b)/i.test(
       prompt,
-    )
+    ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\btag\s+`?[0-9a-z._/-]+`?/i.test(prompt)
   );
 }
 
