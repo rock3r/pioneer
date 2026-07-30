@@ -30,7 +30,7 @@ Prefer the qualified `provider/model` form shown by Pi:
 pioneer review \
   --source "$PWD" \
   --model xai/grok-4.3 \
-  --prompt "Review the working tree."
+  --prompt "Review the implementation under src."
 ```
 
 An unqualified model ID works only when exactly one configured provider exposes it. If the name is missing or ambiguous, Pioneer stops before creating scratch state and prints the configured qualified names. It never silently substitutes another model.
@@ -69,7 +69,7 @@ pioneer review \
   --pi-home /absolute/path/to/pi-agent \
   --model provider/model \
   --thinking high \
-  --prompt "Review the current changes."
+  --prompt "Review the implementation under src."
 ```
 
 Pioneer validates that directory, copies it into the run, and makes the copy writable. The original is never used as the actor's home.
