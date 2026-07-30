@@ -143,6 +143,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review pull request #42.")).toBe(true);
     expect(requiresGitInspection("Review https://github.com/acme/app/pull/42.")).toBe(true);
     expect(requiresGitInspection("Review the last commit.")).toBe(true);
+    expect(requiresGitInspection("Review the latest commit.")).toBe(true);
     expect(requiresGitInspection("Review the last commit carefully.")).toBe(true);
     expect(requiresGitInspection("Inspect the last commit, focusing on regressions.")).toBe(true);
     expect(requiresGitInspection("Review tag v1.2.3.")).toBe(true);
