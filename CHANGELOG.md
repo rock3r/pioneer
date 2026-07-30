@@ -4,7 +4,12 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.1.5 - 2026-07-30
+
 - Add a throttled background npm update notice plus `pioneer check-update` and npm-delegated `pioneer update` commands with interactive or scripted changelog/install choices.
+- Ensure reviews do not complete until Pi's process and RPC pipes close, with bounded cleanup when descendants retain those pipes.
+- Reject Git-target review scopes on macOS and Windows, where source-only tools cannot inspect them.
+- Refresh the tested Pi compatibility maximum to `0.83.0`.
 
 ## 0.1.4 - 2026-07-26
 

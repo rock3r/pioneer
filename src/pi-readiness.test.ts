@@ -83,7 +83,7 @@ describe("Pi readiness", () => {
 
   it("warns but remains ready for a newer untested Pi", async () => {
     const runner = runnerWith([
-      { exitCode: 0, stdout: "0.83.0\n", stderr: "" },
+      { exitCode: 0, stdout: "0.83.1\n", stderr: "" },
       {
         exitCode: 0,
         stdout:

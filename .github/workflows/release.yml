@@ -33,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pi: ["0.80.6", "0.82.1"]
+        pi: ["0.80.6", "0.83.0"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
