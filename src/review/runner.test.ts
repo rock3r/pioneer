@@ -130,6 +130,8 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review the source for correctness.")).toBe(false);
     expect(requiresGitInspection("Review the staged rollout implementation.")).toBe(false);
     expect(requiresGitInspection("Review the tag parser.")).toBe(false);
+    expect(requiresGitInspection("Review the tag parser's behavior.")).toBe(false);
+    expect(requiresGitInspection("Review tag handling: notes.")).toBe(false);
     expect(requiresGitInspection("Review the diff parser's branch selection.")).toBe(false);
     expect(requiresGitInspection("Review control-flow branch logic.")).toBe(false);
     expect(requiresGitInspection("Review changes between parser and renderer.")).toBe(false);
