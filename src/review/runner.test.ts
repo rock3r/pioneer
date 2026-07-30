@@ -99,6 +99,7 @@ describe("review RPC runner", () => {
 
   it("recognizes Git-target requests that macOS and Windows cannot inspect", () => {
     expect(requiresGitInspection("Review only the staged changes.")).toBe(true);
+    expect(requiresGitInspection("Review the untracked changes.")).toBe(true);
     expect(requiresGitInspection("Review the current changes.")).toBe(true);
     expect(requiresGitInspection("Inspect commit abc1234.")).toBe(true);
     expect(requiresGitInspection("Review commit 1234567.")).toBe(true);
@@ -120,6 +121,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review main..feature.")).toBe(true);
     expect(requiresGitInspection("Compare origin/main..HEAD.")).toBe(true);
     expect(requiresGitInspection("Review the source for correctness.")).toBe(false);
+    expect(requiresGitInspection("Review the staged rollout implementation.")).toBe(false);
     expect(requiresGitInspection("Review the diff parser's branch selection.")).toBe(false);
     expect(requiresGitInspection("Review control-flow branch logic.")).toBe(false);
     expect(requiresGitInspection("Review changes between parser and renderer.")).toBe(false);
