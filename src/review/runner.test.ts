@@ -104,6 +104,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review commit `abc123` against its first parent.")).toBe(true);
     expect(requiresGitInspection("Review changes introduced by abc1234.")).toBe(true);
     expect(requiresGitInspection("Please review abc1234.")).toBe(true);
+    expect(requiresGitInspection("Review changes since origin/main.")).toBe(true);
     expect(requiresGitInspection("Compare this branch with origin/main.")).toBe(true);
     expect(requiresGitInspection("Review changes against origin/main.")).toBe(true);
     expect(requiresGitInspection("Review changes against main.")).toBe(true);
@@ -120,6 +121,7 @@ describe("review RPC runner", () => {
     );
     expect(requiresGitInspection("Review locking against main thread starvation.")).toBe(false);
     expect(requiresGitInspection("Review changes against main thread starvation.")).toBe(false);
+    expect(requiresGitInspection("Please review ticket 123456.")).toBe(false);
     expect(requiresGitInspection("Compare these approaches...carefully.")).toBe(false);
   });
 
