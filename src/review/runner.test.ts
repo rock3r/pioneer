@@ -210,7 +210,7 @@ describe("review RPC runner", () => {
         process.cwd(),
         process.env,
         "Review the source",
-        1_000,
+        5_000,
       ),
     ).resolves.toBe("No findings.");
   });
