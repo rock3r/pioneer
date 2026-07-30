@@ -87,9 +87,9 @@ process.stdin.once("data", () => {
 }
 
 describe("review RPC runner", () => {
-  it("limits macOS and Windows reviews to the built-in read tool", () => {
-    expect(reviewTools("darwin")).toEqual(["read"]);
-    expect(reviewTools("win32")).toEqual(["read"]);
+  it("allows source discovery without granting macOS or Windows a shell", () => {
+    expect(reviewTools("darwin")).toEqual(["read", "grep", "find", "ls"]);
+    expect(reviewTools("win32")).toEqual(["read", "grep", "find", "ls"]);
     expect(reviewTools("linux")).toEqual(["read", "bash", "grep", "find", "ls"]);
   });
 
@@ -106,6 +106,8 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Please review abc1234.")).toBe(true);
     expect(requiresGitInspection("Review changes since origin/main.")).toBe(true);
     expect(requiresGitInspection("Compare this branch with origin/main.")).toBe(true);
+    expect(requiresGitInspection("Review branch feature/login.")).toBe(true);
+    expect(requiresGitInspection("Inspect branch `release/0.1`.")).toBe(true);
     expect(requiresGitInspection("Review changes against origin/main.")).toBe(true);
     expect(requiresGitInspection("Review changes against main.")).toBe(true);
     expect(requiresGitInspection("Compare main...feature.")).toBe(true);
