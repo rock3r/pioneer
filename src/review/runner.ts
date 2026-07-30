@@ -88,7 +88,9 @@ export function requiresGitInspection(prompt: string): boolean {
       prompt,
     ) ||
     /\b(?:review|inspect|compare)\b[^.]*\b(?:pull\s+request|PR)\s*#?\s*\d+\b/i.test(prompt) ||
-    /\bhttps?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+\b/i.test(prompt)
+    /\b(?:review|inspect|compare)\b[^.]*\bhttps?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+\b/i.test(
+      prompt,
+    )
   );
 }
 
