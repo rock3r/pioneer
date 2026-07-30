@@ -103,6 +103,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review the current changes.")).toBe(true);
     expect(requiresGitInspection("Inspect commit abc1234.")).toBe(true);
     expect(requiresGitInspection("Review commit 1234567.")).toBe(true);
+    expect(requiresGitInspection("Review commit `deadbeef`.")).toBe(true);
     expect(requiresGitInspection("Review commit HEAD~1.")).toBe(true);
     expect(requiresGitInspection("Review commit `abc123` against its first parent.")).toBe(true);
     expect(requiresGitInspection("Review changes introduced by abc1234.")).toBe(true);
