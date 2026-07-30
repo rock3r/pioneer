@@ -124,6 +124,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Inspect the branch to the retry path.")).toBe(false);
     expect(requiresGitInspection("Review commit message handling.")).toBe(false);
     expect(requiresGitInspection("Review commit facade handling.")).toBe(false);
+    expect(requiresGitInspection("Review commit headers.")).toBe(false);
     expect(requiresGitInspection("Review the implementation against the design document.")).toBe(
       false,
     );
