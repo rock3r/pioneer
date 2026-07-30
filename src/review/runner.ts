@@ -82,7 +82,8 @@ export function requiresGitInspection(prompt: string): boolean {
     /\b(?:[Rr]eview|[Ii]nspect|[Cc]ompare)\s+(?:[Tt]he\s+)?HEAD(?:[~^]\d*)?(?=$|[.?!]|\s+(?:for|against|with)\b)/.test(
       prompt,
     ) ||
-    /\b(?:review|inspect|compare)\b[^.]*\bchanges\b[^.]*\bsince\s+`[0-9a-z._/-]+`/i.test(prompt)
+    /\b(?:review|inspect|compare)\b[^.]*\bchanges\b[^.]*\bsince\s+`[0-9a-z._/-]+`/i.test(prompt) ||
+    /\b(?:review|inspect|compare)\s+(?:the\s+)?origin\/[0-9a-z._/-]+(?=$|[.?!])/i.test(prompt)
   );
 }
 
