@@ -310,7 +310,7 @@ describe("review RPC runner", () => {
           process.cwd(),
           process.env,
           "Review the source",
-          100,
+          500,
         ),
       ).rejects.toThrow("[REVIEW_PROCESS_CONTAINMENT_FAILED]");
       expect(performance.now() - started).toBeLessThan(1_400);
