@@ -135,6 +135,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review HEAD.")).toBe(true);
     expect(requiresGitInspection("Review origin/main.")).toBe(true);
     expect(requiresGitInspection("Review origin/main for regressions.")).toBe(true);
+    expect(requiresGitInspection("Review pull request #42.")).toBe(true);
     expect(requiresGitInspection("Review the last commit.")).toBe(true);
     expect(requiresGitInspection("Review the last commit carefully.")).toBe(true);
     expect(requiresGitInspection("Inspect the last commit, focusing on regressions.")).toBe(true);
@@ -170,6 +171,9 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Review tag handling: notes.")).toBe(false);
     expect(requiresGitInspection("Review the diff parser's branch selection.")).toBe(false);
     expect(requiresGitInspection("Review control-flow branch logic.")).toBe(false);
+    expect(requiresGitInspection("Review this branch of the conditional for correctness.")).toBe(
+      false,
+    );
     expect(requiresGitInspection("Review changes between parser and renderer.")).toBe(false);
     expect(requiresGitInspection("Review changes between parser and main thread scheduling.")).toBe(
       false,
