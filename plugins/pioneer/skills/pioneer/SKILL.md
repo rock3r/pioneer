@@ -19,7 +19,7 @@ Use the `pioneer` CLI to run an independent review through the operator's existi
 
 ## Review command
 
-Run from the repository being reviewed:
+On Linux, run this from the repository being reviewed when the user requests a Git-target review:
 
 ```bash
 pioneer review \
@@ -28,6 +28,11 @@ pioneer review \
   --model provider/model \
   --thinking high
 ```
+
+On macOS and Windows, do not submit Git-target prompts such as current changes, working-tree
+changes, commits, tags, or branch comparisons: Pioneer rejects them before Pi starts. For a
+source-only review, keep the same command shape but use a scope such as `Review the implementation
+under src for correctness, security, and regressions.`
 
 Only include `--model` or `--thinking` when requested. A requested thinking level is binding: include the exact `--thinking <level>` argument in the review command and do not silently omit or substitute it. Supported thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 

@@ -75,7 +75,8 @@ export function requiresGitInspection(prompt: string): boolean {
     ) ||
     /\b(?:review|inspect|compare)\b[^.]*\b(?:changes|diff)\s+against\s+(?:`[0-9a-z._/-]+`|[0-9a-z._/-]+)(?=$|[.?!])/i.test(
       prompt,
-    )
+    ) ||
+    /\b(?:review|inspect|compare)\b[^.]*\b(?:the\s+)?last\s+commit\b/i.test(prompt)
   );
 }
 
@@ -246,6 +247,7 @@ export async function runReviewRpc(
     let terminalFailure: Error | undefined;
     let timedOut = false;
     let childExited = false;
+    let acceptRpcEvents = true;
     let containmentLost = false;
     let timer: NodeJS.Timeout | undefined;
     let pipeCloseTimer: NodeJS.Timeout | undefined;
@@ -352,7 +354,7 @@ export async function runReviewRpc(
       }
     };
     child.stdout.on("data", (chunk: Buffer) => {
-      if (childExited || terminalFailure !== undefined || timedOut) return;
+      if (!acceptRpcEvents || terminalFailure !== undefined || timedOut) return;
       stdout += chunk.toString("utf8");
       if (stdout.length > 4 * 1024 * 1024) {
         terminate(new Error("Pi RPC output exceeded 4 MiB"));
@@ -371,6 +373,9 @@ export async function runReviewRpc(
         timer = undefined;
       }
       schedulePipeCloseFallback();
+      setImmediate(() => {
+        acceptRpcEvents = false;
+      });
     });
     child.once("close", (code, signal) => {
       if (settled) return;
