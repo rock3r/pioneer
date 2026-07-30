@@ -13,6 +13,7 @@ The TypeScript API is:
 ```ts
 import { runReview } from "@rock3r/pioneer";
 
+// On Linux, this reviews the current Git changes.
 const result = await runReview({
   sourceDir: "/absolute/repository",
   prompt: "Review the current changes",
@@ -27,7 +28,7 @@ The CLI prints only the report to stdout. Errors and the Windows warning go to s
 
 ## Target semantics
 
-`--source` grants a directory to Pi and sets it as the working directory. Linux Pi can inspect Git directly inside its PID namespace. macOS and opt-in Windows provide read-only source inspection without controller-side Git execution and reject explicit Git-target requests rather than report on an unverified scope. Put the intended scope in the prompt, for example:
+`--source` grants a directory to Pi and sets it as the working directory. Linux Pi can inspect Git directly inside its PID namespace. macOS and opt-in Windows provide read-only source inspection without controller-side Git execution and reject explicit Git-target requests rather than report on an unverified scope. On those platforms, use a source-only prompt such as `Review the implementation under src/auth for correctness.` Put the intended Linux Git scope in the prompt, for example:
 
 - “Review all current working-tree changes.”
 - “Review commit `abc123` against its first parent.”

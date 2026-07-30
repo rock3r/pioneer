@@ -114,6 +114,7 @@ describe("review RPC runner", () => {
     expect(requiresGitInspection("Inspect branch `release/0.1`.")).toBe(true);
     expect(requiresGitInspection("Review changes against origin/main.")).toBe(true);
     expect(requiresGitInspection("Review changes against main.")).toBe(true);
+    expect(requiresGitInspection("Review changes between main and feature.")).toBe(true);
     expect(requiresGitInspection("Compare main...feature.")).toBe(true);
     expect(requiresGitInspection("Compare feature...main.")).toBe(true);
     expect(requiresGitInspection("Review main..feature.")).toBe(true);
