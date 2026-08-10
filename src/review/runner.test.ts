@@ -394,6 +394,28 @@ describe("review RPC runner", () => {
     ).resolves.toBe("No findings.");
   });
 
+  it("accepts a length-limited retry after an earlier assistant error", async () => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_end",
+            message: { role: "assistant", content: "Partial review", stopReason: "error" },
+          },
+          {
+            type: "message_end",
+            message: { role: "assistant", content: "No findings.", stopReason: "length" },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+      ),
+    ).resolves.toBe("No findings.");
+  });
+
   it.each([
     {
       type: "message_end",

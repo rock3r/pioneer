@@ -222,7 +222,11 @@ function recordAssistantFailure(
   const message = value as Record<string, unknown>;
   const assistantMessage = message.role === "assistant";
   if (requireAssistantRole && !assistantMessage) return;
-  if (message.stopReason === "stop") {
+  if (
+    message.stopReason === "stop" ||
+    message.stopReason === "length" ||
+    message.stopReason === "toolUse"
+  ) {
     clearAssistantFailures(diagnostics);
     return;
   }
