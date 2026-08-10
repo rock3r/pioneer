@@ -205,6 +205,14 @@ function clearAssistantFailures(diagnostics: string[]): void {
   }
 }
 
+function isAssistantMessage(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Record<string, unknown>).role === "assistant"
+  );
+}
+
 function recordAssistantFailure(
   value: unknown,
   diagnostics: string[],
@@ -214,8 +222,11 @@ function recordAssistantFailure(
   const message = value as Record<string, unknown>;
   const assistantMessage = message.role === "assistant";
   if (requireAssistantRole && !assistantMessage) return;
+  if (message.stopReason === "stop") {
+    clearAssistantFailures(diagnostics);
+    return;
+  }
   if (message.stopReason !== "error" && message.stopReason !== "aborted") {
-    if (assistantMessage) clearAssistantFailures(diagnostics);
     return;
   }
   clearAssistantFailures(diagnostics);
@@ -381,12 +392,11 @@ export async function runReviewRpc(
         }
         if (record.type === "agent_end" && Array.isArray(record.messages)) {
           for (const message of [...record.messages].reverse()) {
+            if (!isAssistantMessage(message)) continue;
             const text = assistantText(message);
             recordAssistantFailure(message, diagnostics);
-            if (text !== undefined) {
-              finalReport = text;
-              break;
-            }
+            if (text !== undefined) finalReport = text;
+            break;
           }
         }
         if (record.type === "agent_settled") {
