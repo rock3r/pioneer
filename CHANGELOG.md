@@ -4,6 +4,12 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.1.6 - 2026-08-10
+
+- Refresh the tested Pi compatibility maximum to `0.84.1`, including the release matrix and a regression test for Pi's delta-only RPC updates.
+- Require Node.js 22.19.0 for Pi 0.84.1 and align the user-facing compatibility references.
+- Fail closed on Pi assistant errors, preserve split UTF-8 RPC output, and bound cumulative RPC output at 4 MiB.
+
 ## 0.1.5 - 2026-07-30
 
 - Add a throttled background npm update notice plus `pioneer check-update` and npm-delegated `pioneer update` commands with interactive or scripted changelog/install choices.

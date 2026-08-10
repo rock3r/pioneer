@@ -16,7 +16,7 @@ describe("review RPC completion", () => {
     ).toBe("No findings.");
   });
 
-  it("fails with a stable diagnostic when Pi settles without a report", () => {
+  it("fails with a stable diagnostic when Pi reports an assistant failure without a report", () => {
     expect(() =>
       completeReviewRpc({
         completed: true,
@@ -28,7 +28,23 @@ describe("review RPC completion", () => {
         stderr: "",
       }),
     ).toThrow(
-      "[REVIEW_REPORT_MISSING] Pi settled without a review report (events: agent_settled; diagnostics: assistant stopReason=error: OAuth refresh failed; stderr: none)",
+      "[REVIEW_ASSISTANT_FAILED] Pi reported an assistant failure without a review report (events: agent_settled; diagnostics: assistant stopReason=error: OAuth refresh failed; stderr: none)",
+    );
+  });
+
+  it("rejects partial output when Pi reports an assistant failure", () => {
+    expect(() =>
+      completeReviewRpc({
+        completed: true,
+        report: "Partial review",
+        exitCode: 0,
+        signal: null,
+        eventTypes: ["message_end", "agent_settled"],
+        diagnostics: ["assistant stopReason=error: provider failed"],
+        stderr: "",
+      }),
+    ).toThrow(
+      "[REVIEW_ASSISTANT_FAILED] Pi reported an assistant failure after producing partial review output (events: message_end, agent_settled; diagnostics: assistant stopReason=error: provider failed; stderr: none)",
     );
   });
 

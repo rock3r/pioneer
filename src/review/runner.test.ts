@@ -13,6 +13,44 @@ process.stdin.once("data", () => {
   return [process.execPath, "-e", source];
 }
 
+function oversizedDeltaPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+process.stdin.once("data", () => {
+  const delta = "x".repeat(128 * 1024);
+  for (let index = 0; index < 33; index += 1) {
+    process.stdout.write(JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta },
+    }) + "\\n");
+  }
+  process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n");
+});
+`,
+  ];
+}
+
+function splitUtf8Pi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+process.stdin.once("data", () => {
+  const output = JSON.stringify({
+    type: "message_end",
+    message: { role: "assistant", content: "café" },
+  }) + "\\n" + JSON.stringify({ type: "agent_settled" }) + "\\n";
+  const bytes = Buffer.from(output);
+  const split = bytes.indexOf(Buffer.from("é")) + 1;
+  process.stdout.write(bytes.subarray(0, split));
+  process.stdout.write(bytes.subarray(split));
+});
+`,
+  ];
+}
+
 function neverSettlingPi(): readonly [string, ...string[]] {
   return [
     process.execPath,
@@ -227,6 +265,40 @@ describe("review RPC runner", () => {
     ).resolves.toBe("No findings.");
   });
 
+  it("collects delta-only message updates from Pi 0.84", async () => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "No " },
+          },
+          {
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "findings." },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        5_000,
+      ),
+    ).resolves.toBe("No findings.");
+  });
+
+  it("rejects cumulative RPC output above 4 MiB", async () => {
+    await expect(
+      runReviewRpc(oversizedDeltaPi(), process.cwd(), process.env, "Review the source", 5_000),
+    ).rejects.toThrow("Pi RPC output exceeded 4 MiB");
+  });
+
+  it("preserves UTF-8 split across RPC stdout chunks", async () => {
+    await expect(
+      runReviewRpc(splitUtf8Pi(), process.cwd(), process.env, "Review the source", 5_000),
+    ).resolves.toBe("café");
+  });
+
   it("rejects a settled process that emits no report", async () => {
     await expect(
       runReviewRpc(
@@ -258,6 +330,27 @@ describe("review RPC runner", () => {
         1_000,
       ),
     ).rejects.toThrow("[REVIEW_PROCESS_FAILED]");
+  });
+
+  it.each([
+    {
+      type: "turn_end",
+      message: { role: "assistant", content: "Partial review", stopReason: "error" },
+    },
+    {
+      type: "agent_end",
+      messages: [{ role: "assistant", content: "Partial review", stopReason: "aborted" }],
+    },
+  ])("rejects failed assistant output from $type", async (event) => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc([event, { type: "agent_settled" }]),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+      ),
+    ).rejects.toThrow("[REVIEW_ASSISTANT_FAILED]");
   });
 
   it("rejects a process that exits before Pi settles", async () => {

@@ -2,9 +2,9 @@
 
 ## Requirements
 
-- Node.js 22 or newer;
+- Node.js 22.19.0 or newer;
 - npm;
-- Pi `0.80.6` or newer (versions through `0.82.1` are tested);
+- Pi `0.80.6` or newer (versions through `0.84.1` are tested);
 - at least one provider configured in Pi;
 - macOS or Linux for enforced review and eval isolation.
 
