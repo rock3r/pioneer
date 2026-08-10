@@ -395,6 +395,14 @@ export async function runReviewRpc(
           recordAssistantEventFailure(update, diagnostics);
           if (typeof update === "object" && update !== null) {
             const typed = update as Record<string, unknown>;
+            if (typed.type === "start") {
+              report = "";
+              finalReport = undefined;
+            }
+            if (typed.type === "done") {
+              finalReport = assistantText(typed.message);
+              recordAssistantFailure(typed.message, diagnostics);
+            }
             if (typed.type === "text_delta" && typeof typed.delta === "string")
               report += typed.delta;
           }
