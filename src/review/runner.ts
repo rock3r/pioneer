@@ -196,7 +196,7 @@ function assistantText(value: unknown): string | undefined {
       return record.type === "text" && typeof record.text === "string" ? [record.text] : [];
     })
     .join("");
-  return text || undefined;
+  return text;
 }
 
 function clearAssistantFailures(diagnostics: string[]): void {
