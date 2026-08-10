@@ -199,6 +199,12 @@ function assistantText(value: unknown): string | undefined {
   return text || undefined;
 }
 
+function clearAssistantFailures(diagnostics: string[]): void {
+  for (let index = diagnostics.length - 1; index >= 0; index -= 1) {
+    if (diagnostics[index]?.startsWith("assistant stopReason=")) diagnostics.splice(index, 1);
+  }
+}
+
 function recordAssistantFailure(
   value: unknown,
   diagnostics: string[],
@@ -206,8 +212,13 @@ function recordAssistantFailure(
 ): void {
   if (typeof value !== "object" || value === null) return;
   const message = value as Record<string, unknown>;
-  if (requireAssistantRole && message.role !== "assistant") return;
-  if (message.stopReason !== "error" && message.stopReason !== "aborted") return;
+  const assistantMessage = message.role === "assistant";
+  if (requireAssistantRole && !assistantMessage) return;
+  if (message.stopReason !== "error" && message.stopReason !== "aborted") {
+    if (assistantMessage) clearAssistantFailures(diagnostics);
+    return;
+  }
+  clearAssistantFailures(diagnostics);
   const detail =
     typeof message.errorMessage === "string"
       ? message.errorMessage.replaceAll(/\s+/g, " ").slice(0, 500)

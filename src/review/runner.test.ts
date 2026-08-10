@@ -372,6 +372,28 @@ describe("review RPC runner", () => {
     ).rejects.toThrow("[REVIEW_ASSISTANT_FAILED]");
   });
 
+  it("accepts a successful retry after an earlier assistant error", async () => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_end",
+            message: { role: "assistant", content: "Partial review", stopReason: "error" },
+          },
+          {
+            type: "message_end",
+            message: { role: "assistant", content: "No findings.", stopReason: "stop" },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+      ),
+    ).resolves.toBe("No findings.");
+  });
+
   it("rejects a process that exits before Pi settles", async () => {
     await expect(
       runReviewRpc(fakePiRpc([], 2), process.cwd(), process.env, "Review the source", 1_000),
