@@ -394,6 +394,38 @@ describe("review RPC runner", () => {
     ).resolves.toBe("No findings.");
   });
 
+  it.each([
+    {
+      type: "message_end",
+      message: { role: "assistant", content: "", stopReason: "stop" },
+    },
+    {
+      type: "turn_end",
+      message: { role: "assistant", content: "", stopReason: "stop" },
+    },
+    {
+      type: "agent_end",
+      messages: [{ role: "assistant", content: "", stopReason: "stop" }],
+    },
+  ])("rejects stale output after an empty successful retry via $type", async (successEvent) => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_end",
+            message: { role: "assistant", content: "Partial review", stopReason: "error" },
+          },
+          successEvent,
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+      ),
+    ).rejects.toThrow("[REVIEW_REPORT_MISSING]");
+  });
+
   it("rejects a delta-only stream with an assistant event error", async () => {
     await expect(
       runReviewRpc(
