@@ -237,6 +237,24 @@ function recordAssistantFailure(
   diagnostics.push(`assistant stopReason=${String(message.stopReason)}: ${detail}`);
 }
 
+function recordAssistantEventFailure(value: unknown, diagnostics: string[]): void {
+  if (typeof value !== "object" || value === null) return;
+  const event = value as Record<string, unknown>;
+  if (event.type !== "error" || (event.reason !== "error" && event.reason !== "aborted")) return;
+
+  const error = event.error;
+  if (typeof error === "object" && error !== null) {
+    recordAssistantFailure(
+      { ...(error as Record<string, unknown>), role: "assistant", stopReason: event.reason },
+      diagnostics,
+    );
+    return;
+  }
+
+  clearAssistantFailures(diagnostics);
+  diagnostics.push(`assistant stopReason=${event.reason}: no detail`);
+}
+
 function processOutcomeContext(
   exitCode: number | null,
   signal: NodeJS.Signals | null,
@@ -374,7 +392,7 @@ export async function runReviewRpc(
         if (record.type === "message_update") {
           const update = record.assistantMessageEvent;
           recordAssistantFailure(record.message, diagnostics);
-          recordAssistantFailure(update, diagnostics, false);
+          recordAssistantEventFailure(update, diagnostics);
           if (typeof update === "object" && update !== null) {
             const typed = update as Record<string, unknown>;
             if (typed.type === "text_delta" && typeof typed.delta === "string")
