@@ -400,7 +400,7 @@ export async function runReviewRpc(
               finalReport = undefined;
             }
             if (typed.type === "done") {
-              finalReport = assistantText(typed.message);
+              finalReport = assistantText(typed.message) ?? "";
               recordAssistantFailure(typed.message, diagnostics);
             }
             if (typed.type === "text_delta" && typeof typed.delta === "string")
@@ -408,12 +408,12 @@ export async function runReviewRpc(
           }
         }
         if (record.type === "message_end") {
-          finalReport = assistantText(record.message) ?? finalReport;
+          if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
           recordAssistantFailure(record.message, diagnostics);
         }
         if (record.type === "extension_error") diagnostics.push("extension_error");
         if (record.type === "turn_end") {
-          finalReport = assistantText(record.message) ?? finalReport;
+          if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
           recordAssistantFailure(record.message, diagnostics);
         }
         if (record.type === "agent_end" && Array.isArray(record.messages)) {
@@ -421,7 +421,7 @@ export async function runReviewRpc(
             if (!isAssistantMessage(message)) continue;
             const text = assistantText(message);
             recordAssistantFailure(message, diagnostics);
-            if (text !== undefined) finalReport = text;
+            finalReport = text ?? "";
             break;
           }
         }

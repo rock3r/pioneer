@@ -448,6 +448,28 @@ describe("review RPC runner", () => {
     ).rejects.toThrow("[REVIEW_REPORT_MISSING]");
   });
 
+  it("rejects stale output after a content-less successful retry", async () => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_end",
+            message: { role: "assistant", content: "Partial review", stopReason: "error" },
+          },
+          {
+            type: "message_end",
+            message: { role: "assistant", stopReason: "stop" },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+      ),
+    ).rejects.toThrow("[REVIEW_REPORT_MISSING]");
+  });
+
   it("rejects a delta-only stream with an assistant event error", async () => {
     await expect(
       runReviewRpc(
