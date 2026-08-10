@@ -287,6 +287,25 @@ describe("review RPC runner", () => {
     ).resolves.toBe("No findings.");
   });
 
+  it("rejects a failed assistant reported by a delta-only update", async () => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_update",
+            message: { role: "assistant", stopReason: "error" },
+            assistantMessageEvent: { type: "text_delta", delta: "Partial review" },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+      ),
+    ).rejects.toThrow("[REVIEW_ASSISTANT_FAILED]");
+  });
+
   it("rejects cumulative RPC output above 4 MiB", async () => {
     await expect(
       runReviewRpc(oversizedDeltaPi(), process.cwd(), process.env, "Review the source", 5_000),

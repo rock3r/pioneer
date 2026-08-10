@@ -199,10 +199,14 @@ function assistantText(value: unknown): string | undefined {
   return text || undefined;
 }
 
-function recordAssistantFailure(value: unknown, diagnostics: string[]): void {
+function recordAssistantFailure(
+  value: unknown,
+  diagnostics: string[],
+  requireAssistantRole = true,
+): void {
   if (typeof value !== "object" || value === null) return;
   const message = value as Record<string, unknown>;
-  if (message.role !== "assistant") return;
+  if (requireAssistantRole && message.role !== "assistant") return;
   if (message.stopReason !== "error" && message.stopReason !== "aborted") return;
   const detail =
     typeof message.errorMessage === "string"
@@ -347,6 +351,8 @@ export async function runReviewRpc(
         }
         if (record.type === "message_update") {
           const update = record.assistantMessageEvent;
+          recordAssistantFailure(record.message, diagnostics);
+          recordAssistantFailure(update, diagnostics, false);
           if (typeof update === "object" && update !== null) {
             const typed = update as Record<string, unknown>;
             if (typed.type === "text_delta" && typeof typed.delta === "string")
