@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { diagnosticMessage } from "../diagnostics.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
@@ -54,6 +55,7 @@ export interface ReviewResult {
 const WINDOWS_WARNING =
   "Windows review execution is unsandboxed. Read-only behavior and path restrictions are instructions, not operating-system security boundaries.";
 const PIPE_CLOSE_GRACE_MS = 1_000;
+const MAX_RPC_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 export function reviewTools(platform: NodeJS.Platform = process.platform): readonly string[] {
   return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read", "ls"];
@@ -194,7 +196,67 @@ function assistantText(value: unknown): string | undefined {
       return record.type === "text" && typeof record.text === "string" ? [record.text] : [];
     })
     .join("");
-  return text || undefined;
+  return text;
+}
+
+function clearAssistantFailures(diagnostics: string[]): void {
+  for (let index = diagnostics.length - 1; index >= 0; index -= 1) {
+    if (diagnostics[index]?.startsWith("assistant stopReason=")) diagnostics.splice(index, 1);
+  }
+}
+
+function isAssistantMessage(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Record<string, unknown>).role === "assistant"
+  );
+}
+
+function recordAssistantFailure(
+  value: unknown,
+  diagnostics: string[],
+  requireAssistantRole = true,
+): void {
+  if (typeof value !== "object" || value === null) return;
+  const message = value as Record<string, unknown>;
+  const assistantMessage = message.role === "assistant";
+  if (requireAssistantRole && !assistantMessage) return;
+  if (
+    message.stopReason === "stop" ||
+    message.stopReason === "length" ||
+    message.stopReason === "toolUse"
+  ) {
+    clearAssistantFailures(diagnostics);
+    return;
+  }
+  if (message.stopReason !== "error" && message.stopReason !== "aborted") {
+    return;
+  }
+  clearAssistantFailures(diagnostics);
+  const detail =
+    typeof message.errorMessage === "string"
+      ? message.errorMessage.replaceAll(/\s+/g, " ").slice(0, 500)
+      : "no detail";
+  diagnostics.push(`assistant stopReason=${String(message.stopReason)}: ${detail}`);
+}
+
+function recordAssistantEventFailure(value: unknown, diagnostics: string[]): void {
+  if (typeof value !== "object" || value === null) return;
+  const event = value as Record<string, unknown>;
+  if (event.type !== "error" || (event.reason !== "error" && event.reason !== "aborted")) return;
+
+  const error = event.error;
+  if (typeof error === "object" && error !== null) {
+    recordAssistantFailure(
+      { ...(error as Record<string, unknown>), role: "assistant", stopReason: event.reason },
+      diagnostics,
+    );
+    return;
+  }
+
+  clearAssistantFailures(diagnostics);
+  diagnostics.push(`assistant stopReason=${event.reason}: no detail`);
 }
 
 function processOutcomeContext(
@@ -256,6 +318,8 @@ export async function runReviewRpc(
       detached: process.platform !== "win32",
     });
     let stdout = "";
+    let stdoutBytes = 0;
+    const stdoutDecoder = new StringDecoder("utf8");
     let stderr = "";
     let report = "";
     let finalReport: string | undefined;
@@ -331,36 +395,39 @@ export async function runReviewRpc(
         }
         if (record.type === "message_update") {
           const update = record.assistantMessageEvent;
+          recordAssistantFailure(record.message, diagnostics);
+          recordAssistantEventFailure(update, diagnostics);
           if (typeof update === "object" && update !== null) {
             const typed = update as Record<string, unknown>;
+            if (typed.type === "start") {
+              report = "";
+              finalReport = undefined;
+              clearAssistantFailures(diagnostics);
+            }
+            if (typed.type === "done") {
+              finalReport = assistantText(typed.message) ?? "";
+              recordAssistantFailure(typed.message, diagnostics);
+            }
             if (typed.type === "text_delta" && typeof typed.delta === "string")
               report += typed.delta;
           }
         }
         if (record.type === "message_end") {
-          finalReport = assistantText(record.message) ?? finalReport;
-          if (typeof record.message === "object" && record.message !== null) {
-            const message = record.message as Record<string, unknown>;
-            if (message.stopReason === "error" || message.stopReason === "aborted") {
-              const detail =
-                typeof message.errorMessage === "string"
-                  ? message.errorMessage.replaceAll(/\s+/g, " ").slice(0, 500)
-                  : "no detail";
-              diagnostics.push(`assistant stopReason=${String(message.stopReason)}: ${detail}`);
-            }
-          }
+          if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
+          recordAssistantFailure(record.message, diagnostics);
         }
         if (record.type === "extension_error") diagnostics.push("extension_error");
         if (record.type === "turn_end") {
-          finalReport = assistantText(record.message) ?? finalReport;
+          if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
+          recordAssistantFailure(record.message, diagnostics);
         }
         if (record.type === "agent_end" && Array.isArray(record.messages)) {
           for (const message of [...record.messages].reverse()) {
+            if (!isAssistantMessage(message)) continue;
             const text = assistantText(message);
-            if (text !== undefined) {
-              finalReport = text;
-              break;
-            }
+            recordAssistantFailure(message, diagnostics);
+            finalReport = text ?? "";
+            break;
           }
         }
         if (record.type === "agent_settled") {
@@ -372,10 +439,13 @@ export async function runReviewRpc(
     };
     child.stdout.on("data", (chunk: Buffer) => {
       if (!acceptRpcEvents || terminalFailure !== undefined || timedOut) return;
-      stdout += chunk.toString("utf8");
-      if (stdout.length > 4 * 1024 * 1024) {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > MAX_RPC_OUTPUT_BYTES) {
         terminate(new Error("Pi RPC output exceeded 4 MiB"));
-      } else consume();
+        return;
+      }
+      stdout += stdoutDecoder.write(chunk);
+      consume();
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
@@ -396,6 +466,10 @@ export async function runReviewRpc(
     });
     child.once("close", (code, signal) => {
       if (settled) return;
+      if (terminalFailure === undefined && !timedOut) {
+        stdout += stdoutDecoder.end();
+        consume();
+      }
       if (timedOut) {
         finish(
           new Error(

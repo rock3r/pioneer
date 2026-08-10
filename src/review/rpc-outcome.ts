@@ -21,10 +21,21 @@ function stderrSummary(stderr: string): string {
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
   const report = outcome.report.trim();
   const context = `events: ${summary(outcome.eventTypes)}; diagnostics: ${summary(outcome.diagnostics)}; stderr: ${stderrSummary(outcome.stderr)}`;
-  if (outcome.completed && report && outcome.exitCode === 0 && outcome.signal === null) {
-    return report;
-  }
+  const assistantFailed = outcome.diagnostics.some(
+    (diagnostic) =>
+      diagnostic.startsWith("assistant stopReason=error:") ||
+      diagnostic.startsWith("assistant stopReason=aborted:"),
+  );
   if (outcome.completed && report) {
+    if (outcome.exitCode === 0 && outcome.signal === null && assistantFailed) {
+      throw new Error(
+        diagnosticMessage(
+          "REVIEW_ASSISTANT_FAILED",
+          `Pi reported an assistant failure after producing partial review output (${context})`,
+        ),
+      );
+    }
+    if (outcome.exitCode === 0 && outcome.signal === null) return report;
     throw new Error(
       diagnosticMessage(
         "REVIEW_PROCESS_FAILED",
@@ -33,6 +44,14 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
     );
   }
   if (outcome.completed) {
+    if (assistantFailed) {
+      throw new Error(
+        diagnosticMessage(
+          "REVIEW_ASSISTANT_FAILED",
+          `Pi reported an assistant failure without a review report (${context})`,
+        ),
+      );
+    }
     throw new Error(
       diagnosticMessage("REVIEW_REPORT_MISSING", `Pi settled without a review report (${context})`),
     );
