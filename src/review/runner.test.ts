@@ -572,6 +572,38 @@ describe("review RPC runner", () => {
     ).resolves.toBe("No findings.");
   });
 
+  it("accepts a delta-only retry that settles without a done event", async () => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc([
+          { type: "message_update", assistantMessageEvent: { type: "start" } },
+          {
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "Partial review" },
+          },
+          {
+            type: "message_update",
+            assistantMessageEvent: {
+              type: "error",
+              reason: "error",
+              error: { role: "assistant", stopReason: "error", errorMessage: "provider failed" },
+            },
+          },
+          { type: "message_update", assistantMessageEvent: { type: "start" } },
+          {
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: "No findings." },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+      ),
+    ).resolves.toBe("No findings.");
+  });
+
   it("rejects an agent_end whose newest assistant response failed", async () => {
     await expect(
       runReviewRpc(

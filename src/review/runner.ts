@@ -402,6 +402,7 @@ export async function runReviewRpc(
             if (typed.type === "start") {
               report = "";
               finalReport = undefined;
+              clearAssistantFailures(diagnostics);
             }
             if (typed.type === "done") {
               finalReport = assistantText(typed.message) ?? "";
