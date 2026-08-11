@@ -6,6 +6,7 @@ import {
   readFile,
   stat,
   symlink,
+  unlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
@@ -326,6 +327,62 @@ describe("review work log", () => {
     next.close();
   });
 
+  it("revalidates a stale-looking lease that is renewed by its live owner", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-revalidate-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    await mkdir(directory, { recursive: true });
+    const activeTarget = path.join(
+      directory,
+      "review-20260801T000000000Z-00000000-0000-0000-0000-000000000000.jsonl",
+    );
+    const activeMarker = `${activeTarget}.active-${process.pid}-11111111111111111111111111111111`;
+    await Promise.all([
+      writeFile(activeTarget, "active\n"),
+      writeFile(activeMarker, ""),
+      ...Array.from({ length: 99 }, (_, index) =>
+        writeFile(
+          path.join(
+            directory,
+            `review-20260802T000000000Z-00000000-0000-0000-0000-${String(index).padStart(12, "0")}.jsonl`,
+          ),
+          "completed\n",
+        ),
+      ),
+    ]);
+    await utimes(
+      activeMarker,
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-08-01T00:00:00.000Z"),
+    );
+    const renewal = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        void utimes(activeMarker, new Date(), new Date())
+          .catch(() => {})
+          .finally(resolve);
+      }, 50);
+    });
+    const nextTarget = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000002",
+    );
+    const next = await openReviewWorkLog(nextTarget, { retainDefaultLogs: true, platform });
+    await renewal;
+
+    expect((await lstat(activeTarget)).isFile()).toBe(true);
+    await unlink(activeMarker).catch(() => {});
+    next.close();
+  });
+
   it("removes a stale active marker and prunes its completed log", async () => {
     const stateRoot = path.join(
       tmpdir(),
@@ -347,6 +404,7 @@ describe("review work log", () => {
       writeFile(`${oldestTarget}.active-2147483647`, ""),
       writeFile(`${oldestTarget}.active-${process.pid}`, ""),
       writeFile(`${oldestTarget}.active-00000000000000000000000000000000`, ""),
+      writeFile(`${oldestTarget}.active-${process.pid}-22222222222222222222222222222222`, ""),
       ...Array.from({ length: 99 }, (_, index) =>
         writeFile(
           path.join(
@@ -359,6 +417,11 @@ describe("review work log", () => {
     ]);
     await utimes(
       `${oldestTarget}.active-00000000000000000000000000000000`,
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-08-01T00:00:00.000Z"),
+    );
+    await utimes(
+      `${oldestTarget}.active-${process.pid}-22222222222222222222222222222222`,
       new Date("2026-08-01T00:00:00.000Z"),
       new Date("2026-08-01T00:00:00.000Z"),
     );
@@ -380,6 +443,9 @@ describe("review work log", () => {
     expect(entries).not.toContain(`${path.basename(oldestTarget)}.active-${process.pid}`);
     expect(entries).not.toContain(
       `${path.basename(oldestTarget)}.active-00000000000000000000000000000000`,
+    );
+    expect(entries).not.toContain(
+      `${path.basename(oldestTarget)}.active-${process.pid}-22222222222222222222222222222222`,
     );
   });
 

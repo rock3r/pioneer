@@ -3,6 +3,7 @@ import { closeSync, constants, fsyncSync, openSync, unlinkSync, writeSync } from
 import { chmod, lstat, mkdir, readdir, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 
 const MAX_WORK_LOG_BYTES = 16 * 1024 * 1024;
@@ -11,6 +12,7 @@ const RETAINED_DEFAULT_WORK_LOGS = 100;
 const WORK_LOG_SYNC_INTERVAL_MS = 1_000;
 const ACTIVE_WORK_LOG_SUFFIX = ".active";
 const ACTIVE_WORK_LOG_LEASE_MS = 5_000;
+const ACTIVE_WORK_LOG_REVALIDATION_MS = WORK_LOG_SYNC_INTERVAL_MS + 100;
 const AUTO_WORK_LOG_NAME =
   /^review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl$/i;
 const ACTIVE_WORK_LOG_NAME =
@@ -86,6 +88,23 @@ function platformPath(platform: NodeJS.Platform): typeof path.posix | typeof pat
   return platform === "win32" ? path.win32 : path.posix;
 }
 
+function processIsAlive(processId: number): boolean {
+  try {
+    process.kill(processId, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
+    throw error;
+  }
+}
+
+function activeLeaseIsFresh(modifiedAtMs: number): boolean {
+  const leaseAgeMs = Date.now() - modifiedAtMs;
+  return leaseAgeMs >= -ACTIVE_WORK_LOG_LEASE_MS && leaseAgeMs <= ACTIVE_WORK_LOG_LEASE_MS;
+}
+
 export function reviewWorkLogDirectory(
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
@@ -159,14 +178,25 @@ async function pruneDefaultReviewWorkLogs(
     if (match === null) continue;
     const markerPath = pathApi.join(directory, entry.name);
     const markedLogName = match?.[1];
-    const ownerToken = match?.[2];
-    if (/^[0-9a-f]{32}$/i.test(ownerToken ?? "") && markedLogName !== undefined) {
+    const owner = /^(\d+)-([0-9a-f]{32})$/i.exec(match?.[2] ?? "");
+    if (owner !== null && markedLogName !== undefined) {
       try {
         const markerStats = await lstat(markerPath);
-        const leaseAgeMs = Date.now() - markerStats.mtimeMs;
-        if (leaseAgeMs >= -ACTIVE_WORK_LOG_LEASE_MS && leaseAgeMs <= ACTIVE_WORK_LOG_LEASE_MS) {
+        if (activeLeaseIsFresh(markerStats.mtimeMs)) {
           activeLogs.add(markedLogName);
           continue;
+        }
+        const processId = Number(owner[1]);
+        if (Number.isSafeInteger(processId) && processId > 0 && processIsAlive(processId)) {
+          await delay(ACTIVE_WORK_LOG_REVALIDATION_MS);
+          const refreshedStats = await lstat(markerPath);
+          if (
+            refreshedStats.mtimeMs !== markerStats.mtimeMs &&
+            activeLeaseIsFresh(refreshedStats.mtimeMs)
+          ) {
+            activeLogs.add(markedLogName);
+            continue;
+          }
         }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -360,7 +390,7 @@ export async function openReviewWorkLog(
     options.retainDefaultLogs === true ? crypto.randomUUID().replaceAll("-", "") : undefined;
   const activeMarker =
     options.retainDefaultLogs === true && ownerToken !== undefined
-      ? `${target}${ACTIVE_WORK_LOG_SUFFIX}-${ownerToken}`
+      ? `${target}${ACTIVE_WORK_LOG_SUFFIX}-${process.pid}-${ownerToken}`
       : undefined;
   let markerLeaseWorker: Worker | undefined;
   let markerLeaseControl: Int32Array | undefined;
