@@ -243,6 +243,49 @@ describe("review work log", () => {
     );
   });
 
+  it("does not prune a default log that is still active", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-active-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const activeTarget = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-01T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000001",
+    );
+    const active = await openReviewWorkLog(activeTarget, { retainDefaultLogs: true, platform });
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    await Promise.all(
+      Array.from({ length: 99 }, (_, index) =>
+        writeFile(
+          path.join(
+            directory,
+            `review-20260802T000000000Z-00000000-0000-0000-0000-${String(index).padStart(12, "0")}.jsonl`,
+          ),
+          "completed\n",
+        ),
+      ),
+    );
+    const nextTarget = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000002",
+    );
+    const next = await openReviewWorkLog(nextTarget, { retainDefaultLogs: true, platform });
+
+    expect((await lstat(activeTarget)).isFile()).toBe(true);
+    active.close();
+    next.close();
+  });
+
   it("rejects an unsafe generated log identifier", async () => {
     await expect(
       prepareDefaultReviewWorkLogPath(

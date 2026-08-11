@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fsyncSync, openSync, writeSync } from "node:fs";
+import { closeSync, constants, fsyncSync, openSync, unlinkSync, writeSync } from "node:fs";
 import { chmod, lstat, mkdir, readdir, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +8,7 @@ const MAX_WORK_LOG_BYTES = 16 * 1024 * 1024;
 const WORK_LOG_TRUNCATION_RESERVE_BYTES = 512;
 const RETAINED_DEFAULT_WORK_LOGS = 100;
 const WORK_LOG_SYNC_INTERVAL_MS = 1_000;
+const ACTIVE_WORK_LOG_SUFFIX = ".active";
 const AUTO_WORK_LOG_NAME =
   /^review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl$/i;
 const PI_EVENT_TYPES = new Set([
@@ -137,12 +138,22 @@ async function pruneDefaultReviewWorkLogs(
     throw new Error(`Review work log target is not an auto-created log: ${target}`);
   }
   const entries = await readdir(directory, { withFileTypes: true });
+  const activeLogs = new Set(
+    entries
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          entry.name.endsWith(ACTIVE_WORK_LOG_SUFFIX) &&
+          AUTO_WORK_LOG_NAME.test(entry.name.slice(0, -ACTIVE_WORK_LOG_SUFFIX.length)),
+      )
+      .map((entry) => entry.name.slice(0, -ACTIVE_WORK_LOG_SUFFIX.length)),
+  );
   const existingLogs = entries
     .filter((entry) => entry.isFile() && AUTO_WORK_LOG_NAME.test(entry.name))
     .map((entry) => entry.name)
     .sort();
   const removeCount = Math.max(0, existingLogs.length - RETAINED_DEFAULT_WORK_LOGS);
-  const removableLogs = existingLogs.filter((name) => name !== targetName);
+  const removableLogs = existingLogs.filter((name) => name !== targetName && !activeLogs.has(name));
   for (const name of removableLogs.slice(0, removeCount)) {
     try {
       await unlink(pathApi.join(directory, name));
@@ -313,11 +324,38 @@ export async function openReviewWorkLog(
   target: string,
   options: OpenReviewWorkLogOptions = {},
 ): Promise<ReviewWorkLog> {
-  const descriptor = openSync(
-    target,
-    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-    0o600,
-  );
+  const activeMarker =
+    options.retainDefaultLogs === true ? `${target}${ACTIVE_WORK_LOG_SUFFIX}` : undefined;
+  if (activeMarker !== undefined) {
+    const markerDescriptor = openSync(
+      activeMarker,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+      0o600,
+    );
+    try {
+      closeSync(markerDescriptor);
+    } catch (error) {
+      try {
+        unlinkSync(activeMarker);
+      } catch {
+        // Preserve the marker close failure.
+      }
+      throw error;
+    }
+  }
+  let descriptor: number;
+  try {
+    descriptor = openSync(target, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
+  } catch (error) {
+    if (activeMarker !== undefined) {
+      try {
+        unlinkSync(activeMarker);
+      } catch {
+        // Preserve the create-only target failure.
+      }
+    }
+    throw error;
+  }
   const closeDescriptor = options.fileOperations?.close ?? closeSync;
   if (options.retainDefaultLogs === true) {
     try {
@@ -332,6 +370,13 @@ export async function openReviewWorkLog(
         await unlink(target);
       } catch {
         // Best-effort rollback; preserve the retention failure.
+      }
+      if (activeMarker !== undefined) {
+        try {
+          unlinkSync(activeMarker);
+        } catch {
+          // Best-effort rollback; preserve the retention failure.
+        }
       }
       throw error;
     }
@@ -424,6 +469,13 @@ export async function openReviewWorkLog(
         closeDescriptor(descriptor);
       } catch (error) {
         failure ??= error;
+      }
+      if (activeMarker !== undefined) {
+        try {
+          unlinkSync(activeMarker);
+        } catch (error) {
+          failure ??= error;
+        }
       }
       if (failure !== undefined) throw failure;
     },
