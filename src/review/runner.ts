@@ -111,6 +111,10 @@ export interface RunReviewRpcOptions {
   readonly heartbeatMs?: number;
 }
 
+interface ReviewPromptWriter {
+  write(chunk: string): unknown;
+}
+
 export function reviewTools(platform: NodeJS.Platform = process.platform): readonly string[] {
   return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read", "ls"];
 }
@@ -120,6 +124,26 @@ export function requestedModelForWorkLog(
   prompt: string,
 ): string {
   return sanitizeWorkLogDiagnostic(requestedModel ?? "default", [prompt]);
+}
+
+export function readinessMetadataForWorkLog(
+  readiness: Readonly<{ version?: string; resolvedModel?: string }>,
+  prompt: string,
+): Readonly<{ piVersion: string; model: string }> {
+  return {
+    piVersion: sanitizeWorkLogDiagnostic(readiness.version ?? "unknown", [prompt]),
+    model: sanitizeWorkLogDiagnostic(readiness.resolvedModel ?? "default", [prompt]),
+  };
+}
+
+export function sendReviewPrompt(
+  writer: ReviewPromptWriter,
+  prompt: string,
+  startupFailure: Error | undefined,
+): boolean {
+  if (startupFailure !== undefined) return false;
+  writer.write(`${JSON.stringify({ id: "review", type: "prompt", message: prompt })}\n`);
+  return true;
 }
 
 export async function createReviewScratchDirectory(
@@ -659,7 +683,10 @@ export async function runReviewRpc(
         finish(error instanceof Error ? error : new Error(String(error)));
       }
     });
-    child.stdin.write(`${JSON.stringify({ id: "review", type: "prompt", message: prompt })}\n`);
+    if (!sendReviewPrompt(child.stdin, prompt, workLogFailure)) {
+      child.stdin.destroy();
+      return;
+    }
     lastPiEvent = "prompt_sent";
     lastPiEventAt = Date.now();
     recordWorkLog("pi_prompt_sent", { promptBytes: Buffer.byteLength(prompt) });
@@ -754,8 +781,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     });
     recordReviewWorkLog(workLog, "stage_completed", {
       stage: "pi_readiness",
-      piVersion: readiness.version ?? "unknown",
-      model: readiness.resolvedModel ?? "default",
+      ...readinessMetadataForWorkLog(readiness, request.prompt),
       warning: readiness.warning !== undefined,
     });
 

@@ -5,11 +5,13 @@ import { describe, expect, it } from "vitest";
 import {
   buildReviewPrompt,
   createReviewScratchDirectory,
+  readinessMetadataForWorkLog,
   requestedModelForWorkLog,
   requiresGitInspection,
   reviewTools,
   runReview,
   runReviewRpc,
+  sendReviewPrompt,
 } from "./runner.js";
 import type { ReviewWorkLog } from "./work-log.js";
 
@@ -217,6 +219,31 @@ describe("review RPC runner", () => {
       "Authorization=[REDACTED]",
     );
     expect(requestedModelForWorkLog("x".repeat(600), "Review source")).toHaveLength(500);
+  });
+
+  it("redacts and bounds resolved Pi readiness metadata before logging it", () => {
+    expect(
+      readinessMetadataForWorkLog(
+        { version: "token=private-version", resolvedModel: "x".repeat(600) },
+        "Review source",
+      ),
+    ).toEqual({ piVersion: "token=[REDACTED]", model: "x".repeat(500) });
+  });
+
+  it("does not write the prompt after startup logging fails", () => {
+    let written = false;
+    const sent = sendReviewPrompt(
+      {
+        write() {
+          written = true;
+        },
+      },
+      "Review source",
+      new Error("work log failed"),
+    );
+
+    expect(sent).toBe(false);
+    expect(written).toBe(false);
   });
 
   it("does not classify unrelated request validation as a work-log creation failure", async () => {
