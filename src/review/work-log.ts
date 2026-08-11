@@ -3,6 +3,7 @@ import {
   closeSync,
   constants,
   fsyncSync,
+  lstatSync,
   openSync,
   readdirSync,
   unlinkSync,
@@ -21,6 +22,9 @@ const WORK_LOG_SYNC_INTERVAL_MS = 1_000;
 const ACTIVE_WORK_LOG_SUFFIX = ".active";
 const ACTIVE_WORK_LOG_LEASE_MS = 5_000;
 const ACTIVE_WORK_LOG_REVALIDATION_MS = WORK_LOG_SYNC_INTERVAL_MS + 100;
+const RETENTION_LOCK_NAME = ".pioneer-retention.lock";
+const RETENTION_LOCK_STALE_MS = 30_000;
+const RETENTION_LOCK_WAIT_MS = 10;
 const AUTO_WORK_LOG_NAME =
   /^review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl$/i;
 const ACTIVE_WORK_LOG_NAME =
@@ -235,6 +239,59 @@ async function pruneDefaultReviewWorkLogs(
   }
 }
 
+function withDefaultWorkLogRetentionLock(
+  target: string,
+  platform: NodeJS.Platform,
+  operation: () => void,
+): void {
+  const pathApi = platformPath(platform);
+  const lockPath = pathApi.join(pathApi.dirname(target), RETENTION_LOCK_NAME);
+  const deadline = Date.now() + RETENTION_LOCK_STALE_MS;
+  const waitControl = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  let lockDescriptor: number | undefined;
+  while (lockDescriptor === undefined) {
+    try {
+      lockDescriptor = openSync(
+        lockPath,
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+        0o600,
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - lstatSync(lockPath).mtimeMs >= RETENTION_LOCK_STALE_MS) {
+          unlinkSync(lockPath);
+          continue;
+        }
+      } catch (lockError) {
+        if ((lockError as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw lockError;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for review work-log retention lock: ${lockPath}`);
+      }
+      Atomics.wait(waitControl, 0, 0, RETENTION_LOCK_WAIT_MS);
+    }
+  }
+  let failure: unknown;
+  try {
+    operation();
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    closeSync(lockDescriptor);
+  } catch (error) {
+    failure ??= error;
+  }
+  try {
+    unlinkSync(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") failure ??= error;
+  }
+  if (failure !== undefined) throw failure;
+}
+
 function pruneInactiveDefaultReviewWorkLogsSync(target: string, platform: NodeJS.Platform): void {
   const pathApi = platformPath(platform);
   const directory = pathApi.dirname(target);
@@ -251,8 +308,15 @@ function pruneInactiveDefaultReviewWorkLogsSync(target: string, platform: NodeJS
   );
   const existingLogs = entries
     .filter((entry) => entry.isFile() && AUTO_WORK_LOG_NAME.test(entry.name))
-    .map((entry) => entry.name)
-    .sort();
+    .map((entry) => ({
+      modifiedAtMs: lstatSync(pathApi.join(directory, entry.name)).mtimeMs,
+      name: entry.name,
+    }))
+    .sort(
+      (left, right) =>
+        left.modifiedAtMs - right.modifiedAtMs || left.name.localeCompare(right.name),
+    )
+    .map(({ name }) => name);
   const removeCount = Math.max(0, existingLogs.length - RETAINED_DEFAULT_WORK_LOGS);
   const removableLogs = existingLogs.filter((name) => name !== targetName && !activeLogs.has(name));
   for (const name of removableLogs.slice(0, removeCount)) {
@@ -671,18 +735,12 @@ export async function openReviewWorkLog(
       } catch (error) {
         failure ??= error;
       }
-      let markerRemoved = activeMarker === undefined;
       if (activeMarker !== undefined) {
         try {
-          unlinkSync(activeMarker);
-          markerRemoved = true;
-        } catch (error) {
-          failure ??= error;
-        }
-      }
-      if (activeMarker !== undefined && markerRemoved) {
-        try {
-          pruneInactiveDefaultReviewWorkLogsSync(target, platform);
+          withDefaultWorkLogRetentionLock(target, platform, () => {
+            unlinkSync(activeMarker);
+            pruneInactiveDefaultReviewWorkLogsSync(target, platform);
+          });
         } catch (error) {
           failure ??= error;
         }
