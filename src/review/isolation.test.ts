@@ -157,6 +157,24 @@ describe("review path grants", () => {
     ).rejects.toThrow(/identical/i);
   });
 
+  it("rejects Unicode-equivalent output targets on normalization-insensitive macOS", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const output = path.join(root, "output");
+    await Promise.all([mkdir(source), mkdir(output)]);
+
+    await expect(
+      validateReviewPaths(
+        {
+          sourceDir: source,
+          reportPath: path.join(output, "caf\u00e9.md"),
+          workLogPath: path.join(output, "cafe\u0301.md"),
+        },
+        "darwin",
+      ),
+    ).rejects.toThrow(/identical/i);
+  });
+
   it("rejects existing targets, symlink parents, and missing parents", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
     const source = path.join(root, "source");

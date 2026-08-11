@@ -41,7 +41,10 @@ function overlaps(left: string, right: string): boolean {
 }
 
 function sameOutputPath(left: string, right: string, platform: NodeJS.Platform): boolean {
-  if (platform === "darwin" || platform === "win32") {
+  if (platform === "darwin") {
+    return left.normalize("NFC").toLowerCase() === right.normalize("NFC").toLowerCase();
+  }
+  if (platform === "win32") {
     return left.toLowerCase() === right.toLowerCase();
   }
   return left === right;
