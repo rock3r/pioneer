@@ -180,6 +180,10 @@ async function main(): Promise<void> {
       process.stderr.write(`${result.reportWriteError}\n`);
       process.exitCode = 1;
     }
+    if (result.workLogWriteError !== undefined) {
+      process.stderr.write(`${result.workLogWriteError}\n`);
+      process.exitCode = 1;
+    }
   } finally {
     if (updateCheck !== undefined) {
       const result = await updateCheck;

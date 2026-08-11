@@ -62,6 +62,21 @@ pioneer review \
 
 Pi cannot see arbitrary neighboring directories. Grant each required directory explicitly.
 
+## Observe a review in real time
+
+Pioneer creates a private JSONL work log before readiness checks or Pi startup and immediately prints its location as `[PIONEER_WORK_LOG] ABSOLUTE_PATH` on stderr. Tail that file to distinguish a busy review from a stalled controller: five-second `heartbeat` records include the last sanitized Pi event, idle duration, RPC byte count, stderr byte count, and child PID without storing prompts, model text, or tool content.
+
+Pass `--work-log` to choose an exact create-only destination:
+
+```bash
+pioneer review \
+  --source "$PWD" \
+  --work-log /absolute/path/review.jsonl \
+  --prompt "Review this source tree."
+```
+
+The target must be absolute, absent, outside every actor-visible grant, and beneath an existing writable non-symlink directory. Without the option, Pioneer uses the platform log directory documented in [Getting started](getting-started.md). On Windows, a custom target inherits its parent ACL; use the default unless that parent is already private to the current user. A log write failure or the 16 MiB per-run cap stops the review rather than allowing an unobservable run to continue.
+
 ## Persist a report
 
 The canonical result is stdout. Use `--report` when Pioneer should atomically persist the verified final report outside the sandbox:

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -30,8 +30,50 @@ try {
   if (review.status !== 1 || !review.stderr.includes("--allow-unsandboxed-windows")) {
     throw new Error("Windows review did not require explicit unsandboxed opt-in");
   }
+
+  const localAppData = path.join(source, "local-app-data");
+  const optedIn = spawnSync(
+    process.execPath,
+    [
+      "dist/review-cli.js",
+      "review",
+      "--source",
+      source,
+      "--prompt",
+      "Smoke test",
+      "--allow-unsandboxed-windows",
+    ],
+    {
+      encoding: "utf8",
+      shell: false,
+      env: {
+        ...process.env,
+        LOCALAPPDATA: localAppData,
+        PI_CODING_AGENT_DIR: path.join(source, "missing-pi-home"),
+      },
+    },
+  );
+  const marker = /^\[PIONEER_WORK_LOG\] (.+)$/m.exec(optedIn.stderr)?.[1];
+  if (
+    optedIn.status !== 1 ||
+    !optedIn.stderr.includes("[PI_NOT_FOUND]") ||
+    optedIn.stderr.includes("--allow-unsandboxed-windows") ||
+    marker === undefined ||
+    !path.resolve(marker).startsWith(path.resolve(localAppData))
+  ) {
+    throw new Error(
+      `Windows opted-in review did not reach observable readiness: ${optedIn.stderr}`,
+    );
+  }
+  const workLog = (await readFile(marker, "utf8"))
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => JSON.parse(line));
+  if (!workLog.some((record) => record.type === "review_started" && record.sandboxed === false)) {
+    throw new Error("Windows opted-in review did not record its unsandboxed execution state");
+  }
 } finally {
   await rm(source, { recursive: true, force: true });
 }
 
-process.stdout.write("Windows fail-closed contracts passed\n");
+process.stdout.write("Windows fail-closed and opt-in contracts passed\n");

@@ -1,9 +1,18 @@
 {
   "name": "@rock3r/pioneer",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Safely delegate reviews and isolated skill evals from coding agents to Pi",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/rock3r/pioneer.git"
@@ -25,8 +34,7 @@
     "LICENSE",
     "pi-compatibility.json",
     "README.md",
-    "plugins/pioneer/assets/pioneer-banner.jpg",
-    "plugins/pioneer/assets/pioneer-mascot.png"
+    "plugins/pioneer/"
   ],
   "publishConfig": {
     "access": "public",

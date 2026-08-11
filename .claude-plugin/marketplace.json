@@ -4,12 +4,12 @@
   "owner": {
     "name": "Pioneer contributors"
   },
-  "description": "Claude Code integration for sandboxed reviews through the local Pi coding agent.",
+  "description": "Claude Code integration for Pi reviews with native sandboxing on macOS and Linux.",
   "plugins": [
     {
       "name": "pioneer",
       "source": "./plugins/pioneer",
-      "description": "Delegate sandboxed code reviews to a locally installed Pi coding agent.",
+      "description": "Delegate Pi code reviews with native sandboxing on macOS and Linux.",
       "category": "Developer Tools",
       "tags": ["code-review", "pi", "sandbox"]
     }

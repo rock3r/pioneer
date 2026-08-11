@@ -22,6 +22,7 @@ For implementation details and the threat model, see the [technical documentatio
 - copies your Pi agent directory into a private writable run area;
 - gives Pi read-only access to source/reference directories and a private writable scratch directory;
 - mediates networking through an authenticated proxy;
+- writes a private real-time work log with five-second liveness heartbeats;
 - returns Pi's review as Markdown.
 
 Pioneer does not choose what “the changes” means. Describe the target in your prompt so Pi knows whether to inspect the working tree, staged changes, a commit, a branch comparison, or a specific subsystem.

@@ -103,6 +103,8 @@ By default, work logs are created under `~/Library/Logs/Pioneer/reviews/` on mac
 --work-log /absolute/path/review.jsonl
 ```
 
+On Windows, prefer the default per-user location. A custom target inherits its parent directory ACL, so choose one only beneath a directory already private to your user account.
+
 On macOS and opt-in Windows, use a source-only prompt instead. Git-target prompts such as
 working-tree changes, commits, tags, or branch comparisons fail closed on those platforms:
 

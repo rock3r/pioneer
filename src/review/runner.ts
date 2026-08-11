@@ -62,6 +62,7 @@ export interface ReviewResult {
   readonly sandboxed: boolean;
   readonly warning?: string;
   readonly reportWriteError?: string;
+  readonly workLogWriteError?: string;
   readonly workLogPath: string;
 }
 
@@ -105,6 +106,35 @@ function closeReviewWorkLog(workLog: ReviewWorkLog): void {
   } catch (error) {
     throw reviewWorkLogWriteError(workLog, error);
   }
+}
+
+function combineReviewFailures(primary: Error, secondary: Error): Error {
+  return new Error(`${primary.message}\n${secondary.message}`, {
+    cause: new AggregateError([primary, secondary]),
+  });
+}
+
+type ReviewExecutionOutcome =
+  | Readonly<{ result: ReviewResult; failure?: never }>
+  | Readonly<{ failure: Error; result?: never }>;
+
+export function finalizeReviewWorkLog(
+  workLog: ReviewWorkLog,
+  outcome: ReviewExecutionOutcome,
+): ReviewResult {
+  let closeFailure: Error | undefined;
+  try {
+    closeReviewWorkLog(workLog);
+  } catch (error) {
+    closeFailure = error instanceof Error ? error : new Error(String(error));
+  }
+  if (outcome.result !== undefined) {
+    return closeFailure === undefined
+      ? outcome.result
+      : { ...outcome.result, workLogWriteError: closeFailure.message };
+  }
+  if (closeFailure !== undefined) throw combineReviewFailures(outcome.failure, closeFailure);
+  throw outcome.failure;
 }
 
 function workLogDiagnosticSummary(message: string): Readonly<Record<string, unknown>> {
@@ -800,6 +830,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     );
   }
 
+  let outcome: ReviewExecutionOutcome;
   try {
     if (paths.reportPath !== undefined) {
       await assertDistinctExistingReviewOutputs(paths.reportPath, workLog.path);
@@ -1007,7 +1038,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     if (cleanupFailure !== undefined) throw cleanupFailure;
     if (runFailure !== undefined) throw runFailure;
     if (reviewResult === undefined) throw new Error("Review completed without a result");
-    return reviewResult;
+    outcome = { result: reviewResult };
   } catch (error) {
     let failure = error instanceof Error ? error : new Error(String(error));
     try {
@@ -1015,10 +1046,9 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
         ...workLogDiagnosticSummary(failure.message),
       });
     } catch (workLogError) {
-      failure = reviewWorkLogWriteError(workLog, workLogError);
+      failure = combineReviewFailures(failure, reviewWorkLogWriteError(workLog, workLogError));
     }
-    throw failure;
-  } finally {
-    closeReviewWorkLog(workLog);
+    outcome = { failure };
   }
+  return finalizeReviewWorkLog(workLog, outcome);
 }

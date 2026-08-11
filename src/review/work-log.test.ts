@@ -25,6 +25,7 @@ import {
   reviewWorkLogDirectory,
   sanitizeWorkLogDiagnostic,
   summarizePiEvent,
+  windowsProcessInstanceIdentities,
 } from "./work-log.js";
 
 function processIdentityForTest(processId: number, platform: NodeJS.Platform): string {
@@ -44,7 +45,10 @@ function processIdentityForTest(processId: number, platform: NodeJS.Platform): s
       shell: false,
     }).stdout.trim();
   } else {
-    rawIdentity = String(Math.floor(performance.timeOrigin / 1_000));
+    const identities = windowsProcessInstanceIdentities(processId);
+    const exactIdentity = identities?.[2];
+    if (exactIdentity === undefined) throw new Error("Could not inspect Windows process identity");
+    return exactIdentity;
   }
   return createHash("sha256").update(`${platform}:${rawIdentity}`).digest("hex");
 }
@@ -67,10 +71,26 @@ describe("review work log", () => {
     expect(lookup.command).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
     expect(lookup.arguments.join(" ")).not.toContain("4242");
     expect(lookup.arguments.at(-1)).toContain("$env:PIONEER_RETENTION_OWNER_PID");
+    expect(lookup.arguments.at(-1)).toContain("ToUnixTimeMilliseconds");
     expect(lookup.environment.PIONEER_RETENTION_OWNER_PID).toBe("4242");
     expect(() => buildWindowsProcessStartLookup(4242, { SystemRoot: "relative" })).toThrow(
       /system root/i,
     );
+  });
+
+  it("uses the Windows OS process-start lookup for the current process", () => {
+    let inspectedProcessId: string | undefined;
+    const identities = windowsProcessInstanceIdentities(
+      process.pid,
+      { SystemRoot: "C:\\Windows" },
+      (lookup) => {
+        inspectedProcessId = lookup.environment.PIONEER_RETENTION_OWNER_PID;
+        return { status: 0, stdout: "1700000000123\n" };
+      },
+    );
+
+    expect(inspectedProcessId).toBe(String(process.pid));
+    expect(identities).toContain(createHash("sha256").update("win32:1700000000123").digest("hex"));
   });
 
   it("uses a documented per-user log directory on every platform", () => {
@@ -133,15 +153,19 @@ describe("review work log", () => {
     log.close();
   });
 
-  it("marks a bounded log as truncated instead of growing indefinitely", async () => {
+  it("fails closed after marking a bounded log as truncated", async () => {
     const target = path.join(
       tmpdir(),
       `pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`,
     );
     const log = await openReviewWorkLog(target, { runId: "run-1", maxBytes: 1_024 });
     log.record("review_started", { detail: "small" });
-    log.record("pi_event", { detail: "x".repeat(2_000) });
-    log.record("pi_event", { detail: "ignored after truncation" });
+    expect(() => log.record("pi_event", { detail: "x".repeat(2_000) })).toThrow(
+      /reached its 1024-byte limit/i,
+    );
+    expect(() => log.record("pi_event", { detail: "rejected after truncation" })).toThrow(
+      /reached its 1024-byte limit/i,
+    );
     log.close();
 
     const records = (await readFile(target, "utf8"))
@@ -151,6 +175,34 @@ describe("review work log", () => {
     expect(records.map(({ type }) => type)).toEqual(["review_started", "work_log_truncated"]);
     expect((await stat(target)).size).toBeLessThanOrEqual(1_024);
   });
+
+  it.each([0, 1_023, Number.POSITIVE_INFINITY, Number.NaN])(
+    "rejects an unsafe work-log byte limit of %s",
+    async (maxBytes) => {
+      const target = path.join(
+        tmpdir(),
+        `pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`,
+      );
+
+      await expect(openReviewWorkLog(target, { maxBytes })).rejects.toThrow(
+        /byte limit must be a safe integer of at least 1024/i,
+      );
+    },
+  );
+
+  it.each(["", "contains whitespace", "x".repeat(129)])(
+    "rejects an unsafe work-log run identifier",
+    async (runId) => {
+      const target = path.join(
+        tmpdir(),
+        `pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`,
+      );
+
+      await expect(openReviewWorkLog(target, { runId })).rejects.toThrow(
+        /run identifier must use 1 to 128 ASCII/i,
+      );
+    },
+  );
 
   it("closes the descriptor even when the final sync fails", async () => {
     const target = path.join(
@@ -969,6 +1021,11 @@ describe("review work log", () => {
         "Authorization: Bearer secret-token api_key=abc123 password=hunter2 failed",
       ),
     ).toBe("Authorization=[REDACTED] api_key=[REDACTED] password=[REDACTED] failed");
+    expect(
+      sanitizeWorkLogDiagnostic(
+        "password=\"correct horse battery staple\" token='quoted secret value' failed",
+      ),
+    ).toBe("password=[REDACTED] token=[REDACTED] failed");
     expect(
       sanitizeWorkLogDiagnostic("provider echoed private prompt here", ["private prompt"]),
     ).toBe("provider echoed [REDACTED] here");
