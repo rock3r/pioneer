@@ -12,6 +12,7 @@ import {
   runReview,
   runReviewRpc,
   sendReviewPrompt,
+  shouldSchedulePipeCloseFallback,
 } from "./runner.js";
 import type { ReviewWorkLog } from "./work-log.js";
 
@@ -248,6 +249,12 @@ describe("review RPC runner", () => {
 
     expect(sent).toBe(false);
     expect(written).toBe(false);
+  });
+
+  it("does not schedule a pipe-close fallback after settlement", () => {
+    expect(shouldSchedulePipeCloseFallback(true, false)).toBe(false);
+    expect(shouldSchedulePipeCloseFallback(false, true)).toBe(false);
+    expect(shouldSchedulePipeCloseFallback(false, false)).toBe(true);
   });
 
   it("does not classify unrelated request validation as a work-log creation failure", async () => {

@@ -149,6 +149,13 @@ export function sendReviewPrompt(
   return true;
 }
 
+export function shouldSchedulePipeCloseFallback(
+  settled: boolean,
+  alreadyScheduled: boolean,
+): boolean {
+  return !settled && !alreadyScheduled;
+}
+
 export async function createReviewScratchDirectory(
   scratchBase: string,
   afterCreate: (scratch: string) => void | Promise<void> = () => {},
@@ -503,7 +510,7 @@ export async function runReviewRpc(
       stopProcess(child);
     };
     const schedulePipeCloseFallback = (): void => {
-      if (pipeCloseTimer !== undefined) return;
+      if (!shouldSchedulePipeCloseFallback(settled, pipeCloseTimer !== undefined)) return;
       pipeCloseTimer = setTimeout(() => {
         containmentLost = true;
         stopProcess(child);
