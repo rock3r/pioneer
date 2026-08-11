@@ -137,8 +137,12 @@ export function buildWindowsProcessStartLookup(
   if (!Number.isSafeInteger(processId) || processId <= 0) {
     throw new Error("Process ID must be a positive safe integer");
   }
+  const systemRoot = environment.SystemRoot ?? environment.SYSTEMROOT ?? environment.WINDIR;
+  if (systemRoot === undefined || !path.win32.isAbsolute(systemRoot)) {
+    throw new Error("Windows system root must be an absolute path");
+  }
   return {
-    command: "powershell.exe",
+    command: path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
     arguments: [
       "-NoProfile",
       "-NonInteractive",
