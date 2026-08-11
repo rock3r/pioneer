@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { closeSync, constants, fsyncSync, openSync, writeSync } from "node:fs";
 import { chmod, lstat, mkdir, readdir, unlink } from "node:fs/promises";
 import os from "node:os";
@@ -9,6 +10,40 @@ const RETAINED_DEFAULT_WORK_LOGS = 100;
 const WORK_LOG_SYNC_INTERVAL_MS = 1_000;
 const AUTO_WORK_LOG_NAME =
   /^review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl$/i;
+const PI_EVENT_TYPES = new Set([
+  "agent_end",
+  "agent_settled",
+  "agent_start",
+  "auto_compaction_end",
+  "auto_compaction_start",
+  "auto_retry_end",
+  "auto_retry_start",
+  "error",
+  "extension_error",
+  "message_end",
+  "message_start",
+  "message_update",
+  "response",
+  "tool_execution_end",
+  "tool_execution_start",
+  "tool_execution_update",
+  "turn_end",
+  "turn_start",
+]);
+const PI_MESSAGE_UPDATE_TYPES = new Set([
+  "text_delta",
+  "text_end",
+  "text_start",
+  "thinking_delta",
+  "thinking_end",
+  "thinking_start",
+  "toolcall_delta",
+  "toolcall_end",
+  "toolcall_start",
+]);
+const PI_TOOL_NAMES = new Set(["bash", "find", "grep", "ls", "read"]);
+const PI_MESSAGE_ROLES = new Set(["assistant", "system", "tool", "user"]);
+const PI_STOP_REASONS = new Set(["aborted", "error", "length", "stop", "toolUse"]);
 
 export interface ReviewWorkLog {
   readonly path: string;
@@ -22,6 +57,7 @@ export interface OpenReviewWorkLogOptions {
   readonly now?: () => Date;
   readonly maxBytes?: number;
   readonly fileOperations?: {
+    readonly write?: (descriptor: number, buffer: Buffer, offset: number, length: number) => number;
     readonly sync: (descriptor: number) => void;
     readonly close: (descriptor: number) => void;
   };
@@ -155,13 +191,21 @@ function stringField(record: Record<string, unknown>, name: string): string | un
   return typeof value === "string" ? value : undefined;
 }
 
-function sanitizedStringField(
+function allowlistedStringField(
   record: Record<string, unknown>,
   name: string,
-  secrets: readonly string[],
+  allowed: ReadonlySet<string>,
 ): string | undefined {
   const value = stringField(record, name);
-  return value === undefined ? undefined : sanitizeWorkLogDiagnostic(value, secrets);
+  if (value === undefined) return undefined;
+  return allowed.has(value) ? value : "unrecognized";
+}
+
+function hashedStringField(record: Record<string, unknown>, name: string): string | undefined {
+  const value = stringField(record, name);
+  return value === undefined
+    ? undefined
+    : createHash("sha256").update(value).digest("hex").slice(0, 16);
 }
 
 function numberField(record: Record<string, unknown>, name: string): number | undefined {
@@ -180,13 +224,15 @@ function definedFields(entries: Readonly<Record<string, unknown>>): Record<strin
 
 export function summarizePiEvent(
   event: unknown,
-  secrets: readonly string[] = [],
+  _secrets: readonly string[] = [],
 ): Readonly<Record<string, unknown>> {
   if (typeof event !== "object" || event === null) return { eventType: "unrecognized" };
   const record = event as Record<string, unknown>;
-  const eventType = stringField(record, "type") ?? "unrecognized";
+  const rawEventType = stringField(record, "type");
+  const eventType =
+    rawEventType !== undefined && PI_EVENT_TYPES.has(rawEventType) ? rawEventType : "unrecognized";
   const base: Record<string, unknown> = {
-    eventType: sanitizeWorkLogDiagnostic(eventType, secrets),
+    eventType,
   };
 
   if (eventType === "message_update") {
@@ -196,7 +242,7 @@ export function summarizePiEvent(
     const delta = stringField(typed, "delta");
     return definedFields({
       ...base,
-      eventSubtype: sanitizedStringField(typed, "type", secrets),
+      eventSubtype: allowlistedStringField(typed, "type", PI_MESSAGE_UPDATE_TYPES),
       contentIndex: numberField(typed, "contentIndex"),
       deltaBytes: delta === undefined ? undefined : Buffer.byteLength(delta),
     });
@@ -205,8 +251,8 @@ export function summarizePiEvent(
   if (eventType.startsWith("tool_execution_")) {
     return definedFields({
       ...base,
-      toolCallId: sanitizedStringField(record, "toolCallId", secrets),
-      toolName: sanitizedStringField(record, "toolName", secrets),
+      toolCallIdHash: hashedStringField(record, "toolCallId"),
+      toolName: allowlistedStringField(record, "toolName", PI_TOOL_NAMES),
       isError: booleanField(record, "isError"),
     });
   }
@@ -218,12 +264,11 @@ export function summarizePiEvent(
     const messageDiagnostic = stringField(typed, "errorMessage");
     return definedFields({
       ...base,
-      messageRole: sanitizedStringField(typed, "role", secrets),
-      stopReason: sanitizedStringField(typed, "stopReason", secrets),
-      diagnostic:
-        messageDiagnostic === undefined
-          ? undefined
-          : sanitizeWorkLogDiagnostic(messageDiagnostic, secrets),
+      messageRole: allowlistedStringField(typed, "role", PI_MESSAGE_ROLES),
+      stopReason: allowlistedStringField(typed, "stopReason", PI_STOP_REASONS),
+      diagnosticPresent: messageDiagnostic === undefined ? undefined : true,
+      diagnosticBytes:
+        messageDiagnostic === undefined ? undefined : Buffer.byteLength(messageDiagnostic),
     });
   }
 
@@ -239,9 +284,13 @@ export function summarizePiEvent(
     success: booleanField(record, "success"),
     aborted: booleanField(record, "aborted"),
     willRetry: booleanField(record, "willRetry"),
-    reason: sanitizedStringField(record, "reason", secrets),
-    diagnostic:
-      diagnostic === undefined ? undefined : sanitizeWorkLogDiagnostic(diagnostic, secrets),
+    reasonPresent: stringField(record, "reason") === undefined ? undefined : true,
+    reasonBytes:
+      stringField(record, "reason") === undefined
+        ? undefined
+        : Buffer.byteLength(stringField(record, "reason") ?? ""),
+    diagnosticPresent: diagnostic === undefined ? undefined : true,
+    diagnosticBytes: diagnostic === undefined ? undefined : Buffer.byteLength(diagnostic),
   });
 }
 
@@ -257,6 +306,10 @@ export async function openReviewWorkLog(
   const runId = options.runId ?? crypto.randomUUID();
   const now = options.now ?? (() => new Date());
   const maxBytes = options.maxBytes ?? MAX_WORK_LOG_BYTES;
+  const writeDescriptor =
+    options.fileOperations?.write ??
+    ((fileDescriptor: number, buffer: Buffer, offset: number, length: number) =>
+      writeSync(fileDescriptor, buffer, offset, length));
   const syncDescriptor = options.fileOperations?.sync ?? fsyncSync;
   const closeDescriptor = options.fileOperations?.close ?? closeSync;
   let sequence = 0;
@@ -267,10 +320,17 @@ export async function openReviewWorkLog(
   let truncated = false;
 
   const append = (record: Readonly<Record<string, unknown>>, limit = maxBytes): boolean => {
-    const line = `${JSON.stringify(record)}\n`;
-    const size = Buffer.byteLength(line);
+    const line = Buffer.from(`${JSON.stringify(record)}\n`);
+    const size = line.length;
     if (bytesWritten + size > limit) return false;
-    writeSync(descriptor, line, undefined, "utf8");
+    let offset = 0;
+    while (offset < size) {
+      const written = writeDescriptor(descriptor, line, offset, size - offset);
+      if (!Number.isInteger(written) || written <= 0 || written > size - offset) {
+        throw new Error(`Review work log write returned an invalid byte count: ${written}`);
+      }
+      offset += written;
+    }
     bytesWritten += size;
     return true;
   };

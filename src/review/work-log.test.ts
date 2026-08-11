@@ -1,4 +1,4 @@
-import { closeSync } from "node:fs";
+import { closeSync, writeSync } from "node:fs";
 import { lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -114,6 +114,34 @@ describe("review work log", () => {
     expect(closeCalls).toBe(1);
     expect(() => log.close()).not.toThrow();
     expect(closeCalls).toBe(1);
+  });
+
+  it("completes short writes before declaring a record persisted", async () => {
+    const target = path.join(
+      tmpdir(),
+      `pioneer-work-log-short-write-${process.pid}-${crypto.randomUUID()}.jsonl`,
+    );
+    let writes = 0;
+    const log = await openReviewWorkLog(target, {
+      runId: "run-1",
+      fileOperations: {
+        write(descriptor, buffer, offset, length) {
+          writes += 1;
+          return writeSync(descriptor, buffer, offset, Math.min(length, 5));
+        },
+        sync() {},
+        close: closeSync,
+      },
+    });
+
+    log.record("review_started", { detail: "complete" });
+    log.close();
+
+    expect(writes).toBeGreaterThan(1);
+    expect(JSON.parse((await readFile(target, "utf8")).trim())).toMatchObject({
+      type: "review_started",
+      detail: "complete",
+    });
   });
 
   it("retains at most 100 auto-created review logs without touching other files", async () => {
@@ -253,8 +281,8 @@ describe("review work log", () => {
       }),
     ).toEqual({
       eventType: "tool_execution_start",
-      toolCallId: `call-${"x".repeat(495)}`,
-      toolName: "read token=[REDACTED]",
+      toolCallIdHash: expect.stringMatching(/^[0-9a-f]{16}$/),
+      toolName: "unrecognized",
     });
     expect(
       summarizePiEvent({
@@ -282,7 +310,8 @@ describe("review work log", () => {
       attempt: 1,
       maxAttempts: 3,
       delayMs: 2_000,
-      diagnostic: "Bearer [REDACTED] provider overloaded after [REDACTED]",
+      diagnosticPresent: true,
+      diagnosticBytes: 54,
     });
     expect(
       summarizePiEvent(
@@ -301,7 +330,20 @@ describe("review work log", () => {
       eventType: "message_end",
       messageRole: "assistant",
       stopReason: "error",
-      diagnostic: "[REDACTED] token=[REDACTED] failed",
+      diagnosticPresent: true,
+      diagnosticBytes: 40,
     });
+    expect(
+      JSON.stringify(
+        summarizePiEvent(
+          {
+            type: "auto_retry_start",
+            reason: "Project Falcon",
+            errorMessage: "Project Falcon migration blocked",
+          },
+          ["Review confidential Project Falcon migration"],
+        ),
+      ),
+    ).not.toContain("Project Falcon");
   });
 });

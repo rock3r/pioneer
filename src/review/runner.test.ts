@@ -464,6 +464,23 @@ describe("review RPC runner", () => {
     expect(JSON.stringify(records)).not.toContain(userPrompt);
   });
 
+  it("does not persist prompt excerpts from Pi failure diagnostics", async () => {
+    const { log, records } = recordingWorkLog();
+    const userPrompt = "Review confidential Project Falcon migration";
+
+    await expect(
+      runReviewRpc(
+        fakePiRpc([{ type: "response", success: false, error: "Project Falcon blocked" }]),
+        process.cwd(),
+        process.env,
+        `Pioneer instructions\n\n${userPrompt}`,
+        1_000,
+        { workLog: log, sensitiveValues: [userPrompt] },
+      ),
+    ).rejects.toThrow(/Project Falcon blocked/);
+    expect(JSON.stringify(records)).not.toContain("Project Falcon");
+  });
+
   it("emits real-time heartbeats while Pi is silent", async () => {
     const { log, records } = recordingWorkLog();
     await expect(
