@@ -65,7 +65,7 @@ Normal Pioneer commands start a background npm version check without delaying co
 ## Review lifecycle
 
 1. Validate the prompt, source directory, reference grants, write grants, requested thinking level, optional controller-owned report path, and controller-owned work-log path.
-2. Create a mode-`0600` work log at the explicit create-only target or in the platform's standard Pioneer log directory, notify the caller of its exact path, and record the remaining lifecycle in real time.
+2. Create a private work log at the explicit create-only target or in the platform's standard Pioneer log directory, notify the caller of its exact path, and record the remaining lifecycle in real time. macOS and Linux use mode `0600`; Windows relies on the per-user log-directory ACL.
 3. Refuse Windows unless the caller explicitly opts into unsandboxed review execution.
 4. Run `pi --version`, enforce the supported range, and run `pi --offline --no-approve --no-extensions --list-models` before creating the review scratch area. Reject an invalid `models.json` rather than using Pi's partial catalog. Newer-than-tested Pi versions continue with a warning; older or malformed versions fail before model discovery. If Pi reports no models, use access-only filesystem probes to distinguish missing configuration from an outer agent sandbox that hides Pi's agent directory. Readiness uses an allowlisted runtime environment and does not inherit provider secrets or outer-agent control state.
 5. Resolve a requested qualified model exactly, or an unqualified model only when it is unique.

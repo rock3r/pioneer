@@ -95,7 +95,7 @@ pioneer review \
   --prompt "Review all current working-tree changes. Report only concrete correctness, security, and regression findings with file and line references."
 ```
 
-The review may take several minutes. Pioneer first prints `[PIONEER_WORK_LOG] ABSOLUTE_PATH` to stderr. That mode-`0600` JSONL file is flushed in real time, so another terminal or calling agent can `tail -f` it to see controller stages, Pi activity, and five-second heartbeats without exposing prompts, model text, tool inputs, or tool output. A successful command prints Pi's Markdown report to stdout and removes its temporary Pi home and scratch area while preserving the work log.
+The review may take several minutes. Pioneer first prints `[PIONEER_WORK_LOG] ABSOLUTE_PATH` to stderr. That private JSONL file is flushed in real time, so another terminal or calling agent can `tail -f` it to see controller stages, Pi activity, and five-second heartbeats without exposing prompts, model text, tool inputs, or tool output. macOS and Linux use mode `0600`; Windows uses the per-user log-directory ACL. A successful command prints Pi's Markdown report to stdout and removes its temporary Pi home and scratch area while preserving the work log.
 
 By default, work logs are created under `~/Library/Logs/Pioneer/reviews/` on macOS, `${XDG_STATE_HOME:-~/.local/state}/pioneer/logs/reviews/` on Linux, and `%LOCALAPPDATA%\Pioneer\Logs\reviews\` on Windows. To choose an exact create-only target, add:
 

@@ -28,7 +28,7 @@ export function reviewWorkLogDirectory(
   platform: NodeJS.Platform = process.platform,
   home = os.homedir(),
 ): string {
-  const pathApi = platform === "win32" ? path.win32 : path;
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
   if (platform === "darwin") return pathApi.join(home, "Library", "Logs", "Pioneer", "reviews");
   if (platform === "win32") {
     const localAppData = environment.LOCALAPPDATA;

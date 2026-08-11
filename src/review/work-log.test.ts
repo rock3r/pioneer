@@ -30,7 +30,7 @@ describe("review work log", () => {
     ).toBe("C:\\Users\\operator\\AppData\\Local\\Pioneer\\Logs\\reviews");
   });
 
-  it("writes mode-0600 JSONL records that are visible before close", async () => {
+  it("writes JSONL records that are visible before close with private POSIX mode", async () => {
     const target = path.join(
       tmpdir(),
       `pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`,
@@ -64,7 +64,9 @@ describe("review work log", () => {
         platform: "darwin",
       },
     ]);
-    expect((await stat(target)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(target)).mode & 0o777).toBe(0o600);
+    }
 
     log.close();
   });
@@ -124,7 +126,9 @@ describe("review work log", () => {
     expect(entries.filter((entry) => /^review-\d{8}T/.test(entry))).toHaveLength(100);
     expect(entries).toContain("keep-me.txt");
     expect(entries).toContain("review-custom.jsonl");
-    expect((await stat(directory)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") {
+      expect((await stat(directory)).mode & 0o777).toBe(0o700);
+    }
   });
 
   it("rejects an unsafe generated log identifier", async () => {

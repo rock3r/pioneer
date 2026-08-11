@@ -4,7 +4,7 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
-- Add controller-owned, real-time review work logs with platform-standard default storage, `--work-log` custom targets, immediate path discovery, five-second hang-detection heartbeats, sanitized Pi RPC diagnostics, bounded mode-`0600` files, and automatic default-log retention.
+- Add controller-owned, real-time review work logs with platform-standard default storage, `--work-log` custom targets, immediate path discovery, five-second hang-detection heartbeats, sanitized Pi RPC diagnostics, bounded private files, and automatic default-log retention.
 - Add an Agent Plugins v1 portable manifest so compatible coding agents can discover Pioneer's existing Agent Skill without a Codex- or Claude-specific package layout.
 
 ## 0.1.6 - 2026-08-10

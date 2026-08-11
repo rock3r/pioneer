@@ -58,7 +58,7 @@ pioneer review \
   --thinking max
 ```
 
-Pioneer immediately prints `[PIONEER_WORK_LOG] /absolute/path.jsonl` to stderr, then flushes controller and sanitized Pi activity to that mode-`0600` JSONL file while the review runs. Pass `--work-log /absolute/path.jsonl` to select a create-only target; otherwise Pioneer uses the platform log directory. The final report remains Markdown on stdout. Pass `--report /absolute/path/report.md` when the controller should atomically persist that verified report without granting Pi write access to either controller-owned file. Pioneer resolves model names before creating run state and fails early—with the configured model list—when a requested model is missing or ambiguous.
+Pioneer immediately prints `[PIONEER_WORK_LOG] /absolute/path.jsonl` to stderr, then flushes controller and sanitized Pi activity to that JSONL file while the review runs. It uses mode `0600` on macOS and Linux; Windows relies on the per-user `%LOCALAPPDATA%` ACL. Pass `--work-log /absolute/path.jsonl` to select a create-only target; otherwise Pioneer uses the platform log directory. The final report remains Markdown on stdout. Pass `--report /absolute/path/report.md` when the controller should atomically persist that verified report without granting Pi write access to either controller-owned file. Pioneer resolves model names before creating run state and fails early—with the configured model list—when a requested model is missing or ambiguous.
 
 On macOS and opt-in Windows, use a source-only prompt such as `Review the implementation under src/auth for correctness and regressions.` Explicit Git-target prompts fail closed because those platforms do not grant Pi Git execution.
 
