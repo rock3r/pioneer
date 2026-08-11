@@ -514,6 +514,9 @@ describe("review work log", () => {
     );
     expect(marker).toBeDefined();
     const markerPath = path.join(directory, marker ?? "missing");
+    expect(await readFile(markerPath, "utf8")).toBe(
+      `${processIdentityForTest(process.pid, platform)}\n`,
+    );
     const lockPath = path.join(directory, ".pioneer-retention.lock");
     await writeFile(lockPath, "held\n", { flag: "wx", mode: 0o600 });
     const lockHolder = new Worker(
@@ -639,6 +642,63 @@ describe("review work log", () => {
 
     expect((await lstat(activeTarget)).isFile()).toBe(true);
     active.close();
+    next.close();
+  });
+
+  it("preserves a stale lease owned by the same live process instance", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-suspended-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    await mkdir(directory, { recursive: true });
+    const activeTarget = path.join(
+      directory,
+      "review-20260801T000000000Z-00000000-0000-0000-0000-000000000000.jsonl",
+    );
+    const activeMarker = `${activeTarget}.active-${process.pid}-11111111111111111111111111111111`;
+    await Promise.all([
+      writeFile(activeTarget, "active\n"),
+      writeFile(activeMarker, `${processIdentityForTest(process.pid, platform)}\n`),
+      ...Array.from({ length: 99 }, (_, index) =>
+        writeFile(
+          path.join(
+            directory,
+            `review-20260802T000000000Z-00000000-0000-0000-0000-${String(index).padStart(12, "0")}.jsonl`,
+          ),
+          "completed\n",
+        ),
+      ),
+    ]);
+    await Promise.all([
+      utimes(
+        activeTarget,
+        new Date("2026-08-01T00:00:00.000Z"),
+        new Date("2026-08-01T00:00:00.000Z"),
+      ),
+      utimes(
+        activeMarker,
+        new Date("2026-08-01T00:00:00.000Z"),
+        new Date("2026-08-01T00:00:00.000Z"),
+      ),
+    ]);
+    const nextTarget = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000002",
+    );
+
+    const next = await openReviewWorkLog(nextTarget, { retainDefaultLogs: true, platform });
+
+    expect((await lstat(activeTarget)).isFile()).toBe(true);
+    expect((await lstat(activeMarker)).isFile()).toBe(true);
+    await unlink(activeMarker);
     next.close();
   });
 

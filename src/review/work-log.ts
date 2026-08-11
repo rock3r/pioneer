@@ -424,6 +424,16 @@ function pruneInactiveDefaultReviewWorkLogsSync(target: string, platform: NodeJS
         }
         const processId = Number(owner[1]);
         if (Number.isSafeInteger(processId) && processId > 0 && processIsAlive(processId)) {
+          const ownerIdentity = /^([0-9a-f]{64})\n$/i.exec(readFileSync(markerPath, "utf8"))?.[1];
+          if (ownerIdentity !== undefined) {
+            const currentIdentities = processInstanceIdentities(processId, platform);
+            if (currentIdentities === undefined || currentIdentities.includes(ownerIdentity)) {
+              activeLogs.add(markedLogName);
+            } else {
+              staleMarkers.push(markerPath);
+            }
+            continue;
+          }
           revalidationCandidates.push({
             logName: markedLogName,
             markerPath,
@@ -670,8 +680,16 @@ export async function openReviewWorkLog(
   const platform = options.platform ?? process.platform;
   const ownerToken =
     options.retainDefaultLogs === true ? crypto.randomUUID().replaceAll("-", "") : undefined;
+  const activeOwnerIdentities =
+    options.retainDefaultLogs === true ? currentProcessInstanceIdentities(platform) : undefined;
+  if (options.retainDefaultLogs === true && activeOwnerIdentities === undefined) {
+    throw new Error(`Could not determine review work-log owner identity: ${process.pid}`);
+  }
+  const activeOwnerIdentity = activeOwnerIdentities?.[Math.floor(activeOwnerIdentities.length / 2)];
   const activeMarker =
-    options.retainDefaultLogs === true && ownerToken !== undefined
+    options.retainDefaultLogs === true &&
+    ownerToken !== undefined &&
+    activeOwnerIdentity !== undefined
       ? `${target}${ACTIVE_WORK_LOG_SUFFIX}-${process.pid}-${ownerToken}`
       : undefined;
   let markerLeaseWorker: Worker | undefined;
@@ -689,13 +707,12 @@ export async function openReviewWorkLog(
     }
   };
   if (activeMarker !== undefined) {
-    const markerDescriptor = openSync(
-      activeMarker,
-      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-      0o600,
-    );
     try {
-      closeSync(markerDescriptor);
+      writeFileSync(activeMarker, `${activeOwnerIdentity}\n`, {
+        flag: "wx",
+        flush: true,
+        mode: 0o600,
+      });
       markerLeaseControl = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
       markerLeaseWorker = new Worker(FILE_LEASE_WORKER, {
         eval: true,
