@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -20,7 +20,9 @@ if (
   throw new Error("Windows doctor did not report its stable fail-closed diagnostic");
 }
 
-const source = await mkdtemp(path.join(os.tmpdir(), "pioneer-windows-smoke-"));
+const root = await mkdtemp(path.join(os.tmpdir(), "pioneer-windows-smoke-"));
+const source = path.join(root, "source");
+await mkdir(source);
 try {
   const review = spawnSync(
     process.execPath,
@@ -31,7 +33,7 @@ try {
     throw new Error("Windows review did not require explicit unsandboxed opt-in");
   }
 
-  const localAppData = path.join(source, "local-app-data");
+  const localAppData = path.join(root, "local-app-data");
   const optedIn = spawnSync(
     process.execPath,
     [
@@ -49,7 +51,7 @@ try {
       env: {
         ...process.env,
         LOCALAPPDATA: localAppData,
-        PI_CODING_AGENT_DIR: path.join(source, "missing-pi-home"),
+        PI_CODING_AGENT_DIR: path.join(root, "missing-pi-home"),
       },
     },
   );
@@ -73,7 +75,7 @@ try {
     throw new Error("Windows opted-in review did not record its unsandboxed execution state");
   }
 } finally {
-  await rm(source, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true });
 }
 
 process.stdout.write("Windows fail-closed and opt-in contracts passed\n");
