@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fsyncSync, openSync, unlinkSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fsyncSync,
+  openSync,
+  readdirSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { chmod, lstat, mkdir, readdir, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -221,6 +229,35 @@ async function pruneDefaultReviewWorkLogs(
   for (const name of removableLogs.slice(0, removeCount)) {
     try {
       await unlink(pathApi.join(directory, name));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+function pruneInactiveDefaultReviewWorkLogsSync(target: string, platform: NodeJS.Platform): void {
+  const pathApi = platformPath(platform);
+  const directory = pathApi.dirname(target);
+  const targetName = pathApi.basename(target);
+  if (!AUTO_WORK_LOG_NAME.test(targetName)) {
+    throw new Error(`Review work log target is not an auto-created log: ${target}`);
+  }
+  const entries = readdirSync(directory, { withFileTypes: true });
+  const activeLogs = new Set(
+    entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => ACTIVE_WORK_LOG_NAME.exec(entry.name)?.[1])
+      .filter((name): name is string => name !== undefined),
+  );
+  const existingLogs = entries
+    .filter((entry) => entry.isFile() && AUTO_WORK_LOG_NAME.test(entry.name))
+    .map((entry) => entry.name)
+    .sort();
+  const removeCount = Math.max(0, existingLogs.length - RETAINED_DEFAULT_WORK_LOGS);
+  const removableLogs = existingLogs.filter((name) => !activeLogs.has(name));
+  for (const name of removableLogs.slice(0, removeCount)) {
+    try {
+      unlinkSync(pathApi.join(directory, name));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
@@ -627,16 +664,25 @@ export async function openReviewWorkLog(
       try {
         syncOnClose();
       } catch (error) {
-        failure = error;
+        failure ??= error;
       }
       try {
         closeDescriptor(descriptor);
       } catch (error) {
         failure ??= error;
       }
+      let markerRemoved = activeMarker === undefined;
       if (activeMarker !== undefined) {
         try {
           unlinkSync(activeMarker);
+          markerRemoved = true;
+        } catch (error) {
+          failure ??= error;
+        }
+      }
+      if (activeMarker !== undefined && markerRemoved) {
+        try {
+          pruneInactiveDefaultReviewWorkLogsSync(target, platform);
         } catch (error) {
           failure ??= error;
         }

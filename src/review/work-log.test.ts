@@ -284,6 +284,48 @@ describe("review work log", () => {
     );
   });
 
+  it("prunes the inactive pool after overlapping default logs finish", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-close-retention-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    await mkdir(directory, { recursive: true });
+    const markerPaths = await Promise.all(
+      Array.from({ length: 100 }, async (_, index) => {
+        const logPath = path.join(
+          directory,
+          `review-20260801T000000000Z-00000000-0000-0000-0000-${String(index).padStart(12, "0")}.jsonl`,
+        );
+        const markerPath = `${logPath}.active-${process.pid}-${String(index).padStart(32, "0")}`;
+        await Promise.all([writeFile(logPath, "active\n"), writeFile(markerPath, "")]);
+        return markerPath;
+      }),
+    );
+    const nextTarget = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000101",
+    );
+    const next = await openReviewWorkLog(nextTarget, { retainDefaultLogs: true, platform });
+    expect((await readdir(directory)).filter((entry) => entry.endsWith(".jsonl"))).toHaveLength(
+      101,
+    );
+
+    await Promise.all(markerPaths.map(async (markerPath) => await unlink(markerPath)));
+    next.close();
+
+    expect((await readdir(directory)).filter((entry) => entry.endsWith(".jsonl"))).toHaveLength(
+      100,
+    );
+  });
+
   it("does not prune a default log that is still active", async () => {
     const stateRoot = path.join(
       tmpdir(),
