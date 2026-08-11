@@ -207,26 +207,29 @@ describe("review work log", () => {
     await expect(lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects a symbolic-link default directory before pruning it", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
-      `pioneer-work-log-state-${process.pid}-${crypto.randomUUID()}`,
-    );
-    const external = path.join(
-      tmpdir(),
-      `pioneer-work-log-external-${process.pid}-${crypto.randomUUID()}`,
-    );
-    const parent = path.join(stateRoot, "pioneer", "logs");
-    const retainedName = "review-20260801T000000000Z-00000000-0000-0000-0000-000000000000.jsonl";
-    await Promise.all([mkdir(parent, { recursive: true }), mkdir(external)]);
-    await writeFile(path.join(external, retainedName), "preserve\n");
-    await symlink(external, path.join(parent, "reviews"));
+  it.skipIf(process.platform === "win32")(
+    "rejects a symbolic-link default directory before pruning it",
+    async () => {
+      const stateRoot = path.join(
+        tmpdir(),
+        `pioneer-work-log-state-${process.pid}-${crypto.randomUUID()}`,
+      );
+      const external = path.join(
+        tmpdir(),
+        `pioneer-work-log-external-${process.pid}-${crypto.randomUUID()}`,
+      );
+      const parent = path.join(stateRoot, "pioneer", "logs");
+      const retainedName = "review-20260801T000000000Z-00000000-0000-0000-0000-000000000000.jsonl";
+      await Promise.all([mkdir(parent, { recursive: true }), mkdir(external)]);
+      await writeFile(path.join(external, retainedName), "preserve\n");
+      await symlink(external, path.join(parent, "reviews"));
 
-    await expect(
-      prepareDefaultReviewWorkLogPath({ XDG_STATE_HOME: stateRoot }, "linux", "/home/operator"),
-    ).rejects.toThrow(/symbolic link/i);
-    expect(await readFile(path.join(external, retainedName), "utf8")).toBe("preserve\n");
-  });
+      await expect(
+        prepareDefaultReviewWorkLogPath({ XDG_STATE_HOME: stateRoot }, "linux", "/home/operator"),
+      ).rejects.toThrow(/symbolic link/i);
+      expect(await readFile(path.join(external, retainedName), "utf8")).toBe("preserve\n");
+    },
+  );
 
   it("redacts bounded provider diagnostics", () => {
     expect(
