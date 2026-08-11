@@ -38,6 +38,7 @@ function processIdentityForTest(processId: number, platform: NodeJS.Platform): s
   } else if (platform === "darwin") {
     rawIdentity = spawnSync("/bin/ps", ["-o", "lstart=", "-p", String(processId)], {
       encoding: "utf8",
+      env: { ...process.env, LANG: "C", LC_ALL: "C", TZ: "UTC" },
       shell: false,
     }).stdout.trim();
   } else {

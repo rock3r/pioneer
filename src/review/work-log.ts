@@ -147,6 +147,7 @@ function processInstanceIdentities(
     } else if (platform === "darwin") {
       const result = spawnSync("/bin/ps", ["-o", "lstart=", "-p", String(processId)], {
         encoding: "utf8",
+        env: { ...process.env, LANG: "C", LC_ALL: "C", TZ: "UTC" },
         shell: false,
       });
       if (result.status !== 0) return undefined;
