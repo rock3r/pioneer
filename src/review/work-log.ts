@@ -941,6 +941,13 @@ export async function openReviewWorkLog(
           stopMarkerLease();
           failure ??= markerLeaseFailure;
           failure ??= error;
+          try {
+            unlinkSync(activeMarker);
+          } catch (cleanupError) {
+            if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") {
+              failure ??= cleanupError;
+            }
+          }
         }
       } else {
         stopMarkerLease();

@@ -561,6 +561,49 @@ describe("review work log", () => {
     expect((await lstat(target)).isFile()).toBe(true);
   }, 10_000);
 
+  it("removes its active marker when close-time retention cannot acquire the lock", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-close-timeout-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    const target = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000007",
+    );
+    const log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
+    const marker = (await readdir(directory)).find((entry) =>
+      entry.startsWith(`${path.basename(target)}.active-`),
+    );
+    expect(marker).toBeDefined();
+    const markerPath = path.join(directory, marker ?? "missing");
+    const lockPath = path.join(directory, ".pioneer-retention.lock");
+    await writeFile(
+      lockPath,
+      `${process.pid}:33333333333333333333333333333333:${processIdentityForTest(process.pid, platform)}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
+    const initialNow = Date.now();
+    let nowCalls = 0;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => initialNow + nowCalls++ * 31_000);
+
+    try {
+      expect(() => log.close()).toThrow(/timed out.*retention lock/i);
+    } finally {
+      now.mockRestore();
+      await unlink(lockPath);
+    }
+
+    await expect(lstat(markerPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("reclaims expired leases when an overlapping batch drains on close", async () => {
     const stateRoot = path.join(
       tmpdir(),
