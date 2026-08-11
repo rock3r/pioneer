@@ -9,7 +9,7 @@ The current product surface is:
 - a synchronous review CLI and TypeScript API;
 - a fail-closed skill-eval preparation and execution CLI;
 - native macOS Seatbelt and Linux Bubblewrap transports;
-- one shared agent skill packaged for Codex and Claude Code.
+- one shared Agent Skill packaged for Agent Plugins v1, Codex, and Claude Code.
 
 Background jobs, cancellation APIs, structured finding schemas, MCP transport, and automated eval grading are not implemented. They are extension points, not current behavior.
 
@@ -17,7 +17,7 @@ Background jobs, cancellation APIs, structured finding schemas, MCP transport, a
 
 ```mermaid
 flowchart LR
-    U["User"] --> A["Codex or Claude Code"]
+    U["User"] --> A["Agent Plugins client, Codex, or Claude Code"]
     A --> S["Pioneer skill"]
     S --> C["pioneer CLI"]
     C --> R["Readiness and model resolution"]
@@ -36,7 +36,7 @@ flowchart LR
     O --> A
 ```
 
-The plugin contains instructions only. The CLI owns all policy, validation, Pi startup, sandboxing, and RPC behavior so the Codex and Claude integrations cannot drift.
+The plugin contains instructions only. A portable Agent Plugins v1 manifest and native Codex and Claude manifests all expose the same skill. The CLI owns all policy, validation, Pi startup, sandboxing, and RPC behavior so agent integrations cannot drift.
 
 ## Module boundaries
 
@@ -47,8 +47,9 @@ The plugin contains instructions only. The CLI owns all policy, validation, Pi s
 | Shared diagnostics | `src/doctor.ts`, `src/doctor-report.ts`, `src/sandbox/platform-readiness.ts` | Check Pi and native sandbox readiness for reviews and evals |
 | Pi readiness | `src/pi-readiness.ts`, `src/pi-model-selection.ts` | Detect Pi, enumerate configured models, resolve exact requests |
 | Pi preparation | `src/pi-home.ts`, `src/pi-startup.ts` | Copy the Pi agent directory and apply fast, ephemeral startup flags |
-| Review orchestration | `src/review/runner.ts` | Validate, prepare, sandbox, run RPC, collect the final report, clean up |
+| Review orchestration | `src/review/runner.ts` | Validate, prepare, sandbox, run RPC, stream controller-owned work-log events, collect the final report, clean up |
 | Review policy | `src/review/isolation.ts` | Canonicalize grants and prevent broad or overlapping writable access |
+| Review work log | `src/review/work-log.ts` | Create bounded private JSONL logs, flush records, sanitize Pi event metadata, and manage default retention |
 | Eval orchestration | `src/eval-run/setup.ts`, `src/eval-run/runner.ts` | Stage isolated eval arms, prove containment, run the actor |
 | Eval policy | `src/eval-run/isolation.ts` | Reject unsafe runtime grants and define public-only networking |
 | Native sandbox | `src/sandbox/launcher.ts` | Compile one policy into Seatbelt or Bubblewrap argv |
@@ -63,17 +64,18 @@ Normal Pioneer commands start a background npm version check without delaying co
 
 ## Review lifecycle
 
-1. Validate the prompt, source directory, reference grants, write grants, requested thinking level, and optional controller-owned report path.
-2. Refuse Windows unless the caller explicitly opts into unsandboxed review execution.
-3. Run `pi --version`, enforce the supported range, and run `pi --offline --no-approve --no-extensions --list-models` before creating the review scratch area. Reject an invalid `models.json` rather than using Pi's partial catalog. Newer-than-tested Pi versions continue with a warning; older or malformed versions fail before model discovery. If Pi reports no models, use access-only filesystem probes to distinguish missing configuration from an outer agent sandbox that hides Pi's agent directory. Readiness uses an allowlisted runtime environment and does not inherit provider secrets or outer-agent control state.
-4. Resolve a requested qualified model exactly, or an unqualified model only when it is unique.
-5. Copy `PI_CODING_AGENT_DIR` (default `~/.pi/agent`) into a private writable run directory. Review copies include Pi skills; sessions, logs, caches, and symlinked agent-bin Pi launchers are excluded.
-6. Build an ephemeral `pi --mode rpc` command with offline startup, no session, no approval, no extension discovery, no prompt-template discovery, no theme discovery, and an allowlist of Pi's built-in inspection tools. The allowlist excludes `write`, `edit`, `bash`, `grep`, and `find` outside Linux; all platforms retain `read` and `ls` so source-only reviews can discover files without process creation. Linux additionally permits `bash` for Git inspection inside Bubblewrap, while macOS and Windows reject explicit Git-target reviews.
-7. Start an authenticated loopback proxy when networking is enabled.
-8. Compile the native sandbox policy and start Pi without a shell, using a narrow actor environment on every platform.
-9. Send one JSONL prompt request and collect bounded RPC events until `agent_settled`, failure, or timeout.
-10. Wait for the child process and its stdio pipes to close on every terminal path, including timeout and protocol failure. Only then report completion; success additionally requires exit code zero and a non-empty final report.
-11. Optionally persist Pi's verified final Markdown report through a controller-owned atomic write, return it, and remove the proxy, bridge, Pi snapshot, and scratch directory in `finally` cleanup. Persistence errors preserve the report but make the CLI fail nonzero.
+1. Validate the prompt, source directory, reference grants, write grants, requested thinking level, optional controller-owned report path, and controller-owned work-log path.
+2. Create a private work log at the explicit create-only target or in the platform's standard Pioneer log directory, notify the caller of its exact path, and record the remaining lifecycle in real time. macOS and Linux use mode `0600`; Windows relies on the per-user log-directory ACL.
+3. Refuse Windows unless the caller explicitly opts into unsandboxed review execution.
+4. Run `pi --version`, enforce the supported range, and run `pi --offline --no-approve --no-extensions --list-models` before creating the review scratch area. Reject an invalid `models.json` rather than using Pi's partial catalog. Newer-than-tested Pi versions continue with a warning; older or malformed versions fail before model discovery. If Pi reports no models, use access-only filesystem probes to distinguish missing configuration from an outer agent sandbox that hides Pi's agent directory. Readiness uses an allowlisted runtime environment and does not inherit provider secrets or outer-agent control state.
+5. Resolve a requested qualified model exactly, or an unqualified model only when it is unique.
+6. Copy `PI_CODING_AGENT_DIR` (default `~/.pi/agent`) into a private writable run directory. Review copies include Pi skills; sessions, logs, caches, and symlinked agent-bin Pi launchers are excluded.
+7. Build an ephemeral `pi --mode rpc` command with offline startup, no session, no approval, no extension discovery, no prompt-template discovery, no theme discovery, and an allowlist of Pi's built-in inspection tools. The allowlist excludes `write`, `edit`, `bash`, `grep`, and `find` outside Linux; all platforms retain `read` and `ls` so source-only reviews can discover files without process creation. Linux additionally permits `bash` for Git inspection inside Bubblewrap, while macOS and Windows reject explicit Git-target reviews.
+8. Start an authenticated loopback proxy when networking is enabled.
+9. Compile the native sandbox policy and start Pi without a shell, using a narrow actor environment on every platform.
+10. Send one JSONL prompt request and collect bounded RPC events until `agent_settled`, failure, or timeout. Flush sanitized event metadata and five-second liveness heartbeats to the work log without recording prompts, assistant text or thinking, tool arguments or output, or environment values.
+11. Wait for the child process and its stdio pipes to close on every terminal path, including timeout and protocol failure. Only then report completion; success additionally requires exit code zero and a non-empty final report.
+12. Optionally persist Pi's verified final Markdown report through a controller-owned atomic write, return it, and guarantee removal of the proxy, bridge, Pi snapshot, and scratch directory on success or failure. Persistence errors preserve the report but make the CLI fail nonzero. Work-log creation or flushing failures stop the review because an unobservable run is not allowed to continue.
 
 See [REVIEW-TRANSPORT.md](REVIEW-TRANSPORT.md) for the RPC contract and [SECURITY.md](SECURITY.md) for the trust boundaries.
 

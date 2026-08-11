@@ -10,7 +10,7 @@ With the plugin installed, use ordinary language:
 
 > Ask Pi to review the local deployment too; it may access LAN services but must not modify the repository.
 
-The Codex and Claude plugins translate the request into the same `pioneer review` CLI. They do not maintain separate review implementations.
+The portable Agent Plugin and the native Codex and Claude adapters translate the request into the same `pioneer review` CLI. They do not maintain separate review implementations.
 
 ## Describe the review target
 

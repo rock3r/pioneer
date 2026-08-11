@@ -50,6 +50,7 @@ pioneer review --source DIR --prompt TEXT
   [--allow-read DIR]...
   [--allow-write DIR]...
   [--report FILE]
+  [--work-log FILE]
   [--network full|public|none]
   [--timeout-ms N]
   [--allow-unsandboxed-windows]
@@ -65,13 +66,24 @@ pioneer review --source DIR --prompt TEXT
 | `--allow-read DIR` | none | Additional read-only directory; repeatable |
 | `--allow-write DIR` | none | Additional writable directory; repeatable and forbidden from overlapping read grants |
 | `--report FILE` | none | Absolute controller-owned output path for the final report; must not exist and must not be visible to the review actor |
+| `--work-log FILE` | platform log directory | Absolute controller-owned create-only JSONL path; must not exist, contain control characters, or be visible to the review actor |
 | `--network MODE` | `full` | Proxy destination policy |
 | `--timeout-ms N` | `900000` | Positive integer review timeout |
 | `--allow-unsandboxed-windows` | false | Required acknowledgement for instruction-only Windows reviews |
 
 Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout. When `--report` is set, Pioneer additionally creates that file atomically only after the same success contract passes. If persistence fails, stdout still contains the verified report but Pioneer exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`; diagnostics and warnings use stderr.
 
-Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report, `[REVIEW_ASSISTANT_FAILED]` when Pi reports a failed or aborted assistant run, `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling, `[REVIEW_PROCESS_FAILED]` when a settled Pi process with a report exits nonzero or by signal, and `[REVIEW_PROCESS_CONTAINMENT_FAILED]` when Pioneer cannot prove the process tree stopped after its child exits.
+Immediately after opening the controller-owned work log, Pioneer prints `[PIONEER_WORK_LOG] ABSOLUTE_PATH` to stderr. Without `--work-log`, it creates a unique `review-*.jsonl` file in:
+
+- macOS: `~/Library/Logs/Pioneer/reviews/`;
+- Linux: `${XDG_STATE_HOME:-~/.local/state}/pioneer/logs/reviews/`;
+- Windows: `%LOCALAPPDATA%\Pioneer\Logs\reviews\`.
+
+Each schema-versioned JSONL record is written synchronously before Pioneer continues, so `tail -f` observes it immediately; a dirty-log timer syncs the file to disk within one second even when Pi is silent, and Pioneer syncs again on close. Records include timestamps, elapsed time, run/sequence IDs, controller stages, Pi process state, restricted Pi RPC event metadata, stderr byte activity, retries, tool lifecycle, settlement, termination, and a heartbeat every five seconds while Pi RPC is active. Pi-controlled strings are represented only by allowlisted protocol values, tool-call hashes, booleans, and presence/byte-count metadata. The log deliberately excludes prompt and model-generated text, thinking, tool arguments/output, unrestricted Pi reasons/diagnostics, queue contents, environment values, and credentials. Each auto-created log is capped at 16 MiB. Private nonce-backed leases carry an OS process-start identity and are refreshed by a worker thread even if the controller event loop hangs. If suspend/resume or a clock step makes a live lease look old, retention preserves it when its PID and process identity still match; legacy markers and temporarily unverifiable identities receive one renewal interval, but PID liveness alone never protects a current log. Abandoned leases therefore expire after crashes and PID reuse, and both creation-time and close-time retention reclaim expired leases. Retention runs after both default-log creation and lease removal on close, pruning only inactive auto-named files toward the newest 100 total even after a large overlapping batch drains. Both passes complete their bounded critical section synchronously under a private cross-process lock with an atomically published PID, nonce, and OS process-start identity. Windows records a narrow hashed start-time window to tolerate clock-source rounding without allowing practical PID reuse; Linux uses kernel boot/start ticks, and macOS canonicalizes its OS start time under the C locale and UTC. A suspended owner retains the same process identity, while PID reuse does not; release also verifies the exact owner record before unlinking. A closing log renews its lease until it owns that lock, protects its target, and prefers older last-write times, so concurrently finishing logs cannot delete one another while older completed logs remain. A custom target must be absolute, absent, and have an existing writable non-symlink parent; Pioneer does not rotate custom targets outside its reserved auto-name pattern.
+
+`[REVIEW_WORK_LOG_CREATE_FAILED]` means Pioneer could not establish the requested observability channel, while `[REVIEW_WORK_LOG_WRITE_FAILED]` means real-time flushing failed after creation. Either failure is terminal; Pioneer does not continue an unobservable review.
+
+Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report, `[REVIEW_ASSISTANT_FAILED]` when Pi reports a failed or aborted assistant run, `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling, `[REVIEW_PROCESS_FAILED]` when a settled Pi process with a report exits nonzero or by signal, `[REVIEW_PROCESS_CONTAINMENT_FAILED]` when Pioneer cannot prove the process tree stopped after its child exits, and the work-log failures described above.
 
 ## `pioneer models`
 

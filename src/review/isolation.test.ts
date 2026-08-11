@@ -1,8 +1,13 @@
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildReviewSandboxConfig, validateReviewPaths } from "./isolation.js";
+import {
+  assertDistinctExistingReviewOutputs,
+  buildReviewSandboxConfig,
+  validateProspectiveReviewWorkLogPath,
+  validateReviewPaths,
+} from "./isolation.js";
 
 describe("review path grants", () => {
   it("canonicalizes explicit read and write grants", async () => {
@@ -64,6 +69,56 @@ describe("review path grants", () => {
     expect(result.reportPath).toBe(path.join(await realpath(reports), "review.md"));
   });
 
+  it("accepts a controller-owned work log outside every actor-visible grant", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const logs = path.join(root, "logs");
+    await Promise.all([mkdir(source), mkdir(logs)]);
+
+    const result = await validateReviewPaths({
+      sourceDir: source,
+      workLogPath: path.join(logs, "review.jsonl"),
+    });
+
+    expect(result.workLogPath).toBe(path.join(await realpath(logs), "review.jsonl"));
+  });
+
+  it("rejects a prospective default work log before an actor-visible parent exists", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const target = path.join(source, "state", "pioneer", "logs", "reviews", "review.jsonl");
+    await mkdir(source);
+
+    await expect(
+      validateProspectiveReviewWorkLogPath({ sourceDir: source, workLogPath: target }),
+    ).rejects.toThrow(/actor-visible/i);
+    await expect(lstat(path.join(source, "state"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("validates the full request before accepting a prospective work log", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const output = path.join(root, "output");
+    const target = path.join(root, "state", "pioneer", "logs", "reviews", "review.jsonl");
+    await Promise.all([mkdir(source), mkdir(output)]);
+
+    await expect(
+      validateProspectiveReviewWorkLogPath({
+        sourceDir: source,
+        reportPath: "relative-review.md",
+        workLogPath: target,
+      }),
+    ).rejects.toThrow(/report path is not absolute/i);
+    await expect(
+      validateProspectiveReviewWorkLogPath({
+        sourceDir: source,
+        allowReadPaths: [output],
+        allowWritePaths: [root],
+        workLogPath: target,
+      }),
+    ).rejects.toThrow(/overlaps/i);
+  });
+
   it("rejects report targets that are relative or actor-visible", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
     const source = path.join(root, "source");
@@ -83,6 +138,54 @@ describe("review path grants", () => {
         reportPath: path.join(output, "review.md"),
       }),
     ).rejects.toThrow(/actor-visible/i);
+  });
+
+  it("rejects case-equivalent output targets on case-insensitive platforms", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const output = path.join(root, "output");
+    await Promise.all([mkdir(source), mkdir(output)]);
+
+    await expect(
+      validateReviewPaths(
+        {
+          sourceDir: source,
+          reportPath: path.join(output, "Review.md"),
+          workLogPath: path.join(output, "review.md"),
+        },
+        "win32",
+      ),
+    ).rejects.toThrow(/identical/i);
+  });
+
+  it("rejects Unicode-equivalent output targets on normalization-insensitive macOS", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const output = path.join(root, "output");
+    await Promise.all([mkdir(source), mkdir(output)]);
+
+    await expect(
+      validateReviewPaths(
+        {
+          sourceDir: source,
+          reportPath: path.join(output, "caf\u00e9.md"),
+          workLogPath: path.join(output, "cafe\u0301.md"),
+        },
+        "darwin",
+      ),
+    ).rejects.toThrow(/identical/i);
+  });
+
+  it("rejects output paths that resolve to the same existing filesystem object", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const reportPath = path.join(root, "Review.md");
+    const workLogPath = path.join(root, "review.jsonl");
+    await writeFile(workLogPath, "work log\n");
+    await link(workLogPath, reportPath);
+
+    await expect(
+      assertDistinctExistingReviewOutputs(reportPath, workLogPath, "linux"),
+    ).rejects.toThrow(/identical/i);
   });
 
   it("rejects existing targets, symlink parents, and missing parents", async () => {
@@ -106,6 +209,36 @@ describe("review path grants", () => {
         reportPath: path.join(root, "missing", "report.md"),
       }),
     ).rejects.toThrow(/parent does not exist/i);
+  });
+
+  it("rejects work logs that are relative, existing, or actor-visible", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const logs = path.join(root, "logs");
+    await Promise.all([mkdir(source), mkdir(logs)]);
+    await writeFile(path.join(logs, "existing.jsonl"), "existing\n");
+
+    await expect(
+      validateReviewPaths({ sourceDir: source, workLogPath: "review.jsonl" }),
+    ).rejects.toThrow(/absolute/i);
+    await expect(
+      validateReviewPaths({
+        sourceDir: source,
+        workLogPath: path.join(source, "review.jsonl"),
+      }),
+    ).rejects.toThrow(/actor-visible/i);
+    await expect(
+      validateReviewPaths({
+        sourceDir: source,
+        workLogPath: path.join(logs, "existing.jsonl"),
+      }),
+    ).rejects.toThrow(/already exists/i);
+    await expect(
+      validateReviewPaths({
+        sourceDir: source,
+        workLogPath: path.join(logs, "review\n[PIONEER_WORK_LOG] forged.jsonl"),
+      }),
+    ).rejects.toThrow(/control character/i);
   });
 });
 

@@ -1,5 +1,40 @@
+import { lstat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, requiresGitInspection, reviewTools, runReviewRpc } from "./runner.js";
+import {
+  buildReviewPrompt,
+  createReviewScratchDirectory,
+  type ReviewRequest,
+  readinessMetadataForWorkLog,
+  requestedModelForWorkLog,
+  requiresGitInspection,
+  reviewTools,
+  runReview,
+  runReviewRpc,
+  sendReviewPrompt,
+  shouldSchedulePipeCloseFallback,
+  sourcePathForWorkLog,
+} from "./runner.js";
+import type { ReviewWorkLog } from "./work-log.js";
+
+function recordingWorkLog(): {
+  readonly log: ReviewWorkLog;
+  readonly records: Array<{ readonly type: string; readonly details: Record<string, unknown> }>;
+} {
+  const records: Array<{ readonly type: string; readonly details: Record<string, unknown> }> = [];
+  return {
+    records,
+    log: {
+      path: "/tmp/review.jsonl",
+      runId: "run-1",
+      record(type, details = {}) {
+        records.push({ type, details: { ...details } });
+      },
+      close() {},
+    },
+  };
+}
 
 function fakePiRpc(events: readonly unknown[], exitCode = 0): readonly [string, ...string[]] {
   const source = `
@@ -57,6 +92,10 @@ function neverSettlingPi(): readonly [string, ...string[]] {
     "-e",
     "process.stdin.once('data', () => setInterval(() => {}, 1_000));",
   ];
+}
+
+function delayedExitPi(): readonly [string, ...string[]] {
+  return [process.execPath, "-e", "setTimeout(() => process.exit(0), 250);"];
 }
 
 function rejectedPromptPi(): readonly [string, ...string[]] {
@@ -148,6 +187,115 @@ process.stdin.once("data", () => {
 }
 
 describe("review RPC runner", () => {
+  it("removes a newly created scratch directory when post-create work fails", async () => {
+    let scratch: string | undefined;
+
+    await expect(
+      createReviewScratchDirectory(tmpdir(), (created) => {
+        scratch = created;
+        throw new Error("work log failed");
+      }),
+    ).rejects.toThrow(/work log failed/i);
+    expect(scratch).toBeDefined();
+    await expect(lstat(scratch ?? "")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves the post-create failure when scratch cleanup also fails", async () => {
+    let cleanupAttempted = false;
+
+    await expect(
+      createReviewScratchDirectory(
+        tmpdir(),
+        () => {
+          throw new Error("work log failed");
+        },
+        async () => {
+          cleanupAttempted = true;
+          throw new Error("cleanup failed");
+        },
+      ),
+    ).rejects.toThrow(/work log failed/i);
+    expect(cleanupAttempted).toBe(true);
+  });
+
+  it("redacts and bounds the requested model before logging it", () => {
+    expect(requestedModelForWorkLog("private review prompt", "private review prompt")).toBe(
+      "[REDACTED]",
+    );
+    expect(requestedModelForWorkLog("Authorization: Bearer secret-token", "Review source")).toBe(
+      "Authorization=[REDACTED]",
+    );
+    expect(requestedModelForWorkLog("x".repeat(600), "Review source")).toHaveLength(500);
+  });
+
+  it("redacts and bounds resolved Pi readiness metadata before logging it", () => {
+    expect(
+      readinessMetadataForWorkLog(
+        { version: "token=private-version", resolvedModel: "x".repeat(600) },
+        "Review source",
+      ),
+    ).toEqual({ piVersion: "token=[REDACTED]", model: "x".repeat(500) });
+  });
+
+  it("redacts and bounds the source path before logging it", () => {
+    expect(sourcePathForWorkLog("/checkout/token=private/repo", "Review source")).toBe(
+      "/checkout/token=[REDACTED]",
+    );
+    expect(sourcePathForWorkLog(`/${"x".repeat(600)}`, "Review source")).toHaveLength(500);
+  });
+
+  it("does not write the prompt after startup logging fails", () => {
+    let written = false;
+    const sent = sendReviewPrompt(
+      {
+        write() {
+          written = true;
+        },
+      },
+      "Review source",
+      new Error("work log failed"),
+    );
+
+    expect(sent).toBe(false);
+    expect(written).toBe(false);
+  });
+
+  it("does not schedule a pipe-close fallback after settlement", () => {
+    expect(shouldSchedulePipeCloseFallback(true, false)).toBe(false);
+    expect(shouldSchedulePipeCloseFallback(false, true)).toBe(false);
+    expect(shouldSchedulePipeCloseFallback(false, false)).toBe(true);
+  });
+
+  it("does not classify unrelated request validation as a work-log creation failure", async () => {
+    const sourceDir = await import("node:fs/promises").then(({ mkdtemp }) =>
+      mkdtemp(path.join(tmpdir(), "pioneer-review-source-")),
+    );
+
+    await expect(
+      runReview({ sourceDir, prompt: "Review source", reportPath: "relative-review.md" }),
+    ).rejects.toThrow(/^Review report path is not absolute:/);
+  });
+
+  it("rejects an invalid runtime network mode before opening a work log", async () => {
+    const request = {
+      sourceDir: "/not-reached",
+      prompt: "Review source",
+      network: "token=private-value",
+    } as unknown as ReviewRequest;
+
+    await expect(runReview(request)).rejects.toThrow(/network mode/i);
+  });
+
+  it("rejects an invalid runtime timeout before opening a work log", async () => {
+    const request = {
+      sourceDir: "/not-reached",
+      prompt: "Review source",
+      timeoutMs: "token=private-value",
+    } as unknown as ReviewRequest;
+
+    await expect(runReview(request)).rejects.toThrow(/timeout/i);
+  });
+
   it("allows source discovery without granting macOS or Windows process tools", () => {
     expect(reviewTools("darwin")).toEqual(["read", "ls"]);
     expect(reviewTools("win32")).toEqual(["read", "ls"]);
@@ -263,6 +411,156 @@ describe("review RPC runner", () => {
         5_000,
       ),
     ).resolves.toBe("No findings.");
+  });
+
+  it("streams sanitized Pi lifecycle and tool metadata to the work log", async () => {
+    const { log, records } = recordingWorkLog();
+    const report = await runReviewRpc(
+      fakePiRpc([
+        { type: "agent_start" },
+        {
+          type: "tool_execution_start",
+          toolCallId: "call-1",
+          toolName: "read",
+          args: { path: "/private/source.ts" },
+        },
+        {
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", delta: "private finding" },
+        },
+        {
+          type: "tool_execution_end",
+          toolCallId: "call-1",
+          toolName: "read",
+          result: { content: [{ type: "text", text: "private source" }] },
+          isError: false,
+        },
+        { type: "message_end", message: { role: "assistant", content: "No findings." } },
+        { type: "agent_settled" },
+      ]),
+      process.cwd(),
+      process.env,
+      "Review secret prompt",
+      1_000,
+      { workLog: log },
+    );
+
+    expect(report).toBe("No findings.");
+    expect(records.map(({ type }) => type)).toEqual([
+      "pi_process_started",
+      "pi_prompt_sent",
+      "pi_event",
+      "pi_event",
+      "pi_event",
+      "pi_event",
+      "pi_event",
+      "pi_event",
+      "pi_process_exit",
+      "pi_rpc_completed",
+    ]);
+    const serialized = JSON.stringify(records);
+    expect(serialized).not.toContain("Review secret prompt");
+    expect(serialized).not.toContain("/private/source.ts");
+    expect(serialized).not.toContain("private source");
+    expect(serialized).not.toContain("private finding");
+    expect(serialized).toContain('"deltaBytes":15');
+  });
+
+  it("redacts the original user prompt from Pi event metadata", async () => {
+    const { log, records } = recordingWorkLog();
+    const userPrompt = "private user request";
+    await runReviewRpc(
+      fakePiRpc([
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: userPrompt },
+        { type: "message_end", message: { role: "assistant", content: "No findings." } },
+        { type: "agent_settled" },
+      ]),
+      process.cwd(),
+      process.env,
+      `Pioneer review instructions\n\nUser request:\n${userPrompt}`,
+      1_000,
+      { workLog: log, sensitiveValues: [userPrompt] },
+    );
+
+    expect(JSON.stringify(records)).not.toContain(userPrompt);
+  });
+
+  it("does not persist prompt excerpts from Pi failure diagnostics", async () => {
+    const { log, records } = recordingWorkLog();
+    const userPrompt = "Review confidential Project Falcon migration";
+
+    await expect(
+      runReviewRpc(
+        fakePiRpc([{ type: "response", success: false, error: "Project Falcon blocked" }]),
+        process.cwd(),
+        process.env,
+        `Pioneer instructions\n\n${userPrompt}`,
+        1_000,
+        { workLog: log, sensitiveValues: [userPrompt] },
+      ),
+    ).rejects.toThrow(/Project Falcon blocked/);
+    expect(JSON.stringify(records)).not.toContain("Project Falcon");
+  });
+
+  it("emits real-time heartbeats while Pi is silent", async () => {
+    const { log, records } = recordingWorkLog();
+    await expect(
+      runReviewRpc(neverSettlingPi(), process.cwd(), process.env, "Review the source", 45, {
+        workLog: log,
+        heartbeatMs: 10,
+      }),
+    ).rejects.toThrow("[REVIEW_TIMEOUT]");
+
+    expect(records).toContainEqual({
+      type: "heartbeat",
+      details: expect.objectContaining({
+        phase: "pi_rpc",
+        lastPiEvent: "prompt_sent",
+        idleMs: expect.any(Number),
+      }),
+    });
+  });
+
+  it("fails closed if the real-time work log stops accepting records", async () => {
+    let writes = 0;
+    const workLog: ReviewWorkLog = {
+      path: "/tmp/review.jsonl",
+      runId: "run-1",
+      record() {
+        writes += 1;
+        if (writes === 2) throw new Error("disk full");
+      },
+      close() {},
+    };
+
+    await expect(
+      runReviewRpc(neverSettlingPi(), process.cwd(), process.env, "Review the source", 1_000, {
+        workLog,
+      }),
+    ).rejects.toThrow("[REVIEW_WORK_LOG_WRITE_FAILED]");
+  });
+
+  it("waits for child closure when startup failure termination stalls", async () => {
+    const workLog: ReviewWorkLog = {
+      path: "/tmp/review.jsonl",
+      runId: "run-1",
+      record() {
+        throw new Error("disk full");
+      },
+      close() {},
+    };
+    const startedAt = Date.now();
+
+    await expect(
+      runReviewRpc(delayedExitPi(), process.cwd(), process.env, "Review the source", 1_000, {
+        workLog,
+        terminateProcess() {},
+        escalateProcess() {},
+        startupFailureGraceMs: 10,
+      }),
+    ).rejects.toThrow("[REVIEW_WORK_LOG_WRITE_FAILED]");
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(200);
+    expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
   it("collects delta-only message updates from Pi 0.84", async () => {

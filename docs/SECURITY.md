@@ -26,6 +26,7 @@ For reviews:
 - the source and repeated `--allow-read` grants are read-only;
 - the private scratch directory and repeated `--allow-write` grants are writable;
 - an optional `--report` target is controller-owned, create-only, and never granted to the actor; it must be absolute, absent, and outside every actor-visible grant;
+- every review work log is controller-owned, create-only, and never granted to the actor; an explicit `--work-log` target must be absolute, absent, free of control characters, and outside every actor-visible grant;
 - a writable grant may not overlap the source or a read-only grant;
 - filesystem roots and the user's home directory are rejected as grants;
 - grant paths must exist, be directories, and not themselves be symbolic links;
@@ -64,7 +65,7 @@ Pi readiness probes receive an allowlist of runtime, home-directory, certificate
 
 Review actors receive only the controller-selected runtime variables, Pi's isolated `HOME`, `TMPDIR`, and `PI_CODING_AGENT_DIR`, proxy variables, and minimal locale/path settings. This narrow environment applies on Windows too, even though Windows review filesystem isolation remains instruction-only. Eval actors receive an even narrower broker environment. A mandatory eval probe verifies that a controller-only secret is absent.
 
-Neither debug output nor errors should contain Pi credentials, proxy tokens, prompts, or full environment dumps.
+Neither debug output nor errors should contain Pi credentials, proxy tokens, prompts, or full environment dumps. Work logs contain controller lifecycle records and a field allowlist of Pi RPC metadata. They omit prompts, assistant text and thinking, message bodies, tool arguments and results, queue contents, extension paths, proxy values, and environment values. Provider diagnostics are whitespace-normalized, capped at 500 characters, and redacted for common authorization, token, key, password, and secret forms before persistence.
 
 ## Network policy
 
@@ -98,8 +99,9 @@ Review isolation is not enforced. The caller must explicitly pass `--allow-unsan
 
 ## Process and output controls
 
-- Every subprocess uses discrete argv with `shell: false`.
+- Every subprocess uses discrete argv with `shell: false`; Windows controller helpers use absolute paths under the validated system root rather than current-directory or `PATH` lookup.
 - Review RPC buffers are limited to 4 MiB and stderr retains only the final 64 KiB.
+- Review work logs are mode `0600` on macOS and Linux and use the per-user `%LOCALAPPDATA%` ACL on Windows. They are synchronously written after every JSONL record, synced by a dirty-log timer within one second and again on close, limited to 16 MiB per run, and stop with an explicit truncation record at the bound. A worker thread refreshes each private nonce-backed active lease independently of the controller event loop, and the marker carries the owner's OS process-start identity. A stale-looking lease is preserved when both its PID and process identity still match, handling suspension and clock steps without treating PID liveness alone as ownership; legacy markers and temporarily unavailable identity lookups receive one bounded renewal interval. Abandoned leases expire after crashes or PID reuse and are reclaimed by both creation-time and close-time retention. Both passes complete their bounded critical section synchronously under a private cross-process lock whose PID, nonce, and OS process-start identity are atomically published. Windows uses a narrow hashed start-time window to absorb clock-source rounding; Linux uses kernel boot/start ticks, and macOS hashes a C-locale UTC start time. Suspension preserves identity while PID reuse changes it, and release verifies the exact owner record before unlinking. A closer renews its log lease until it owns that lock; its pass excludes its finishing target, tolerates concurrently vanished candidates, and orders inactive candidates by last write time while pruning toward the newest 100 total. Pioneer does not rotate custom targets outside that reserved naming pattern.
 - Readiness output is limited to 64 KiB per stream.
 - Reviews default to a 15-minute timeout; eval actors default to five minutes.
 - Cleanup runs even after failure or timeout.

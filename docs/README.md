@@ -6,7 +6,7 @@
 - [PI-COMPATIBILITY.md](PI-COMPATIBILITY.md) — supported Pi range, capability contract, and release maintenance
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — complete command and option reference
 - [EVALS.md](EVALS.md) — isolated eval preparation, execution, platform evidence, and setup
-- [PLUGIN-PACKAGING.md](PLUGIN-PACKAGING.md) — shared Claude/Codex plugin layout and release rules
+- [PLUGIN-PACKAGING.md](PLUGIN-PACKAGING.md) — portable Agent Plugins plus native Codex/Claude packaging and release rules
 - [RELEASING.md](RELEASING.md) — cross-platform gates, npm provenance, and tag-driven publication
 - [TESTING.md](TESTING.md) — test layers and required validation
 - [CONVENTIONS.md](CONVENTIONS.md) — implementation conventions

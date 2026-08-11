@@ -13,6 +13,7 @@ import {
   startEgressProxy,
   type startPublicEgressProxy,
 } from "../eval-run/public-egress-proxy.js";
+import { PIONEER_VERSION } from "../package-metadata.js";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import { assertPiReady } from "../pi-readiness.js";
@@ -22,12 +23,21 @@ import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-p
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { isThinkingLevel, type ThinkingLevel } from "../thinking-level.js";
 import {
+  assertDistinctExistingReviewOutputs,
   buildReviewSandboxConfig,
   type ReviewNetworkMode,
+  validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
 } from "./isolation.js";
 import { writeReviewReport } from "./report-output.js";
 import { completeReviewRpc } from "./rpc-outcome.js";
+import {
+  openReviewWorkLog,
+  prepareValidatedDefaultReviewWorkLogPath,
+  type ReviewWorkLog,
+  sanitizeWorkLogDiagnostic,
+  summarizePiEvent,
+} from "./work-log.js";
 
 export interface ReviewRequest {
   readonly sourceDir: string;
@@ -38,6 +48,8 @@ export interface ReviewRequest {
   readonly allowReadPaths?: readonly string[];
   readonly allowWritePaths?: readonly string[];
   readonly reportPath?: string;
+  readonly workLogPath?: string;
+  readonly onWorkLogReady?: (path: string) => void;
   readonly network?: ReviewNetworkMode;
   readonly allowUnsandboxedWindows?: boolean;
   readonly timeoutMs?: number;
@@ -50,15 +62,134 @@ export interface ReviewResult {
   readonly sandboxed: boolean;
   readonly warning?: string;
   readonly reportWriteError?: string;
+  readonly workLogPath: string;
 }
 
 const WINDOWS_WARNING =
   "Windows review execution is unsandboxed. Read-only behavior and path restrictions are instructions, not operating-system security boundaries.";
 const PIPE_CLOSE_GRACE_MS = 1_000;
 const MAX_RPC_OUTPUT_BYTES = 4 * 1024 * 1024;
+const WORK_LOG_HEARTBEAT_MS = 5_000;
+
+class ProspectiveReviewPathValidationError extends Error {
+  constructor(readonly original: unknown) {
+    super("Prospective review path validation failed");
+    this.name = "ProspectiveReviewPathValidationError";
+  }
+}
+
+function reviewWorkLogWriteError(workLog: ReviewWorkLog, error: unknown): Error {
+  return new Error(
+    diagnosticMessage(
+      "REVIEW_WORK_LOG_WRITE_FAILED",
+      `Pioneer could not continue the real-time review work log at ${workLog.path}: ${error instanceof Error ? error.message : String(error)}`,
+    ),
+  );
+}
+
+function recordReviewWorkLog(
+  workLog: ReviewWorkLog,
+  type: string,
+  details: Readonly<Record<string, unknown>> = {},
+): void {
+  try {
+    workLog.record(type, details);
+  } catch (error) {
+    throw reviewWorkLogWriteError(workLog, error);
+  }
+}
+
+function closeReviewWorkLog(workLog: ReviewWorkLog): void {
+  try {
+    workLog.close();
+  } catch (error) {
+    throw reviewWorkLogWriteError(workLog, error);
+  }
+}
+
+function workLogDiagnosticSummary(message: string): Readonly<Record<string, unknown>> {
+  const code = /^\[([A-Z][A-Z0-9_]*)\]/.exec(message)?.[1];
+  return {
+    diagnosticCode: code ?? "UNCLASSIFIED",
+    diagnosticBytes: Buffer.byteLength(message),
+  };
+}
+
+export interface RunReviewRpcOptions {
+  readonly workLog?: ReviewWorkLog;
+  readonly heartbeatMs?: number;
+  readonly sensitiveValues?: readonly string[];
+  readonly terminateProcess?: (child: ReturnType<typeof spawn>) => void;
+  readonly escalateProcess?: (child: ReturnType<typeof spawn>) => void;
+  readonly startupFailureGraceMs?: number;
+}
+
+interface ReviewPromptWriter {
+  write(chunk: string): unknown;
+}
 
 export function reviewTools(platform: NodeJS.Platform = process.platform): readonly string[] {
   return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read", "ls"];
+}
+
+export function requestedModelForWorkLog(
+  requestedModel: string | undefined,
+  prompt: string,
+): string {
+  return sanitizeWorkLogDiagnostic(requestedModel ?? "default", [prompt]);
+}
+
+export function readinessMetadataForWorkLog(
+  readiness: Readonly<{ version?: string; resolvedModel?: string }>,
+  prompt: string,
+): Readonly<{ piVersion: string; model: string }> {
+  return {
+    piVersion: sanitizeWorkLogDiagnostic(readiness.version ?? "unknown", [prompt]),
+    model: sanitizeWorkLogDiagnostic(readiness.resolvedModel ?? "default", [prompt]),
+  };
+}
+
+export function sourcePathForWorkLog(sourcePath: string, prompt: string): string {
+  return sanitizeWorkLogDiagnostic(sourcePath, [prompt]);
+}
+
+export function sendReviewPrompt(
+  writer: ReviewPromptWriter,
+  prompt: string,
+  startupFailure: Error | undefined,
+): boolean {
+  if (startupFailure !== undefined) return false;
+  writer.write(`${JSON.stringify({ id: "review", type: "prompt", message: prompt })}\n`);
+  return true;
+}
+
+export function shouldSchedulePipeCloseFallback(
+  settled: boolean,
+  alreadyScheduled: boolean,
+): boolean {
+  return !settled && !alreadyScheduled;
+}
+
+export async function createReviewScratchDirectory(
+  scratchBase: string,
+  afterCreate: (scratch: string) => void | Promise<void> = () => {},
+  removeScratch: (scratch: string) => Promise<void> = async (scratch) => {
+    await rm(scratch, { recursive: true, force: true });
+  },
+): Promise<string> {
+  const created = await mkdtemp(path.join(scratchBase, "pir-"));
+  try {
+    const scratch = await realpath(created);
+    await afterCreate(scratch);
+    return scratch;
+  } catch (error) {
+    try {
+      await removeScratch(created);
+    } catch {
+      // Preserve the primary setup failure; cleanup is best-effort on this path.
+    }
+    throw error;
+  }
 }
 
 export function requiresGitInspection(prompt: string): boolean {
@@ -308,6 +439,7 @@ export async function runReviewRpc(
   environment: NodeJS.ProcessEnv,
   prompt: string,
   timeoutMs: number,
+  options: RunReviewRpcOptions = {},
 ): Promise<string> {
   return await new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
@@ -332,30 +464,73 @@ export async function runReviewRpc(
     let containmentLost = false;
     let timer: NodeJS.Timeout | undefined;
     let pipeCloseTimer: NodeJS.Timeout | undefined;
+    let heartbeatTimer: NodeJS.Timeout | undefined;
     let onSigint: (() => void) | undefined;
     let onSigterm: (() => void) | undefined;
     const eventTypes = new Set<string>();
     const diagnostics: string[] = [];
+    let workLogFailure: Error | undefined;
+    let lastPiEvent = "process_started";
+    let lastPiEventAt = Date.now();
+    let stderrBytes = 0;
+    const stopProcess = options.terminateProcess ?? terminateProcessTree;
+    const escalateProcess =
+      options.escalateProcess ??
+      ((runningChild: ReturnType<typeof spawn>) => runningChild.kill("SIGKILL"));
+    const workLogSecrets = [prompt, ...(options.sensitiveValues ?? [])];
+    const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
+      if (options.workLog === undefined || workLogFailure !== undefined) return;
+      try {
+        options.workLog.record(type, details);
+      } catch (error) {
+        workLogFailure = new Error(
+          diagnosticMessage(
+            "REVIEW_WORK_LOG_WRITE_FAILED",
+            `Pioneer could not continue the real-time review work log at ${options.workLog.path}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+        terminalFailure ??= workLogFailure;
+        stopProcess(child);
+      }
+    };
     const finish = (error?: Error): void => {
       if (settled) return;
+      if (error === undefined) {
+        recordWorkLog("pi_rpc_completed", {
+          reportBytes: Buffer.byteLength(report.trim()),
+          rpcBytes: stdoutBytes,
+          stderrBytes,
+        });
+      } else {
+        recordWorkLog("pi_rpc_failed", {
+          ...workLogDiagnosticSummary(error.message),
+          rpcBytes: stdoutBytes,
+          stderrBytes,
+        });
+      }
+      const finalError = workLogFailure ?? error;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       if (pipeCloseTimer !== undefined) clearTimeout(pipeCloseTimer);
+      if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer);
       if (onSigint !== undefined) process.off("SIGINT", onSigint);
       if (onSigterm !== undefined) process.off("SIGTERM", onSigterm);
-      if (error) reject(error);
+      if (finalError) reject(finalError);
       else resolve(report.trim());
     };
     const terminate = (error: Error): void => {
       if (terminalFailure !== undefined || timedOut) return;
       terminalFailure = error;
-      terminateProcessTree(child);
+      recordWorkLog("pi_termination_requested", {
+        ...workLogDiagnosticSummary(error.message),
+      });
+      stopProcess(child);
     };
     const schedulePipeCloseFallback = (): void => {
-      if (pipeCloseTimer !== undefined) return;
+      if (!shouldSchedulePipeCloseFallback(settled, pipeCloseTimer !== undefined)) return;
       pipeCloseTimer = setTimeout(() => {
         containmentLost = true;
-        terminateProcessTree(child);
+        stopProcess(child);
         child.stdout.destroy();
         child.stderr.destroy();
       }, PIPE_CLOSE_GRACE_MS);
@@ -368,6 +543,10 @@ export async function runReviewRpc(
     };
     process.once("SIGINT", onSigint);
     process.once("SIGTERM", onSigterm);
+    recordWorkLog("pi_process_started", {
+      ...(child.pid === undefined ? {} : { pid: child.pid }),
+      timeoutMs,
+    });
     const consume = (): void => {
       for (;;) {
         const newline = stdout.indexOf("\n");
@@ -384,6 +563,12 @@ export async function runReviewRpc(
         }
         if (typeof event !== "object" || event === null) continue;
         const record = event as Record<string, unknown>;
+        const eventSummary = summarizePiEvent(record, workLogSecrets);
+        lastPiEvent =
+          typeof eventSummary.eventType === "string" ? eventSummary.eventType : "unrecognized";
+        lastPiEventAt = Date.now();
+        recordWorkLog("pi_event", eventSummary);
+        if (workLogFailure !== undefined) return;
         if (typeof record.type === "string") eventTypes.add(record.type);
         if (record.type === "response" && record.success === false) {
           terminate(
@@ -448,13 +633,22 @@ export async function runReviewRpc(
       consume();
     });
     child.stderr.on("data", (chunk: Buffer) => {
+      stderrBytes += chunk.length;
+      recordWorkLog("pi_stderr", { chunkBytes: chunk.length, totalBytes: stderrBytes });
       stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
     });
     child.once("error", (error) => {
+      recordWorkLog("pi_process_error", {
+        ...workLogDiagnosticSummary(error.message),
+      });
       terminalFailure ??= error;
     });
-    child.once("exit", () => {
+    child.once("exit", (code, signal) => {
       childExited = true;
+      recordWorkLog("pi_process_exit", {
+        exitCode: code,
+        signal: signal ?? "none",
+      });
       if (timer !== undefined) {
         clearTimeout(timer);
         timer = undefined;
@@ -469,6 +663,10 @@ export async function runReviewRpc(
       if (terminalFailure === undefined && !timedOut) {
         stdout += stdoutDecoder.end();
         consume();
+      }
+      if (workLogFailure !== undefined) {
+        finish(workLogFailure);
+        return;
       }
       if (timedOut) {
         finish(
@@ -513,10 +711,35 @@ export async function runReviewRpc(
         finish(error instanceof Error ? error : new Error(String(error)));
       }
     });
-    child.stdin.write(`${JSON.stringify({ id: "review", type: "prompt", message: prompt })}\n`);
+    const startupFailure = workLogFailure;
+    if (!sendReviewPrompt(child.stdin, prompt, startupFailure)) {
+      child.stdin.destroy();
+      timer = setTimeout(() => {
+        escalateProcess(child);
+        acceptRpcEvents = false;
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }, options.startupFailureGraceMs ?? PIPE_CLOSE_GRACE_MS);
+      return;
+    }
+    lastPiEvent = "prompt_sent";
+    lastPiEventAt = Date.now();
+    recordWorkLog("pi_prompt_sent", { promptBytes: Buffer.byteLength(prompt) });
+    heartbeatTimer = setInterval(() => {
+      recordWorkLog("heartbeat", {
+        phase: "pi_rpc",
+        ...(child.pid === undefined ? {} : { pid: child.pid }),
+        lastPiEvent,
+        idleMs: Math.max(0, Date.now() - lastPiEventAt),
+        rpcBytes: stdoutBytes,
+        stderrBytes,
+      });
+    }, options.heartbeatMs ?? WORK_LOG_HEARTBEAT_MS);
+    heartbeatTimer.unref();
     timer = setTimeout(() => {
       timedOut = true;
-      terminateProcessTree(child);
+      recordWorkLog("pi_timeout", { timeoutMs });
+      stopProcess(child);
       if (childExited) schedulePipeCloseFallback();
     }, timeoutMs);
   });
@@ -526,125 +749,276 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   if (!request.prompt.trim()) throw new Error("Review prompt must not be empty");
   if (request.thinking !== undefined && !isThinkingLevel(request.thinking))
     throw new Error(`Unsupported thinking level: ${String(request.thinking)}`);
-  const paths = await validateReviewPaths(request);
-  const windows = process.platform === "win32";
-  if (windows && request.allowUnsandboxedWindows !== true)
-    throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
-  if (process.platform !== "linux" && requiresGitInspection(request.prompt))
-    throw new Error(
-      "Git-target reviews require Linux, where Pioneer can inspect Git inside Bubblewrap. macOS and Windows support source-only reviews.",
-    );
-  const piHomeSource = request.piHomeSource ?? defaultPiAgentDir();
-  const readiness = await assertPiReady({
-    environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
-    ...(request.model === undefined ? {} : { requestedModel: request.model }),
-  });
-  const scratchBase = process.platform === "win32" ? os.tmpdir() : "/tmp";
-  const scratch = await realpath(await mkdtemp(path.join(scratchBase, "pir-")));
-  let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
-  let bridge: LinuxProxyBridge | undefined;
-  let bridgeRoot: string | undefined;
-  try {
-    const piHome = await prepareIsolatedPiHome({
-      sourceDir: piHomeSource,
-      destination: path.join(scratch, "pi-home"),
-      mode: "review",
-    });
-    const model = readiness.resolvedModel;
-    const command: [string, ...string[]] = ["pi", "--mode", "rpc"];
-    if (model !== undefined) command.push("--model", model);
-    const thinking =
-      request.thinking ??
-      (request.model === undefined ? undefined : thinkingFromModelShorthand(request.model));
-    if (thinking !== undefined) command.push("--thinking", thinking);
-    const optimized = optimizePiStartupCommand(command, {
-      disableExtensions: true,
-      tools: reviewTools(),
-    });
-    const environment = {
-      ...optimized.environment,
-      ...piHome.environment,
-      HOME: piHome.homeDir,
-      TMPDIR: piHome.tmpDir,
-      ...(process.platform === "darwin"
-        ? {
-            OPENSSL_CONF: "/private/etc/ssl/openssl.cnf",
-            SSL_CERT_FILE: "/private/etc/ssl/cert.pem",
-          }
-        : {}),
-    };
-    const prompt = buildReviewPrompt(paths.sourceDir, scratch, request.prompt);
-    const timeoutMs = request.timeoutMs ?? 900_000;
-    if (windows) {
-      const report = await runReviewRpc(
-        optimized.command,
-        paths.sourceDir,
-        reviewProcessEnvironment({}, environment),
-        prompt,
-        timeoutMs,
+  if (
+    request.network !== undefined &&
+    request.network !== "full" &&
+    request.network !== "public" &&
+    request.network !== "none"
+  ) {
+    throw new Error("Unsupported review network mode");
+  }
+  if (
+    request.timeoutMs !== undefined &&
+    (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0)
+  ) {
+    throw new Error("Review timeout must be a positive safe integer");
+  }
+  const network = request.network ?? "full";
+  const timeoutMs = request.timeoutMs ?? 900_000;
+  const defaultWorkLog = request.workLogPath === undefined;
+  let requestedWorkLogPath = request.workLogPath;
+  if (requestedWorkLogPath === undefined) {
+    try {
+      requestedWorkLogPath = await prepareValidatedDefaultReviewWorkLogPath(async (candidate) => {
+        try {
+          await validateProspectiveReviewWorkLogPath({ ...request, workLogPath: candidate });
+        } catch (error) {
+          throw new ProspectiveReviewPathValidationError(error);
+        }
+      });
+    } catch (error) {
+      if (error instanceof ProspectiveReviewPathValidationError) throw error.original;
+      throw new Error(
+        diagnosticMessage(
+          "REVIEW_WORK_LOG_CREATE_FAILED",
+          `Pioneer could not prepare the default real-time review work-log directory: ${error instanceof Error ? error.message : String(error)}`,
+        ),
       );
+    }
+  }
+  const paths = await validateReviewPaths({ ...request, workLogPath: requestedWorkLogPath });
+  if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
+  let workLog: ReviewWorkLog;
+  try {
+    workLog = await openReviewWorkLog(paths.workLogPath, { retainDefaultLogs: defaultWorkLog });
+  } catch (error) {
+    throw new Error(
+      diagnosticMessage(
+        "REVIEW_WORK_LOG_CREATE_FAILED",
+        `Pioneer could not create the real-time review work log at ${paths.workLogPath}: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
+  }
+
+  try {
+    if (paths.reportPath !== undefined) {
+      await assertDistinctExistingReviewOutputs(paths.reportPath, workLog.path);
+    }
+    request.onWorkLogReady?.(workLog.path);
+    const windows = process.platform === "win32";
+    recordReviewWorkLog(workLog, "review_started", {
+      pioneerVersion: PIONEER_VERSION,
+      platform: process.platform,
+      controllerPid: process.pid,
+      sourceDir: sourcePathForWorkLog(paths.sourceDir, request.prompt),
+      promptBytes: Buffer.byteLength(request.prompt),
+      network,
+      timeoutMs,
+      requestedModel: requestedModelForWorkLog(request.model, request.prompt),
+      requestedThinking: request.thinking ?? "default",
+      reportRequested: paths.reportPath !== undefined,
+      sandboxed: !windows,
+    });
+    if (windows && request.allowUnsandboxedWindows !== true)
+      throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
+    if (process.platform !== "linux" && requiresGitInspection(request.prompt))
+      throw new Error(
+        "Git-target reviews require Linux, where Pioneer can inspect Git inside Bubblewrap. macOS and Windows support source-only reviews.",
+      );
+
+    const piHomeSource = request.piHomeSource ?? defaultPiAgentDir();
+    recordReviewWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
+    const readiness = await assertPiReady({
+      environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
+      ...(request.model === undefined ? {} : { requestedModel: request.model }),
+    });
+    recordReviewWorkLog(workLog, "stage_completed", {
+      stage: "pi_readiness",
+      ...readinessMetadataForWorkLog(readiness, request.prompt),
+      warning: readiness.warning !== undefined,
+    });
+
+    const scratchBase = windows ? os.tmpdir() : "/tmp";
+    recordReviewWorkLog(workLog, "stage_started", { stage: "scratch_creation" });
+    const scratch = await createReviewScratchDirectory(scratchBase, () => {
+      recordReviewWorkLog(workLog, "stage_completed", { stage: "scratch_creation" });
+    });
+    let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
+    let bridge: LinuxProxyBridge | undefined;
+    let bridgeRoot: string | undefined;
+    let reviewResult: ReviewResult | undefined;
+    let runFailure: Error | undefined;
+    let reportBytes = 0;
+    try {
+      recordReviewWorkLog(workLog, "stage_started", { stage: "pi_home_snapshot" });
+      const piHome = await prepareIsolatedPiHome({
+        sourceDir: piHomeSource,
+        destination: path.join(scratch, "pi-home"),
+        mode: "review",
+      });
+      recordReviewWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
+      const model = readiness.resolvedModel;
+      const command: [string, ...string[]] = ["pi", "--mode", "rpc"];
+      if (model !== undefined) command.push("--model", model);
+      const thinking =
+        request.thinking ??
+        (request.model === undefined ? undefined : thinkingFromModelShorthand(request.model));
+      if (thinking !== undefined) command.push("--thinking", thinking);
+      const optimized = optimizePiStartupCommand(command, {
+        disableExtensions: true,
+        tools: reviewTools(),
+      });
+      const environment = {
+        ...optimized.environment,
+        ...piHome.environment,
+        HOME: piHome.homeDir,
+        TMPDIR: piHome.tmpDir,
+        ...(process.platform === "darwin"
+          ? {
+              OPENSSL_CONF: "/private/etc/ssl/openssl.cnf",
+              SSL_CERT_FILE: "/private/etc/ssl/cert.pem",
+            }
+          : {}),
+      };
+      const prompt = buildReviewPrompt(paths.sourceDir, scratch, request.prompt);
+      let report: string;
+      let sandboxed: boolean;
+      if (windows) {
+        recordReviewWorkLog(workLog, "stage_started", { stage: "pi_rpc" });
+        report = await runReviewRpc(
+          optimized.command,
+          paths.sourceDir,
+          reviewProcessEnvironment({}, environment),
+          prompt,
+          timeoutMs,
+          { workLog, sensitiveValues: [request.prompt] },
+        );
+        sandboxed = false;
+      } else {
+        recordReviewWorkLog(workLog, "stage_started", { stage: "sandbox_readiness" });
+        await assertNativeSandboxReady();
+        recordReviewWorkLog(workLog, "stage_completed", { stage: "sandbox_readiness" });
+        if (network !== "none") {
+          recordReviewWorkLog(workLog, "stage_started", { stage: "network_proxy" });
+          proxy = await startEgressProxy(
+            crypto.randomUUID(),
+            network === "public" ? resolvePublicTarget : resolveAnyTarget,
+          );
+          recordReviewWorkLog(workLog, "stage_completed", { stage: "network_proxy" });
+        }
+        const bwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
+        if (process.platform === "linux" && bwrapPath === undefined) {
+          throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");
+        }
+        if (process.platform === "linux" && proxy !== undefined) {
+          bridgeRoot = await mkdtemp("/tmp/pir-bridge-");
+          bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
+        }
+        recordReviewWorkLog(workLog, "stage_started", { stage: "sandbox_launch" });
+        const config = buildReviewSandboxConfig({
+          platform: process.platform as "darwin" | "linux",
+          ...paths,
+          scratchDir: scratch,
+          runtimeReadPaths: [
+            ...(await piRuntimePaths("pi")),
+            ...(await piRuntimePaths("node")),
+            ...(await macosRuntimeReadPaths(process.execPath)),
+          ],
+          network,
+          ...(proxy === undefined ? {} : { parentProxyUrl: proxy.url }),
+        });
+        const launch =
+          process.platform === "darwin"
+            ? buildMacosSandboxArgv({ ...config, allowProcessFork: false }, optimized.command)
+            : buildLinuxSandboxArgv(config, optimized.command, bwrapPath ?? "", bridge?.socketPath);
+        recordReviewWorkLog(workLog, "stage_completed", { stage: "sandbox_launch" });
+        recordReviewWorkLog(workLog, "stage_started", { stage: "pi_rpc" });
+        report = await runReviewRpc(
+          launch.argv,
+          paths.sourceDir,
+          reviewProcessEnvironment(launch.environment, environment),
+          prompt,
+          timeoutMs,
+          { workLog, sensitiveValues: [request.prompt] },
+        );
+        sandboxed = true;
+      }
+      reportBytes = Buffer.byteLength(report);
+      recordReviewWorkLog(workLog, "stage_completed", { stage: "pi_rpc", reportBytes });
+      recordReviewWorkLog(workLog, "stage_started", { stage: "report_persistence" });
       const reportWriteError = await persistReviewReport(report, paths.reportPath);
-      return {
+      recordReviewWorkLog(workLog, "stage_completed", {
+        stage: "report_persistence",
+        requested: paths.reportPath !== undefined,
+        success: reportWriteError === undefined,
+        ...(reportWriteError === undefined ? {} : workLogDiagnosticSummary(reportWriteError)),
+      });
+      reviewResult = {
         report,
-        sandboxed: false,
-        warning: combineWarnings(WINDOWS_WARNING, readiness.warning) ?? WINDOWS_WARNING,
+        sandboxed,
+        workLogPath: workLog.path,
+        ...(windows
+          ? { warning: combineWarnings(WINDOWS_WARNING, readiness.warning) ?? WINDOWS_WARNING }
+          : readiness.warning === undefined
+            ? {}
+            : { warning: readiness.warning }),
         ...(model === undefined ? {} : { model }),
         ...(thinking === undefined ? {} : { thinking }),
         ...(reportWriteError === undefined ? {} : { reportWriteError }),
       };
+    } catch (error) {
+      runFailure = error instanceof Error ? error : new Error(String(error));
     }
-    await assertNativeSandboxReady();
-    const network = request.network ?? "full";
-    if (network !== "none") {
-      proxy = await startEgressProxy(
-        crypto.randomUUID(),
-        network === "public" ? resolvePublicTarget : resolveAnyTarget,
-      );
+    let cleanupFailure: Error | undefined;
+    try {
+      recordReviewWorkLog(workLog, "stage_started", { stage: "cleanup" });
+    } catch (error) {
+      cleanupFailure = error instanceof Error ? error : new Error(String(error));
     }
-    const bwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
-    if (process.platform === "linux" && bwrapPath === undefined) {
-      throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");
+    for (const cleanup of [
+      async () => bridge?.close(),
+      async () => {
+        if (bridgeRoot !== undefined) await rm(bridgeRoot, { recursive: true, force: true });
+      },
+      async () => proxy?.close(),
+      async () => rm(scratch, { recursive: true, force: true }),
+    ]) {
+      try {
+        await cleanup();
+      } catch (error) {
+        cleanupFailure ??= error instanceof Error ? error : new Error(String(error));
+      }
     }
-    if (process.platform === "linux" && proxy !== undefined) {
-      bridgeRoot = await mkdtemp("/tmp/pir-bridge-");
-      bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
+    try {
+      recordReviewWorkLog(workLog, "stage_completed", {
+        stage: "cleanup",
+        success: cleanupFailure === undefined,
+        ...(cleanupFailure === undefined ? {} : workLogDiagnosticSummary(cleanupFailure.message)),
+      });
+      if (reviewResult !== undefined && cleanupFailure === undefined) {
+        recordReviewWorkLog(workLog, "review_completed", {
+          reportBytes,
+          status: reviewResult.reportWriteError === undefined ? "success" : "report_write_failed",
+        });
+      }
+    } catch (error) {
+      cleanupFailure = error instanceof Error ? error : new Error(String(error));
     }
-    const config = buildReviewSandboxConfig({
-      platform: process.platform as "darwin" | "linux",
-      ...paths,
-      scratchDir: scratch,
-      runtimeReadPaths: [
-        ...(await piRuntimePaths("pi")),
-        ...(await piRuntimePaths("node")),
-        ...(await macosRuntimeReadPaths(process.execPath)),
-      ],
-      network,
-      ...(proxy === undefined ? {} : { parentProxyUrl: proxy.url }),
-    });
-    const launch =
-      process.platform === "darwin"
-        ? buildMacosSandboxArgv({ ...config, allowProcessFork: false }, optimized.command)
-        : buildLinuxSandboxArgv(config, optimized.command, bwrapPath ?? "", bridge?.socketPath);
-    const report = await runReviewRpc(
-      launch.argv,
-      paths.sourceDir,
-      reviewProcessEnvironment(launch.environment, environment),
-      prompt,
-      timeoutMs,
-    );
-    const reportWriteError = await persistReviewReport(report, paths.reportPath);
-    return {
-      report,
-      sandboxed: true,
-      ...(readiness.warning === undefined ? {} : { warning: readiness.warning }),
-      ...(model === undefined ? {} : { model }),
-      ...(thinking === undefined ? {} : { thinking }),
-      ...(reportWriteError === undefined ? {} : { reportWriteError }),
-    };
+    if (cleanupFailure !== undefined) throw cleanupFailure;
+    if (runFailure !== undefined) throw runFailure;
+    if (reviewResult === undefined) throw new Error("Review completed without a result");
+    return reviewResult;
+  } catch (error) {
+    let failure = error instanceof Error ? error : new Error(String(error));
+    try {
+      workLog.record("review_failed", {
+        ...workLogDiagnosticSummary(failure.message),
+      });
+    } catch (workLogError) {
+      failure = reviewWorkLogWriteError(workLog, workLogError);
+    }
+    throw failure;
   } finally {
-    await bridge?.close();
-    if (bridgeRoot !== undefined) await rm(bridgeRoot, { recursive: true, force: true });
-    await proxy?.close();
-    await rm(scratch, { recursive: true, force: true });
+    closeReviewWorkLog(workLog);
   }
 }

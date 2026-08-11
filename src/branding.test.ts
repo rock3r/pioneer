@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 const readJson = async (path: string) => JSON.parse(await readFile(path, "utf8"));
 
 describe("Pioneer distribution identity", () => {
-  it("uses the Pioneer identity across npm and both plugin formats", async () => {
+  it("uses the Pioneer identity across npm and the client-specific plugin formats", async () => {
     const packageManifest = await readJson("package.json");
     const codexManifest = await readJson("plugins/pioneer/.codex-plugin/plugin.json");
     const claudeManifest = await readJson("plugins/pioneer/.claude-plugin/plugin.json");
@@ -31,9 +31,35 @@ describe("Pioneer distribution identity", () => {
     await access("plugins/pioneer/assets/pioneer-banner.jpg");
   });
 
+  it("publishes an Agent Plugins 1.0 portable manifest", async () => {
+    const packageManifest = await readJson("package.json");
+    const portableManifest = await readJson("plugins/pioneer/plugin.json");
+
+    expect(portableManifest).toEqual({
+      $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+      name: "pioneer",
+      version: packageManifest.version,
+      description: "Delegate sandboxed code reviews to a locally installed Pi coding agent.",
+      author: {
+        name: "Pioneer contributors",
+      },
+      homepage: "https://github.com/rock3r/pioneer#readme",
+      repository: "https://github.com/rock3r/pioneer",
+      license: "UEL-1.0",
+      keywords: ["code-review", "pi", "sandbox", "models"],
+    });
+
+    await access("plugins/pioneer/skills/pioneer/SKILL.md");
+  });
+
   it("requires agent integrations to preserve review terminal evidence", async () => {
     const skill = await readFile("plugins/pioneer/skills/pioneer/SKILL.md", "utf8");
 
+    expect(skill).toContain(
+      "description: Delegate a code review from a coding agent to the locally installed Pi coding agent.",
+    );
+    expect(skill).toContain("license: UEL-1.0");
+    expect(skill).not.toContain("from Codex or Claude Code");
     expect(skill).toContain("run `pioneer doctor` before the first review");
     expect(skill).toContain("exit status is zero");
     expect(skill).toContain("stdout contains a non-empty report");

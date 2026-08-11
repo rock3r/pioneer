@@ -12,6 +12,7 @@ export interface ReviewPathSpec {
   readonly allowReadPaths?: readonly string[];
   readonly allowWritePaths?: readonly string[];
   readonly reportPath?: string;
+  readonly workLogPath?: string;
 }
 
 export interface ValidatedReviewPaths {
@@ -19,6 +20,7 @@ export interface ValidatedReviewPaths {
   readonly allowReadPaths: readonly string[];
   readonly allowWritePaths: readonly string[];
   readonly reportPath?: string;
+  readonly workLogPath?: string;
 }
 
 export interface ReviewSandboxConfigOptions extends ValidatedReviewPaths {
@@ -36,6 +38,44 @@ function contains(parent: string, child: string): boolean {
 
 function overlaps(left: string, right: string): boolean {
   return contains(left, right) || contains(right, left);
+}
+
+function sameOutputPath(left: string, right: string, platform: NodeJS.Platform): boolean {
+  if (platform === "darwin") {
+    return left.normalize("NFC").toLowerCase() === right.normalize("NFC").toLowerCase();
+  }
+  if (platform === "win32") {
+    return left.toLowerCase() === right.toLowerCase();
+  }
+  return left === right;
+}
+
+export async function assertDistinctExistingReviewOutputs(
+  reportPath: string,
+  workLogPath: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  if (sameOutputPath(reportPath, workLogPath, platform)) {
+    throw new Error(`Review report and work log targets are identical: ${reportPath}`);
+  }
+  try {
+    const [reportStats, workLogStats, canonicalReport, canonicalWorkLog] = await Promise.all([
+      lstat(reportPath),
+      lstat(workLogPath),
+      realpath(reportPath),
+      realpath(workLogPath),
+    ]);
+    const sameInode =
+      reportStats.ino !== 0 &&
+      reportStats.dev === workLogStats.dev &&
+      reportStats.ino === workLogStats.ino;
+    if (sameInode || sameOutputPath(canonicalReport, canonicalWorkLog, platform)) {
+      throw new Error(`Review report and work log targets are identical: ${reportPath}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
 }
 
 async function canonicalGrant(candidate: string): Promise<string> {
@@ -59,9 +99,23 @@ async function canonicalList(paths: readonly string[]): Promise<string[]> {
   return values;
 }
 
-async function canonicalReportPath(candidate: string): Promise<string> {
-  if (!path.isAbsolute(candidate))
-    throw new Error(`Review report path is not absolute: ${candidate}`);
+function assertControllerOutputPathSyntax(candidate: string, kind: string): void {
+  if (!path.isAbsolute(candidate)) {
+    throw new Error(`Review ${kind} path is not absolute: ${candidate}`);
+  }
+  for (const character of candidate) {
+    const codePoint = character.codePointAt(0);
+    if (
+      codePoint !== undefined &&
+      (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
+    ) {
+      throw new Error(`Review ${kind} path contains a control character`);
+    }
+  }
+}
+
+async function canonicalControllerOutputPath(candidate: string, kind: string): Promise<string> {
+  assertControllerOutputPathSyntax(candidate, kind);
   const absolute = path.normalize(candidate);
   const parent = path.dirname(absolute);
   let parentStats: Awaited<ReturnType<typeof lstat>>;
@@ -69,19 +123,19 @@ async function canonicalReportPath(candidate: string): Promise<string> {
     parentStats = await lstat(parent);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error(`Review report parent does not exist: ${parent}`);
+      throw new Error(`Review ${kind} parent does not exist: ${parent}`);
     }
     throw error;
   }
   if (parentStats.isSymbolicLink()) {
-    throw new Error(`Review report parent is a symbolic link: ${parent}`);
+    throw new Error(`Review ${kind} parent is a symbolic link: ${parent}`);
   }
   if (!parentStats.isDirectory())
-    throw new Error(`Review report parent is not a directory: ${parent}`);
+    throw new Error(`Review ${kind} parent is not a directory: ${parent}`);
   try {
     await access(parent, constants.W_OK);
   } catch {
-    throw new Error(`Review report parent is not writable: ${parent}`);
+    throw new Error(`Review ${kind} parent is not writable: ${parent}`);
   }
   const canonicalParent = await realpath(parent);
   const reportPath = path.join(canonicalParent, path.basename(absolute));
@@ -91,15 +145,54 @@ async function canonicalReportPath(candidate: string): Promise<string> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return reportPath;
     throw error;
   }
-  throw new Error(`Review report target already exists: ${reportPath}`);
+  throw new Error(`Review ${kind} target already exists: ${reportPath}`);
 }
 
-export async function validateReviewPaths(spec: ReviewPathSpec): Promise<ValidatedReviewPaths> {
+async function canonicalProspectiveControllerOutputPath(
+  candidate: string,
+  kind: string,
+): Promise<string> {
+  assertControllerOutputPathSyntax(candidate, kind);
+  const absolute = path.normalize(candidate);
+  let existingAncestor = path.dirname(absolute);
+  let ancestorStats: Awaited<ReturnType<typeof lstat>>;
+  for (;;) {
+    try {
+      ancestorStats = await lstat(existingAncestor);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) throw error;
+      existingAncestor = parent;
+    }
+  }
+  const canonicalAncestor = await realpath(existingAncestor);
+  if (ancestorStats.isSymbolicLink()) ancestorStats = await lstat(canonicalAncestor);
+  if (!ancestorStats.isDirectory()) {
+    throw new Error(`Review ${kind} ancestor is not a directory: ${canonicalAncestor}`);
+  }
+  return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
+}
+
+async function validateReviewPathsInternal(
+  spec: ReviewPathSpec,
+  prospectiveWorkLog: boolean,
+  platform: NodeJS.Platform,
+): Promise<ValidatedReviewPaths> {
   const sourceDir = await canonicalGrant(spec.sourceDir);
   const allowReadPaths = await canonicalList(spec.allowReadPaths ?? []);
   const allowWritePaths = await canonicalList(spec.allowWritePaths ?? []);
   const reportPath =
-    spec.reportPath === undefined ? undefined : await canonicalReportPath(spec.reportPath);
+    spec.reportPath === undefined
+      ? undefined
+      : await canonicalControllerOutputPath(spec.reportPath, "report");
+  const workLogPath =
+    spec.workLogPath === undefined
+      ? undefined
+      : await (prospectiveWorkLog
+          ? canonicalProspectiveControllerOutputPath(spec.workLogPath, "work log")
+          : canonicalControllerOutputPath(spec.workLogPath, "work log"));
   for (const writable of allowWritePaths) {
     if (
       overlaps(writable, sourceDir) ||
@@ -114,12 +207,42 @@ export async function validateReviewPaths(spec: ReviewPathSpec): Promise<Validat
   ) {
     throw new Error(`Review report target is actor-visible: ${reportPath}`);
   }
+  if (
+    workLogPath !== undefined &&
+    [sourceDir, ...allowReadPaths, ...allowWritePaths].some((grant) => contains(grant, workLogPath))
+  ) {
+    throw new Error(`Review work log target is actor-visible: ${workLogPath}`);
+  }
+  if (
+    reportPath !== undefined &&
+    workLogPath !== undefined &&
+    sameOutputPath(reportPath, workLogPath, platform)
+  ) {
+    throw new Error(`Review report and work log targets are identical: ${reportPath}`);
+  }
   return {
     sourceDir,
     allowReadPaths,
     allowWritePaths,
     ...(reportPath === undefined ? {} : { reportPath }),
+    ...(workLogPath === undefined ? {} : { workLogPath }),
   };
+}
+
+export async function validateProspectiveReviewWorkLogPath(
+  spec: ReviewPathSpec & { readonly workLogPath: string },
+  platform: NodeJS.Platform = process.platform,
+): Promise<string> {
+  const paths = await validateReviewPathsInternal(spec, true, platform);
+  if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
+  return paths.workLogPath;
+}
+
+export async function validateReviewPaths(
+  spec: ReviewPathSpec,
+  platform: NodeJS.Platform = process.platform,
+): Promise<ValidatedReviewPaths> {
+  return await validateReviewPathsInternal(spec, false, platform);
 }
 
 export function buildReviewSandboxConfig(options: ReviewSandboxConfigOptions): SandboxPolicy {
