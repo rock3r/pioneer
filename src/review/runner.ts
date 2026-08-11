@@ -108,6 +108,21 @@ export function reviewTools(platform: NodeJS.Platform = process.platform): reado
   return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read", "ls"];
 }
 
+export async function createReviewScratchDirectory(
+  scratchBase: string,
+  afterCreate: (scratch: string) => void | Promise<void> = () => {},
+): Promise<string> {
+  const created = await mkdtemp(path.join(scratchBase, "pir-"));
+  try {
+    const scratch = await realpath(created);
+    await afterCreate(scratch);
+    return scratch;
+  } catch (error) {
+    await rm(created, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 export function requiresGitInspection(prompt: string): boolean {
   return (
     /\b(?:review|inspect|compare)\b[^.]*\b(?:(?:staged|unstaged|untracked)\s+(?:changes|files)|working[-\s]tree|current\s+changes|changes\s+between\s+(?:(?:main\b(?!\s+thread\b)|master\b|HEAD\b|origin\/[0-9a-z._/-]+)\s+and\s+[0-9a-z._/-]+|[0-9a-z._/-]+\s+and\s+(?:main\b(?!\s+thread\b)|master\b|HEAD\b|origin\/[0-9a-z._/-]+))|commit\s+(?:`[0-9a-f]{6,64}`|`?(?=[0-9a-f]{6,64}`?\b)(?=[0-9a-f`]*\d)[0-9a-f]{6,64}`?|HEAD(?:[~^]\d*)?\b)|changes\s+introduced\s+by\s+`?(?=[0-9a-f]{6,64}`?\b)(?=[0-9a-f`]*\d)(?=[0-9a-f`]*[a-f])[0-9a-f]{6,64}`?|`?(?=[0-9a-f]{6,64}`?\b)(?=[0-9a-f`]*\d)(?=[0-9a-f`]*[a-f])[0-9a-f]{6,64}`?|this\s+branch(?!\s+of\b)|branch\s+(?:against|with|compared|`?[0-9a-z._-]+\/[0-9a-z._/-]+`?)|merge\s+base|(?:the\s+)?diff(?:\s*(?:$|[.?!])|\s+(?:against|between|of|from)\b)|against\s+origin\/|(?:changes|commit|branch|diff)\b[^.]*\b(?:against\s+(?:HEAD\b|main\b(?!\s+thread\b)|master\b)|since\s+origin\/)|(?:main|master|HEAD|origin\/[0-9a-z._/-]+)\.{2,3}[0-9a-z._/-]+|[0-9a-z._/-]+\.{2,3}(?:main|master|HEAD|origin\/[0-9a-z._/-]+))/i.test(
@@ -720,8 +735,9 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
 
     const scratchBase = windows ? os.tmpdir() : "/tmp";
     recordReviewWorkLog(workLog, "stage_started", { stage: "scratch_creation" });
-    const scratch = await realpath(await mkdtemp(path.join(scratchBase, "pir-")));
-    recordReviewWorkLog(workLog, "stage_completed", { stage: "scratch_creation" });
+    const scratch = await createReviewScratchDirectory(scratchBase, () => {
+      recordReviewWorkLog(workLog, "stage_completed", { stage: "scratch_creation" });
+    });
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
     let bridgeRoot: string | undefined;

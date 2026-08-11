@@ -21,6 +21,10 @@ export interface OpenReviewWorkLogOptions {
   readonly runId?: string;
   readonly now?: () => Date;
   readonly maxBytes?: number;
+  readonly fileOperations?: {
+    readonly sync: (descriptor: number) => void;
+    readonly close: (descriptor: number) => void;
+  };
 }
 
 export type ValidateReviewWorkLogTarget = (target: string) => Promise<void>;
@@ -253,6 +257,8 @@ export async function openReviewWorkLog(
   const runId = options.runId ?? crypto.randomUUID();
   const now = options.now ?? (() => new Date());
   const maxBytes = options.maxBytes ?? MAX_WORK_LOG_BYTES;
+  const syncDescriptor = options.fileOperations?.sync ?? fsyncSync;
+  const closeDescriptor = options.fileOperations?.close ?? closeSync;
   let sequence = 0;
   let bytesWritten = 0;
   let firstTimestamp: number | undefined;
@@ -271,7 +277,7 @@ export async function openReviewWorkLog(
 
   const syncIfDue = (timestamp: Date): void => {
     if (lastSyncAt === undefined || timestamp.getTime() - lastSyncAt >= WORK_LOG_SYNC_INTERVAL_MS) {
-      fsyncSync(descriptor);
+      syncDescriptor(descriptor);
       lastSyncAt = timestamp.getTime();
     }
   };
@@ -316,8 +322,18 @@ export async function openReviewWorkLog(
     close() {
       if (closed) return;
       closed = true;
-      fsyncSync(descriptor);
-      closeSync(descriptor);
+      let failure: unknown;
+      try {
+        syncDescriptor(descriptor);
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        closeDescriptor(descriptor);
+      } catch (error) {
+        failure ??= error;
+      }
+      if (failure !== undefined) throw failure;
     },
   };
 }

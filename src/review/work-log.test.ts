@@ -1,3 +1,4 @@
+import { closeSync } from "node:fs";
 import { lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -89,6 +90,30 @@ describe("review work log", () => {
       .map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(records.map(({ type }) => type)).toEqual(["review_started", "work_log_truncated"]);
     expect((await stat(target)).size).toBeLessThanOrEqual(1_024);
+  });
+
+  it("closes the descriptor even when the final sync fails", async () => {
+    const target = path.join(
+      tmpdir(),
+      `pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`,
+    );
+    let closeCalls = 0;
+    const log = await openReviewWorkLog(target, {
+      fileOperations: {
+        sync() {
+          throw new Error("sync failed");
+        },
+        close(descriptor) {
+          closeCalls += 1;
+          closeSync(descriptor);
+        },
+      },
+    });
+
+    expect(() => log.close()).toThrow(/sync failed/i);
+    expect(closeCalls).toBe(1);
+    expect(() => log.close()).not.toThrow();
+    expect(closeCalls).toBe(1);
   });
 
   it("retains at most 100 auto-created review logs without touching other files", async () => {

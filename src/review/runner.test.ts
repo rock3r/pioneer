@@ -1,5 +1,13 @@
+import { lstat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { buildReviewPrompt, requiresGitInspection, reviewTools, runReviewRpc } from "./runner.js";
+import {
+  buildReviewPrompt,
+  createReviewScratchDirectory,
+  requiresGitInspection,
+  reviewTools,
+  runReviewRpc,
+} from "./runner.js";
 import type { ReviewWorkLog } from "./work-log.js";
 
 function recordingWorkLog(): {
@@ -167,6 +175,19 @@ process.stdin.once("data", () => {
 }
 
 describe("review RPC runner", () => {
+  it("removes a newly created scratch directory when post-create work fails", async () => {
+    let scratch: string | undefined;
+
+    await expect(
+      createReviewScratchDirectory(tmpdir(), (created) => {
+        scratch = created;
+        throw new Error("work log failed");
+      }),
+    ).rejects.toThrow(/work log failed/i);
+    expect(scratch).toBeDefined();
+    await expect(lstat(scratch ?? "")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("allows source discovery without granting macOS or Windows process tools", () => {
     expect(reviewTools("darwin")).toEqual(["read", "ls"]);
     expect(reviewTools("win32")).toEqual(["read", "ls"]);
