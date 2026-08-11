@@ -91,6 +91,10 @@ function neverSettlingPi(): readonly [string, ...string[]] {
   ];
 }
 
+function delayedExitPi(): readonly [string, ...string[]] {
+  return [process.execPath, "-e", "setTimeout(() => process.exit(0), 250);"];
+}
+
 function rejectedPromptPi(): readonly [string, ...string[]] {
   return [
     process.execPath,
@@ -462,6 +466,27 @@ describe("review RPC runner", () => {
         workLog,
       }),
     ).rejects.toThrow("[REVIEW_WORK_LOG_WRITE_FAILED]");
+  });
+
+  it("bounds settlement when startup logging fails and process termination stalls", async () => {
+    const workLog: ReviewWorkLog = {
+      path: "/tmp/review.jsonl",
+      runId: "run-1",
+      record() {
+        throw new Error("disk full");
+      },
+      close() {},
+    };
+    const startedAt = Date.now();
+
+    await expect(
+      runReviewRpc(delayedExitPi(), process.cwd(), process.env, "Review the source", 1_000, {
+        workLog,
+        terminateProcess() {},
+        startupFailureGraceMs: 10,
+      }),
+    ).rejects.toThrow("[REVIEW_WORK_LOG_WRITE_FAILED]");
+    expect(Date.now() - startedAt).toBeLessThan(150);
   });
 
   it("collects delta-only message updates from Pi 0.84", async () => {

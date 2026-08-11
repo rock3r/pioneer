@@ -109,6 +109,8 @@ function closeReviewWorkLog(workLog: ReviewWorkLog): void {
 export interface RunReviewRpcOptions {
   readonly workLog?: ReviewWorkLog;
   readonly heartbeatMs?: number;
+  readonly terminateProcess?: (child: ReturnType<typeof spawn>) => void;
+  readonly startupFailureGraceMs?: number;
 }
 
 interface ReviewPromptWriter {
@@ -449,6 +451,7 @@ export async function runReviewRpc(
     let lastPiEvent = "process_started";
     let lastPiEventAt = Date.now();
     let stderrBytes = 0;
+    const stopProcess = options.terminateProcess ?? terminateProcessTree;
     const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
       if (options.workLog === undefined || workLogFailure !== undefined) return;
       try {
@@ -461,7 +464,7 @@ export async function runReviewRpc(
           ),
         );
         terminalFailure ??= workLogFailure;
-        terminateProcessTree(child);
+        stopProcess(child);
       }
     };
     const finish = (error?: Error): void => {
@@ -495,13 +498,13 @@ export async function runReviewRpc(
       recordWorkLog("pi_termination_requested", {
         diagnostic: sanitizeWorkLogDiagnostic(error.message, [prompt]),
       });
-      terminateProcessTree(child);
+      stopProcess(child);
     };
     const schedulePipeCloseFallback = (): void => {
       if (pipeCloseTimer !== undefined) return;
       pipeCloseTimer = setTimeout(() => {
         containmentLost = true;
-        terminateProcessTree(child);
+        stopProcess(child);
         child.stdout.destroy();
         child.stderr.destroy();
       }, PIPE_CLOSE_GRACE_MS);
@@ -683,8 +686,17 @@ export async function runReviewRpc(
         finish(error instanceof Error ? error : new Error(String(error)));
       }
     });
-    if (!sendReviewPrompt(child.stdin, prompt, workLogFailure)) {
+    const startupFailure = workLogFailure;
+    if (!sendReviewPrompt(child.stdin, prompt, startupFailure)) {
       child.stdin.destroy();
+      timer = setTimeout(() => {
+        stopProcess(child);
+        acceptRpcEvents = false;
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.unref();
+        finish(startupFailure);
+      }, options.startupFailureGraceMs ?? PIPE_CLOSE_GRACE_MS);
       return;
     }
     lastPiEvent = "prompt_sent";
@@ -704,7 +716,7 @@ export async function runReviewRpc(
     timer = setTimeout(() => {
       timedOut = true;
       recordWorkLog("pi_timeout", { timeoutMs });
-      terminateProcessTree(child);
+      stopProcess(child);
       if (childExited) schedulePipeCloseFallback();
     }, timeoutMs);
   });
