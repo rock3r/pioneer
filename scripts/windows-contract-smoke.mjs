@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -33,7 +33,9 @@ try {
     throw new Error("Windows review did not require explicit unsandboxed opt-in");
   }
 
-  const localAppData = path.join(root, "local-app-data");
+  const localAppDataSource = path.join(root, "local-app-data");
+  await mkdir(localAppDataSource);
+  const localAppData = await realpath(localAppDataSource);
   const optedIn = spawnSync(
     process.execPath,
     [
