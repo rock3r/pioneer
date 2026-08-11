@@ -109,6 +109,7 @@ function closeReviewWorkLog(workLog: ReviewWorkLog): void {
 export interface RunReviewRpcOptions {
   readonly workLog?: ReviewWorkLog;
   readonly heartbeatMs?: number;
+  readonly sensitiveValues?: readonly string[];
   readonly terminateProcess?: (child: ReturnType<typeof spawn>) => void;
   readonly startupFailureGraceMs?: number;
 }
@@ -452,6 +453,7 @@ export async function runReviewRpc(
     let lastPiEventAt = Date.now();
     let stderrBytes = 0;
     const stopProcess = options.terminateProcess ?? terminateProcessTree;
+    const workLogSecrets = [prompt, ...(options.sensitiveValues ?? [])];
     const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
       if (options.workLog === undefined || workLogFailure !== undefined) return;
       try {
@@ -477,7 +479,7 @@ export async function runReviewRpc(
         });
       } else {
         recordWorkLog("pi_rpc_failed", {
-          diagnostic: sanitizeWorkLogDiagnostic(error.message, [prompt]),
+          diagnostic: sanitizeWorkLogDiagnostic(error.message, workLogSecrets),
           rpcBytes: stdoutBytes,
           stderrBytes,
         });
@@ -496,7 +498,7 @@ export async function runReviewRpc(
       if (terminalFailure !== undefined || timedOut) return;
       terminalFailure = error;
       recordWorkLog("pi_termination_requested", {
-        diagnostic: sanitizeWorkLogDiagnostic(error.message, [prompt]),
+        diagnostic: sanitizeWorkLogDiagnostic(error.message, workLogSecrets),
       });
       stopProcess(child);
     };
@@ -539,10 +541,10 @@ export async function runReviewRpc(
         const record = event as Record<string, unknown>;
         lastPiEvent =
           typeof record.type === "string"
-            ? sanitizeWorkLogDiagnostic(record.type, [prompt])
+            ? sanitizeWorkLogDiagnostic(record.type, workLogSecrets)
             : "unrecognized";
         lastPiEventAt = Date.now();
-        recordWorkLog("pi_event", summarizePiEvent(record, [prompt]));
+        recordWorkLog("pi_event", summarizePiEvent(record, workLogSecrets));
         if (workLogFailure !== undefined) return;
         if (typeof record.type === "string") eventTypes.add(record.type);
         if (record.type === "response" && record.success === false) {
@@ -614,7 +616,7 @@ export async function runReviewRpc(
     });
     child.once("error", (error) => {
       recordWorkLog("pi_process_error", {
-        diagnostic: sanitizeWorkLogDiagnostic(error.message, [prompt]),
+        diagnostic: sanitizeWorkLogDiagnostic(error.message, workLogSecrets),
       });
       terminalFailure ??= error;
     });
@@ -850,7 +852,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
           reviewProcessEnvironment({}, environment),
           prompt,
           timeoutMs,
-          { workLog },
+          { workLog, sensitiveValues: [request.prompt] },
         );
         sandboxed = false;
       } else {
@@ -898,7 +900,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
           reviewProcessEnvironment(launch.environment, environment),
           prompt,
           timeoutMs,
-          { workLog },
+          { workLog, sensitiveValues: [request.prompt] },
         );
         sandboxed = true;
       }

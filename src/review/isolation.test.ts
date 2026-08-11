@@ -139,6 +139,24 @@ describe("review path grants", () => {
     ).rejects.toThrow(/actor-visible/i);
   });
 
+  it("rejects case-equivalent output targets on case-insensitive platforms", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const output = path.join(root, "output");
+    await Promise.all([mkdir(source), mkdir(output)]);
+
+    await expect(
+      validateReviewPaths(
+        {
+          sourceDir: source,
+          reportPath: path.join(output, "Review.md"),
+          workLogPath: path.join(output, "review.md"),
+        },
+        "win32",
+      ),
+    ).rejects.toThrow(/identical/i);
+  });
+
   it("rejects existing targets, symlink parents, and missing parents", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
     const source = path.join(root, "source");

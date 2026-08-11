@@ -40,6 +40,13 @@ function overlaps(left: string, right: string): boolean {
   return contains(left, right) || contains(right, left);
 }
 
+function sameOutputPath(left: string, right: string, platform: NodeJS.Platform): boolean {
+  if (platform === "darwin" || platform === "win32") {
+    return left.toLowerCase() === right.toLowerCase();
+  }
+  return left === right;
+}
+
 async function canonicalGrant(candidate: string): Promise<string> {
   const absolute = path.resolve(candidate);
   const stats = await lstat(absolute);
@@ -127,6 +134,7 @@ async function canonicalProspectiveControllerOutputPath(
 async function validateReviewPathsInternal(
   spec: ReviewPathSpec,
   prospectiveWorkLog: boolean,
+  platform: NodeJS.Platform,
 ): Promise<ValidatedReviewPaths> {
   const sourceDir = await canonicalGrant(spec.sourceDir);
   const allowReadPaths = await canonicalList(spec.allowReadPaths ?? []);
@@ -161,7 +169,11 @@ async function validateReviewPathsInternal(
   ) {
     throw new Error(`Review work log target is actor-visible: ${workLogPath}`);
   }
-  if (reportPath !== undefined && workLogPath === reportPath) {
+  if (
+    reportPath !== undefined &&
+    workLogPath !== undefined &&
+    sameOutputPath(reportPath, workLogPath, platform)
+  ) {
     throw new Error(`Review report and work log targets are identical: ${reportPath}`);
   }
   return {
@@ -175,14 +187,18 @@ async function validateReviewPathsInternal(
 
 export async function validateProspectiveReviewWorkLogPath(
   spec: ReviewPathSpec & { readonly workLogPath: string },
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
-  const paths = await validateReviewPathsInternal(spec, true);
+  const paths = await validateReviewPathsInternal(spec, true, platform);
   if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
   return paths.workLogPath;
 }
 
-export async function validateReviewPaths(spec: ReviewPathSpec): Promise<ValidatedReviewPaths> {
-  return await validateReviewPathsInternal(spec, false);
+export async function validateReviewPaths(
+  spec: ReviewPathSpec,
+  platform: NodeJS.Platform = process.platform,
+): Promise<ValidatedReviewPaths> {
+  return await validateReviewPathsInternal(spec, false, platform);
 }
 
 export function buildReviewSandboxConfig(options: ReviewSandboxConfigOptions): SandboxPolicy {

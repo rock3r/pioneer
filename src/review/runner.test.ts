@@ -430,6 +430,25 @@ describe("review RPC runner", () => {
     expect(serialized).toContain('"deltaBytes":15');
   });
 
+  it("redacts the original user prompt from Pi event metadata", async () => {
+    const { log, records } = recordingWorkLog();
+    const userPrompt = "private user request";
+    await runReviewRpc(
+      fakePiRpc([
+        { type: "tool_execution_start", toolCallId: "call-1", toolName: userPrompt },
+        { type: "message_end", message: { role: "assistant", content: "No findings." } },
+        { type: "agent_settled" },
+      ]),
+      process.cwd(),
+      process.env,
+      `Pioneer review instructions\n\nUser request:\n${userPrompt}`,
+      1_000,
+      { workLog: log, sensitiveValues: [userPrompt] },
+    );
+
+    expect(JSON.stringify(records)).not.toContain(userPrompt);
+  });
+
   it("emits real-time heartbeats while Pi is silent", async () => {
     const { log, records } = recordingWorkLog();
     await expect(
