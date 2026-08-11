@@ -223,6 +223,14 @@ function activeLeaseIsFresh(modifiedAtMs: number): boolean {
   return leaseAgeMs >= -ACTIVE_WORK_LOG_LEASE_MS && leaseAgeMs <= ACTIVE_WORK_LOG_LEASE_MS;
 }
 
+export function classifyStaleActiveLeaseOwner(
+  ownerIdentity: string,
+  currentIdentities: readonly string[] | undefined,
+): "protect" | "reclaim" | "revalidate" {
+  if (currentIdentities === undefined) return "revalidate";
+  return currentIdentities.includes(ownerIdentity) ? "protect" : "reclaim";
+}
+
 export function reviewWorkLogDirectory(
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
@@ -431,12 +439,15 @@ function pruneInactiveDefaultReviewWorkLogsSync(target: string, platform: NodeJS
           const ownerIdentity = /^([0-9a-f]{64})\n$/i.exec(readFileSync(markerPath, "utf8"))?.[1];
           if (ownerIdentity !== undefined) {
             const currentIdentities = processInstanceIdentities(processId, platform);
-            if (currentIdentities === undefined || currentIdentities.includes(ownerIdentity)) {
+            const ownerStatus = classifyStaleActiveLeaseOwner(ownerIdentity, currentIdentities);
+            if (ownerStatus === "protect") {
               activeLogs.add(markedLogName);
-            } else {
-              staleMarkers.push(markerPath);
+              continue;
             }
-            continue;
+            if (ownerStatus === "reclaim") {
+              staleMarkers.push(markerPath);
+              continue;
+            }
           }
           revalidationCandidates.push({
             logName: markedLogName,

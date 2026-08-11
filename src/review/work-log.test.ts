@@ -18,6 +18,7 @@ import { Worker } from "node:worker_threads";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildWindowsProcessStartLookup,
+  classifyStaleActiveLeaseOwner,
   openReviewWorkLog,
   prepareDefaultReviewWorkLogPath,
   prepareValidatedDefaultReviewWorkLogPath,
@@ -49,6 +50,14 @@ function processIdentityForTest(processId: number, platform: NodeJS.Platform): s
 }
 
 describe("review work log", () => {
+  it("requires renewal when a stale lease owner identity cannot be inspected", () => {
+    const ownerIdentity = "a".repeat(64);
+
+    expect(classifyStaleActiveLeaseOwner(ownerIdentity, [ownerIdentity])).toBe("protect");
+    expect(classifyStaleActiveLeaseOwner(ownerIdentity, ["b".repeat(64)])).toBe("reclaim");
+    expect(classifyStaleActiveLeaseOwner(ownerIdentity, undefined)).toBe("revalidate");
+  });
+
   it("passes a retention-owner PID to a fixed PowerShell program as data", () => {
     const lookup = buildWindowsProcessStartLookup(4242, {
       PATH: "C:\\untrusted",
