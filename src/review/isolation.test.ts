@@ -94,6 +94,30 @@ describe("review path grants", () => {
     await expect(lstat(path.join(source, "state"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("validates the full request before accepting a prospective work log", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const output = path.join(root, "output");
+    const target = path.join(root, "state", "pioneer", "logs", "reviews", "review.jsonl");
+    await Promise.all([mkdir(source), mkdir(output)]);
+
+    await expect(
+      validateProspectiveReviewWorkLogPath({
+        sourceDir: source,
+        reportPath: "relative-review.md",
+        workLogPath: target,
+      }),
+    ).rejects.toThrow(/report path is not absolute/i);
+    await expect(
+      validateProspectiveReviewWorkLogPath({
+        sourceDir: source,
+        allowReadPaths: [output],
+        allowWritePaths: [root],
+        workLogPath: target,
+      }),
+    ).rejects.toThrow(/overlaps/i);
+  });
+
   it("rejects report targets that are relative or actor-visible", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
     const source = path.join(root, "source");

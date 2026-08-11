@@ -108,6 +108,13 @@ export function reviewTools(platform: NodeJS.Platform = process.platform): reado
   return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read", "ls"];
 }
 
+export function requestedModelForWorkLog(
+  requestedModel: string | undefined,
+  prompt: string,
+): string {
+  return sanitizeWorkLogDiagnostic(requestedModel ?? "default", [prompt]);
+}
+
 export async function createReviewScratchDirectory(
   scratchBase: string,
   afterCreate: (scratch: string) => void | Promise<void> = () => {},
@@ -715,7 +722,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       promptBytes: Buffer.byteLength(request.prompt),
       network,
       timeoutMs,
-      requestedModel: request.model ?? "default",
+      requestedModel: requestedModelForWorkLog(request.model, request.prompt),
       requestedThinking: request.thinking ?? "default",
       reportRequested: paths.reportPath !== undefined,
       sandboxed: !windows,

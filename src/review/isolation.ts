@@ -124,22 +124,10 @@ async function canonicalProspectiveControllerOutputPath(
   return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
 }
 
-export async function validateProspectiveReviewWorkLogPath(
-  spec: ReviewPathSpec & { readonly workLogPath: string },
-): Promise<string> {
-  const sourceDir = await canonicalGrant(spec.sourceDir);
-  const allowReadPaths = await canonicalList(spec.allowReadPaths ?? []);
-  const allowWritePaths = await canonicalList(spec.allowWritePaths ?? []);
-  const workLogPath = await canonicalProspectiveControllerOutputPath(spec.workLogPath, "work log");
-  if (
-    [sourceDir, ...allowReadPaths, ...allowWritePaths].some((grant) => contains(grant, workLogPath))
-  ) {
-    throw new Error(`Review work log target is actor-visible: ${workLogPath}`);
-  }
-  return workLogPath;
-}
-
-export async function validateReviewPaths(spec: ReviewPathSpec): Promise<ValidatedReviewPaths> {
+async function validateReviewPathsInternal(
+  spec: ReviewPathSpec,
+  prospectiveWorkLog: boolean,
+): Promise<ValidatedReviewPaths> {
   const sourceDir = await canonicalGrant(spec.sourceDir);
   const allowReadPaths = await canonicalList(spec.allowReadPaths ?? []);
   const allowWritePaths = await canonicalList(spec.allowWritePaths ?? []);
@@ -150,7 +138,9 @@ export async function validateReviewPaths(spec: ReviewPathSpec): Promise<Validat
   const workLogPath =
     spec.workLogPath === undefined
       ? undefined
-      : await canonicalControllerOutputPath(spec.workLogPath, "work log");
+      : await (prospectiveWorkLog
+          ? canonicalProspectiveControllerOutputPath(spec.workLogPath, "work log")
+          : canonicalControllerOutputPath(spec.workLogPath, "work log"));
   for (const writable of allowWritePaths) {
     if (
       overlaps(writable, sourceDir) ||
@@ -181,6 +171,18 @@ export async function validateReviewPaths(spec: ReviewPathSpec): Promise<Validat
     ...(reportPath === undefined ? {} : { reportPath }),
     ...(workLogPath === undefined ? {} : { workLogPath }),
   };
+}
+
+export async function validateProspectiveReviewWorkLogPath(
+  spec: ReviewPathSpec & { readonly workLogPath: string },
+): Promise<string> {
+  const paths = await validateReviewPathsInternal(spec, true);
+  if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
+  return paths.workLogPath;
+}
+
+export async function validateReviewPaths(spec: ReviewPathSpec): Promise<ValidatedReviewPaths> {
+  return await validateReviewPathsInternal(spec, false);
 }
 
 export function buildReviewSandboxConfig(options: ReviewSandboxConfigOptions): SandboxPolicy {

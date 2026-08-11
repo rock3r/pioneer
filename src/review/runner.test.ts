@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildReviewPrompt,
   createReviewScratchDirectory,
+  requestedModelForWorkLog,
   requiresGitInspection,
   reviewTools,
   runReviewRpc,
@@ -204,6 +205,16 @@ describe("review RPC runner", () => {
       ),
     ).rejects.toThrow(/work log failed/i);
     expect(cleanupAttempted).toBe(true);
+  });
+
+  it("redacts and bounds the requested model before logging it", () => {
+    expect(requestedModelForWorkLog("private review prompt", "private review prompt")).toBe(
+      "[REDACTED]",
+    );
+    expect(requestedModelForWorkLog("Authorization: Bearer secret-token", "Review source")).toBe(
+      "Authorization=[REDACTED]",
+    );
+    expect(requestedModelForWorkLog("x".repeat(600), "Review source")).toHaveLength(500);
   });
 
   it("allows source discovery without granting macOS or Windows process tools", () => {
