@@ -239,11 +239,7 @@ async function pruneDefaultReviewWorkLogs(
   }
 }
 
-function withDefaultWorkLogRetentionLock(
-  target: string,
-  platform: NodeJS.Platform,
-  operation: () => void,
-): void {
+function acquireDefaultWorkLogRetentionLock(target: string, platform: NodeJS.Platform): () => void {
   const pathApi = platformPath(platform);
   const lockPath = pathApi.join(pathApi.dirname(target), RETENTION_LOCK_NAME);
   const deadline = Date.now() + RETENTION_LOCK_STALE_MS;
@@ -273,6 +269,66 @@ function withDefaultWorkLogRetentionLock(
       Atomics.wait(waitControl, 0, 0, RETENTION_LOCK_WAIT_MS);
     }
   }
+  return retentionLockRelease(lockDescriptor, lockPath);
+}
+
+async function acquireDefaultWorkLogRetentionLockAsync(
+  target: string,
+  platform: NodeJS.Platform,
+): Promise<() => void> {
+  const pathApi = platformPath(platform);
+  const lockPath = pathApi.join(pathApi.dirname(target), RETENTION_LOCK_NAME);
+  const deadline = Date.now() + RETENTION_LOCK_STALE_MS;
+  while (true) {
+    try {
+      const lockDescriptor = openSync(
+        lockPath,
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+        0o600,
+      );
+      return retentionLockRelease(lockDescriptor, lockPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - lstatSync(lockPath).mtimeMs >= RETENTION_LOCK_STALE_MS) {
+          unlinkSync(lockPath);
+          continue;
+        }
+      } catch (lockError) {
+        if ((lockError as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw lockError;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting for review work-log retention lock: ${lockPath}`);
+      }
+      await delay(RETENTION_LOCK_WAIT_MS);
+    }
+  }
+}
+
+function retentionLockRelease(lockDescriptor: number, lockPath: string): () => void {
+  return () => {
+    let failure: unknown;
+    try {
+      closeSync(lockDescriptor);
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      unlinkSync(lockPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") failure ??= error;
+    }
+    if (failure !== undefined) throw failure;
+  };
+}
+
+function withDefaultWorkLogRetentionLock(
+  target: string,
+  platform: NodeJS.Platform,
+  operation: () => void,
+): void {
+  const release = acquireDefaultWorkLogRetentionLock(target, platform);
   let failure: unknown;
   try {
     operation();
@@ -280,14 +336,29 @@ function withDefaultWorkLogRetentionLock(
     failure = error;
   }
   try {
-    closeSync(lockDescriptor);
+    release();
   } catch (error) {
     failure ??= error;
   }
+  if (failure !== undefined) throw failure;
+}
+
+async function withDefaultWorkLogRetentionLockAsync(
+  target: string,
+  platform: NodeJS.Platform,
+  operation: () => Promise<void>,
+): Promise<void> {
+  const release = await acquireDefaultWorkLogRetentionLockAsync(target, platform);
+  let failure: unknown;
   try {
-    unlinkSync(lockPath);
+    await operation();
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") failure ??= error;
+    failure = error;
+  }
+  try {
+    release();
+  } catch (error) {
+    failure ??= error;
   }
   if (failure !== undefined) throw failure;
 }
@@ -306,19 +377,28 @@ function pruneInactiveDefaultReviewWorkLogsSync(target: string, platform: NodeJS
       .map((entry) => ACTIVE_WORK_LOG_NAME.exec(entry.name)?.[1])
       .filter((name): name is string => name !== undefined),
   );
-  const existingLogs = entries
-    .filter((entry) => entry.isFile() && AUTO_WORK_LOG_NAME.test(entry.name))
-    .map((entry) => ({
-      modifiedAtMs: lstatSync(pathApi.join(directory, entry.name)).mtimeMs,
-      name: entry.name,
-    }))
+  const existingLogs: Array<{ modifiedAtMs: number; name: string }> = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !AUTO_WORK_LOG_NAME.test(entry.name)) continue;
+    try {
+      existingLogs.push({
+        modifiedAtMs: lstatSync(pathApi.join(directory, entry.name)).mtimeMs,
+        name: entry.name,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  const existingLogNames = existingLogs
     .sort(
       (left, right) =>
         left.modifiedAtMs - right.modifiedAtMs || left.name.localeCompare(right.name),
     )
     .map(({ name }) => name);
-  const removeCount = Math.max(0, existingLogs.length - RETAINED_DEFAULT_WORK_LOGS);
-  const removableLogs = existingLogs.filter((name) => name !== targetName && !activeLogs.has(name));
+  const removeCount = Math.max(0, existingLogNames.length - RETAINED_DEFAULT_WORK_LOGS);
+  const removableLogs = existingLogNames.filter(
+    (name) => name !== targetName && !activeLogs.has(name),
+  );
   for (const name of removableLogs.slice(0, removeCount)) {
     try {
       unlinkSync(pathApi.join(directory, name));
@@ -575,7 +655,9 @@ export async function openReviewWorkLog(
   const closeDescriptor = options.fileOperations?.close ?? closeSync;
   if (options.retainDefaultLogs === true) {
     try {
-      await pruneDefaultReviewWorkLogs(target, platform);
+      await withDefaultWorkLogRetentionLockAsync(target, platform, async () => {
+        await pruneDefaultReviewWorkLogs(target, platform);
+      });
     } catch (error) {
       stopMarkerLease();
       try {
@@ -723,7 +805,6 @@ export async function openReviewWorkLog(
     close() {
       if (closed) return;
       closed = true;
-      stopMarkerLease();
       let failure: unknown = markerLeaseFailure;
       try {
         syncOnClose();
@@ -738,12 +819,22 @@ export async function openReviewWorkLog(
       if (activeMarker !== undefined) {
         try {
           withDefaultWorkLogRetentionLock(target, platform, () => {
-            unlinkSync(activeMarker);
+            stopMarkerLease();
+            failure ??= markerLeaseFailure;
+            try {
+              unlinkSync(activeMarker);
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            }
             pruneInactiveDefaultReviewWorkLogsSync(target, platform);
           });
         } catch (error) {
+          stopMarkerLease();
+          failure ??= markerLeaseFailure;
           failure ??= error;
         }
+      } else {
+        stopMarkerLease();
       }
       if (failure !== undefined) throw failure;
     },

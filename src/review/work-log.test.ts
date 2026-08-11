@@ -12,6 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 import { describe, expect, it, vi } from "vitest";
 import {
   openReviewWorkLog,
@@ -326,6 +327,109 @@ describe("review work log", () => {
     );
     expect((await lstat(nextTarget)).isFile()).toBe(true);
   });
+
+  it("serializes creation-time retention with close-time retention", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-creation-lock-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    await mkdir(directory, { recursive: true });
+    const staleTarget = path.join(
+      directory,
+      "review-20260801T000000000Z-00000000-0000-0000-0000-000000000000.jsonl",
+    );
+    const staleMarker = `${staleTarget}.active-${process.pid}-11111111111111111111111111111111`;
+    await Promise.all([writeFile(staleTarget, "completed\n"), writeFile(staleMarker, "")]);
+    await utimes(
+      staleMarker,
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-08-01T00:00:00.000Z"),
+    );
+    const nextTarget = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000002",
+    );
+
+    const opening = openReviewWorkLog(nextTarget, { retainDefaultLogs: true, platform });
+    let observedRetentionLock = false;
+    for (let attempt = 0; attempt < 20 && !observedRetentionLock; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      observedRetentionLock = (await readdir(directory)).includes(".pioneer-retention.lock");
+    }
+    const next = await opening;
+
+    expect(observedRetentionLock).toBe(true);
+    next.close();
+  });
+
+  it("keeps renewing its active lease while waiting for close-time retention", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-close-lease-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    const target = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000003",
+    );
+    const log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
+    const marker = (await readdir(directory)).find((entry) =>
+      entry.startsWith(`${path.basename(target)}.active-`),
+    );
+    expect(marker).toBeDefined();
+    const markerPath = path.join(directory, marker ?? "missing");
+    const lockPath = path.join(directory, ".pioneer-retention.lock");
+    await writeFile(lockPath, "held\n", { flag: "wx", mode: 0o600 });
+    const lockHolder = new Worker(
+      `
+          const { lstatSync, unlinkSync } = require("node:fs");
+          const { workerData } = require("node:worker_threads");
+          const wait = new Int32Array(new SharedArrayBuffer(4));
+          Atomics.wait(wait, 0, 0, workerData.waitMs);
+          if (Date.now() - lstatSync(workerData.markerPath).mtimeMs >= workerData.staleMs) {
+            unlinkSync(workerData.markerPath);
+          }
+          unlinkSync(workerData.lockPath);
+        `,
+      {
+        eval: true,
+        workerData: { lockPath, markerPath, staleMs: 5_000, waitMs: 5_500 },
+      },
+    );
+    const lockReleased = new Promise<void>((resolve, reject) => {
+      lockHolder.once("error", reject);
+      lockHolder.once("exit", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Retention lock-holder worker exited with code ${code}`));
+      });
+    });
+    let closeFailure: unknown;
+
+    try {
+      log.close();
+    } catch (error) {
+      closeFailure = error;
+    }
+    await lockReleased;
+
+    expect(closeFailure).toBeUndefined();
+    expect((await lstat(target)).isFile()).toBe(true);
+  }, 10_000);
 
   it("does not prune a default log that is still active", async () => {
     const stateRoot = path.join(
