@@ -286,6 +286,52 @@ describe("review work log", () => {
     next.close();
   });
 
+  it("removes a stale active marker and prunes its completed log", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-stale-active-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    await mkdir(directory, { recursive: true });
+    const oldestTarget = path.join(
+      directory,
+      "review-20260801T000000000Z-00000000-0000-0000-0000-000000000000.jsonl",
+    );
+    await Promise.all([
+      writeFile(oldestTarget, "completed\n"),
+      writeFile(`${oldestTarget}.active`, ""),
+      writeFile(`${oldestTarget}.active-2147483647`, ""),
+      ...Array.from({ length: 99 }, (_, index) =>
+        writeFile(
+          path.join(
+            directory,
+            `review-20260802T000000000Z-00000000-0000-0000-0000-${String(index).padStart(12, "0")}.jsonl`,
+          ),
+          "completed\n",
+        ),
+      ),
+    ]);
+    const nextTarget = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000002",
+    );
+    const next = await openReviewWorkLog(nextTarget, { retainDefaultLogs: true, platform });
+    next.close();
+
+    const entries = await readdir(directory);
+    expect(entries.filter((entry) => entry.endsWith(".jsonl"))).toHaveLength(100);
+    expect(entries).not.toContain(path.basename(oldestTarget));
+    expect(entries).not.toContain(`${path.basename(oldestTarget)}.active`);
+    expect(entries).not.toContain(`${path.basename(oldestTarget)}.active-2147483647`);
+  });
+
   it("rejects an unsafe generated log identifier", async () => {
     await expect(
       prepareDefaultReviewWorkLogPath(

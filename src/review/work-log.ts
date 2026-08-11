@@ -11,6 +11,8 @@ const WORK_LOG_SYNC_INTERVAL_MS = 1_000;
 const ACTIVE_WORK_LOG_SUFFIX = ".active";
 const AUTO_WORK_LOG_NAME =
   /^review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl$/i;
+const ACTIVE_WORK_LOG_NAME =
+  /^(review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl)\.active-(\d+)$/i;
 const PI_EVENT_TYPES = new Set([
   "agent_end",
   "agent_settled",
@@ -138,16 +140,43 @@ async function pruneDefaultReviewWorkLogs(
     throw new Error(`Review work log target is not an auto-created log: ${target}`);
   }
   const entries = await readdir(directory, { withFileTypes: true });
-  const activeLogs = new Set(
-    entries
-      .filter(
-        (entry) =>
-          entry.isFile() &&
-          entry.name.endsWith(ACTIVE_WORK_LOG_SUFFIX) &&
-          AUTO_WORK_LOG_NAME.test(entry.name.slice(0, -ACTIVE_WORK_LOG_SUFFIX.length)),
-      )
-      .map((entry) => entry.name.slice(0, -ACTIVE_WORK_LOG_SUFFIX.length)),
-  );
+  const activeLogs = new Set<string>();
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const match = ACTIVE_WORK_LOG_NAME.exec(entry.name);
+    const legacyLogName = entry.name.endsWith(ACTIVE_WORK_LOG_SUFFIX)
+      ? entry.name.slice(0, -ACTIVE_WORK_LOG_SUFFIX.length)
+      : undefined;
+    if (
+      match === null &&
+      (legacyLogName === undefined || !AUTO_WORK_LOG_NAME.test(legacyLogName))
+    ) {
+      continue;
+    }
+    const markerPath = pathApi.join(directory, entry.name);
+    const markedLogName = match?.[1];
+    const processId = match === null ? undefined : Number(match[2]);
+    let processIsAlive = false;
+    if (processId !== undefined && Number.isSafeInteger(processId) && processId > 0) {
+      try {
+        process.kill(processId, 0);
+        processIsAlive = true;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "EPERM") processIsAlive = true;
+        else if (code !== "ESRCH") throw error;
+      }
+    }
+    if (processIsAlive && markedLogName !== undefined) {
+      activeLogs.add(markedLogName);
+      continue;
+    }
+    try {
+      await unlink(markerPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
   const existingLogs = entries
     .filter((entry) => entry.isFile() && AUTO_WORK_LOG_NAME.test(entry.name))
     .map((entry) => entry.name)
@@ -325,7 +354,9 @@ export async function openReviewWorkLog(
   options: OpenReviewWorkLogOptions = {},
 ): Promise<ReviewWorkLog> {
   const activeMarker =
-    options.retainDefaultLogs === true ? `${target}${ACTIVE_WORK_LOG_SUFFIX}` : undefined;
+    options.retainDefaultLogs === true
+      ? `${target}${ACTIVE_WORK_LOG_SUFFIX}-${process.pid}`
+      : undefined;
   if (activeMarker !== undefined) {
     const markerDescriptor = openSync(
       activeMarker,
