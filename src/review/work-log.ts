@@ -12,10 +12,9 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { chmod, lstat, mkdir, readdir, unlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { Worker } from "node:worker_threads";
 
 const MAX_WORK_LOG_BYTES = 16 * 1024 * 1024;
@@ -179,70 +178,6 @@ async function prepareDefaultReviewWorkLogDirectory(
   if (platform !== "win32") await chmod(directory, 0o700);
 }
 
-async function pruneDefaultReviewWorkLogs(
-  target: string,
-  platform: NodeJS.Platform,
-): Promise<void> {
-  const pathApi = platformPath(platform);
-  const directory = pathApi.dirname(target);
-  const targetName = pathApi.basename(target);
-  if (!AUTO_WORK_LOG_NAME.test(targetName)) {
-    throw new Error(`Review work log target is not an auto-created log: ${target}`);
-  }
-  const entries = await readdir(directory, { withFileTypes: true });
-  const activeLogs = new Set<string>();
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    const match = ACTIVE_WORK_LOG_NAME.exec(entry.name);
-    if (match === null) continue;
-    const markerPath = pathApi.join(directory, entry.name);
-    const markedLogName = match?.[1];
-    const owner = /^(\d+)-([0-9a-f]{32})$/i.exec(match?.[2] ?? "");
-    if (owner !== null && markedLogName !== undefined) {
-      try {
-        const markerStats = await lstat(markerPath);
-        if (activeLeaseIsFresh(markerStats.mtimeMs)) {
-          activeLogs.add(markedLogName);
-          continue;
-        }
-        const processId = Number(owner[1]);
-        if (Number.isSafeInteger(processId) && processId > 0 && processIsAlive(processId)) {
-          await delay(ACTIVE_WORK_LOG_REVALIDATION_MS);
-          const refreshedStats = await lstat(markerPath);
-          if (
-            refreshedStats.mtimeMs !== markerStats.mtimeMs &&
-            activeLeaseIsFresh(refreshedStats.mtimeMs)
-          ) {
-            activeLogs.add(markedLogName);
-            continue;
-          }
-        }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        continue;
-      }
-    }
-    try {
-      await unlink(markerPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-  }
-  const existingLogs = entries
-    .filter((entry) => entry.isFile() && AUTO_WORK_LOG_NAME.test(entry.name))
-    .map((entry) => entry.name)
-    .sort();
-  const removeCount = Math.max(0, existingLogs.length - RETAINED_DEFAULT_WORK_LOGS);
-  const removableLogs = existingLogs.filter((name) => name !== targetName && !activeLogs.has(name));
-  for (const name of removableLogs.slice(0, removeCount)) {
-    try {
-      await unlink(pathApi.join(directory, name));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-  }
-}
-
 function acquireDefaultWorkLogRetentionLock(target: string, platform: NodeJS.Platform): () => void {
   const pathApi = platformPath(platform);
   const lockPath = pathApi.join(pathApi.dirname(target), RETENTION_LOCK_NAME);
@@ -256,24 +191,6 @@ function acquireDefaultWorkLogRetentionLock(target: string, platform: NodeJS.Pla
       throw new Error(`Timed out waiting for review work-log retention lock: ${lockPath}`);
     }
     Atomics.wait(waitControl, 0, 0, RETENTION_LOCK_WAIT_MS);
-  }
-}
-
-async function acquireDefaultWorkLogRetentionLockAsync(
-  target: string,
-  platform: NodeJS.Platform,
-): Promise<() => void> {
-  const pathApi = platformPath(platform);
-  const lockPath = pathApi.join(pathApi.dirname(target), RETENTION_LOCK_NAME);
-  const deadline = Date.now() + RETENTION_LOCK_STALE_MS;
-  while (true) {
-    const release = tryCreateRetentionLock(lockPath);
-    if (release !== undefined) return release;
-    if (reclaimAbandonedRetentionLock(lockPath)) continue;
-    if (Date.now() >= deadline) {
-      throw new Error(`Timed out waiting for review work-log retention lock: ${lockPath}`);
-    }
-    await delay(RETENTION_LOCK_WAIT_MS);
   }
 }
 
@@ -354,26 +271,6 @@ function withDefaultWorkLogRetentionLock(
   let failure: unknown;
   try {
     operation();
-  } catch (error) {
-    failure = error;
-  }
-  try {
-    release();
-  } catch (error) {
-    failure ??= error;
-  }
-  if (failure !== undefined) throw failure;
-}
-
-async function withDefaultWorkLogRetentionLockAsync(
-  target: string,
-  platform: NodeJS.Platform,
-  operation: () => Promise<void>,
-): Promise<void> {
-  const release = await acquireDefaultWorkLogRetentionLockAsync(target, platform);
-  let failure: unknown;
-  try {
-    await operation();
   } catch (error) {
     failure = error;
   }
@@ -735,8 +632,8 @@ export async function openReviewWorkLog(
   const closeDescriptor = options.fileOperations?.close ?? closeSync;
   if (options.retainDefaultLogs === true) {
     try {
-      await withDefaultWorkLogRetentionLockAsync(target, platform, async () => {
-        await pruneDefaultReviewWorkLogs(target, platform);
+      withDefaultWorkLogRetentionLock(target, platform, () => {
+        pruneInactiveDefaultReviewWorkLogsSync(target, platform);
       });
     } catch (error) {
       stopMarkerLease();

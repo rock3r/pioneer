@@ -1,4 +1,4 @@
-import { closeSync, writeSync } from "node:fs";
+import { closeSync, readdirSync, writeSync } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -328,7 +328,7 @@ describe("review work log", () => {
     expect((await lstat(nextTarget)).isFile()).toBe(true);
   });
 
-  it("serializes creation-time retention with close-time retention", async () => {
+  it("finishes creation-time retention before yielding the event loop", async () => {
     const stateRoot = path.join(
       tmpdir(),
       `pioneer-work-log-creation-lock-${process.pid}-${crypto.randomUUID()}`,
@@ -359,14 +359,10 @@ describe("review work log", () => {
     );
 
     const opening = openReviewWorkLog(nextTarget, { retainDefaultLogs: true, platform });
-    let observedRetentionLock = false;
-    for (let attempt = 0; attempt < 20 && !observedRetentionLock; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      observedRetentionLock = (await readdir(directory)).includes(".pioneer-retention.lock");
-    }
+
+    expect(readdirSync(directory)).not.toContain(".pioneer-retention.lock");
     const next = await opening;
 
-    expect(observedRetentionLock).toBe(true);
     next.close();
   });
 
@@ -398,15 +394,29 @@ describe("review work log", () => {
       new Date("2026-08-11T10:00:00.000Z"),
       "00000000-0000-0000-0000-000000000004",
     );
-    const releaseOwner = setTimeout(() => {
-      void unlink(lockPath).catch(() => {});
-    }, 200);
+    const owner = new Worker(
+      `
+        const { unlinkSync } = require("node:fs");
+        const { workerData } = require("node:worker_threads");
+        const wait = new Int32Array(new SharedArrayBuffer(4));
+        Atomics.wait(wait, 0, 0, workerData.waitMs);
+        unlinkSync(workerData.lockPath);
+      `,
+      { eval: true, workerData: { lockPath, waitMs: 200 } },
+    );
+    const ownerReleased = new Promise<void>((resolve, reject) => {
+      owner.once("error", reject);
+      owner.once("exit", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Retention lock owner exited with code ${code}`));
+      });
+    });
     const startedAt = Date.now();
 
     const log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
+    await ownerReleased;
 
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(150);
-    clearTimeout(releaseOwner);
     log.close();
   });
 
@@ -595,12 +605,23 @@ describe("review work log", () => {
       new Date("2026-08-01T00:00:00.000Z"),
       new Date("2026-08-01T00:00:00.000Z"),
     );
-    const renewal = new Promise<void>((resolve) => {
-      setTimeout(() => {
-        void utimes(activeMarker, new Date(), new Date())
-          .catch(() => {})
-          .finally(resolve);
-      }, 50);
+    const leaseOwner = new Worker(
+      `
+        const { utimesSync } = require("node:fs");
+        const { workerData } = require("node:worker_threads");
+        const wait = new Int32Array(new SharedArrayBuffer(4));
+        Atomics.wait(wait, 0, 0, workerData.waitMs);
+        const now = new Date();
+        utimesSync(workerData.markerPath, now, now);
+      `,
+      { eval: true, workerData: { markerPath: activeMarker, waitMs: 50 } },
+    );
+    const renewal = new Promise<void>((resolve, reject) => {
+      leaseOwner.once("error", reject);
+      leaseOwner.once("exit", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Lease owner exited with code ${code}`));
+      });
     });
     const nextTarget = await prepareDefaultReviewWorkLogPath(
       environment,
