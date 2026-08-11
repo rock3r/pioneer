@@ -70,6 +70,13 @@ const PIPE_CLOSE_GRACE_MS = 1_000;
 const MAX_RPC_OUTPUT_BYTES = 4 * 1024 * 1024;
 const WORK_LOG_HEARTBEAT_MS = 5_000;
 
+class ProspectiveReviewPathValidationError extends Error {
+  constructor(readonly original: unknown) {
+    super("Prospective review path validation failed");
+    this.name = "ProspectiveReviewPathValidationError";
+  }
+}
+
 function reviewWorkLogWriteError(workLog: ReviewWorkLog, error: unknown): Error {
   return new Error(
     diagnosticMessage(
@@ -684,9 +691,14 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   if (requestedWorkLogPath === undefined) {
     try {
       requestedWorkLogPath = await prepareValidatedDefaultReviewWorkLogPath(async (candidate) => {
-        await validateProspectiveReviewWorkLogPath({ ...request, workLogPath: candidate });
+        try {
+          await validateProspectiveReviewWorkLogPath({ ...request, workLogPath: candidate });
+        } catch (error) {
+          throw new ProspectiveReviewPathValidationError(error);
+        }
       });
     } catch (error) {
+      if (error instanceof ProspectiveReviewPathValidationError) throw error.original;
       throw new Error(
         diagnosticMessage(
           "REVIEW_WORK_LOG_CREATE_FAILED",

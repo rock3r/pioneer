@@ -1,5 +1,6 @@
 import { lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildReviewPrompt,
@@ -7,6 +8,7 @@ import {
   requestedModelForWorkLog,
   requiresGitInspection,
   reviewTools,
+  runReview,
   runReviewRpc,
 } from "./runner.js";
 import type { ReviewWorkLog } from "./work-log.js";
@@ -215,6 +217,16 @@ describe("review RPC runner", () => {
       "Authorization=[REDACTED]",
     );
     expect(requestedModelForWorkLog("x".repeat(600), "Review source")).toHaveLength(500);
+  });
+
+  it("does not classify unrelated request validation as a work-log creation failure", async () => {
+    const sourceDir = await import("node:fs/promises").then(({ mkdtemp }) =>
+      mkdtemp(path.join(tmpdir(), "pioneer-review-source-")),
+    );
+
+    await expect(
+      runReview({ sourceDir, prompt: "Review source", reportPath: "relative-review.md" }),
+    ).rejects.toThrow(/^Review report path is not absolute:/);
   });
 
   it("allows source discovery without granting macOS or Windows process tools", () => {
