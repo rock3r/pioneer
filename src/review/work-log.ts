@@ -32,7 +32,7 @@ const AUTO_WORK_LOG_NAME =
 const ACTIVE_WORK_LOG_NAME =
   /^(review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl)\.active(?:-([a-z0-9-]+))?$/i;
 const RETENTION_LOCK_OWNER = /^(\d+):([0-9a-f]{32})\n$/i;
-const ACTIVE_WORK_LOG_LEASE_WORKER = `
+const FILE_LEASE_WORKER = `
   const { utimesSync } = require("node:fs");
   const { workerData } = require("node:worker_threads");
   const control = new Int32Array(workerData.control);
@@ -223,17 +223,28 @@ function tryCreateRetentionLock(lockPath: string): (() => void) | undefined {
     throw failure;
   }
   if (!linked) return undefined;
-  return retentionLockRelease(lockPath, owner);
+  return retentionLockReleaseWithLease(lockPath, owner);
 }
 
 function reclaimAbandonedRetentionLock(lockPath: string): boolean {
   try {
-    if (Date.now() - lstatSync(lockPath).mtimeMs < RETENTION_LOCK_STALE_MS) return false;
+    const initialStats = lstatSync(lockPath);
+    if (Date.now() - initialStats.mtimeMs < RETENTION_LOCK_STALE_MS) return false;
     const owner = readFileSync(lockPath, "utf8");
     const match = RETENTION_LOCK_OWNER.exec(owner);
     const processId = Number(match?.[1]);
-    if (!Number.isSafeInteger(processId) || processId <= 0 || processIsAlive(processId)) {
-      return false;
+    if (!Number.isSafeInteger(processId) || processId <= 0) return false;
+    if (processIsAlive(processId)) {
+      const waitControl = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+      Atomics.wait(waitControl, 0, 0, ACTIVE_WORK_LOG_REVALIDATION_MS);
+      const refreshedStats = lstatSync(lockPath);
+      if (readFileSync(lockPath, "utf8") !== owner) return false;
+      if (
+        refreshedStats.mtimeMs !== initialStats.mtimeMs &&
+        Date.now() - refreshedStats.mtimeMs < RETENTION_LOCK_STALE_MS
+      ) {
+        return false;
+      }
     }
     if (readFileSync(lockPath, "utf8") !== owner) return false;
     unlinkSync(lockPath);
@@ -242,6 +253,49 @@ function reclaimAbandonedRetentionLock(lockPath: string): boolean {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     throw error;
   }
+}
+
+function retentionLockReleaseWithLease(lockPath: string, owner: string): () => void {
+  const control = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  let leaseFailure: unknown;
+  let stopped = false;
+  let worker: Worker;
+  try {
+    worker = new Worker(FILE_LEASE_WORKER, {
+      eval: true,
+      workerData: {
+        control: control.buffer,
+        intervalMs: WORK_LOG_SYNC_INTERVAL_MS,
+        markerPath: lockPath,
+      },
+    });
+  } catch (error) {
+    retentionLockRelease(lockPath, owner)();
+    throw error;
+  }
+  worker.on("error", (error) => {
+    if (!stopped) leaseFailure ??= error;
+  });
+  worker.on("exit", (code) => {
+    if (!stopped) {
+      leaseFailure ??= new Error(`Review work-log retention lease stopped with code ${code}`);
+    }
+  });
+  worker.unref();
+  const release = retentionLockRelease(lockPath, owner);
+  return () => {
+    stopped = true;
+    Atomics.store(control, 0, 1);
+    Atomics.notify(control, 0);
+    void worker.terminate().catch(() => {});
+    let failure = leaseFailure;
+    try {
+      release();
+    } catch (error) {
+      failure ??= error;
+    }
+    if (failure !== undefined) throw failure;
+  };
 }
 
 function retentionLockRelease(lockPath: string, owner: string): () => void {
@@ -586,7 +640,7 @@ export async function openReviewWorkLog(
     try {
       closeSync(markerDescriptor);
       markerLeaseControl = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
-      markerLeaseWorker = new Worker(ACTIVE_WORK_LOG_LEASE_WORKER, {
+      markerLeaseWorker = new Worker(FILE_LEASE_WORKER, {
         eval: true,
         workerData: {
           control: markerLeaseControl.buffer,

@@ -420,6 +420,41 @@ describe("review work log", () => {
     log.close();
   });
 
+  it("reclaims an abandoned retention lock after its PID is reused", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-reused-lock-pid-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    await mkdir(directory, { recursive: true });
+    const lockPath = path.join(directory, ".pioneer-retention.lock");
+    await writeFile(lockPath, `${process.pid}:22222222222222222222222222222222\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await utimes(
+      lockPath,
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-08-01T00:00:00.000Z"),
+    );
+    const target = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000006",
+    );
+
+    const log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
+
+    log.close();
+    expect((await lstat(target)).isFile()).toBe(true);
+  }, 5_000);
+
   it("keeps renewing its active lease while waiting for close-time retention", async () => {
     const stateRoot = path.join(
       tmpdir(),
