@@ -3,10 +3,13 @@ import {
   closeSync,
   constants,
   fsyncSync,
+  linkSync,
   lstatSync,
   openSync,
   readdirSync,
+  readFileSync,
   unlinkSync,
+  writeFileSync,
   writeSync,
 } from "node:fs";
 import { chmod, lstat, mkdir, readdir, unlink } from "node:fs/promises";
@@ -29,6 +32,7 @@ const AUTO_WORK_LOG_NAME =
   /^review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl$/i;
 const ACTIVE_WORK_LOG_NAME =
   /^(review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl)\.active(?:-([a-z0-9-]+))?$/i;
+const RETENTION_LOCK_OWNER = /^(\d+):([0-9a-f]{32})\n$/i;
 const ACTIVE_WORK_LOG_LEASE_WORKER = `
   const { utimesSync } = require("node:fs");
   const { workerData } = require("node:worker_threads");
@@ -244,32 +248,15 @@ function acquireDefaultWorkLogRetentionLock(target: string, platform: NodeJS.Pla
   const lockPath = pathApi.join(pathApi.dirname(target), RETENTION_LOCK_NAME);
   const deadline = Date.now() + RETENTION_LOCK_STALE_MS;
   const waitControl = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
-  let lockDescriptor: number | undefined;
-  while (lockDescriptor === undefined) {
-    try {
-      lockDescriptor = openSync(
-        lockPath,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-        0o600,
-      );
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        if (Date.now() - lstatSync(lockPath).mtimeMs >= RETENTION_LOCK_STALE_MS) {
-          unlinkSync(lockPath);
-          continue;
-        }
-      } catch (lockError) {
-        if ((lockError as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw lockError;
-      }
-      if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting for review work-log retention lock: ${lockPath}`);
-      }
-      Atomics.wait(waitControl, 0, 0, RETENTION_LOCK_WAIT_MS);
+  while (true) {
+    const release = tryCreateRetentionLock(lockPath);
+    if (release !== undefined) return release;
+    if (reclaimAbandonedRetentionLock(lockPath)) continue;
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for review work-log retention lock: ${lockPath}`);
     }
+    Atomics.wait(waitControl, 0, 0, RETENTION_LOCK_WAIT_MS);
   }
-  return retentionLockRelease(lockDescriptor, lockPath);
 }
 
 async function acquireDefaultWorkLogRetentionLockAsync(
@@ -280,46 +267,81 @@ async function acquireDefaultWorkLogRetentionLockAsync(
   const lockPath = pathApi.join(pathApi.dirname(target), RETENTION_LOCK_NAME);
   const deadline = Date.now() + RETENTION_LOCK_STALE_MS;
   while (true) {
-    try {
-      const lockDescriptor = openSync(
-        lockPath,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-        0o600,
-      );
-      return retentionLockRelease(lockDescriptor, lockPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        if (Date.now() - lstatSync(lockPath).mtimeMs >= RETENTION_LOCK_STALE_MS) {
-          unlinkSync(lockPath);
-          continue;
-        }
-      } catch (lockError) {
-        if ((lockError as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw lockError;
-      }
-      if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting for review work-log retention lock: ${lockPath}`);
-      }
-      await delay(RETENTION_LOCK_WAIT_MS);
+    const release = tryCreateRetentionLock(lockPath);
+    if (release !== undefined) return release;
+    if (reclaimAbandonedRetentionLock(lockPath)) continue;
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for review work-log retention lock: ${lockPath}`);
     }
+    await delay(RETENTION_LOCK_WAIT_MS);
   }
 }
 
-function retentionLockRelease(lockDescriptor: number, lockPath: string): () => void {
-  return () => {
-    let failure: unknown;
-    try {
-      closeSync(lockDescriptor);
-    } catch (error) {
-      failure = error;
+function tryCreateRetentionLock(lockPath: string): (() => void) | undefined {
+  const ownerToken = crypto.randomUUID().replaceAll("-", "");
+  const owner = `${process.pid}:${ownerToken}\n`;
+  const ownerPath = `${lockPath}.owner-${process.pid}-${ownerToken}`;
+  writeFileSync(ownerPath, owner, { flag: "wx", flush: true, mode: 0o600 });
+  let linked = false;
+  let failure: unknown;
+  try {
+    linkSync(ownerPath, lockPath);
+    linked = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") failure = error;
+  }
+  try {
+    unlinkSync(ownerPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") failure ??= error;
+  }
+  if (failure !== undefined) {
+    if (linked) {
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        // Preserve the owner-publication or temporary-file cleanup failure.
+      }
     }
+    throw failure;
+  }
+  if (!linked) return undefined;
+  return retentionLockRelease(lockPath, owner);
+}
+
+function reclaimAbandonedRetentionLock(lockPath: string): boolean {
+  try {
+    if (Date.now() - lstatSync(lockPath).mtimeMs < RETENTION_LOCK_STALE_MS) return false;
+    const owner = readFileSync(lockPath, "utf8");
+    const match = RETENTION_LOCK_OWNER.exec(owner);
+    const processId = Number(match?.[1]);
+    if (!Number.isSafeInteger(processId) || processId <= 0 || processIsAlive(processId)) {
+      return false;
+    }
+    if (readFileSync(lockPath, "utf8") !== owner) return false;
+    unlinkSync(lockPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+}
+
+function retentionLockRelease(lockPath: string, owner: string): () => void {
+  return () => {
     try {
+      if (readFileSync(lockPath, "utf8") !== owner) {
+        throw new Error(`Review work-log retention lock ownership changed: ${lockPath}`);
+      }
       unlinkSync(lockPath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") failure ??= error;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`Review work-log retention lock disappeared: ${lockPath}`, {
+          cause: error,
+        });
+      }
+      throw error;
     }
-    if (failure !== undefined) throw failure;
   };
 }
 
@@ -371,12 +393,70 @@ function pruneInactiveDefaultReviewWorkLogsSync(target: string, platform: NodeJS
     throw new Error(`Review work log target is not an auto-created log: ${target}`);
   }
   const entries = readdirSync(directory, { withFileTypes: true });
-  const activeLogs = new Set(
-    entries
-      .filter((entry) => entry.isFile())
-      .map((entry) => ACTIVE_WORK_LOG_NAME.exec(entry.name)?.[1])
-      .filter((name): name is string => name !== undefined),
-  );
+  const activeLogs = new Set<string>();
+  const staleMarkers: string[] = [];
+  const revalidationCandidates: Array<{
+    logName: string;
+    markerPath: string;
+    modifiedAtMs: number;
+  }> = [];
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const match = ACTIVE_WORK_LOG_NAME.exec(entry.name);
+    if (match === null) continue;
+    const markerPath = pathApi.join(directory, entry.name);
+    const markedLogName = match[1];
+    const owner = /^(\d+)-([0-9a-f]{32})$/i.exec(match[2] ?? "");
+    if (owner !== null && markedLogName !== undefined) {
+      try {
+        const markerStats = lstatSync(markerPath);
+        if (activeLeaseIsFresh(markerStats.mtimeMs)) {
+          activeLogs.add(markedLogName);
+          continue;
+        }
+        const processId = Number(owner[1]);
+        if (Number.isSafeInteger(processId) && processId > 0 && processIsAlive(processId)) {
+          revalidationCandidates.push({
+            logName: markedLogName,
+            markerPath,
+            modifiedAtMs: markerStats.mtimeMs,
+          });
+          continue;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        continue;
+      }
+    }
+    staleMarkers.push(markerPath);
+  }
+  if (revalidationCandidates.length > 0) {
+    const waitControl = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+    Atomics.wait(waitControl, 0, 0, ACTIVE_WORK_LOG_REVALIDATION_MS);
+    for (const candidate of revalidationCandidates) {
+      try {
+        const refreshedStats = lstatSync(candidate.markerPath);
+        if (
+          refreshedStats.mtimeMs !== candidate.modifiedAtMs &&
+          activeLeaseIsFresh(refreshedStats.mtimeMs)
+        ) {
+          activeLogs.add(candidate.logName);
+          continue;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        continue;
+      }
+      staleMarkers.push(candidate.markerPath);
+    }
+  }
+  for (const markerPath of staleMarkers) {
+    try {
+      unlinkSync(markerPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
   const existingLogs: Array<{ modifiedAtMs: number; name: string }> = [];
   for (const entry of entries) {
     if (!entry.isFile() || !AUTO_WORK_LOG_NAME.test(entry.name)) continue;

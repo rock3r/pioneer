@@ -370,6 +370,46 @@ describe("review work log", () => {
     next.close();
   });
 
+  it("does not reclaim a stale-looking retention lock owned by a live process", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-live-lock-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    await mkdir(directory, { recursive: true });
+    const lockPath = path.join(directory, ".pioneer-retention.lock");
+    await writeFile(lockPath, `${process.pid}:11111111111111111111111111111111\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await utimes(
+      lockPath,
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-08-01T00:00:00.000Z"),
+    );
+    const target = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000004",
+    );
+    const releaseOwner = setTimeout(() => {
+      void unlink(lockPath).catch(() => {});
+    }, 200);
+    const startedAt = Date.now();
+
+    const log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
+
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(150);
+    clearTimeout(releaseOwner);
+    log.close();
+  });
+
   it("keeps renewing its active lease while waiting for close-time retention", async () => {
     const stateRoot = path.join(
       tmpdir(),
@@ -430,6 +470,53 @@ describe("review work log", () => {
     expect(closeFailure).toBeUndefined();
     expect((await lstat(target)).isFile()).toBe(true);
   }, 10_000);
+
+  it("reclaims expired leases when an overlapping batch drains on close", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-close-stale-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    const target = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000005",
+    );
+    const log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
+    const staleMarkers = await Promise.all(
+      Array.from({ length: 100 }, async (_, index) => {
+        const staleTarget = path.join(
+          directory,
+          `review-20260801T000000000Z-00000000-0000-0000-0000-${String(index).padStart(12, "0")}.jsonl`,
+        );
+        const staleMarker = `${staleTarget}.active-2147483647-${String(index).padStart(32, "0")}`;
+        await Promise.all([writeFile(staleTarget, "crashed\n"), writeFile(staleMarker, "")]);
+        return staleMarker;
+      }),
+    );
+    await Promise.all(
+      staleMarkers.map(async (marker) => {
+        await utimes(
+          marker,
+          new Date("2026-08-01T00:00:00.000Z"),
+          new Date("2026-08-01T00:00:00.000Z"),
+        );
+      }),
+    );
+
+    log.close();
+
+    const entries = await readdir(directory);
+    expect(entries.filter((entry) => entry.endsWith(".jsonl"))).toHaveLength(100);
+    expect(entries.some((entry) => entry.includes(".active-"))).toBe(false);
+    expect((await lstat(target)).isFile()).toBe(true);
+  });
 
   it("does not prune a default log that is still active", async () => {
     const stateRoot = path.join(
