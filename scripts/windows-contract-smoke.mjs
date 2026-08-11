@@ -70,7 +70,11 @@ try {
     path.isAbsolute(markerRelative)
   ) {
     throw new Error(
-      `Windows opted-in review did not reach observable readiness: ${optedIn.stderr}`,
+      `Windows opted-in review did not reach observable readiness (${JSON.stringify({
+        status: optedIn.status,
+        signal: optedIn.signal,
+        markerRelative,
+      })}): ${optedIn.stderr}`,
     );
   }
   const workLog = (await readFile(marker, "utf8"))
