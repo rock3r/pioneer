@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildReviewPrompt,
   createReviewScratchDirectory,
+  type ReviewRequest,
   readinessMetadataForWorkLog,
   requestedModelForWorkLog,
   requiresGitInspection,
@@ -273,6 +274,16 @@ describe("review RPC runner", () => {
     await expect(
       runReview({ sourceDir, prompt: "Review source", reportPath: "relative-review.md" }),
     ).rejects.toThrow(/^Review report path is not absolute:/);
+  });
+
+  it("rejects an invalid runtime network mode before opening a work log", async () => {
+    const request = {
+      sourceDir: "/not-reached",
+      prompt: "Review source",
+      network: "token=private-value",
+    } as unknown as ReviewRequest;
+
+    await expect(runReview(request)).rejects.toThrow(/network mode/i);
   });
 
   it("allows source discovery without granting macOS or Windows process tools", () => {

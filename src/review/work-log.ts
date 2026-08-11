@@ -48,6 +48,9 @@ const PI_EVENT_TYPES = new Set([
   "turn_start",
 ]);
 const PI_MESSAGE_UPDATE_TYPES = new Set([
+  "done",
+  "error",
+  "start",
   "text_delta",
   "text_end",
   "text_start",
@@ -327,11 +330,21 @@ export function summarizePiEvent(
     if (typeof update !== "object" || update === null) return base;
     const typed = update as Record<string, unknown>;
     const delta = stringField(typed, "delta");
+    const reason = stringField(typed, "reason");
+    const error = typed.error;
+    const diagnostic =
+      typeof error === "object" && error !== null
+        ? stringField(error as Record<string, unknown>, "errorMessage")
+        : undefined;
     return definedFields({
       ...base,
       eventSubtype: allowlistedStringField(typed, "type", PI_MESSAGE_UPDATE_TYPES),
       contentIndex: numberField(typed, "contentIndex"),
       deltaBytes: delta === undefined ? undefined : Buffer.byteLength(delta),
+      reasonPresent: reason === undefined ? undefined : true,
+      reasonBytes: reason === undefined ? undefined : Buffer.byteLength(reason),
+      diagnosticPresent: diagnostic === undefined ? undefined : true,
+      diagnosticBytes: diagnostic === undefined ? undefined : Buffer.byteLength(diagnostic),
     });
   }
 

@@ -748,6 +748,15 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   if (!request.prompt.trim()) throw new Error("Review prompt must not be empty");
   if (request.thinking !== undefined && !isThinkingLevel(request.thinking))
     throw new Error(`Unsupported thinking level: ${String(request.thinking)}`);
+  if (
+    request.network !== undefined &&
+    request.network !== "full" &&
+    request.network !== "public" &&
+    request.network !== "none"
+  ) {
+    throw new Error("Unsupported review network mode");
+  }
+  const network = request.network ?? "full";
   const defaultWorkLog = request.workLogPath === undefined;
   let requestedWorkLogPath = request.workLogPath;
   if (requestedWorkLogPath === undefined) {
@@ -786,7 +795,6 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   try {
     request.onWorkLogReady?.(workLog.path);
     const windows = process.platform === "win32";
-    const network = request.network ?? "full";
     const timeoutMs = request.timeoutMs ?? 900_000;
     recordReviewWorkLog(workLog, "review_started", {
       pioneerVersion: PIONEER_VERSION,

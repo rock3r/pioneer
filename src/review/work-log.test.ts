@@ -550,6 +550,29 @@ describe("review work log", () => {
       deltaBytes: 15,
     });
     expect(
+      ["start", "done", "error"].map((type) =>
+        summarizePiEvent({
+          type: "message_update",
+          assistantMessageEvent: {
+            type,
+            reason: type === "error" ? "provider failure" : undefined,
+            error: type === "error" ? { errorMessage: "private provider diagnostic" } : undefined,
+          },
+        }),
+      ),
+    ).toEqual([
+      { eventType: "message_update", eventSubtype: "start" },
+      { eventType: "message_update", eventSubtype: "done" },
+      {
+        eventType: "message_update",
+        eventSubtype: "error",
+        reasonPresent: true,
+        reasonBytes: 16,
+        diagnosticPresent: true,
+        diagnosticBytes: 27,
+      },
+    ]);
+    expect(
       summarizePiEvent(
         {
           type: "auto_retry_start",
