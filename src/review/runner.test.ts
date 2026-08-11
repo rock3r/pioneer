@@ -188,6 +188,24 @@ describe("review RPC runner", () => {
     await expect(lstat(scratch ?? "")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("preserves the post-create failure when scratch cleanup also fails", async () => {
+    let cleanupAttempted = false;
+
+    await expect(
+      createReviewScratchDirectory(
+        tmpdir(),
+        () => {
+          throw new Error("work log failed");
+        },
+        async () => {
+          cleanupAttempted = true;
+          throw new Error("cleanup failed");
+        },
+      ),
+    ).rejects.toThrow(/work log failed/i);
+    expect(cleanupAttempted).toBe(true);
+  });
+
   it("allows source discovery without granting macOS or Windows process tools", () => {
     expect(reviewTools("darwin")).toEqual(["read", "ls"]);
     expect(reviewTools("win32")).toEqual(["read", "ls"]);

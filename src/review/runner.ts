@@ -111,6 +111,9 @@ export function reviewTools(platform: NodeJS.Platform = process.platform): reado
 export async function createReviewScratchDirectory(
   scratchBase: string,
   afterCreate: (scratch: string) => void | Promise<void> = () => {},
+  removeScratch: (scratch: string) => Promise<void> = async (scratch) => {
+    await rm(scratch, { recursive: true, force: true });
+  },
 ): Promise<string> {
   const created = await mkdtemp(path.join(scratchBase, "pir-"));
   try {
@@ -118,7 +121,11 @@ export async function createReviewScratchDirectory(
     await afterCreate(scratch);
     return scratch;
   } catch (error) {
-    await rm(created, { recursive: true, force: true });
+    try {
+      await removeScratch(created);
+    } catch {
+      // Preserve the primary setup failure; cleanup is best-effort on this path.
+    }
     throw error;
   }
 }
