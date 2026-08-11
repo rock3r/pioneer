@@ -29,7 +29,7 @@ If needed, install the current package:
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 ```
 
-Restart Codex or Claude Code after changing `PATH`.
+Restart the calling agent after changing `PATH`.
 
 ## No configured models
 

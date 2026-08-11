@@ -13,7 +13,8 @@ import { runUpdateCommand } from "./update-command.js";
 const REVIEW_USAGE = `Usage:
   pioneer review --source DIR --prompt TEXT [--model PROVIDER/MODEL] [--thinking LEVEL]
     [--pi-home DIR] [--allow-read DIR] [--allow-write DIR]
-    [--report FILE] [--network full|public|none] [--timeout-ms N] [--allow-unsandboxed-windows]
+    [--report FILE] [--work-log FILE] [--network full|public|none] [--timeout-ms N]
+    [--allow-unsandboxed-windows]
   pioneer doctor
   pioneer models [--pi-home DIR] [--json]
   pioneer check-update
@@ -142,6 +143,7 @@ async function main(): Promise<void> {
     const allowReadPaths = takeRepeated(args, "--allow-read");
     const allowWritePaths = takeRepeated(args, "--allow-write");
     const reportPath = takeOption(args, "--report");
+    const workLogPath = takeOption(args, "--work-log");
     const networkText = takeOption(args, "--network") ?? "full";
     const timeoutText = takeOption(args, "--timeout-ms");
     const unsafeIndex = args.indexOf("--allow-unsandboxed-windows");
@@ -163,6 +165,8 @@ async function main(): Promise<void> {
       allowReadPaths,
       allowWritePaths,
       ...(reportPath === undefined ? {} : { reportPath }),
+      ...(workLogPath === undefined ? {} : { workLogPath }),
+      onWorkLogReady: (logPath) => process.stderr.write(`[PIONEER_WORK_LOG] ${logPath}\n`),
       network: networkText as "full" | "public" | "none",
       allowUnsandboxedWindows,
       ...(model === undefined ? {} : { model }),

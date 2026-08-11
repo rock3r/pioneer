@@ -2,6 +2,7 @@ import { access, readFile } from "node:fs/promises";
 
 const readJson = async (filename) => JSON.parse(await readFile(filename, "utf8"));
 const packageManifest = await readJson("package.json");
+const portableManifest = await readJson("plugins/pioneer/plugin.json");
 const codexManifest = await readJson("plugins/pioneer/.codex-plugin/plugin.json");
 const claudeManifest = await readJson("plugins/pioneer/.claude-plugin/plugin.json");
 const piCompatibility = await readJson("pi-compatibility.json");
@@ -43,13 +44,21 @@ if (packageManifest.publishConfig?.access !== "public")
 if (actualTag !== expectedTag)
   throw new Error(`release tag ${actualTag ?? "<missing>"} must equal ${expectedTag}`);
 if (
+  portableManifest.version !== packageManifest.version ||
   codexManifest.version !== packageManifest.version ||
   claudeManifest.version !== packageManifest.version
 ) {
-  throw new Error("npm, Codex, and Claude plugin versions must match");
+  throw new Error("npm and all plugin manifest versions must match");
 }
-if (codexManifest.name !== expectedPluginName || claudeManifest.name !== expectedPluginName) {
-  throw new Error(`Codex and Claude plugin names must be ${expectedPluginName}`);
+if (
+  portableManifest.name !== expectedPluginName ||
+  codexManifest.name !== expectedPluginName ||
+  claudeManifest.name !== expectedPluginName
+) {
+  throw new Error(`all plugin manifest names must be ${expectedPluginName}`);
+}
+if (portableManifest.$schema !== "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json") {
+  throw new Error("portable plugin must target Agent Plugins 1.0.0");
 }
 if (codexManifest.skills !== "./skills/" || claudeManifest.skills !== "./skills/") {
   throw new Error("Codex and Claude plugin manifests must expose ./skills/");

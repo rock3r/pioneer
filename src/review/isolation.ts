@@ -12,6 +12,7 @@ export interface ReviewPathSpec {
   readonly allowReadPaths?: readonly string[];
   readonly allowWritePaths?: readonly string[];
   readonly reportPath?: string;
+  readonly workLogPath?: string;
 }
 
 export interface ValidatedReviewPaths {
@@ -19,6 +20,7 @@ export interface ValidatedReviewPaths {
   readonly allowReadPaths: readonly string[];
   readonly allowWritePaths: readonly string[];
   readonly reportPath?: string;
+  readonly workLogPath?: string;
 }
 
 export interface ReviewSandboxConfigOptions extends ValidatedReviewPaths {
@@ -59,9 +61,9 @@ async function canonicalList(paths: readonly string[]): Promise<string[]> {
   return values;
 }
 
-async function canonicalReportPath(candidate: string): Promise<string> {
+async function canonicalControllerOutputPath(candidate: string, kind: string): Promise<string> {
   if (!path.isAbsolute(candidate))
-    throw new Error(`Review report path is not absolute: ${candidate}`);
+    throw new Error(`Review ${kind} path is not absolute: ${candidate}`);
   const absolute = path.normalize(candidate);
   const parent = path.dirname(absolute);
   let parentStats: Awaited<ReturnType<typeof lstat>>;
@@ -69,19 +71,19 @@ async function canonicalReportPath(candidate: string): Promise<string> {
     parentStats = await lstat(parent);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error(`Review report parent does not exist: ${parent}`);
+      throw new Error(`Review ${kind} parent does not exist: ${parent}`);
     }
     throw error;
   }
   if (parentStats.isSymbolicLink()) {
-    throw new Error(`Review report parent is a symbolic link: ${parent}`);
+    throw new Error(`Review ${kind} parent is a symbolic link: ${parent}`);
   }
   if (!parentStats.isDirectory())
-    throw new Error(`Review report parent is not a directory: ${parent}`);
+    throw new Error(`Review ${kind} parent is not a directory: ${parent}`);
   try {
     await access(parent, constants.W_OK);
   } catch {
-    throw new Error(`Review report parent is not writable: ${parent}`);
+    throw new Error(`Review ${kind} parent is not writable: ${parent}`);
   }
   const canonicalParent = await realpath(parent);
   const reportPath = path.join(canonicalParent, path.basename(absolute));
@@ -91,7 +93,7 @@ async function canonicalReportPath(candidate: string): Promise<string> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return reportPath;
     throw error;
   }
-  throw new Error(`Review report target already exists: ${reportPath}`);
+  throw new Error(`Review ${kind} target already exists: ${reportPath}`);
 }
 
 export async function validateReviewPaths(spec: ReviewPathSpec): Promise<ValidatedReviewPaths> {
@@ -99,7 +101,13 @@ export async function validateReviewPaths(spec: ReviewPathSpec): Promise<Validat
   const allowReadPaths = await canonicalList(spec.allowReadPaths ?? []);
   const allowWritePaths = await canonicalList(spec.allowWritePaths ?? []);
   const reportPath =
-    spec.reportPath === undefined ? undefined : await canonicalReportPath(spec.reportPath);
+    spec.reportPath === undefined
+      ? undefined
+      : await canonicalControllerOutputPath(spec.reportPath, "report");
+  const workLogPath =
+    spec.workLogPath === undefined
+      ? undefined
+      : await canonicalControllerOutputPath(spec.workLogPath, "work log");
   for (const writable of allowWritePaths) {
     if (
       overlaps(writable, sourceDir) ||
@@ -114,11 +122,21 @@ export async function validateReviewPaths(spec: ReviewPathSpec): Promise<Validat
   ) {
     throw new Error(`Review report target is actor-visible: ${reportPath}`);
   }
+  if (
+    workLogPath !== undefined &&
+    [sourceDir, ...allowReadPaths, ...allowWritePaths].some((grant) => contains(grant, workLogPath))
+  ) {
+    throw new Error(`Review work log target is actor-visible: ${workLogPath}`);
+  }
+  if (reportPath !== undefined && workLogPath === reportPath) {
+    throw new Error(`Review report and work log targets are identical: ${reportPath}`);
+  }
   return {
     sourceDir,
     allowReadPaths,
     allowWritePaths,
     ...(reportPath === undefined ? {} : { reportPath }),
+    ...(workLogPath === undefined ? {} : { workLogPath }),
   };
 }
 

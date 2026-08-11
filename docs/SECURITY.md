@@ -26,6 +26,7 @@ For reviews:
 - the source and repeated `--allow-read` grants are read-only;
 - the private scratch directory and repeated `--allow-write` grants are writable;
 - an optional `--report` target is controller-owned, create-only, and never granted to the actor; it must be absolute, absent, and outside every actor-visible grant;
+- every review work log is controller-owned, create-only, and never granted to the actor; an explicit `--work-log` target must be absolute, absent, and outside every actor-visible grant;
 - a writable grant may not overlap the source or a read-only grant;
 - filesystem roots and the user's home directory are rejected as grants;
 - grant paths must exist, be directories, and not themselves be symbolic links;
@@ -64,7 +65,7 @@ Pi readiness probes receive an allowlist of runtime, home-directory, certificate
 
 Review actors receive only the controller-selected runtime variables, Pi's isolated `HOME`, `TMPDIR`, and `PI_CODING_AGENT_DIR`, proxy variables, and minimal locale/path settings. This narrow environment applies on Windows too, even though Windows review filesystem isolation remains instruction-only. Eval actors receive an even narrower broker environment. A mandatory eval probe verifies that a controller-only secret is absent.
 
-Neither debug output nor errors should contain Pi credentials, proxy tokens, prompts, or full environment dumps.
+Neither debug output nor errors should contain Pi credentials, proxy tokens, prompts, or full environment dumps. Work logs contain controller lifecycle records and a field allowlist of Pi RPC metadata. They omit prompts, assistant text and thinking, message bodies, tool arguments and results, queue contents, extension paths, proxy values, and environment values. Provider diagnostics are whitespace-normalized, capped at 500 characters, and redacted for common authorization, token, key, password, and secret forms before persistence.
 
 ## Network policy
 
@@ -100,6 +101,7 @@ Review isolation is not enforced. The caller must explicitly pass `--allow-unsan
 
 - Every subprocess uses discrete argv with `shell: false`.
 - Review RPC buffers are limited to 4 MiB and stderr retains only the final 64 KiB.
+- Review work logs are mode `0600`, synchronously written after every JSONL record, synced to disk at least once per second and again on close, limited to 16 MiB per run, and stop with an explicit truncation record at the bound. Pioneer retains the newest 100 auto-named files in its default directory; it does not rotate custom targets outside that reserved naming pattern.
 - Readiness output is limited to 64 KiB per stream.
 - Reviews default to a 15-minute timeout; eval actors default to five minutes.
 - Cleanup runs even after failure or timeout.

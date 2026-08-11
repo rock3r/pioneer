@@ -56,6 +56,15 @@ export {
   validateReviewPaths,
 } from "./review/isolation.js";
 export { type ReviewRequest, type ReviewResult, runReview } from "./review/runner.js";
+export {
+  type OpenReviewWorkLogOptions,
+  openReviewWorkLog,
+  prepareDefaultReviewWorkLogPath,
+  type ReviewWorkLog,
+  reviewWorkLogDirectory,
+  sanitizeWorkLogDiagnostic,
+  summarizePiEvent,
+} from "./review/work-log.js";
 export { isThinkingLevel, THINKING_LEVELS, type ThinkingLevel } from "./thinking-level.js";
 export {
   checkForUpdate,

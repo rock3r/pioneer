@@ -50,6 +50,7 @@ pioneer review --source DIR --prompt TEXT
   [--allow-read DIR]...
   [--allow-write DIR]...
   [--report FILE]
+  [--work-log FILE]
   [--network full|public|none]
   [--timeout-ms N]
   [--allow-unsandboxed-windows]
@@ -65,13 +66,24 @@ pioneer review --source DIR --prompt TEXT
 | `--allow-read DIR` | none | Additional read-only directory; repeatable |
 | `--allow-write DIR` | none | Additional writable directory; repeatable and forbidden from overlapping read grants |
 | `--report FILE` | none | Absolute controller-owned output path for the final report; must not exist and must not be visible to the review actor |
+| `--work-log FILE` | platform log directory | Absolute controller-owned create-only JSONL path; must not exist and must not be visible to the review actor |
 | `--network MODE` | `full` | Proxy destination policy |
 | `--timeout-ms N` | `900000` | Positive integer review timeout |
 | `--allow-unsandboxed-windows` | false | Required acknowledgement for instruction-only Windows reviews |
 
 Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout. When `--report` is set, Pioneer additionally creates that file atomically only after the same success contract passes. If persistence fails, stdout still contains the verified report but Pioneer exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`; diagnostics and warnings use stderr.
 
-Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report, `[REVIEW_ASSISTANT_FAILED]` when Pi reports a failed or aborted assistant run, `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling, `[REVIEW_PROCESS_FAILED]` when a settled Pi process with a report exits nonzero or by signal, and `[REVIEW_PROCESS_CONTAINMENT_FAILED]` when Pioneer cannot prove the process tree stopped after its child exits.
+Immediately after opening the controller-owned work log, Pioneer prints `[PIONEER_WORK_LOG] ABSOLUTE_PATH` to stderr. Without `--work-log`, it creates a unique `review-*.jsonl` file in:
+
+- macOS: `~/Library/Logs/Pioneer/reviews/`;
+- Linux: `${XDG_STATE_HOME:-~/.local/state}/pioneer/logs/reviews/`;
+- Windows: `%LOCALAPPDATA%\Pioneer\Logs\reviews\`.
+
+Each schema-versioned JSONL record is written synchronously before Pioneer continues, so `tail -f` observes it immediately; Pioneer syncs the file to disk at least once per second and on close. Records include timestamps, elapsed time, run/sequence IDs, controller stages, Pi process state, sanitized Pi RPC event metadata, stderr byte activity, retries, compaction, tool lifecycle, settlement, termination, and a heartbeat every five seconds while Pi RPC is active. The log deliberately excludes prompt and model-generated text, thinking, tool arguments/output, queue contents, environment values, and credentials. Each auto-created log is capped at 16 MiB, and Pioneer retains the newest 100 auto-named files in its default directory. A custom target must be absolute, absent, and have an existing writable non-symlink parent; Pioneer does not rotate custom targets outside its reserved auto-name pattern.
+
+`[REVIEW_WORK_LOG_CREATE_FAILED]` means Pioneer could not establish the requested observability channel, while `[REVIEW_WORK_LOG_WRITE_FAILED]` means real-time flushing failed after creation. Either failure is terminal; Pioneer does not continue an unobservable review.
+
+Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report, `[REVIEW_ASSISTANT_FAILED]` when Pi reports a failed or aborted assistant run, `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling, `[REVIEW_PROCESS_FAILED]` when a settled Pi process with a report exits nonzero or by signal, `[REVIEW_PROCESS_CONTAINMENT_FAILED]` when Pioneer cannot prove the process tree stopped after its child exits, and the work-log failures described above.
 
 ## `pioneer models`
 

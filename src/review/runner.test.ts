@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { buildReviewPrompt, requiresGitInspection, reviewTools, runReviewRpc } from "./runner.js";
+import type { ReviewWorkLog } from "./work-log.js";
+
+function recordingWorkLog(): {
+  readonly log: ReviewWorkLog;
+  readonly records: Array<{ readonly type: string; readonly details: Record<string, unknown> }>;
+} {
+  const records: Array<{ readonly type: string; readonly details: Record<string, unknown> }> = [];
+  return {
+    records,
+    log: {
+      path: "/tmp/review.jsonl",
+      runId: "run-1",
+      record(type, details = {}) {
+        records.push({ type, details: { ...details } });
+      },
+      close() {},
+    },
+  };
+}
 
 function fakePiRpc(events: readonly unknown[], exitCode = 0): readonly [string, ...string[]] {
   const source = `
@@ -263,6 +282,97 @@ describe("review RPC runner", () => {
         5_000,
       ),
     ).resolves.toBe("No findings.");
+  });
+
+  it("streams sanitized Pi lifecycle and tool metadata to the work log", async () => {
+    const { log, records } = recordingWorkLog();
+    const report = await runReviewRpc(
+      fakePiRpc([
+        { type: "agent_start" },
+        {
+          type: "tool_execution_start",
+          toolCallId: "call-1",
+          toolName: "read",
+          args: { path: "/private/source.ts" },
+        },
+        {
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", delta: "private finding" },
+        },
+        {
+          type: "tool_execution_end",
+          toolCallId: "call-1",
+          toolName: "read",
+          result: { content: [{ type: "text", text: "private source" }] },
+          isError: false,
+        },
+        { type: "message_end", message: { role: "assistant", content: "No findings." } },
+        { type: "agent_settled" },
+      ]),
+      process.cwd(),
+      process.env,
+      "Review secret prompt",
+      1_000,
+      { workLog: log },
+    );
+
+    expect(report).toBe("No findings.");
+    expect(records.map(({ type }) => type)).toEqual([
+      "pi_process_started",
+      "pi_prompt_sent",
+      "pi_event",
+      "pi_event",
+      "pi_event",
+      "pi_event",
+      "pi_event",
+      "pi_event",
+      "pi_process_exit",
+      "pi_rpc_completed",
+    ]);
+    const serialized = JSON.stringify(records);
+    expect(serialized).not.toContain("Review secret prompt");
+    expect(serialized).not.toContain("/private/source.ts");
+    expect(serialized).not.toContain("private source");
+    expect(serialized).not.toContain("private finding");
+    expect(serialized).toContain('"deltaBytes":15');
+  });
+
+  it("emits real-time heartbeats while Pi is silent", async () => {
+    const { log, records } = recordingWorkLog();
+    await expect(
+      runReviewRpc(neverSettlingPi(), process.cwd(), process.env, "Review the source", 45, {
+        workLog: log,
+        heartbeatMs: 10,
+      }),
+    ).rejects.toThrow("[REVIEW_TIMEOUT]");
+
+    expect(records).toContainEqual({
+      type: "heartbeat",
+      details: expect.objectContaining({
+        phase: "pi_rpc",
+        lastPiEvent: "prompt_sent",
+        idleMs: expect.any(Number),
+      }),
+    });
+  });
+
+  it("fails closed if the real-time work log stops accepting records", async () => {
+    let writes = 0;
+    const workLog: ReviewWorkLog = {
+      path: "/tmp/review.jsonl",
+      runId: "run-1",
+      record() {
+        writes += 1;
+        if (writes === 2) throw new Error("disk full");
+      },
+      close() {},
+    };
+
+    await expect(
+      runReviewRpc(neverSettlingPi(), process.cwd(), process.env, "Review the source", 1_000, {
+        workLog,
+      }),
+    ).rejects.toThrow("[REVIEW_WORK_LOG_WRITE_FAILED]");
   });
 
   it("collects delta-only message updates from Pi 0.84", async () => {

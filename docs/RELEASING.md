@@ -1,6 +1,6 @@
 # Releasing
 
-Releases publish one public npm CLI package and the matching Codex and Claude plugin payload from the same tagged source tree.
+Releases publish one public npm CLI package and the matching portable Agent Plugins, Codex, and Claude plugin payload from the same tagged source tree.
 
 ## One-time setup
 
@@ -17,8 +17,8 @@ The workflow uses a GitHub-hosted Ubuntu runner, `id-token: write`, npm 11, and 
 For every tag, `.github/workflows/release.yml` independently requires:
 
 - full lint, type, test, and build checks on Ubuntu, macOS, and Windows;
-- exact tag, npm package, Codex plugin, and Claude plugin version agreement;
-- plugin name/skill-path integrity and byte-for-byte root/plugin UEL agreement;
+- exact tag, npm package, portable plugin, Codex plugin, and Claude plugin version agreement;
+- portable schema, plugin name/skill-path integrity, and byte-for-byte root/plugin UEL agreement;
 - the minimum and tested-maximum Pi releases to pass the CLI compatibility smoke;
 - the checked-in Pi tested maximum to equal the official npm `latest`;
 - a real Seatbelt smoke battery on macOS;
@@ -46,7 +46,7 @@ Do not defer a newer Pi release to a later Pioneer release: review it, raise the
 ## Cutting a release
 
 1. Refresh the Pi compatibility range and endpoint tests.
-2. Update `package.json` and both plugin manifests to the same semantic version.
+2. Update `package.json` and all three plugin manifests to the same semantic version.
 3. Update `CHANGELOG.md`: move every applicable entry from `Unreleased` into a new `## <version> - YYYY-MM-DD` section, then leave an empty `Unreleased` heading for the next release.
 4. Update other release-facing documentation and verify the UEL text is synchronized.
 5. Run locally:
@@ -60,7 +60,7 @@ Do not defer a newer Pi release to a later Pioneer release: review it, raise the
    npm run release:verify -- v0.1.3
    ```
 
-6. Validate both plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).
+6. Validate the portable Agent Plugins package and both native plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).
 7. Run a real review through Codex and Claude Code. For each client, preserve the nested terminal session until it returns an exit code, then record the exit code and stdout/stderr byte counts. An intermediate empty output with a session ID is not a completed review. Use `--report /absolute/path/report.md` when a durable final report artifact is needed.
 8. Commit and push the reviewed release candidate.
 9. Create and push an annotated `v<version>` tag. Pushing the tag is the publication trigger.

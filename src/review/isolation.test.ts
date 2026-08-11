@@ -64,6 +64,20 @@ describe("review path grants", () => {
     expect(result.reportPath).toBe(path.join(await realpath(reports), "review.md"));
   });
 
+  it("accepts a controller-owned work log outside every actor-visible grant", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const logs = path.join(root, "logs");
+    await Promise.all([mkdir(source), mkdir(logs)]);
+
+    const result = await validateReviewPaths({
+      sourceDir: source,
+      workLogPath: path.join(logs, "review.jsonl"),
+    });
+
+    expect(result.workLogPath).toBe(path.join(await realpath(logs), "review.jsonl"));
+  });
+
   it("rejects report targets that are relative or actor-visible", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
     const source = path.join(root, "source");
@@ -106,6 +120,30 @@ describe("review path grants", () => {
         reportPath: path.join(root, "missing", "report.md"),
       }),
     ).rejects.toThrow(/parent does not exist/i);
+  });
+
+  it("rejects work logs that are relative, existing, or actor-visible", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const logs = path.join(root, "logs");
+    await Promise.all([mkdir(source), mkdir(logs)]);
+    await writeFile(path.join(logs, "existing.jsonl"), "existing\n");
+
+    await expect(
+      validateReviewPaths({ sourceDir: source, workLogPath: "review.jsonl" }),
+    ).rejects.toThrow(/absolute/i);
+    await expect(
+      validateReviewPaths({
+        sourceDir: source,
+        workLogPath: path.join(source, "review.jsonl"),
+      }),
+    ).rejects.toThrow(/actor-visible/i);
+    await expect(
+      validateReviewPaths({
+        sourceDir: source,
+        workLogPath: path.join(logs, "existing.jsonl"),
+      }),
+    ).rejects.toThrow(/already exists/i);
   });
 });
 

@@ -1,6 +1,6 @@
 # Agent integrations
 
-The Codex and Claude Code packages share the same `pioneer` skill. The skill turns an ordinary review request into a call to the locally installed CLI and preserves the CLI's fail-closed behavior.
+The portable Agent Plugins package and the Codex and Claude Code adapters share the same `pioneer` skill. The skill turns an ordinary review request into a call to the locally installed CLI and preserves the CLI's fail-closed behavior.
 
 The plugin is a thin adapter. Install and configure Pi, then install the Pioneer CLI or build/link a trusted checkout, and make these commands visible on the agent's `PATH` first:
 
@@ -9,7 +9,13 @@ command -v pi
 command -v pioneer
 ```
 
-No provider authentication is stored in either plugin manifest.
+No provider authentication is stored in any plugin manifest.
+
+## Agent Plugins v1 clients
+
+[`plugins/pioneer/plugin.json`](../plugins/pioneer/plugin.json) targets the vendor-neutral [Agent Plugins v1 specification](https://agent-plugins.org/specification). A conforming skills-capable client discovers the shared skill at the standard `skills/pioneer/SKILL.md` location without a client-specific manifest.
+
+The Agent Plugins specification deliberately leaves installation and distribution to each client. Clone or download Pioneer, then use the client's local-plugin flow to load the absolute `plugins/pioneer/` directory. The client still needs `pi` and `pioneer` on its terminal `PATH`; loading the portable package does not install executables or credentials. See the specification's [live compatible-client list](https://agent-plugins.org/compatible-clients) for current adopters and setup links.
 
 ## Claude Code
 
@@ -70,7 +76,7 @@ Ask naturally, for example:
 
 Pioneer does not require a Codex- or Claude-specific runtime. Any coding agent that can execute local commands can use the CLI.
 
-For agents that support Agent Skills, clone or download Pioneer and copy the shared skill into the agent's configured skills directory:
+For agents that support Agent Skills but not Agent Plugins packages, clone or download Pioneer and copy the shared skill into the agent's configured skills directory:
 
 ```bash
 cp -R /absolute/path/to/pioneer/plugins/pioneer/skills/pioneer /path/to/agent/skills/
@@ -82,7 +88,7 @@ On Windows, use the equivalent PowerShell copy:
 Copy-Item -Recurse C:\path\to\pioneer\plugins\pioneer\skills\pioneer C:\path\to\agent\skills\
 ```
 
-Restart the agent or begin a fresh session after installation. Confirm that its terminal can resolve all three commands:
+Restart the agent or begin a fresh session after installation. Confirm that its terminal can resolve both commands:
 
 ```bash
 command -v pi

@@ -58,13 +58,17 @@ pioneer review \
   --thinking max
 ```
 
-The report is Markdown on stdout. Pass `--report /absolute/path/report.md` when the controller should atomically persist the verified final report without granting Pi write access to that path. Pioneer resolves model names before creating run state and fails early—with the configured model list—when a requested model is missing or ambiguous.
+Pioneer immediately prints `[PIONEER_WORK_LOG] /absolute/path.jsonl` to stderr, then flushes controller and sanitized Pi activity to that mode-`0600` JSONL file while the review runs. Pass `--work-log /absolute/path.jsonl` to select a create-only target; otherwise Pioneer uses the platform log directory. The final report remains Markdown on stdout. Pass `--report /absolute/path/report.md` when the controller should atomically persist that verified report without granting Pi write access to either controller-owned file. Pioneer resolves model names before creating run state and fails early—with the configured model list—when a requested model is missing or ambiguous.
 
 On macOS and opt-in Windows, use a source-only prompt such as `Review the implementation under src/auth for correctness and regressions.` Explicit Git-target prompts fail closed because those platforms do not grant Pi Git execution.
 
 ## Install for your agent
 
 All integrations require `pi` and `pioneer` on the agent's `PATH`. The plugin is a thin adapter: it does not bundle Pi, provider credentials, or a second implementation.
+
+### Agent Plugins v1 clients
+
+Pioneer includes a vendor-neutral [`plugin.json`](plugins/pioneer/plugin.json) conforming to [Agent Plugins v1](https://agent-plugins.org/specification). Use your client's local-plugin installation flow to load the `plugins/pioneer/` directory; compatible clients discover the same Agent Skill from its standard `skills/` location. Installation commands are client-specific and are intentionally outside the portable specification.
 
 ### Codex
 
@@ -92,7 +96,7 @@ For a local checkout, replace `rock3r/pioneer` with the absolute repository path
 
 ### Other coding agents
 
-If the agent supports Agent Skills, clone or download this repository and copy [`plugins/pioneer/skills/pioneer`](plugins/pioneer/skills/pioneer) into its configured skills directory:
+If the agent supports Agent Skills but not Agent Plugins packages, clone or download this repository and copy [`plugins/pioneer/skills/pioneer`](plugins/pioneer/skills/pioneer) into its configured skills directory:
 
 ```bash
 cp -R /absolute/path/to/pioneer/plugins/pioneer/skills/pioneer /path/to/agent/skills/
