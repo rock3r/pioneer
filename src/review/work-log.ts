@@ -254,7 +254,7 @@ function pruneInactiveDefaultReviewWorkLogsSync(target: string, platform: NodeJS
     .map((entry) => entry.name)
     .sort();
   const removeCount = Math.max(0, existingLogs.length - RETAINED_DEFAULT_WORK_LOGS);
-  const removableLogs = existingLogs.filter((name) => !activeLogs.has(name));
+  const removableLogs = existingLogs.filter((name) => name !== targetName && !activeLogs.has(name));
   for (const name of removableLogs.slice(0, removeCount)) {
     try {
       unlinkSync(pathApi.join(directory, name));

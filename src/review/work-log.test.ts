@@ -310,7 +310,7 @@ describe("review work log", () => {
       environment,
       platform,
       home,
-      new Date("2026-08-11T10:00:00.000Z"),
+      new Date("2026-07-11T10:00:00.000Z"),
       "00000000-0000-0000-0000-000000000101",
     );
     const next = await openReviewWorkLog(nextTarget, { retainDefaultLogs: true, platform });
@@ -324,6 +324,7 @@ describe("review work log", () => {
     expect((await readdir(directory)).filter((entry) => entry.endsWith(".jsonl"))).toHaveLength(
       100,
     );
+    expect((await lstat(nextTarget)).isFile()).toBe(true);
   });
 
   it("does not prune a default log that is still active", async () => {
