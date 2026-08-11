@@ -23,6 +23,7 @@ import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-p
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { isThinkingLevel, type ThinkingLevel } from "../thinking-level.js";
 import {
+  assertDistinctExistingReviewOutputs,
   buildReviewSandboxConfig,
   type ReviewNetworkMode,
   validateProspectiveReviewWorkLogPath,
@@ -800,6 +801,9 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   }
 
   try {
+    if (paths.reportPath !== undefined) {
+      await assertDistinctExistingReviewOutputs(paths.reportPath, workLog.path);
+    }
     request.onWorkLogReady?.(workLog.path);
     const windows = process.platform === "win32";
     recordReviewWorkLog(workLog, "review_started", {

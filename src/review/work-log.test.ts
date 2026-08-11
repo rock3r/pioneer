@@ -17,6 +17,7 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildWindowsProcessStartLookup,
   openReviewWorkLog,
   prepareDefaultReviewWorkLogPath,
   prepareValidatedDefaultReviewWorkLogPath,
@@ -48,6 +49,15 @@ function processIdentityForTest(processId: number, platform: NodeJS.Platform): s
 }
 
 describe("review work log", () => {
+  it("passes a retention-owner PID to a fixed PowerShell program as data", () => {
+    const lookup = buildWindowsProcessStartLookup(4242, { PATH: "C:\\Windows\\System32" });
+
+    expect(lookup.command).toBe("powershell.exe");
+    expect(lookup.arguments.join(" ")).not.toContain("4242");
+    expect(lookup.arguments.at(-1)).toContain("$env:PIONEER_RETENTION_OWNER_PID");
+    expect(lookup.environment.PIONEER_RETENTION_OWNER_PID).toBe("4242");
+  });
+
   it("uses a documented per-user log directory on every platform", () => {
     expect(reviewWorkLogDirectory({}, "darwin", "/Users/operator")).toBe(
       "/Users/operator/Library/Logs/Pioneer/reviews",

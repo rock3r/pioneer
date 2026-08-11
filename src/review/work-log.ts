@@ -126,6 +126,29 @@ function hashProcessInstanceIdentity(platform: NodeJS.Platform, rawIdentity: str
   return createHash("sha256").update(`${platform}:${rawIdentity}`).digest("hex");
 }
 
+export function buildWindowsProcessStartLookup(
+  processId: number,
+  environment: NodeJS.ProcessEnv = process.env,
+): Readonly<{
+  command: string;
+  arguments: readonly string[];
+  environment: NodeJS.ProcessEnv;
+}> {
+  if (!Number.isSafeInteger(processId) || processId <= 0) {
+    throw new Error("Process ID must be a positive safe integer");
+  }
+  return {
+    command: "powershell.exe",
+    arguments: [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "[DateTimeOffset]::new((Get-Process -Id ([int]$env:PIONEER_RETENTION_OWNER_PID) -ErrorAction Stop).StartTime).ToUnixTimeSeconds()",
+    ],
+    environment: { ...environment, PIONEER_RETENTION_OWNER_PID: String(processId) },
+  };
+}
+
 function processInstanceIdentities(
   processId: number,
   platform: NodeJS.Platform,
@@ -157,16 +180,13 @@ function processInstanceIdentities(
       if (processId === process.pid) {
         startTimeSeconds = Math.floor(performance.timeOrigin / 1_000);
       } else {
-        const result = spawnSync(
-          "powershell.exe",
-          [
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            `[DateTimeOffset]::new((Get-Process -Id ${processId} -ErrorAction Stop).StartTime).ToUnixTimeSeconds()`,
-          ],
-          { encoding: "utf8", shell: false, windowsHide: true },
-        );
+        const lookup = buildWindowsProcessStartLookup(processId);
+        const result = spawnSync(lookup.command, [...lookup.arguments], {
+          encoding: "utf8",
+          env: lookup.environment,
+          shell: false,
+          windowsHide: true,
+        });
         if (result.status !== 0) return undefined;
         startTimeSeconds = Number(result.stdout.trim());
       }

@@ -50,6 +50,34 @@ function sameOutputPath(left: string, right: string, platform: NodeJS.Platform):
   return left === right;
 }
 
+export async function assertDistinctExistingReviewOutputs(
+  reportPath: string,
+  workLogPath: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  if (sameOutputPath(reportPath, workLogPath, platform)) {
+    throw new Error(`Review report and work log targets are identical: ${reportPath}`);
+  }
+  try {
+    const [reportStats, workLogStats, canonicalReport, canonicalWorkLog] = await Promise.all([
+      lstat(reportPath),
+      lstat(workLogPath),
+      realpath(reportPath),
+      realpath(workLogPath),
+    ]);
+    const sameInode =
+      reportStats.ino !== 0 &&
+      reportStats.dev === workLogStats.dev &&
+      reportStats.ino === workLogStats.ino;
+    if (sameInode || sameOutputPath(canonicalReport, canonicalWorkLog, platform)) {
+      throw new Error(`Review report and work log targets are identical: ${reportPath}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+}
+
 async function canonicalGrant(candidate: string): Promise<string> {
   const absolute = path.resolve(candidate);
   const stats = await lstat(absolute);

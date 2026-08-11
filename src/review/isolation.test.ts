@@ -1,8 +1,9 @@
-import { lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  assertDistinctExistingReviewOutputs,
   buildReviewSandboxConfig,
   validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
@@ -172,6 +173,18 @@ describe("review path grants", () => {
         },
         "darwin",
       ),
+    ).rejects.toThrow(/identical/i);
+  });
+
+  it("rejects output paths that resolve to the same existing filesystem object", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const reportPath = path.join(root, "Review.md");
+    const workLogPath = path.join(root, "review.jsonl");
+    await writeFile(workLogPath, "work log\n");
+    await link(workLogPath, reportPath);
+
+    await expect(
+      assertDistinctExistingReviewOutputs(reportPath, workLogPath, "linux"),
     ).rejects.toThrow(/identical/i);
   });
 
