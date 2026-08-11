@@ -13,6 +13,7 @@ import {
   runReviewRpc,
   sendReviewPrompt,
   shouldSchedulePipeCloseFallback,
+  sourcePathForWorkLog,
 } from "./runner.js";
 import type { ReviewWorkLog } from "./work-log.js";
 
@@ -233,6 +234,13 @@ describe("review RPC runner", () => {
         "Review source",
       ),
     ).toEqual({ piVersion: "token=[REDACTED]", model: "x".repeat(500) });
+  });
+
+  it("redacts and bounds the source path before logging it", () => {
+    expect(sourcePathForWorkLog("/checkout/token=private/repo", "Review source")).toBe(
+      "/checkout/token=[REDACTED]",
+    );
+    expect(sourcePathForWorkLog(`/${"x".repeat(600)}`, "Review source")).toHaveLength(500);
   });
 
   it("does not write the prompt after startup logging fails", () => {
@@ -494,7 +502,7 @@ describe("review RPC runner", () => {
     ).rejects.toThrow("[REVIEW_WORK_LOG_WRITE_FAILED]");
   });
 
-  it("bounds settlement when startup logging fails and process termination stalls", async () => {
+  it("waits for child closure when startup failure termination stalls", async () => {
     const workLog: ReviewWorkLog = {
       path: "/tmp/review.jsonl",
       runId: "run-1",
@@ -509,10 +517,12 @@ describe("review RPC runner", () => {
       runReviewRpc(delayedExitPi(), process.cwd(), process.env, "Review the source", 1_000, {
         workLog,
         terminateProcess() {},
+        escalateProcess() {},
         startupFailureGraceMs: 10,
       }),
     ).rejects.toThrow("[REVIEW_WORK_LOG_WRITE_FAILED]");
-    expect(Date.now() - startedAt).toBeLessThan(150);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(200);
+    expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
   it("collects delta-only message updates from Pi 0.84", async () => {

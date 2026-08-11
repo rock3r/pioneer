@@ -111,6 +111,7 @@ export interface RunReviewRpcOptions {
   readonly heartbeatMs?: number;
   readonly sensitiveValues?: readonly string[];
   readonly terminateProcess?: (child: ReturnType<typeof spawn>) => void;
+  readonly escalateProcess?: (child: ReturnType<typeof spawn>) => void;
   readonly startupFailureGraceMs?: number;
 }
 
@@ -137,6 +138,10 @@ export function readinessMetadataForWorkLog(
     piVersion: sanitizeWorkLogDiagnostic(readiness.version ?? "unknown", [prompt]),
     model: sanitizeWorkLogDiagnostic(readiness.resolvedModel ?? "default", [prompt]),
   };
+}
+
+export function sourcePathForWorkLog(sourcePath: string, prompt: string): string {
+  return sanitizeWorkLogDiagnostic(sourcePath, [prompt]);
 }
 
 export function sendReviewPrompt(
@@ -460,6 +465,9 @@ export async function runReviewRpc(
     let lastPiEventAt = Date.now();
     let stderrBytes = 0;
     const stopProcess = options.terminateProcess ?? terminateProcessTree;
+    const escalateProcess =
+      options.escalateProcess ??
+      ((runningChild: ReturnType<typeof spawn>) => runningChild.kill("SIGKILL"));
     const workLogSecrets = [prompt, ...(options.sensitiveValues ?? [])];
     const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
       if (options.workLog === undefined || workLogFailure !== undefined) return;
@@ -699,12 +707,10 @@ export async function runReviewRpc(
     if (!sendReviewPrompt(child.stdin, prompt, startupFailure)) {
       child.stdin.destroy();
       timer = setTimeout(() => {
-        stopProcess(child);
+        escalateProcess(child);
         acceptRpcEvents = false;
         child.stdout.destroy();
         child.stderr.destroy();
-        child.unref();
-        finish(startupFailure);
       }, options.startupFailureGraceMs ?? PIPE_CLOSE_GRACE_MS);
       return;
     }
@@ -778,7 +784,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       pioneerVersion: PIONEER_VERSION,
       platform: process.platform,
       controllerPid: process.pid,
-      sourceDir: paths.sourceDir,
+      sourceDir: sourcePathForWorkLog(paths.sourceDir, request.prompt),
       promptBytes: Buffer.byteLength(request.prompt),
       network,
       timeoutMs,
