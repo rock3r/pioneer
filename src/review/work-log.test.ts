@@ -711,6 +711,11 @@ describe("review work log", () => {
       new Date("2026-08-01T00:00:00.000Z"),
     );
     await utimes(
+      oldestTarget,
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-08-01T00:00:00.000Z"),
+    );
+    await utimes(
       `${oldestTarget}.active-${process.pid}-22222222222222222222222222222222`,
       new Date("2026-08-01T00:00:00.000Z"),
       new Date("2026-08-01T00:00:00.000Z"),
