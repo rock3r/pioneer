@@ -41,16 +41,7 @@ function processIdentityForTest(processId: number, platform: NodeJS.Platform): s
       shell: false,
     }).stdout.trim();
   } else {
-    rawIdentity = spawnSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `(Get-Process -Id ${processId} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
-      ],
-      { encoding: "utf8", shell: false, windowsHide: true },
-    ).stdout.trim();
+    rawIdentity = String(Math.floor(performance.timeOrigin / 1_000));
   }
   return createHash("sha256").update(`${platform}:${rawIdentity}`).digest("hex");
 }

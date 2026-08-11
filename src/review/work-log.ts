@@ -145,18 +145,22 @@ function processInstanceIdentity(processId: number, platform: NodeJS.Platform): 
       if (result.status !== 0) return undefined;
       rawIdentity = result.stdout.trim();
     } else if (platform === "win32") {
-      const result = spawnSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          `(Get-Process -Id ${processId} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
-        ],
-        { encoding: "utf8", shell: false, windowsHide: true },
-      );
-      if (result.status !== 0) return undefined;
-      rawIdentity = result.stdout.trim();
+      if (processId === process.pid) {
+        rawIdentity = String(Math.floor(performance.timeOrigin / 1_000));
+      } else {
+        const result = spawnSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `[DateTimeOffset]::new((Get-Process -Id ${processId} -ErrorAction Stop).StartTime).ToUnixTimeSeconds()`,
+          ],
+          { encoding: "utf8", shell: false, windowsHide: true },
+        );
+        if (result.status !== 0) return undefined;
+        rawIdentity = result.stdout.trim();
+      }
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
