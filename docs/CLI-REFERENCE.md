@@ -66,7 +66,7 @@ pioneer review --source DIR --prompt TEXT
 | `--allow-read DIR` | none | Additional read-only directory; repeatable |
 | `--allow-write DIR` | none | Additional writable directory; repeatable and forbidden from overlapping read grants |
 | `--report FILE` | none | Absolute controller-owned output path for the final report; must not exist and must not be visible to the review actor |
-| `--work-log FILE` | platform log directory | Absolute controller-owned create-only JSONL path; must not exist and must not be visible to the review actor |
+| `--work-log FILE` | platform log directory | Absolute controller-owned create-only JSONL path; must not exist, contain control characters, or be visible to the review actor |
 | `--network MODE` | `full` | Proxy destination policy |
 | `--timeout-ms N` | `900000` | Positive integer review timeout |
 | `--allow-unsandboxed-windows` | false | Required acknowledgement for instruction-only Windows reviews |

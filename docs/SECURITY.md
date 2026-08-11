@@ -26,7 +26,7 @@ For reviews:
 - the source and repeated `--allow-read` grants are read-only;
 - the private scratch directory and repeated `--allow-write` grants are writable;
 - an optional `--report` target is controller-owned, create-only, and never granted to the actor; it must be absolute, absent, and outside every actor-visible grant;
-- every review work log is controller-owned, create-only, and never granted to the actor; an explicit `--work-log` target must be absolute, absent, and outside every actor-visible grant;
+- every review work log is controller-owned, create-only, and never granted to the actor; an explicit `--work-log` target must be absolute, absent, free of control characters, and outside every actor-visible grant;
 - a writable grant may not overlap the source or a read-only grant;
 - filesystem roots and the user's home directory are rejected as grants;
 - grant paths must exist, be directories, and not themselves be symbolic links;

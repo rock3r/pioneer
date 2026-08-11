@@ -99,9 +99,23 @@ async function canonicalList(paths: readonly string[]): Promise<string[]> {
   return values;
 }
 
-async function canonicalControllerOutputPath(candidate: string, kind: string): Promise<string> {
-  if (!path.isAbsolute(candidate))
+function assertControllerOutputPathSyntax(candidate: string, kind: string): void {
+  if (!path.isAbsolute(candidate)) {
     throw new Error(`Review ${kind} path is not absolute: ${candidate}`);
+  }
+  for (const character of candidate) {
+    const codePoint = character.codePointAt(0);
+    if (
+      codePoint !== undefined &&
+      (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
+    ) {
+      throw new Error(`Review ${kind} path contains a control character`);
+    }
+  }
+}
+
+async function canonicalControllerOutputPath(candidate: string, kind: string): Promise<string> {
+  assertControllerOutputPathSyntax(candidate, kind);
   const absolute = path.normalize(candidate);
   const parent = path.dirname(absolute);
   let parentStats: Awaited<ReturnType<typeof lstat>>;
@@ -138,8 +152,7 @@ async function canonicalProspectiveControllerOutputPath(
   candidate: string,
   kind: string,
 ): Promise<string> {
-  if (!path.isAbsolute(candidate))
-    throw new Error(`Review ${kind} path is not absolute: ${candidate}`);
+  assertControllerOutputPathSyntax(candidate, kind);
   const absolute = path.normalize(candidate);
   let existingAncestor = path.dirname(absolute);
   let ancestorStats: Awaited<ReturnType<typeof lstat>>;

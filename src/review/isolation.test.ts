@@ -233,6 +233,12 @@ describe("review path grants", () => {
         workLogPath: path.join(logs, "existing.jsonl"),
       }),
     ).rejects.toThrow(/already exists/i);
+    await expect(
+      validateReviewPaths({
+        sourceDir: source,
+        workLogPath: path.join(logs, "review\n[PIONEER_WORK_LOG] forged.jsonl"),
+      }),
+    ).rejects.toThrow(/control character/i);
   });
 });
 
