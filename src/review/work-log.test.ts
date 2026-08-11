@@ -1,8 +1,17 @@
 import { closeSync, writeSync } from "node:fs";
-import { lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   openReviewWorkLog,
   prepareDefaultReviewWorkLogPath,
@@ -142,6 +151,37 @@ describe("review work log", () => {
       type: "review_started",
       detail: "complete",
     });
+  });
+
+  it("syncs dirty records after one second without waiting for another event", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-11T10:00:00.000Z"));
+    const target = path.join(
+      tmpdir(),
+      `pioneer-work-log-periodic-sync-${process.pid}-${crypto.randomUUID()}.jsonl`,
+    );
+    let syncCalls = 0;
+    const log = await openReviewWorkLog(target, {
+      fileOperations: {
+        sync() {
+          syncCalls += 1;
+        },
+        close: closeSync,
+      },
+    });
+    try {
+      log.record("review_started");
+      expect(syncCalls).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+      log.record("stage_started");
+      expect(syncCalls).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(900);
+      expect(syncCalls).toBe(2);
+    } finally {
+      log.close();
+      vi.useRealTimers();
+    }
   });
 
   it("retains at most 100 auto-created review logs without touching other files", async () => {
@@ -305,6 +345,8 @@ describe("review work log", () => {
       writeFile(oldestTarget, "completed\n"),
       writeFile(`${oldestTarget}.active`, ""),
       writeFile(`${oldestTarget}.active-2147483647`, ""),
+      writeFile(`${oldestTarget}.active-${process.pid}`, ""),
+      writeFile(`${oldestTarget}.active-00000000000000000000000000000000`, ""),
       ...Array.from({ length: 99 }, (_, index) =>
         writeFile(
           path.join(
@@ -315,6 +357,11 @@ describe("review work log", () => {
         ),
       ),
     ]);
+    await utimes(
+      `${oldestTarget}.active-00000000000000000000000000000000`,
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-08-01T00:00:00.000Z"),
+    );
     const nextTarget = await prepareDefaultReviewWorkLogPath(
       environment,
       platform,
@@ -330,6 +377,10 @@ describe("review work log", () => {
     expect(entries).not.toContain(path.basename(oldestTarget));
     expect(entries).not.toContain(`${path.basename(oldestTarget)}.active`);
     expect(entries).not.toContain(`${path.basename(oldestTarget)}.active-2147483647`);
+    expect(entries).not.toContain(`${path.basename(oldestTarget)}.active-${process.pid}`);
+    expect(entries).not.toContain(
+      `${path.basename(oldestTarget)}.active-00000000000000000000000000000000`,
+    );
   });
 
   it("rejects an unsafe generated log identifier", async () => {

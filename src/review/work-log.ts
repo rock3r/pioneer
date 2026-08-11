@@ -3,16 +3,28 @@ import { closeSync, constants, fsyncSync, openSync, unlinkSync, writeSync } from
 import { chmod, lstat, mkdir, readdir, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 
 const MAX_WORK_LOG_BYTES = 16 * 1024 * 1024;
 const WORK_LOG_TRUNCATION_RESERVE_BYTES = 512;
 const RETAINED_DEFAULT_WORK_LOGS = 100;
 const WORK_LOG_SYNC_INTERVAL_MS = 1_000;
 const ACTIVE_WORK_LOG_SUFFIX = ".active";
+const ACTIVE_WORK_LOG_LEASE_MS = 5_000;
 const AUTO_WORK_LOG_NAME =
   /^review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl$/i;
 const ACTIVE_WORK_LOG_NAME =
-  /^(review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl)\.active-(\d+)$/i;
+  /^(review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl)\.active(?:-([a-z0-9-]+))?$/i;
+const ACTIVE_WORK_LOG_LEASE_WORKER = `
+  const { utimesSync } = require("node:fs");
+  const { workerData } = require("node:worker_threads");
+  const control = new Int32Array(workerData.control);
+  while (Atomics.load(control, 0) === 0) {
+    const now = new Date();
+    utimesSync(workerData.markerPath, now, now);
+    Atomics.wait(control, 0, 0, workerData.intervalMs);
+  }
+`;
 const PI_EVENT_TYPES = new Set([
   "agent_end",
   "agent_settled",
@@ -144,32 +156,22 @@ async function pruneDefaultReviewWorkLogs(
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     const match = ACTIVE_WORK_LOG_NAME.exec(entry.name);
-    const legacyLogName = entry.name.endsWith(ACTIVE_WORK_LOG_SUFFIX)
-      ? entry.name.slice(0, -ACTIVE_WORK_LOG_SUFFIX.length)
-      : undefined;
-    if (
-      match === null &&
-      (legacyLogName === undefined || !AUTO_WORK_LOG_NAME.test(legacyLogName))
-    ) {
-      continue;
-    }
+    if (match === null) continue;
     const markerPath = pathApi.join(directory, entry.name);
     const markedLogName = match?.[1];
-    const processId = match === null ? undefined : Number(match[2]);
-    let processIsAlive = false;
-    if (processId !== undefined && Number.isSafeInteger(processId) && processId > 0) {
+    const ownerToken = match?.[2];
+    if (/^[0-9a-f]{32}$/i.test(ownerToken ?? "") && markedLogName !== undefined) {
       try {
-        process.kill(processId, 0);
-        processIsAlive = true;
+        const markerStats = await lstat(markerPath);
+        const leaseAgeMs = Date.now() - markerStats.mtimeMs;
+        if (leaseAgeMs >= -ACTIVE_WORK_LOG_LEASE_MS && leaseAgeMs <= ACTIVE_WORK_LOG_LEASE_MS) {
+          activeLogs.add(markedLogName);
+          continue;
+        }
       } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        if (code === "EPERM") processIsAlive = true;
-        else if (code !== "ESRCH") throw error;
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        continue;
       }
-    }
-    if (processIsAlive && markedLogName !== undefined) {
-      activeLogs.add(markedLogName);
-      continue;
     }
     try {
       await unlink(markerPath);
@@ -353,10 +355,27 @@ export async function openReviewWorkLog(
   target: string,
   options: OpenReviewWorkLogOptions = {},
 ): Promise<ReviewWorkLog> {
+  const platform = options.platform ?? process.platform;
+  const ownerToken =
+    options.retainDefaultLogs === true ? crypto.randomUUID().replaceAll("-", "") : undefined;
   const activeMarker =
-    options.retainDefaultLogs === true
-      ? `${target}${ACTIVE_WORK_LOG_SUFFIX}-${process.pid}`
+    options.retainDefaultLogs === true && ownerToken !== undefined
+      ? `${target}${ACTIVE_WORK_LOG_SUFFIX}-${ownerToken}`
       : undefined;
+  let markerLeaseWorker: Worker | undefined;
+  let markerLeaseControl: Int32Array | undefined;
+  let markerLeaseFailure: unknown;
+  let markerLeaseStopped = false;
+  const stopMarkerLease = (): void => {
+    markerLeaseStopped = true;
+    if (markerLeaseControl !== undefined) {
+      Atomics.store(markerLeaseControl, 0, 1);
+      Atomics.notify(markerLeaseControl, 0);
+    }
+    if (markerLeaseWorker !== undefined) {
+      void markerLeaseWorker.terminate().catch(() => {});
+    }
+  };
   if (activeMarker !== undefined) {
     const markerDescriptor = openSync(
       activeMarker,
@@ -365,7 +384,28 @@ export async function openReviewWorkLog(
     );
     try {
       closeSync(markerDescriptor);
+      markerLeaseControl = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+      markerLeaseWorker = new Worker(ACTIVE_WORK_LOG_LEASE_WORKER, {
+        eval: true,
+        workerData: {
+          control: markerLeaseControl.buffer,
+          intervalMs: WORK_LOG_SYNC_INTERVAL_MS,
+          markerPath: activeMarker,
+        },
+      });
+      markerLeaseWorker.on("error", (error) => {
+        if (!markerLeaseStopped) markerLeaseFailure ??= error;
+      });
+      markerLeaseWorker.on("exit", (code) => {
+        if (!markerLeaseStopped) {
+          markerLeaseFailure ??= new Error(
+            `Review work-log marker lease stopped with code ${code}`,
+          );
+        }
+      });
+      markerLeaseWorker.unref();
     } catch (error) {
+      stopMarkerLease();
       try {
         unlinkSync(activeMarker);
       } catch {
@@ -378,6 +418,7 @@ export async function openReviewWorkLog(
   try {
     descriptor = openSync(target, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
   } catch (error) {
+    stopMarkerLease();
     if (activeMarker !== undefined) {
       try {
         unlinkSync(activeMarker);
@@ -390,8 +431,9 @@ export async function openReviewWorkLog(
   const closeDescriptor = options.fileOperations?.close ?? closeSync;
   if (options.retainDefaultLogs === true) {
     try {
-      await pruneDefaultReviewWorkLogs(target, options.platform ?? process.platform);
+      await pruneDefaultReviewWorkLogs(target, platform);
     } catch (error) {
+      stopMarkerLease();
       try {
         closeDescriptor(descriptor);
       } catch {
@@ -424,6 +466,9 @@ export async function openReviewWorkLog(
   let bytesWritten = 0;
   let firstTimestamp: number | undefined;
   let lastSyncAt: number | undefined;
+  let syncTimer: NodeJS.Timeout | undefined;
+  let syncFailure: unknown;
+  let dirty = false;
   let closed = false;
   let truncated = false;
 
@@ -443,10 +488,52 @@ export async function openReviewWorkLog(
     return true;
   };
 
-  const syncIfDue = (timestamp: Date): void => {
-    if (lastSyncAt === undefined || timestamp.getTime() - lastSyncAt >= WORK_LOG_SYNC_INTERVAL_MS) {
+  const syncNow = (): void => {
+    if (syncTimer !== undefined) {
+      clearTimeout(syncTimer);
+      syncTimer = undefined;
+    }
+    syncDescriptor(descriptor);
+    dirty = false;
+    lastSyncAt = Date.now();
+  };
+
+  const syncOrSchedule = (): void => {
+    if (syncFailure !== undefined) throw syncFailure;
+    dirty = true;
+    const currentTime = Date.now();
+    if (lastSyncAt === undefined || currentTime - lastSyncAt >= WORK_LOG_SYNC_INTERVAL_MS) {
+      syncNow();
+      return;
+    }
+    if (syncTimer !== undefined) return;
+    syncTimer = setTimeout(
+      () => {
+        syncTimer = undefined;
+        if (closed || !dirty) return;
+        try {
+          syncDescriptor(descriptor);
+          dirty = false;
+          lastSyncAt = Date.now();
+        } catch (error) {
+          syncFailure = error;
+        }
+      },
+      Math.max(0, WORK_LOG_SYNC_INTERVAL_MS - (currentTime - lastSyncAt)),
+    );
+    syncTimer.unref();
+  };
+
+  const syncOnClose = (): void => {
+    if (syncTimer !== undefined) {
+      clearTimeout(syncTimer);
+      syncTimer = undefined;
+    }
+    if (syncFailure !== undefined) throw syncFailure;
+    try {
       syncDescriptor(descriptor);
-      lastSyncAt = timestamp.getTime();
+    } finally {
+      dirty = false;
     }
   };
 
@@ -455,6 +542,8 @@ export async function openReviewWorkLog(
     runId,
     record(type, details = {}) {
       if (closed) throw new Error(`Review work log is closed: ${target}`);
+      if (markerLeaseFailure !== undefined) throw markerLeaseFailure;
+      if (syncFailure !== undefined) throw syncFailure;
       if (truncated) return;
       const timestamp = now();
       firstTimestamp ??= timestamp.getTime();
@@ -476,7 +565,7 @@ export async function openReviewWorkLog(
           Math.max(0, maxBytes - WORK_LOG_TRUNCATION_RESERVE_BYTES),
         )
       ) {
-        syncIfDue(timestamp);
+        syncOrSchedule();
         return;
       }
       truncated = true;
@@ -485,14 +574,15 @@ export async function openReviewWorkLog(
         type: "work_log_truncated",
         maxBytes,
       });
-      syncIfDue(timestamp);
+      syncOrSchedule();
     },
     close() {
       if (closed) return;
       closed = true;
-      let failure: unknown;
+      stopMarkerLease();
+      let failure: unknown = markerLeaseFailure;
       try {
-        syncDescriptor(descriptor);
+        syncOnClose();
       } catch (error) {
         failure = error;
       }

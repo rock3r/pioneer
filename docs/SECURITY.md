@@ -101,7 +101,7 @@ Review isolation is not enforced. The caller must explicitly pass `--allow-unsan
 
 - Every subprocess uses discrete argv with `shell: false`.
 - Review RPC buffers are limited to 4 MiB and stderr retains only the final 64 KiB.
-- Review work logs are mode `0600` on macOS and Linux and use the per-user `%LOCALAPPDATA%` ACL on Windows. They are synchronously written after every JSONL record, synced to disk at least once per second and again on close, limited to 16 MiB per run, and stop with an explicit truncation record at the bound. Private PID-backed active markers prevent retention from unlinking a running review's log; stale markers are removed after their owner process exits, then inactive auto-named files are pruned toward the newest 100 total. Pioneer does not rotate custom targets outside that reserved naming pattern.
+- Review work logs are mode `0600` on macOS and Linux and use the per-user `%LOCALAPPDATA%` ACL on Windows. They are synchronously written after every JSONL record, synced by a dirty-log timer within one second and again on close, limited to 16 MiB per run, and stop with an explicit truncation record at the bound. A worker thread refreshes each private nonce-backed active lease independently of the controller event loop; abandoned leases expire after crashes, and inactive auto-named files are pruned toward the newest 100 total without trusting reusable PIDs. Pioneer does not rotate custom targets outside that reserved naming pattern.
 - Readiness output is limited to 64 KiB per stream.
 - Reviews default to a 15-minute timeout; eval actors default to five minutes.
 - Cleanup runs even after failure or timeout.
