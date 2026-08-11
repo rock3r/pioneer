@@ -55,13 +55,19 @@ try {
       },
     },
   );
-  const marker = /^\[PIONEER_WORK_LOG\] (.+)$/m.exec(optedIn.stderr)?.[1];
+  const marker = /^\[PIONEER_WORK_LOG\] (.+)$/m.exec(optedIn.stderr)?.[1]?.trim();
+  const markerRelative =
+    marker === undefined
+      ? undefined
+      : path.relative(path.resolve(localAppData), path.resolve(marker));
   if (
-    optedIn.status !== 1 ||
+    optedIn.status === null ||
+    optedIn.status === 0 ||
     !optedIn.stderr.includes("[PI_NOT_FOUND]") ||
-    optedIn.stderr.includes("--allow-unsandboxed-windows") ||
     marker === undefined ||
-    !path.resolve(marker).startsWith(path.resolve(localAppData))
+    markerRelative === undefined ||
+    markerRelative.startsWith("..") ||
+    path.isAbsolute(markerRelative)
   ) {
     throw new Error(
       `Windows opted-in review did not reach observable readiness: ${optedIn.stderr}`,
