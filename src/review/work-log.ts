@@ -32,9 +32,9 @@ const AUTO_WORK_LOG_NAME =
   /^review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl$/i;
 const ACTIVE_WORK_LOG_NAME =
   /^(review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl)\.active(?:-([a-z0-9-]+))?$/i;
-const RETENTION_LOCK_OWNER = /^(\d+):([0-9a-f]{32}):([0-9a-f]{64})\n$/i;
+const RETENTION_LOCK_OWNER = /^(\d+):([0-9a-f]{32}):([0-9a-f]{64}(?:,[0-9a-f]{64}){0,4})\n$/i;
 let currentProcessIdentityCache:
-  | Readonly<{ identity: string; platform: NodeJS.Platform }>
+  | Readonly<{ identities: readonly string[]; platform: NodeJS.Platform }>
   | undefined;
 const FILE_LEASE_WORKER = `
   const { utimesSync } = require("node:fs");
@@ -122,7 +122,14 @@ function processIsAlive(processId: number): boolean {
   }
 }
 
-function processInstanceIdentity(processId: number, platform: NodeJS.Platform): string | undefined {
+function hashProcessInstanceIdentity(platform: NodeJS.Platform, rawIdentity: string): string {
+  return createHash("sha256").update(`${platform}:${rawIdentity}`).digest("hex");
+}
+
+function processInstanceIdentities(
+  processId: number,
+  platform: NodeJS.Platform,
+): readonly string[] | undefined {
   let rawIdentity: string | undefined;
   try {
     if (platform === "linux") {
@@ -145,8 +152,9 @@ function processInstanceIdentity(processId: number, platform: NodeJS.Platform): 
       if (result.status !== 0) return undefined;
       rawIdentity = result.stdout.trim();
     } else if (platform === "win32") {
+      let startTimeSeconds: number;
       if (processId === process.pid) {
-        rawIdentity = String(Math.floor(performance.timeOrigin / 1_000));
+        startTimeSeconds = Math.floor(performance.timeOrigin / 1_000);
       } else {
         const result = spawnSync(
           "powershell.exe",
@@ -159,24 +167,30 @@ function processInstanceIdentity(processId: number, platform: NodeJS.Platform): 
           { encoding: "utf8", shell: false, windowsHide: true },
         );
         if (result.status !== 0) return undefined;
-        rawIdentity = result.stdout.trim();
+        startTimeSeconds = Number(result.stdout.trim());
       }
+      if (!Number.isSafeInteger(startTimeSeconds) || startTimeSeconds <= 0) return undefined;
+      return [-2, -1, 0, 1, 2].map((offset) =>
+        hashProcessInstanceIdentity(platform, String(startTimeSeconds + offset)),
+      );
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
   if (rawIdentity === undefined || rawIdentity.length === 0) return undefined;
-  return createHash("sha256").update(`${platform}:${rawIdentity}`).digest("hex");
+  return [hashProcessInstanceIdentity(platform, rawIdentity)];
 }
 
-function currentProcessInstanceIdentity(platform: NodeJS.Platform): string | undefined {
+function currentProcessInstanceIdentities(
+  platform: NodeJS.Platform,
+): readonly string[] | undefined {
   if (currentProcessIdentityCache?.platform === platform) {
-    return currentProcessIdentityCache.identity;
+    return currentProcessIdentityCache.identities;
   }
-  const identity = processInstanceIdentity(process.pid, platform);
-  if (identity !== undefined) currentProcessIdentityCache = { identity, platform };
-  return identity;
+  const identities = processInstanceIdentities(process.pid, platform);
+  if (identities !== undefined) currentProcessIdentityCache = { identities, platform };
+  return identities;
 }
 
 function activeLeaseIsFresh(modifiedAtMs: number): boolean {
@@ -260,11 +274,11 @@ function tryCreateRetentionLock(
   platform: NodeJS.Platform,
 ): (() => void) | undefined {
   const ownerToken = crypto.randomUUID().replaceAll("-", "");
-  const instanceIdentity = currentProcessInstanceIdentity(platform);
-  if (instanceIdentity === undefined) {
+  const instanceIdentities = currentProcessInstanceIdentities(platform);
+  if (instanceIdentities === undefined) {
     throw new Error(`Could not determine review work-log retention owner identity: ${process.pid}`);
   }
-  const owner = `${process.pid}:${ownerToken}:${instanceIdentity}\n`;
+  const owner = `${process.pid}:${ownerToken}:${instanceIdentities.join(",")}\n`;
   const ownerPath = `${lockPath}.owner-${process.pid}-${ownerToken}`;
   writeFileSync(ownerPath, owner, { flag: "wx", flush: true, mode: 0o600 });
   let linked = false;
@@ -302,8 +316,14 @@ function reclaimAbandonedRetentionLock(lockPath: string, platform: NodeJS.Platfo
     const processId = Number(match?.[1]);
     if (!Number.isSafeInteger(processId) || processId <= 0) return false;
     if (processIsAlive(processId)) {
-      const currentIdentity = processInstanceIdentity(processId, platform);
-      if (currentIdentity === undefined || currentIdentity === match?.[3]) return false;
+      const currentIdentities = processInstanceIdentities(processId, platform);
+      const ownerIdentities = new Set(match?.[3]?.split(",") ?? []);
+      if (
+        currentIdentities === undefined ||
+        currentIdentities.some((identity) => ownerIdentities.has(identity))
+      ) {
+        return false;
+      }
     }
     if (readFileSync(lockPath, "utf8") !== owner) return false;
     unlinkSync(lockPath);
