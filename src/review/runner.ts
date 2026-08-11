@@ -756,7 +756,14 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   ) {
     throw new Error("Unsupported review network mode");
   }
+  if (
+    request.timeoutMs !== undefined &&
+    (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0)
+  ) {
+    throw new Error("Review timeout must be a positive safe integer");
+  }
   const network = request.network ?? "full";
+  const timeoutMs = request.timeoutMs ?? 900_000;
   const defaultWorkLog = request.workLogPath === undefined;
   let requestedWorkLogPath = request.workLogPath;
   if (requestedWorkLogPath === undefined) {
@@ -795,7 +802,6 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   try {
     request.onWorkLogReady?.(workLog.path);
     const windows = process.platform === "win32";
-    const timeoutMs = request.timeoutMs ?? 900_000;
     recordReviewWorkLog(workLog, "review_started", {
       pioneerVersion: PIONEER_VERSION,
       platform: process.platform,

@@ -286,6 +286,16 @@ describe("review RPC runner", () => {
     await expect(runReview(request)).rejects.toThrow(/network mode/i);
   });
 
+  it("rejects an invalid runtime timeout before opening a work log", async () => {
+    const request = {
+      sourceDir: "/not-reached",
+      prompt: "Review source",
+      timeoutMs: "token=private-value",
+    } as unknown as ReviewRequest;
+
+    await expect(runReview(request)).rejects.toThrow(/timeout/i);
+  });
+
   it("allows source discovery without granting macOS or Windows process tools", () => {
     expect(reviewTools("darwin")).toEqual(["read", "ls"]);
     expect(reviewTools("win32")).toEqual(["read", "ls"]);
