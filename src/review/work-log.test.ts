@@ -1,4 +1,6 @@
-import { closeSync, readdirSync, writeSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { closeSync, readdirSync, readFileSync, writeSync } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -22,6 +24,36 @@ import {
   sanitizeWorkLogDiagnostic,
   summarizePiEvent,
 } from "./work-log.js";
+
+function processIdentityForTest(processId: number, platform: NodeJS.Platform): string {
+  let rawIdentity: string;
+  if (platform === "linux") {
+    const processStat = readFileSync(`/proc/${processId}/stat`, "utf8");
+    const commandEnd = processStat.lastIndexOf(")");
+    const fields = processStat
+      .slice(commandEnd + 2)
+      .trim()
+      .split(/\s+/);
+    rawIdentity = `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}:${fields[19]}`;
+  } else if (platform === "darwin") {
+    rawIdentity = spawnSync("/bin/ps", ["-o", "lstart=", "-p", String(processId)], {
+      encoding: "utf8",
+      shell: false,
+    }).stdout.trim();
+  } else {
+    rawIdentity = spawnSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-Process -Id ${processId} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
+      ],
+      { encoding: "utf8", shell: false, windowsHide: true },
+    ).stdout.trim();
+  }
+  return createHash("sha256").update(`${platform}:${rawIdentity}`).digest("hex");
+}
 
 describe("review work log", () => {
   it("uses a documented per-user log directory on every platform", () => {
@@ -378,10 +410,11 @@ describe("review work log", () => {
     const directory = reviewWorkLogDirectory(environment, platform, home);
     await mkdir(directory, { recursive: true });
     const lockPath = path.join(directory, ".pioneer-retention.lock");
-    await writeFile(lockPath, `${process.pid}:11111111111111111111111111111111\n`, {
-      flag: "wx",
-      mode: 0o600,
-    });
+    await writeFile(
+      lockPath,
+      `${process.pid}:11111111111111111111111111111111:${processIdentityForTest(process.pid, platform)}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
     await utimes(
       lockPath,
       new Date("2026-08-01T00:00:00.000Z"),
@@ -432,10 +465,11 @@ describe("review work log", () => {
     const directory = reviewWorkLogDirectory(environment, platform, home);
     await mkdir(directory, { recursive: true });
     const lockPath = path.join(directory, ".pioneer-retention.lock");
-    await writeFile(lockPath, `${process.pid}:22222222222222222222222222222222\n`, {
-      flag: "wx",
-      mode: 0o600,
-    });
+    await writeFile(
+      lockPath,
+      `${process.pid}:22222222222222222222222222222222:${"0".repeat(64)}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
     await utimes(
       lockPath,
       new Date("2026-08-01T00:00:00.000Z"),

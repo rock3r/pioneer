@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   closeSync,
@@ -31,7 +32,10 @@ const AUTO_WORK_LOG_NAME =
   /^review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl$/i;
 const ACTIVE_WORK_LOG_NAME =
   /^(review-\d{8}T\d{9}Z-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jsonl)\.active(?:-([a-z0-9-]+))?$/i;
-const RETENTION_LOCK_OWNER = /^(\d+):([0-9a-f]{32})\n$/i;
+const RETENTION_LOCK_OWNER = /^(\d+):([0-9a-f]{32}):([0-9a-f]{64})\n$/i;
+let currentProcessIdentityCache:
+  | Readonly<{ identity: string; platform: NodeJS.Platform }>
+  | undefined;
 const FILE_LEASE_WORKER = `
   const { utimesSync } = require("node:fs");
   const { workerData } = require("node:worker_threads");
@@ -118,6 +122,59 @@ function processIsAlive(processId: number): boolean {
   }
 }
 
+function processInstanceIdentity(processId: number, platform: NodeJS.Platform): string | undefined {
+  let rawIdentity: string | undefined;
+  try {
+    if (platform === "linux") {
+      const processStat = readFileSync(`/proc/${processId}/stat`, "utf8");
+      const commandEnd = processStat.lastIndexOf(")");
+      if (commandEnd < 0) return undefined;
+      const fields = processStat
+        .slice(commandEnd + 2)
+        .trim()
+        .split(/\s+/);
+      const startTimeTicks = fields[19];
+      if (startTimeTicks === undefined || !/^\d+$/.test(startTimeTicks)) return undefined;
+      const bootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      rawIdentity = `${bootId}:${startTimeTicks}`;
+    } else if (platform === "darwin") {
+      const result = spawnSync("/bin/ps", ["-o", "lstart=", "-p", String(processId)], {
+        encoding: "utf8",
+        shell: false,
+      });
+      if (result.status !== 0) return undefined;
+      rawIdentity = result.stdout.trim();
+    } else if (platform === "win32") {
+      const result = spawnSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-Process -Id ${processId} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`,
+        ],
+        { encoding: "utf8", shell: false, windowsHide: true },
+      );
+      if (result.status !== 0) return undefined;
+      rawIdentity = result.stdout.trim();
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (rawIdentity === undefined || rawIdentity.length === 0) return undefined;
+  return createHash("sha256").update(`${platform}:${rawIdentity}`).digest("hex");
+}
+
+function currentProcessInstanceIdentity(platform: NodeJS.Platform): string | undefined {
+  if (currentProcessIdentityCache?.platform === platform) {
+    return currentProcessIdentityCache.identity;
+  }
+  const identity = processInstanceIdentity(process.pid, platform);
+  if (identity !== undefined) currentProcessIdentityCache = { identity, platform };
+  return identity;
+}
+
 function activeLeaseIsFresh(modifiedAtMs: number): boolean {
   const leaseAgeMs = Date.now() - modifiedAtMs;
   return leaseAgeMs >= -ACTIVE_WORK_LOG_LEASE_MS && leaseAgeMs <= ACTIVE_WORK_LOG_LEASE_MS;
@@ -184,9 +241,9 @@ function acquireDefaultWorkLogRetentionLock(target: string, platform: NodeJS.Pla
   const deadline = Date.now() + RETENTION_LOCK_STALE_MS;
   const waitControl = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
   while (true) {
-    const release = tryCreateRetentionLock(lockPath);
+    const release = tryCreateRetentionLock(lockPath, platform);
     if (release !== undefined) return release;
-    if (reclaimAbandonedRetentionLock(lockPath)) continue;
+    if (reclaimAbandonedRetentionLock(lockPath, platform)) continue;
     if (Date.now() >= deadline) {
       throw new Error(`Timed out waiting for review work-log retention lock: ${lockPath}`);
     }
@@ -194,9 +251,16 @@ function acquireDefaultWorkLogRetentionLock(target: string, platform: NodeJS.Pla
   }
 }
 
-function tryCreateRetentionLock(lockPath: string): (() => void) | undefined {
+function tryCreateRetentionLock(
+  lockPath: string,
+  platform: NodeJS.Platform,
+): (() => void) | undefined {
   const ownerToken = crypto.randomUUID().replaceAll("-", "");
-  const owner = `${process.pid}:${ownerToken}\n`;
+  const instanceIdentity = currentProcessInstanceIdentity(platform);
+  if (instanceIdentity === undefined) {
+    throw new Error(`Could not determine review work-log retention owner identity: ${process.pid}`);
+  }
+  const owner = `${process.pid}:${ownerToken}:${instanceIdentity}\n`;
   const ownerPath = `${lockPath}.owner-${process.pid}-${ownerToken}`;
   writeFileSync(ownerPath, owner, { flag: "wx", flush: true, mode: 0o600 });
   let linked = false;
@@ -223,28 +287,19 @@ function tryCreateRetentionLock(lockPath: string): (() => void) | undefined {
     throw failure;
   }
   if (!linked) return undefined;
-  return retentionLockReleaseWithLease(lockPath, owner);
+  return retentionLockRelease(lockPath, owner);
 }
 
-function reclaimAbandonedRetentionLock(lockPath: string): boolean {
+function reclaimAbandonedRetentionLock(lockPath: string, platform: NodeJS.Platform): boolean {
   try {
-    const initialStats = lstatSync(lockPath);
-    if (Date.now() - initialStats.mtimeMs < RETENTION_LOCK_STALE_MS) return false;
+    if (Date.now() - lstatSync(lockPath).mtimeMs < RETENTION_LOCK_STALE_MS) return false;
     const owner = readFileSync(lockPath, "utf8");
     const match = RETENTION_LOCK_OWNER.exec(owner);
     const processId = Number(match?.[1]);
     if (!Number.isSafeInteger(processId) || processId <= 0) return false;
     if (processIsAlive(processId)) {
-      const waitControl = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
-      Atomics.wait(waitControl, 0, 0, ACTIVE_WORK_LOG_REVALIDATION_MS);
-      const refreshedStats = lstatSync(lockPath);
-      if (readFileSync(lockPath, "utf8") !== owner) return false;
-      if (
-        refreshedStats.mtimeMs !== initialStats.mtimeMs &&
-        Date.now() - refreshedStats.mtimeMs < RETENTION_LOCK_STALE_MS
-      ) {
-        return false;
-      }
+      const currentIdentity = processInstanceIdentity(processId, platform);
+      if (currentIdentity === undefined || currentIdentity === match?.[3]) return false;
     }
     if (readFileSync(lockPath, "utf8") !== owner) return false;
     unlinkSync(lockPath);
@@ -253,49 +308,6 @@ function reclaimAbandonedRetentionLock(lockPath: string): boolean {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     throw error;
   }
-}
-
-function retentionLockReleaseWithLease(lockPath: string, owner: string): () => void {
-  const control = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
-  let leaseFailure: unknown;
-  let stopped = false;
-  let worker: Worker;
-  try {
-    worker = new Worker(FILE_LEASE_WORKER, {
-      eval: true,
-      workerData: {
-        control: control.buffer,
-        intervalMs: WORK_LOG_SYNC_INTERVAL_MS,
-        markerPath: lockPath,
-      },
-    });
-  } catch (error) {
-    retentionLockRelease(lockPath, owner)();
-    throw error;
-  }
-  worker.on("error", (error) => {
-    if (!stopped) leaseFailure ??= error;
-  });
-  worker.on("exit", (code) => {
-    if (!stopped) {
-      leaseFailure ??= new Error(`Review work-log retention lease stopped with code ${code}`);
-    }
-  });
-  worker.unref();
-  const release = retentionLockRelease(lockPath, owner);
-  return () => {
-    stopped = true;
-    Atomics.store(control, 0, 1);
-    Atomics.notify(control, 0);
-    void worker.terminate().catch(() => {});
-    let failure = leaseFailure;
-    try {
-      release();
-    } catch (error) {
-      failure ??= error;
-    }
-    if (failure !== undefined) throw failure;
-  };
 }
 
 function retentionLockRelease(lockPath: string, owner: string): () => void {
