@@ -56,6 +56,8 @@ export interface OpenReviewWorkLogOptions {
   readonly runId?: string;
   readonly now?: () => Date;
   readonly maxBytes?: number;
+  readonly retainDefaultLogs?: boolean;
+  readonly platform?: NodeJS.Platform;
   readonly fileOperations?: {
     readonly write?: (descriptor: number, buffer: Buffer, offset: number, length: number) => number;
     readonly sync: (descriptor: number) => void;
@@ -122,13 +124,26 @@ async function prepareDefaultReviewWorkLogDirectory(
     throw new Error(`Review work log path is not a directory: ${directory}`);
   }
   if (platform !== "win32") await chmod(directory, 0o700);
+}
+
+async function pruneDefaultReviewWorkLogs(
+  target: string,
+  platform: NodeJS.Platform,
+): Promise<void> {
+  const pathApi = platformPath(platform);
+  const directory = pathApi.dirname(target);
+  const targetName = pathApi.basename(target);
+  if (!AUTO_WORK_LOG_NAME.test(targetName)) {
+    throw new Error(`Review work log target is not an auto-created log: ${target}`);
+  }
   const entries = await readdir(directory, { withFileTypes: true });
   const existingLogs = entries
     .filter((entry) => entry.isFile() && AUTO_WORK_LOG_NAME.test(entry.name))
     .map((entry) => entry.name)
     .sort();
-  const removeCount = Math.max(0, existingLogs.length - (RETAINED_DEFAULT_WORK_LOGS - 1));
-  for (const name of existingLogs.slice(0, removeCount)) {
+  const removeCount = Math.max(0, existingLogs.length - RETAINED_DEFAULT_WORK_LOGS);
+  const removableLogs = existingLogs.filter((name) => name !== targetName);
+  for (const name of removableLogs.slice(0, removeCount)) {
     try {
       await unlink(pathApi.join(directory, name));
     } catch (error) {
@@ -303,6 +318,24 @@ export async function openReviewWorkLog(
     constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
     0o600,
   );
+  const closeDescriptor = options.fileOperations?.close ?? closeSync;
+  if (options.retainDefaultLogs === true) {
+    try {
+      await pruneDefaultReviewWorkLogs(target, options.platform ?? process.platform);
+    } catch (error) {
+      try {
+        closeDescriptor(descriptor);
+      } catch {
+        // Preserve the retention failure that prevented the log from opening.
+      }
+      try {
+        await unlink(target);
+      } catch {
+        // Best-effort rollback; preserve the retention failure.
+      }
+      throw error;
+    }
+  }
   const runId = options.runId ?? crypto.randomUUID();
   const now = options.now ?? (() => new Date());
   const maxBytes = options.maxBytes ?? MAX_WORK_LOG_BYTES;
@@ -311,7 +344,6 @@ export async function openReviewWorkLog(
     ((fileDescriptor: number, buffer: Buffer, offset: number, length: number) =>
       writeSync(fileDescriptor, buffer, offset, length));
   const syncDescriptor = options.fileOperations?.sync ?? fsyncSync;
-  const closeDescriptor = options.fileOperations?.close ?? closeSync;
   let sequence = 0;
   let bytesWritten = 0;
   let firstTimestamp: number | undefined;

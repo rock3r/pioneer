@@ -181,7 +181,7 @@ describe("review work log", () => {
       new Date("2026-08-11T10:00:00.000Z"),
       "00000000-0000-0000-0000-000000000101",
     );
-    const log = await openReviewWorkLog(target);
+    const log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
     log.record("review_started");
     log.close();
 
@@ -192,6 +192,55 @@ describe("review work log", () => {
     if (process.platform !== "win32") {
       expect((await stat(directory)).mode & 0o777).toBe(0o700);
     }
+  });
+
+  it("retains at most 100 default logs across sequentially prepared concurrent reviews", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-concurrent-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory = reviewWorkLogDirectory(environment, platform, home);
+    await mkdir(directory, { recursive: true });
+    await Promise.all(
+      Array.from({ length: 100 }, (_, index) =>
+        writeFile(
+          path.join(
+            directory,
+            `review-20260801T000000000Z-00000000-0000-0000-0000-${String(index).padStart(12, "0")}.jsonl`,
+          ),
+          "old\n",
+        ),
+      ),
+    );
+    const firstTarget = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.000Z"),
+      "00000000-0000-0000-0000-000000000101",
+    );
+    const secondTarget = await prepareDefaultReviewWorkLogPath(
+      environment,
+      platform,
+      home,
+      new Date("2026-08-11T10:00:00.001Z"),
+      "00000000-0000-0000-0000-000000000102",
+    );
+
+    const [first, second] = await Promise.all([
+      openReviewWorkLog(firstTarget, { retainDefaultLogs: true, platform }),
+      openReviewWorkLog(secondTarget, { retainDefaultLogs: true, platform }),
+    ]);
+    first.close();
+    second.close();
+
+    expect((await readdir(directory)).filter((entry) => /^review-\d{8}T/.test(entry))).toHaveLength(
+      100,
+    );
   });
 
   it("rejects an unsafe generated log identifier", async () => {

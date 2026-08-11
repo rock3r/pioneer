@@ -748,6 +748,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   if (!request.prompt.trim()) throw new Error("Review prompt must not be empty");
   if (request.thinking !== undefined && !isThinkingLevel(request.thinking))
     throw new Error(`Unsupported thinking level: ${String(request.thinking)}`);
+  const defaultWorkLog = request.workLogPath === undefined;
   let requestedWorkLogPath = request.workLogPath;
   if (requestedWorkLogPath === undefined) {
     try {
@@ -772,7 +773,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
   let workLog: ReviewWorkLog;
   try {
-    workLog = await openReviewWorkLog(paths.workLogPath);
+    workLog = await openReviewWorkLog(paths.workLogPath, { retainDefaultLogs: defaultWorkLog });
   } catch (error) {
     throw new Error(
       diagnosticMessage(
