@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildReviewPrompt,
   createReviewScratchDirectory,
+  finalizeReviewWorkLog,
   type ReviewRequest,
   readinessMetadataForWorkLog,
   requestedModelForWorkLog,
@@ -187,6 +188,47 @@ process.stdin.once("data", () => {
 }
 
 describe("review RPC runner", () => {
+  it("preserves a successful report when closing its work log fails", () => {
+    const workLog: ReviewWorkLog = {
+      path: "/tmp/review.jsonl",
+      runId: "run-1",
+      record() {},
+      close() {
+        throw new Error("sync failed");
+      },
+    };
+    const result = {
+      report: "No findings.",
+      sandboxed: true,
+      workLogPath: workLog.path,
+    };
+
+    expect(finalizeReviewWorkLog(workLog, { result })).toEqual({
+      ...result,
+      workLogWriteError:
+        "[REVIEW_WORK_LOG_WRITE_FAILED] Pioneer could not continue the real-time review work log at /tmp/review.jsonl: sync failed",
+    });
+  });
+
+  it("preserves the primary diagnostic when closing a failed review log also fails", () => {
+    const workLog: ReviewWorkLog = {
+      path: "/tmp/review.jsonl",
+      runId: "run-1",
+      record() {},
+      close() {
+        throw new Error("sync failed");
+      },
+    };
+
+    expect(() =>
+      finalizeReviewWorkLog(workLog, {
+        failure: new Error("[REVIEW_TIMEOUT] Pi timed out"),
+      }),
+    ).toThrow(
+      "[REVIEW_TIMEOUT] Pi timed out\n[REVIEW_WORK_LOG_WRITE_FAILED] Pioneer could not continue the real-time review work log at /tmp/review.jsonl: sync failed",
+    );
+  });
+
   it("removes a newly created scratch directory when post-create work fails", async () => {
     let scratch: string | undefined;
 

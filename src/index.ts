@@ -59,7 +59,6 @@ export { type ReviewRequest, type ReviewResult, runReview } from "./review/runne
 export {
   type OpenReviewWorkLogOptions,
   openReviewWorkLog,
-  prepareDefaultReviewWorkLogPath,
   type ReviewWorkLog,
   reviewWorkLogDirectory,
   sanitizeWorkLogDiagnostic,

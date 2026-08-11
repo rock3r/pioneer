@@ -19,6 +19,7 @@ import path from "node:path";
 import { Worker } from "node:worker_threads";
 
 const MAX_WORK_LOG_BYTES = 16 * 1024 * 1024;
+const MIN_WORK_LOG_BYTES = 1_024;
 const WORK_LOG_TRUNCATION_RESERVE_BYTES = 512;
 const RETAINED_DEFAULT_WORK_LOGS = 100;
 const WORK_LOG_SYNC_INTERVAL_MS = 1_000;
@@ -147,10 +148,35 @@ export function buildWindowsProcessStartLookup(
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      "[DateTimeOffset]::new((Get-Process -Id ([int]$env:PIONEER_RETENTION_OWNER_PID) -ErrorAction Stop).StartTime).ToUnixTimeSeconds()",
+      "[DateTimeOffset]::new((Get-Process -Id ([int]$env:PIONEER_RETENTION_OWNER_PID) -ErrorAction Stop).StartTime).ToUnixTimeMilliseconds()",
     ],
     environment: { ...environment, PIONEER_RETENTION_OWNER_PID: String(processId) },
   };
+}
+
+export function windowsProcessInstanceIdentities(
+  processId: number,
+  environment: NodeJS.ProcessEnv = process.env,
+  runLookup: (
+    lookup: ReturnType<typeof buildWindowsProcessStartLookup>,
+  ) => Readonly<{ status: number | null; stdout: string }> = (lookup) => {
+    const result = spawnSync(lookup.command, [...lookup.arguments], {
+      encoding: "utf8",
+      env: lookup.environment,
+      shell: false,
+      windowsHide: true,
+    });
+    return { status: result.status, stdout: result.stdout };
+  },
+): readonly string[] | undefined {
+  const lookup = buildWindowsProcessStartLookup(processId, environment);
+  const result = runLookup(lookup);
+  if (result.status !== 0) return undefined;
+  const startTimeMilliseconds = Number(result.stdout.trim());
+  if (!Number.isSafeInteger(startTimeMilliseconds) || startTimeMilliseconds <= 0) return undefined;
+  return [-2, -1, 0, 1, 2].map((offset) =>
+    hashProcessInstanceIdentity("win32", String(startTimeMilliseconds + offset)),
+  );
 }
 
 function processInstanceIdentities(
@@ -180,24 +206,7 @@ function processInstanceIdentities(
       if (result.status !== 0) return undefined;
       rawIdentity = result.stdout.trim();
     } else if (platform === "win32") {
-      let startTimeSeconds: number;
-      if (processId === process.pid) {
-        startTimeSeconds = Math.floor(performance.timeOrigin / 1_000);
-      } else {
-        const lookup = buildWindowsProcessStartLookup(processId);
-        const result = spawnSync(lookup.command, [...lookup.arguments], {
-          encoding: "utf8",
-          env: lookup.environment,
-          shell: false,
-          windowsHide: true,
-        });
-        if (result.status !== 0) return undefined;
-        startTimeSeconds = Number(result.stdout.trim());
-      }
-      if (!Number.isSafeInteger(startTimeSeconds) || startTimeSeconds <= 0) return undefined;
-      return [-2, -1, 0, 1, 2].map((offset) =>
-        hashProcessInstanceIdentity(platform, String(startTimeSeconds + offset)),
-      );
+      return windowsProcessInstanceIdentities(processId);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
@@ -559,6 +568,14 @@ export function sanitizeWorkLogDiagnostic(value: string, secrets: readonly strin
     if (normalized) sanitized = sanitized.replaceAll(normalized, "[REDACTED]");
   }
   return sanitized
+    .replaceAll(
+      /\bauthorization\s*[:=]\s*(?:bearer\s+)?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/gi,
+      "Authorization=[REDACTED]",
+    )
+    .replaceAll(
+      /\b(api[-_ ]?key|token|password|secret)\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/gi,
+      (_match, label: string) => `${label}=[REDACTED]`,
+    )
     .replaceAll(/\bauthorization\s*[:=]\s*(?:bearer\s+)?[^\s,;]+/gi, "Authorization=[REDACTED]")
     .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     .replaceAll(
@@ -693,6 +710,18 @@ export async function openReviewWorkLog(
   options: OpenReviewWorkLogOptions = {},
 ): Promise<ReviewWorkLog> {
   const platform = options.platform ?? process.platform;
+  const maxBytes = options.maxBytes ?? MAX_WORK_LOG_BYTES;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < MIN_WORK_LOG_BYTES) {
+    throw new Error(
+      `Review work log byte limit must be a safe integer of at least ${MIN_WORK_LOG_BYTES}`,
+    );
+  }
+  const runId = options.runId ?? crypto.randomUUID();
+  if (!/^[A-Za-z0-9._-]{1,128}$/.test(runId)) {
+    throw new Error(
+      "Review work log run identifier must use 1 to 128 ASCII letters, digits, '.', '_', or '-'",
+    );
+  }
   const ownerToken =
     options.retainDefaultLogs === true ? crypto.randomUUID().replaceAll("-", "") : undefined;
   const activeOwnerIdentities =
@@ -800,9 +829,7 @@ export async function openReviewWorkLog(
       throw error;
     }
   }
-  const runId = options.runId ?? crypto.randomUUID();
   const now = options.now ?? (() => new Date());
-  const maxBytes = options.maxBytes ?? MAX_WORK_LOG_BYTES;
   const writeDescriptor =
     options.fileOperations?.write ??
     ((fileDescriptor: number, buffer: Buffer, offset: number, length: number) =>
@@ -817,6 +844,8 @@ export async function openReviewWorkLog(
   let dirty = false;
   let closed = false;
   let truncated = false;
+  const truncationError = (): Error =>
+    new Error(`Review work log reached its ${maxBytes}-byte limit: ${target}`);
 
   const append = (record: Readonly<Record<string, unknown>>, limit = maxBytes): boolean => {
     const line = Buffer.from(`${JSON.stringify(record)}\n`);
@@ -890,7 +919,7 @@ export async function openReviewWorkLog(
       if (closed) throw new Error(`Review work log is closed: ${target}`);
       if (markerLeaseFailure !== undefined) throw markerLeaseFailure;
       if (syncFailure !== undefined) throw syncFailure;
-      if (truncated) return;
+      if (truncated) throw truncationError();
       const timestamp = now();
       firstTimestamp ??= timestamp.getTime();
       sequence += 1;
@@ -915,12 +944,17 @@ export async function openReviewWorkLog(
         return;
       }
       truncated = true;
-      append({
-        ...base,
-        type: "work_log_truncated",
-        maxBytes,
-      });
+      if (
+        !append({
+          ...base,
+          type: "work_log_truncated",
+          maxBytes,
+        })
+      ) {
+        throw new Error(`Review work log could not persist its truncation marker: ${target}`);
+      }
       syncOrSchedule();
+      throw truncationError();
     },
     close() {
       if (closed) return;

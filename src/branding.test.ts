@@ -13,7 +13,16 @@ describe("Pioneer distribution identity", () => {
 
     expect(packageManifest.name).toBe("@rock3r/pioneer");
     expect(packageManifest.bin).toEqual({ pioneer: "dist/review-cli.js" });
-    expect(packageManifest.files).toContain("plugins/pioneer/assets/pioneer-banner.jpg");
+    expect(packageManifest.main).toBe("./dist/index.js");
+    expect(packageManifest.types).toBe("./dist/index.d.ts");
+    expect(packageManifest.exports).toEqual({
+      ".": {
+        types: "./dist/index.d.ts",
+        import: "./dist/index.js",
+      },
+      "./package.json": "./package.json",
+    });
+    expect(packageManifest.files).toContain("plugins/pioneer/");
     expect(codexManifest.name).toBe("pioneer");
     expect(codexManifest.interface.displayName).toBe("Pioneer");
     expect(codexManifest.interface.composerIcon).toBe("./assets/pioneer-mascot.png");
@@ -34,12 +43,13 @@ describe("Pioneer distribution identity", () => {
   it("publishes an Agent Plugins 1.0 portable manifest", async () => {
     const packageManifest = await readJson("package.json");
     const portableManifest = await readJson("plugins/pioneer/plugin.json");
+    const pluginReadme = await readFile("plugins/pioneer/README.md", "utf8");
 
     expect(portableManifest).toEqual({
       $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
       name: "pioneer",
       version: packageManifest.version,
-      description: "Delegate sandboxed code reviews to a locally installed Pi coding agent.",
+      description: "Delegate Pi code reviews with native sandboxing on macOS and Linux.",
       author: {
         name: "Pioneer contributors",
       },
@@ -50,6 +60,9 @@ describe("Pioneer distribution identity", () => {
     });
 
     await access("plugins/pioneer/skills/pioneer/SKILL.md");
+    expect(pluginReadme).toContain(
+      "https://github.com/rock3r/pioneer/blob/main/user-guide/plugins.md",
+    );
   });
 
   it("requires agent integrations to preserve review terminal evidence", async () => {
@@ -67,6 +80,7 @@ describe("Pioneer distribution identity", () => {
     expect(skill).toContain("session ID");
     expect(skill).toContain("does not use `fs.watch`");
     expect(skill).toContain("not a semantic verdict");
+    expect(skill).toContain("Windows custom targets inherit their parent directory ACL");
   });
 
   it("routes CI and release sandbox setup through the unified CLI", async () => {

@@ -129,6 +129,12 @@ The default is 900,000 ms (15 minutes). Retry with a larger positive integer onl
 
 Timeout cleanup kills Pi and removes the private run state.
 
+## Review appears to hang
+
+Preserve the `[PIONEER_WORK_LOG] ABSOLUTE_PATH` line that Pioneer prints on stderr, then inspect the final records in that JSONL file. Fresh five-second `heartbeat` records mean the controller is alive; advancing `rpcBytes`, `stderrBytes`, or `lastPiEvent` means Pi is still active. Missing heartbeats indicate a stalled controller or event loop, while fresh heartbeats with a growing `idleMs` indicate a live controller waiting on silent Pi activity.
+
+`[REVIEW_WORK_LOG_CREATE_FAILED]` means Pioneer could not establish the log before starting long-running work. `[REVIEW_WORK_LOG_WRITE_FAILED]` means persistence failed after creation, including when the 16 MiB cap was reached. Both are terminal because Pioneer will not continue an unobservable review. If the report had already been verified when close-time syncing or retention failed, Pioneer still prints that report to stdout before reporting the work-log failure and exiting nonzero.
+
 ## Review completed without a report
 
 Pioneer exits nonzero with `[REVIEW_REPORT_MISSING]` if Pi reaches `agent_settled` without a non-empty assistant report. It exits nonzero with `[REVIEW_RPC_INCOMPLETE]` if Pi ends before settling, with `[REVIEW_PROCESS_FAILED]` if Pi settles with a report but exits nonzero or by signal, and with `[REVIEW_PROCESS_CONTAINMENT_FAILED]` if an inherited RPC pipe prevents Pioneer from proving the process tree stopped. A successful no-findings review still prints a non-empty report; exit zero alone is transport success, not a semantic verdict.

@@ -76,6 +76,12 @@ try {
   }
   await access(path.join(packageRoot, "plugins", "pioneer", "assets", "pioneer-mascot.png"));
   await access(path.join(packageRoot, "plugins", "pioneer", "assets", "pioneer-banner.jpg"));
+  await access(path.join(packageRoot, "plugins", "pioneer", "plugin.json"));
+  await access(path.join(packageRoot, "plugins", "pioneer", ".codex-plugin", "plugin.json"));
+  await access(path.join(packageRoot, "plugins", "pioneer", ".claude-plugin", "plugin.json"));
+  await access(path.join(packageRoot, "plugins", "pioneer", "skills", "pioneer", "SKILL.md"));
+  await access(path.join(packageRoot, "plugins", "pioneer", "README.md"));
+  await access(path.join(packageRoot, "plugins", "pioneer", "LICENSE"));
   await access(path.join(packageRoot, "pi-compatibility.json"));
   const legacyEvalCliPresent = await access(path.join(packageRoot, "dist", "eval-run-cli.js")).then(
     () => true,
@@ -83,6 +89,34 @@ try {
   );
   if (legacyEvalCliPresent) {
     throw new Error(`packed artifact retained the removed pioneer-eval entry point`);
+  }
+
+  const consumerRoot = path.join(root, "consumer");
+  await mkdir(consumerRoot, { recursive: true });
+  const consumerInstall = runNpm([
+    "install",
+    "--ignore-scripts",
+    "--omit=dev",
+    "--no-audit",
+    "--no-fund",
+    "--prefix",
+    consumerRoot,
+    tarball,
+  ]);
+  if (consumerInstall.status !== 0) {
+    throw new Error(`consumer package install failed: ${consumerInstall.stderr}`);
+  }
+  const rootImport = run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      "const loaded = await import('@rock3r/pioneer'); if (typeof loaded.runReview !== 'function') throw new Error('runReview export missing');",
+    ],
+    { cwd: consumerRoot },
+  );
+  if (rootImport.status !== 0) {
+    throw new Error(`package-root API import failed: ${rootImport.stderr || rootImport.stdout}`);
   }
 
   const shimSuffix = process.platform === "win32" ? ".cmd" : "";
