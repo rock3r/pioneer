@@ -1,8 +1,12 @@
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildReviewSandboxConfig, validateReviewPaths } from "./isolation.js";
+import {
+  buildReviewSandboxConfig,
+  validateProspectiveReviewWorkLogPath,
+  validateReviewPaths,
+} from "./isolation.js";
 
 describe("review path grants", () => {
   it("canonicalizes explicit read and write grants", async () => {
@@ -76,6 +80,18 @@ describe("review path grants", () => {
     });
 
     expect(result.workLogPath).toBe(path.join(await realpath(logs), "review.jsonl"));
+  });
+
+  it("rejects a prospective default work log before an actor-visible parent exists", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const target = path.join(source, "state", "pioneer", "logs", "reviews", "review.jsonl");
+    await mkdir(source);
+
+    await expect(
+      validateProspectiveReviewWorkLogPath({ sourceDir: source, workLogPath: target }),
+    ).rejects.toThrow(/actor-visible/i);
+    await expect(lstat(path.join(source, "state"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects report targets that are relative or actor-visible", async () => {

@@ -25,13 +25,14 @@ import { isThinkingLevel, type ThinkingLevel } from "../thinking-level.js";
 import {
   buildReviewSandboxConfig,
   type ReviewNetworkMode,
+  validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
 } from "./isolation.js";
 import { writeReviewReport } from "./report-output.js";
 import { completeReviewRpc } from "./rpc-outcome.js";
 import {
   openReviewWorkLog,
-  prepareDefaultReviewWorkLogPath,
+  prepareValidatedDefaultReviewWorkLogPath,
   type ReviewWorkLog,
   sanitizeWorkLogDiagnostic,
   summarizePiEvent,
@@ -473,7 +474,10 @@ export async function runReviewRpc(
         }
         if (typeof event !== "object" || event === null) continue;
         const record = event as Record<string, unknown>;
-        lastPiEvent = typeof record.type === "string" ? record.type : "unrecognized";
+        lastPiEvent =
+          typeof record.type === "string"
+            ? sanitizeWorkLogDiagnostic(record.type, [prompt])
+            : "unrecognized";
         lastPiEventAt = Date.now();
         recordWorkLog("pi_event", summarizePiEvent(record, [prompt]));
         if (workLogFailure !== undefined) return;
@@ -650,7 +654,9 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   let requestedWorkLogPath = request.workLogPath;
   if (requestedWorkLogPath === undefined) {
     try {
-      requestedWorkLogPath = await prepareDefaultReviewWorkLogPath();
+      requestedWorkLogPath = await prepareValidatedDefaultReviewWorkLogPath(async (candidate) => {
+        await validateProspectiveReviewWorkLogPath({ ...request, workLogPath: candidate });
+      });
     } catch (error) {
       throw new Error(
         diagnosticMessage(

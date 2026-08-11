@@ -1,10 +1,11 @@
-import { mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   openReviewWorkLog,
   prepareDefaultReviewWorkLogPath,
+  prepareValidatedDefaultReviewWorkLogPath,
   reviewWorkLogDirectory,
   sanitizeWorkLogDiagnostic,
   summarizePiEvent,
@@ -95,7 +96,16 @@ describe("review work log", () => {
       tmpdir(),
       `pioneer-work-log-state-${process.pid}-${crypto.randomUUID()}`,
     );
-    const directory = path.join(stateRoot, "pioneer", "logs", "reviews");
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory =
+      platform === "darwin"
+        ? path.join(home, "Library", "Logs", "Pioneer", "reviews")
+        : platform === "win32"
+          ? path.join(stateRoot, "Pioneer", "Logs", "reviews")
+          : path.join(stateRoot, "pioneer", "logs", "reviews");
     await mkdir(directory, { recursive: true });
     await Promise.all(
       Array.from({ length: 101 }, (_, index) =>
@@ -112,9 +122,9 @@ describe("review work log", () => {
     await writeFile(path.join(directory, "review-custom.jsonl"), "custom\n");
 
     const target = await prepareDefaultReviewWorkLogPath(
-      { XDG_STATE_HOME: stateRoot },
-      "linux",
-      "/home/operator",
+      environment,
+      platform,
+      home,
       new Date("2026-08-11T10:00:00.000Z"),
       "00000000-0000-0000-0000-000000000101",
     );
@@ -141,6 +151,35 @@ describe("review work log", () => {
         "../escape",
       ),
     ).rejects.toThrow(/identifier/i);
+  });
+
+  it("validates a generated target before creating or pruning its directory", async () => {
+    const stateRoot = path.join(
+      tmpdir(),
+      `pioneer-work-log-state-${process.pid}-${crypto.randomUUID()}`,
+    );
+    const platform = process.platform;
+    const environment =
+      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+    const home = stateRoot;
+    const directory =
+      platform === "darwin"
+        ? path.join(home, "Library", "Logs", "Pioneer", "reviews")
+        : platform === "win32"
+          ? path.join(stateRoot, "Pioneer", "Logs", "reviews")
+          : path.join(stateRoot, "pioneer", "logs", "reviews");
+
+    await expect(
+      prepareValidatedDefaultReviewWorkLogPath(
+        async () => {
+          throw new Error("actor-visible target");
+        },
+        environment,
+        platform,
+        home,
+      ),
+    ).rejects.toThrow(/actor-visible/i);
+    await expect(lstat(directory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects a symbolic-link default directory before pruning it", async () => {
@@ -180,14 +219,14 @@ describe("review work log", () => {
     expect(
       summarizePiEvent({
         type: "tool_execution_start",
-        toolCallId: "call-1",
-        toolName: "read",
+        toolCallId: `call-${"x".repeat(600)}`,
+        toolName: "read token=secret-value",
         args: { path: "/secret/repository/file.ts" },
       }),
     ).toEqual({
       eventType: "tool_execution_start",
-      toolCallId: "call-1",
-      toolName: "read",
+      toolCallId: `call-${"x".repeat(495)}`,
+      toolName: "read token=[REDACTED]",
     });
     expect(
       summarizePiEvent({

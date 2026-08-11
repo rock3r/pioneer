@@ -96,6 +96,49 @@ async function canonicalControllerOutputPath(candidate: string, kind: string): P
   throw new Error(`Review ${kind} target already exists: ${reportPath}`);
 }
 
+async function canonicalProspectiveControllerOutputPath(
+  candidate: string,
+  kind: string,
+): Promise<string> {
+  if (!path.isAbsolute(candidate))
+    throw new Error(`Review ${kind} path is not absolute: ${candidate}`);
+  const absolute = path.normalize(candidate);
+  let existingAncestor = path.dirname(absolute);
+  let ancestorStats: Awaited<ReturnType<typeof lstat>>;
+  for (;;) {
+    try {
+      ancestorStats = await lstat(existingAncestor);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) throw error;
+      existingAncestor = parent;
+    }
+  }
+  const canonicalAncestor = await realpath(existingAncestor);
+  if (ancestorStats.isSymbolicLink()) ancestorStats = await lstat(canonicalAncestor);
+  if (!ancestorStats.isDirectory()) {
+    throw new Error(`Review ${kind} ancestor is not a directory: ${canonicalAncestor}`);
+  }
+  return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
+}
+
+export async function validateProspectiveReviewWorkLogPath(
+  spec: ReviewPathSpec & { readonly workLogPath: string },
+): Promise<string> {
+  const sourceDir = await canonicalGrant(spec.sourceDir);
+  const allowReadPaths = await canonicalList(spec.allowReadPaths ?? []);
+  const allowWritePaths = await canonicalList(spec.allowWritePaths ?? []);
+  const workLogPath = await canonicalProspectiveControllerOutputPath(spec.workLogPath, "work log");
+  if (
+    [sourceDir, ...allowReadPaths, ...allowWritePaths].some((grant) => contains(grant, workLogPath))
+  ) {
+    throw new Error(`Review work log target is actor-visible: ${workLogPath}`);
+  }
+  return workLogPath;
+}
+
 export async function validateReviewPaths(spec: ReviewPathSpec): Promise<ValidatedReviewPaths> {
   const sourceDir = await canonicalGrant(spec.sourceDir);
   const allowReadPaths = await canonicalList(spec.allowReadPaths ?? []);

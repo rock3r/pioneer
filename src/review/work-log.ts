@@ -23,12 +23,18 @@ export interface OpenReviewWorkLogOptions {
   readonly maxBytes?: number;
 }
 
+export type ValidateReviewWorkLogTarget = (target: string) => Promise<void>;
+
+function platformPath(platform: NodeJS.Platform): typeof path.posix | typeof path.win32 {
+  return platform === "win32" ? path.win32 : path.posix;
+}
+
 export function reviewWorkLogDirectory(
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
   home = os.homedir(),
 ): string {
-  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  const pathApi = platformPath(platform);
   if (platform === "darwin") return pathApi.join(home, "Library", "Logs", "Pioneer", "reviews");
   if (platform === "win32") {
     const localAppData = environment.LOCALAPPDATA;
@@ -46,18 +52,27 @@ export function reviewWorkLogDirectory(
   return pathApi.join(root, "pioneer", "logs", "reviews");
 }
 
-export async function prepareDefaultReviewWorkLogPath(
+function generatedDefaultReviewWorkLogPath(
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
   home = os.homedir(),
   now = new Date(),
   id: string = crypto.randomUUID(),
-): Promise<string> {
+): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,99}$/.test(id)) {
     throw new Error("Review work log identifier is invalid");
   }
   const timestamp = now.toISOString().replaceAll(/[-:.]/g, "");
   const directory = reviewWorkLogDirectory(environment, platform, home);
+  return platformPath(platform).join(directory, `review-${timestamp}-${id}.jsonl`);
+}
+
+async function prepareDefaultReviewWorkLogDirectory(
+  target: string,
+  platform: NodeJS.Platform,
+): Promise<void> {
+  const pathApi = platformPath(platform);
+  const directory = pathApi.dirname(target);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const directoryStats = await lstat(directory);
   if (directoryStats.isSymbolicLink()) {
@@ -75,12 +90,42 @@ export async function prepareDefaultReviewWorkLogPath(
   const removeCount = Math.max(0, existingLogs.length - (RETAINED_DEFAULT_WORK_LOGS - 1));
   for (const name of existingLogs.slice(0, removeCount)) {
     try {
-      await unlink(path.join(directory, name));
+      await unlink(pathApi.join(directory, name));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  return path.join(directory, `review-${timestamp}-${id}.jsonl`);
+}
+
+export async function prepareValidatedDefaultReviewWorkLogPath(
+  validateTarget: ValidateReviewWorkLogTarget,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home = os.homedir(),
+  now = new Date(),
+  id: string = crypto.randomUUID(),
+): Promise<string> {
+  const target = generatedDefaultReviewWorkLogPath(environment, platform, home, now, id);
+  await validateTarget(target);
+  await prepareDefaultReviewWorkLogDirectory(target, platform);
+  return target;
+}
+
+export async function prepareDefaultReviewWorkLogPath(
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home = os.homedir(),
+  now = new Date(),
+  id: string = crypto.randomUUID(),
+): Promise<string> {
+  return await prepareValidatedDefaultReviewWorkLogPath(
+    async () => {},
+    environment,
+    platform,
+    home,
+    now,
+    id,
+  );
 }
 
 export function sanitizeWorkLogDiagnostic(value: string, secrets: readonly string[] = []): string {
@@ -106,6 +151,15 @@ function stringField(record: Record<string, unknown>, name: string): string | un
   return typeof value === "string" ? value : undefined;
 }
 
+function sanitizedStringField(
+  record: Record<string, unknown>,
+  name: string,
+  secrets: readonly string[],
+): string | undefined {
+  const value = stringField(record, name);
+  return value === undefined ? undefined : sanitizeWorkLogDiagnostic(value, secrets);
+}
+
 function numberField(record: Record<string, unknown>, name: string): number | undefined {
   const value = record[name];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
@@ -127,7 +181,9 @@ export function summarizePiEvent(
   if (typeof event !== "object" || event === null) return { eventType: "unrecognized" };
   const record = event as Record<string, unknown>;
   const eventType = stringField(record, "type") ?? "unrecognized";
-  const base: Record<string, unknown> = { eventType };
+  const base: Record<string, unknown> = {
+    eventType: sanitizeWorkLogDiagnostic(eventType, secrets),
+  };
 
   if (eventType === "message_update") {
     const update = record.assistantMessageEvent;
@@ -136,7 +192,7 @@ export function summarizePiEvent(
     const delta = stringField(typed, "delta");
     return definedFields({
       ...base,
-      eventSubtype: stringField(typed, "type"),
+      eventSubtype: sanitizedStringField(typed, "type", secrets),
       contentIndex: numberField(typed, "contentIndex"),
       deltaBytes: delta === undefined ? undefined : Buffer.byteLength(delta),
     });
@@ -145,8 +201,8 @@ export function summarizePiEvent(
   if (eventType.startsWith("tool_execution_")) {
     return definedFields({
       ...base,
-      toolCallId: stringField(record, "toolCallId"),
-      toolName: stringField(record, "toolName"),
+      toolCallId: sanitizedStringField(record, "toolCallId", secrets),
+      toolName: sanitizedStringField(record, "toolName", secrets),
       isError: booleanField(record, "isError"),
     });
   }
@@ -158,8 +214,8 @@ export function summarizePiEvent(
     const messageDiagnostic = stringField(typed, "errorMessage");
     return definedFields({
       ...base,
-      messageRole: stringField(typed, "role"),
-      stopReason: stringField(typed, "stopReason"),
+      messageRole: sanitizedStringField(typed, "role", secrets),
+      stopReason: sanitizedStringField(typed, "stopReason", secrets),
       diagnostic:
         messageDiagnostic === undefined
           ? undefined
@@ -179,7 +235,7 @@ export function summarizePiEvent(
     success: booleanField(record, "success"),
     aborted: booleanField(record, "aborted"),
     willRetry: booleanField(record, "willRetry"),
-    reason: stringField(record, "reason"),
+    reason: sanitizedStringField(record, "reason", secrets),
     diagnostic:
       diagnostic === undefined ? undefined : sanitizeWorkLogDiagnostic(diagnostic, secrets),
   });
