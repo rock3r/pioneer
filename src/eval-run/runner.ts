@@ -177,13 +177,13 @@ function terminateEvalProcessTree(child: ChildProcess, signal: NodeJS.Signals): 
 
 function decodeBoundedUtf8(chunks: readonly Buffer[], limit: number): string {
   if (limit <= 0) return "";
-  let encoded = Buffer.concat(chunks).subarray(0, limit);
-  for (;;) {
-    const decoded = encoded.toString("utf8");
-    const normalized = Buffer.from(decoded, "utf8");
-    if (normalized.length <= limit) return decoded;
-    encoded = normalized.subarray(0, limit - 1);
-  }
+  const decoded = Buffer.concat(chunks).subarray(0, limit).toString("utf8");
+  const normalized = Buffer.from(decoded, "utf8");
+  if (normalized.length <= limit) return decoded;
+  // Truncating a valid UTF-8 buffer can leave at most one partial code point;
+  // dropping three bytes before decoding prevents replacement expansion from
+  // exceeding the byte cap without an unbounded retry loop.
+  return normalized.subarray(0, Math.max(0, limit - 3)).toString("utf8");
 }
 
 export async function captureEvalProcess(

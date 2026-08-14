@@ -66,6 +66,9 @@ describe("direct sandbox launchers", () => {
 
     expect(launch.argv.slice(-3)).toEqual(["/pioneer-runtime/node", runtime, "actor.mjs"]);
     expect(launch.argv).toEqual(
+      expect.arrayContaining(["--perms", "0555", "--ro-bind-data", "3", "/pioneer-runtime/node"]),
+    );
+    expect(launch.argv).toEqual(
       expect.arrayContaining(["--ro-bind-data", "3", "/pioneer-runtime/node"]),
     );
     expect(
