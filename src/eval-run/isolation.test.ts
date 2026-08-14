@@ -165,6 +165,13 @@ describe("validateEvalRunSpec", () => {
     await expect(resolveEvalExecutable("actor", runDir, binDir)).rejects.toThrow(
       "[EVAL_SHEBANG_RESOLUTION_FAILED]",
     );
+
+    await writeFile(path.join(binDir, "actor"), "#!/usr/bin/env -S deno arg\\ value\n", {
+      mode: 0o755,
+    });
+    await expect(resolveEvalExecutable("actor", runDir, binDir)).rejects.toThrow(
+      "[EVAL_SHEBANG_RESOLUTION_FAILED]",
+    );
   });
 
   it("preserves a complete nested env shebang command and every exact read grant", async () => {

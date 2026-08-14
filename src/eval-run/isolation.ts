@@ -176,7 +176,6 @@ function splitEnvShebangArguments(value: string): string[] {
       "'": "'",
       '"': '"',
       "\\": "\\",
-      " ": " ",
       "#": "#",
       f: "\f",
       n: "\n",
