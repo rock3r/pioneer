@@ -53,25 +53,23 @@ describe("direct sandbox launchers", () => {
     expect(linux.argv).toContain("--unshare-net");
   });
 
-  it("binds only the Linux runtime executable when given a file descriptor", () => {
+  it("binds only the Linux runtime executable", () => {
     const runtime = "/opt/node/bin/node";
     const launch = buildLinuxSandboxArgv(
-      { ...policy, network: "none" },
+      { ...policy, network: "none", readOnlyPaths: [...policy.readOnlyPaths, runtime] },
       [runtime, runtime, "actor.mjs"],
       "/usr/bin/bwrap",
       undefined,
       runtime,
-      3,
     );
 
     expect(launch.argv.slice(-3)).toEqual([runtime, runtime, "actor.mjs"]);
-    expect(launch.argv).toEqual(expect.arrayContaining(["--ro-bind-fd", "3", runtime]));
-    expect(launch.argv).toEqual(expect.arrayContaining(["--ro-bind-fd", "3", runtime]));
+    expect(launch.argv).toEqual(expect.arrayContaining(["--ro-bind", runtime, runtime]));
     expect(
       launch.argv.some(
         (entry, index) => entry === "--ro-bind" && launch.argv[index + 1] === runtime,
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("can prohibit child-process creation for a controller-owned review", () => {

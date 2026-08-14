@@ -15,9 +15,6 @@ export interface SandboxLaunch {
   readonly profile?: string;
 }
 
-export const LINUX_RUNTIME_ROOT_PATH = "/pioneer-runtime";
-export const LINUX_RUNTIME_EXECUTABLE_PATH = `${LINUX_RUNTIME_ROOT_PATH}/node`;
-
 function quoted(value: string): string {
   return JSON.stringify(value);
 }
@@ -124,27 +121,19 @@ export function buildLinuxSandboxArgv(
   bwrapPath: string,
   proxySocketPath?: string,
   runtimeExecutable?: string,
-  runtimeFileDescriptor?: number,
 ): SandboxLaunch {
   const proxy = parsedProxy(policy);
   if (policy.network === "proxy" && proxySocketPath === undefined) {
     throw new Error("Linux proxy sandbox is missing its Unix bridge socket");
   }
   const supervisorPath = fileURLToPath(new URL("./linux-network-supervisor.js", import.meta.url));
-  const readOnlyPaths =
-    runtimeFileDescriptor === undefined
-      ? policy.readOnlyPaths
-      : policy.readOnlyPaths.filter((entry) => entry !== runtimeExecutable);
   const paths = [
-    ...readOnlyPaths,
+    ...policy.readOnlyPaths,
     ...policy.writablePaths,
     ...(proxySocketPath === undefined ? [] : [proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
-    ...(runtimeExecutable === undefined || runtimeFileDescriptor !== undefined
-      ? []
-      : [runtimeExecutable]),
+    ...(runtimeExecutable === undefined ? [] : [runtimeExecutable]),
   ];
-  const runtimeCommand = command;
   const args: string[] = [
     "--new-session",
     "--die-with-parent",
@@ -158,15 +147,8 @@ export function buildLinuxSandboxArgv(
     "ALL",
     "--tmpfs",
     "/",
-    ...(runtimeFileDescriptor === undefined
-      ? []
-      : ["--ro-bind-fd", String(runtimeFileDescriptor), runtimeExecutable ?? command[0]]),
-    ...ancestorDirectories(
-      runtimeFileDescriptor === undefined || runtimeExecutable === undefined
-        ? paths
-        : [runtimeExecutable, ...paths],
-    ).flatMap((entry) => ["--dir", entry]),
-    ...readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
+    ...ancestorDirectories(paths).flatMap((entry) => ["--dir", entry]),
+    ...policy.readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", proxySocketPath, proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", supervisorPath, supervisorPath]),
@@ -178,14 +160,14 @@ export function buildLinuxSandboxArgv(
   if (proxy !== undefined) proxy.port = "3128";
   const environment = proxyEnvironment(proxy?.toString());
   if (proxySocketPath === undefined) {
-    args.push("--", ...runtimeCommand);
+    args.push("--", ...command);
   } else {
     args.push(
       "--",
       runtimeExecutable === undefined ? process.execPath : runtimeExecutable,
       supervisorPath,
       proxySocketPath,
-      ...runtimeCommand,
+      ...command,
     );
   }
   return { argv: [bwrapPath, ...args], environment };
