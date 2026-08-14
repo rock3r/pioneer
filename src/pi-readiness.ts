@@ -81,6 +81,8 @@ const PI_READINESS_ENVIRONMENT_NAME =
   /^(?:PATH|PATHEXT|HOME|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|SYSTEMROOT|WINDIR|COMSPEC|LANG|LC_ALL|TMPDIR|TMP|TEMP|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|OPENSSL_CONF|PI_CODING_AGENT_DIR)$/i;
 const PI_MODEL_FIELD = /^[A-Za-z0-9][A-Za-z0-9._:@+/-]*$/;
 const AUTHENTICATED_URL = /[a-z][a-z0-9+.-]*:\/\/[^/\s@]+@/i;
+const CREDENTIAL_ASSIGNMENT =
+  /(?:^|[_-])(?:[a-z0-9]+[_-])*(?:credential|key|token|secret|password|passphrase|connection[_-]?string)(?:[_-][a-z0-9]+)*[:=]/i;
 
 export function piReadinessEnvironment(
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -150,7 +152,9 @@ function configuredModels(output: string): readonly PiConfiguredModel[] | undefi
       !PI_MODEL_FIELD.test(provider) ||
       !PI_MODEL_FIELD.test(id) ||
       AUTHENTICATED_URL.test(provider) ||
-      AUTHENTICATED_URL.test(id)
+      AUTHENTICATED_URL.test(id) ||
+      CREDENTIAL_ASSIGNMENT.test(provider) ||
+      CREDENTIAL_ASSIGNMENT.test(id)
     ) {
       return undefined;
     }
