@@ -175,7 +175,7 @@ Windows always reports strict eval execution as unsupported.
 pioneer eval prepare --skill DIR --evals FILE --output DIR
 ```
 
-The output must not exist and must be outside the source skill. The command rejects symlinks in the skill, parses `evals.json`, and creates controller metadata plus baseline/with-skill actor directories.
+The output must not exist and its canonical parent must keep it outside the source skill. Pioneer revalidates the created destination before populating it. The command rejects symlinks in the skill, requires `skill_name` to be one portable path component valid on Windows and Unix, including the 255-byte filename limit, parses `evals.json`, and creates controller metadata plus baseline/with-skill actor directories.
 
 ## `pioneer eval run`
 
@@ -192,7 +192,7 @@ The command after `--` is executed as discrete argv in the strict sandbox. The r
 
 Eval failures return nonzero. Stable stderr diagnostics are `[EVAL_TIMEOUT]` for timeout, `[EVAL_INTERRUPTED]` for SIGINT/SIGTERM, `[EVAL_SPAWN_FAILED]` for sandbox launch failure, `[EVAL_SHEBANG_RESOLUTION_FAILED]` for a cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` interpreter chain, `[EVAL_PROCESS_CONTAINMENT_FAILED]` when inherited pipes prevent proving the process tree stopped, and `[EVAL_OUTPUT_LIMIT]` when the output bound is exceeded. These diagnostics do not print the actor environment, Pi configuration, or authenticated proxy URL.
 
-When the actor executable is Pi, fast-start flags are added automatically and skills are disabled. Runtime read paths must be narrow and are mounted read-only. Eval networking is always public-only.
+When the actor executable is Pi, fast-start flags are added automatically and skills are disabled. The writable run directory and read-only runtime paths must all be narrow and non-overlapping. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, temporary, variable-data, and home roots, are rejected after canonicalization; narrowly selected read-only system runtimes and disposable temporary descendants remain supported. Eval networking is always public-only.
 
 ## `pioneer eval install-linux`
 

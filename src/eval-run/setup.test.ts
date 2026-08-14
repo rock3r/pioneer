@@ -87,4 +87,91 @@ describe("prepareEvalBattery", () => {
       }),
     ).rejects.toThrow(/symbolic link/i);
   });
+
+  it("rejects a skill name that escapes the prepared actor skill directory", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    const escapedSkillDir = path.join(fixture.root, "escaped-skill");
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "../../../../../escaped-skill",
+        evals: [{ id: 1, prompt: "Review the fixture.", files: [] }],
+      }),
+    );
+
+    await expect(
+      prepareEvalBattery({
+        skillDir: fixture.skillDir,
+        evalsPath,
+        outputRoot: path.join(fixture.root, "battery"),
+      }),
+    ).rejects.toThrow(/skill_name/i);
+    await expect(readFile(path.join(escapedSkillDir, "SKILL.md"))).rejects.toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects an output path whose canonical parent places it inside the source skill",
+    async () => {
+      const fixture = await createSkillFixture();
+      const outputAlias = path.join(fixture.root, "output-link");
+      await symlink(fixture.skillDir, outputAlias);
+
+      await expect(
+        prepareEvalBattery({
+          skillDir: fixture.skillDir,
+          evalsPath: path.join(fixture.skillDir, "evals", "evals.json"),
+          outputRoot: path.join(outputAlias, "battery"),
+        }),
+      ).rejects.toThrow(/outside the source skill/i);
+      await expect(
+        readFile(path.join(fixture.skillDir, "battery", "controller", "manifest.json")),
+      ).rejects.toThrow();
+    },
+  );
+
+  it("rejects a dot-prefixed output path inside the source skill", async () => {
+    const fixture = await createSkillFixture();
+    await expect(
+      prepareEvalBattery({
+        skillDir: fixture.skillDir,
+        evalsPath: path.join(fixture.skillDir, "evals", "evals.json"),
+        outputRoot: path.join(fixture.skillDir, "..battery"),
+      }),
+    ).rejects.toThrow(/outside the source skill/i);
+  });
+
+  it.each([
+    "",
+    ".",
+    "..",
+    "nested/skill",
+    "nested\\skill",
+    "/absolute",
+    "C:\\absolute",
+    "CON",
+    "nul.txt",
+    "COM1",
+    "LPT9.log",
+    "foo:bar",
+    "trailing.",
+    "trailing ",
+    "é".repeat(128),
+  ])("rejects unsafe skill_name %j before creating output", async (skillName) => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    const outputRoot = path.join(fixture.root, "battery");
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: skillName,
+        evals: [{ id: 1, prompt: "Review the fixture.", files: [] }],
+      }),
+    );
+
+    await expect(
+      prepareEvalBattery({ skillDir: fixture.skillDir, evalsPath, outputRoot }),
+    ).rejects.toThrow(/skill_name/i);
+    await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
+  });
 });

@@ -4,6 +4,7 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Reject broad, protected-system, or overlapping eval grants, actor-writable Pi package overlaps, unsafe portable `skill_name` path components, and output paths whose canonical parent enters the source skill or changes during creation.
 - Fix macOS eval actor launch resolution and process-tree timeout containment while preserving narrow native sandbox grants and bounded diagnostics; reject cyclic, excessively deep, or unterminated env shebang resolution safely.
 - Replace recursive Pi-home copying with a selective snapshot MVP: copy the required root configuration and review skills, skip dependency/runtime fluff by default, and support repeated exact-path `--pi-home-include` opt-ins for reviews while preserving hard exclusions, symlink checks, and the 500,000-entry/1 GiB backstops.
 - Certify Pi `0.84.2` as the newest tested compatibility endpoint, including the endpoint matrix, readiness policy, and compatibility documentation.
