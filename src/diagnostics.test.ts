@@ -80,4 +80,23 @@ describe("diagnostics", () => {
     expect(sanitized).not.toContain("private-material");
     expect(sanitized).toContain("[REDACTED]");
   });
+
+  it("redacts quoted JSON Authorization headers", () => {
+    const sanitized = sanitizeDiagnostic('{"Authorization":"Basic dXNlcjpwYXNz"}');
+
+    expect(sanitized).not.toContain("dXNlcjpwYXNz");
+    expect(sanitized).toContain("[REDACTED]");
+  });
+
+  it("redacts complete unquoted private-key assignments", () => {
+    for (const lineBreak of ["\n", "\\n"]) {
+      const sanitized = sanitizeDiagnostic(
+        `PRIVATE_KEY=-----BEGIN PRIVATE KEY-----${lineBreak}private-material${lineBreak}-----END PRIVATE KEY----- request failed`,
+      );
+
+      expect(sanitized).not.toContain("private-material");
+      expect(sanitized).toContain("[REDACTED]");
+      expect(sanitized).toContain("request failed");
+    }
+  });
 });

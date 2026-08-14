@@ -18,11 +18,15 @@ export function diagnosticMessage(id: string, message: string): string {
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
   let sanitized = value
     .replaceAll(
-      /\bauthorization\s*[:=]\s*(?:digest|aws4-hmac-sha256)\b[^\r\n]*/gi,
+      /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY)-----|$)/gi,
+      "[REDACTED]",
+    )
+    .replaceAll(
+      /(["']?)\bauthorization\1\s*[:=]\s*(?:digest|aws4-hmac-sha256)\b[^\r\n]*/gi,
       "Authorization=[REDACTED]",
     )
     .replaceAll(
-      /\bauthorization\s*[:=]\s*(?!\[REDACTED\])(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+(?:\s+[^\s,;]+)?)/gi,
+      /(["']?)\bauthorization\1\s*[:=]\s*(?!\[REDACTED\])(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+(?:\s+[^\s,;]+)?)/gi,
       "Authorization=[REDACTED]",
     );
   sanitized = sanitized.replaceAll(/\s+/g, " ");
