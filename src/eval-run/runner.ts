@@ -388,7 +388,7 @@ export async function runEvalCommand(
       : resolvedCommand;
   const piActor = isPiExecutable(spec.command[0]);
   const piInstallation = piActor
-    ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath)
+    ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath, validated.runDir)
     : undefined;
   if (piActor && piInstallation === undefined) {
     throw new Error("Pi eval actor is not a validated Pi installation");

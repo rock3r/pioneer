@@ -69,6 +69,14 @@ describe("direct sandbox launchers", () => {
         (entry, index) => entry === "--dir" && launch.argv[index + 1] === "/pioneer-runtime",
       ),
     ).toBe(true);
+    expect(launch.argv).toEqual(
+      expect.arrayContaining(["--ro-bind", "/opt/node/bin", "/pioneer-runtime/bin"]),
+    );
+    expect(
+      launch.argv.some(
+        (entry, index) => entry === "--ro-bind" && launch.argv[index + 1] === "/opt/node",
+      ),
+    ).toBe(false);
   });
 
   it("can prohibit child-process creation for a controller-owned review", () => {

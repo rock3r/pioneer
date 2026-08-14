@@ -16,6 +16,7 @@ export interface SandboxLaunch {
 }
 
 export const LINUX_RUNTIME_ROOT_PATH = "/pioneer-runtime";
+export const LINUX_RUNTIME_BIN_PATH = `${LINUX_RUNTIME_ROOT_PATH}/bin`;
 export const LINUX_RUNTIME_EXECUTABLE_PATH = `${LINUX_RUNTIME_ROOT_PATH}/bin/node`;
 
 function quoted(value: string): string {
@@ -135,9 +136,7 @@ export function buildLinuxSandboxArgv(
     ...policy.writablePaths,
     ...(proxySocketPath === undefined ? [] : [proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
-    ...(runtimeExecutable === undefined
-      ? []
-      : [path.resolve(path.dirname(runtimeExecutable), "..")]),
+    ...(runtimeExecutable === undefined ? [] : [path.dirname(runtimeExecutable)]),
   ];
   const runtimeCommand =
     runtimeExecutable === undefined || command[0] !== runtimeExecutable
@@ -157,18 +156,16 @@ export function buildLinuxSandboxArgv(
     "--tmpfs",
     "/",
     ...ancestorDirectories(paths).flatMap((entry) => ["--dir", entry]),
-    ...(runtimeExecutable === undefined ? [] : ["--dir", LINUX_RUNTIME_ROOT_PATH]),
+    ...(runtimeExecutable === undefined
+      ? []
+      : ["--dir", LINUX_RUNTIME_ROOT_PATH, "--dir", LINUX_RUNTIME_BIN_PATH]),
     ...policy.readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", proxySocketPath, proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", supervisorPath, supervisorPath]),
     ...(runtimeExecutable === undefined
       ? []
-      : [
-          "--ro-bind",
-          path.resolve(path.dirname(runtimeExecutable), ".."),
-          LINUX_RUNTIME_ROOT_PATH,
-        ]),
+      : ["--ro-bind", path.dirname(runtimeExecutable), LINUX_RUNTIME_BIN_PATH]),
     "--proc",
     "/proc",
     "--dev",

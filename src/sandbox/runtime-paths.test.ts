@@ -15,7 +15,7 @@ describe("executableRuntimeRoot", () => {
     await symlink(executable, linkedExecutable);
 
     expect(await executableRuntimeRoot(linkedExecutable, "linux")).toBe(
-      path.resolve(path.dirname(await realpath(executable)), ".."),
+      path.dirname(await realpath(executable)),
     );
   });
 

@@ -265,8 +265,23 @@ async function readBoundedPiPackageManifest(manifestPath: string): Promise<strin
 
 export async function findValidatedPiPackageRoot(
   executablePath: string,
+  excludedRunDir?: string,
 ): Promise<ValidatedPiInstallation | undefined> {
-  let current = path.dirname(executablePath);
+  let canonicalExcludedRunDir: string | undefined;
+  if (excludedRunDir !== undefined) {
+    try {
+      canonicalExcludedRunDir = await realpath(excludedRunDir);
+    } catch {
+      return undefined;
+    }
+  }
+  let canonicalExecutablePath: string;
+  try {
+    canonicalExecutablePath = await realpath(executablePath);
+  } catch {
+    return undefined;
+  }
+  let current = path.dirname(canonicalExecutablePath);
   for (;;) {
     try {
       const manifestPath = path.join(current, "package.json");
@@ -278,7 +293,8 @@ export async function findValidatedPiPackageRoot(
         manifest !== null &&
         "name" in manifest &&
         manifest.name === PI_PACKAGE_NAME &&
-        !isBroadRuntimePath(current)
+        !isBroadRuntimePath(current) &&
+        (canonicalExcludedRunDir === undefined || !isWithin(current, canonicalExcludedRunDir))
       ) {
         return { packageRoot: current };
       }

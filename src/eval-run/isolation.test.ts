@@ -234,6 +234,21 @@ describe("validateEvalRunSpec", () => {
     await expect(findValidatedPiPackageRoot(executable)).resolves.toBeUndefined();
   });
 
+  it("rejects an actor-spoofed Pi package root that contains the run directory", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-package-"));
+    const packageRoot = path.join(temp, "package");
+    const runDir = path.join(packageRoot, "run");
+    const executable = path.join(runDir, "pi");
+    await mkdir(runDir, { recursive: true });
+    await writeFile(executable, "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(
+      path.join(packageRoot, "package.json"),
+      JSON.stringify({ name: "@earendil-works/pi-coding-agent" }),
+    );
+
+    await expect(findValidatedPiPackageRoot(executable, runDir)).resolves.toBeUndefined();
+  });
+
   it("rejects NUL argv and relative paths that escape the run directory", async () => {
     const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
     const runDir = path.join(temp, "run");
