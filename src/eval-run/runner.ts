@@ -383,10 +383,8 @@ export async function runEvalCommand(
     ...optimizedPi.command.slice(1),
   ] as [string, ...string[]];
   const sandboxCommand =
-    process.platform === "linux"
-      ? resolvedCommand.map((argument) =>
-          argument === sandboxRuntimeExecutable ? LINUX_RUNTIME_EXECUTABLE_PATH : argument,
-        )
+    process.platform === "linux" && resolvedCommand[0] === sandboxRuntimeExecutable
+      ? [LINUX_RUNTIME_EXECUTABLE_PATH, ...resolvedCommand.slice(1)]
       : resolvedCommand;
   const piActor = isPiExecutable(spec.command[0]);
   const piInstallation = piActor

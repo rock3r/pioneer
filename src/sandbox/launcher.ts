@@ -140,11 +140,9 @@ export function buildLinuxSandboxArgv(
       : [path.resolve(path.dirname(runtimeExecutable), "..")]),
   ];
   const runtimeCommand =
-    runtimeExecutable === undefined
+    runtimeExecutable === undefined || command[0] !== runtimeExecutable
       ? command
-      : command.map((argument) =>
-          argument === runtimeExecutable ? LINUX_RUNTIME_EXECUTABLE_PATH : argument,
-        );
+      : [LINUX_RUNTIME_EXECUTABLE_PATH, ...command.slice(1)];
   const args: string[] = [
     "--new-session",
     "--die-with-parent",

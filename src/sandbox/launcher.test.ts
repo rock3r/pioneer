@@ -53,6 +53,19 @@ describe("direct sandbox launchers", () => {
     expect(linux.argv).toContain("--unshare-net");
   });
 
+  it("rewrites only the Linux runtime executable slot", () => {
+    const runtime = "/opt/node/bin/node";
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, network: "none" },
+      [runtime, runtime, "actor.mjs"],
+      "/usr/bin/bwrap",
+      undefined,
+      runtime,
+    );
+
+    expect(launch.argv.slice(-3)).toEqual(["/pioneer-runtime/bin/node", runtime, "actor.mjs"]);
+  });
+
   it("can prohibit child-process creation for a controller-owned review", () => {
     const launch = buildMacosSandboxArgv({ ...policy, allowProcessFork: false }, [
       "/usr/bin/node",
