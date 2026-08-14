@@ -133,7 +133,8 @@ try {
     '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.1; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
     { mode: 0o755 },
   );
-  const nestedInterpreter = `const { spawnSync } = require("node:child_process");\nconst [script, ...args] = process.argv.slice(2);\nconst child = spawnSync(${JSON.stringify(nodeExecutable)}, [script, ...args], { stdio: "inherit" });\nprocess.exit(child.status ?? 1);\n`;
+  const nestedInterpreter =
+    'const { spawnSync } = require("node:child_process");\nconst [script, ...args] = process.argv.slice(2);\nconst child = spawnSync(process.execPath, [script, ...args], { stdio: "inherit" });\nprocess.exit(child.status ?? 1);\n';
   await writeFile(evalFinal, `#!${nodeExecutable}\n${nestedInterpreter}`, { mode: 0o755 });
   await writeFile(evalMiddle, `#!/usr/bin/env final\n${nestedInterpreter}`, { mode: 0o755 });
   await writeFile(
@@ -143,12 +144,12 @@ try {
   );
   await writeFile(
     evalTimeoutActor,
-    `#!${nodeExecutable}\nconst { spawn } = require("node:child_process"); spawn(${JSON.stringify(nodeExecutable)}, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("timeout-before\\n"); process.stderr.write("timeout-error-before\\n"); setInterval(() => {}, 10000);\n`,
+    `#!${nodeExecutable}\nconst { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("timeout-before\\n"); process.stderr.write("timeout-error-before\\n"); setInterval(() => {}, 10000);\n`,
     { mode: 0o755 },
   );
   await writeFile(
     evalContainmentActor,
-    `#!${nodeExecutable}\nconst { spawn } = require("node:child_process"); spawn(${JSON.stringify(nodeExecutable)}, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("containment-before\\n"); process.exit(0);\n`,
+    `#!${nodeExecutable}\nconst { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("containment-before\\n"); process.exit(0);\n`,
     { mode: 0o755 },
   );
   const previousPath = process.env.PATH;

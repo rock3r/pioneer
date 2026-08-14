@@ -15,6 +15,8 @@ export interface SandboxLaunch {
   readonly profile?: string;
 }
 
+export const LINUX_RUNTIME_EXECUTABLE_PATH = "/pioneer-node";
+
 function quoted(value: string): string {
   return JSON.stringify(value);
 }
@@ -120,7 +122,7 @@ export function buildLinuxSandboxArgv(
   command: readonly [string, ...string[]],
   bwrapPath: string,
   proxySocketPath?: string,
-  runtimeExecutable = process.execPath,
+  runtimeExecutable?: string,
 ): SandboxLaunch {
   const proxy = parsedProxy(policy);
   if (policy.network === "proxy" && proxySocketPath === undefined) {
@@ -132,7 +134,14 @@ export function buildLinuxSandboxArgv(
     ...policy.writablePaths,
     ...(proxySocketPath === undefined ? [] : [proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
+    ...(runtimeExecutable === undefined ? [] : [runtimeExecutable]),
   ];
+  const runtimeCommand =
+    runtimeExecutable === undefined
+      ? command
+      : command.map((argument) =>
+          argument === runtimeExecutable ? LINUX_RUNTIME_EXECUTABLE_PATH : argument,
+        );
   const args: string[] = [
     "--new-session",
     "--die-with-parent",
@@ -151,6 +160,9 @@ export function buildLinuxSandboxArgv(
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", proxySocketPath, proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", supervisorPath, supervisorPath]),
+    ...(runtimeExecutable === undefined
+      ? []
+      : ["--ro-bind", runtimeExecutable, LINUX_RUNTIME_EXECUTABLE_PATH]),
     "--proc",
     "/proc",
     "--dev",
@@ -159,9 +171,15 @@ export function buildLinuxSandboxArgv(
   if (proxy !== undefined) proxy.port = "3128";
   const environment = proxyEnvironment(proxy?.toString());
   if (proxySocketPath === undefined) {
-    args.push("--", ...command);
+    args.push("--", ...runtimeCommand);
   } else {
-    args.push("--", runtimeExecutable, supervisorPath, proxySocketPath, ...command);
+    args.push(
+      "--",
+      runtimeExecutable === undefined ? process.execPath : LINUX_RUNTIME_EXECUTABLE_PATH,
+      supervisorPath,
+      proxySocketPath,
+      ...runtimeCommand,
+    );
   }
   return { argv: [bwrapPath, ...args], environment };
 }
