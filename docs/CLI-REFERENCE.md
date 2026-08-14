@@ -115,7 +115,7 @@ Human output contains one sorted, qualified `provider/model` name per line. `--j
 
 `--pi-home` selects an alternative Pi agent directory without copying it. The command fails nonzero with the same readiness diagnostic used by reviews. In particular, Pioneer refuses to return a partial catalog when Pi reports that `models.json` is invalid.
 
-Review Pi-home snapshots copy only the known root configuration files and `skills/`; unknown root paths and dependency/runtime fluff are skipped. `--pi-home-include` names one existing relative file or directory exactly. It accepts no glob, negation, or persistent configuration syntax, and paths cannot be absolute, traverse with `..`, or escape the source home. Sessions, logs, `.npm`, `.cache`, `tmp`, `.tmp`, `temp`, and `*.log` paths are hard exclusions. Internal symlinks are retained only when their targets are also selected. Review includes are not accepted by eval commands.
+Review Pi-home snapshots copy only the known root configuration files and `skills/`; unknown root paths and dependency/runtime fluff are skipped. `--pi-home-include` names one existing relative file or directory exactly; use `--pi-home-include=--NAME` for an exact path beginning with `--`. It accepts no glob, negation, or persistent configuration syntax, and paths cannot be absolute, traverse with `..`, or escape the source home. Sessions, logs, `.npm`, `.cache`, `tmp`, `.tmp`, `temp`, and `*.log` paths are hard exclusions. Internal symlinks are retained only when their targets are also selected. Review includes are not accepted by eval commands.
 
 ## `pioneer doctor`
 

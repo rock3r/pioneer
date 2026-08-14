@@ -23,4 +23,8 @@ describe("review CLI arguments", () => {
       piHomeIncludes: ["node_modules/package", "skills/custom"],
     });
   });
+
+  it("accepts option-like Pi-home includes through attached values", () => {
+    expect(parseReviewCliArgs(["--pi-home-include=--shared"]).piHomeIncludes).toEqual(["--shared"]);
+  });
 });

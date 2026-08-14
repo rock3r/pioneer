@@ -19,10 +19,20 @@ export interface ParsedReviewCliArgs {
 
 function takeOption(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
-  if (index < 0) return undefined;
-  const value = args[index + 1];
-  if (value === undefined || value.startsWith("--")) throw new Error(`Missing value for ${name}`);
-  args.splice(index, 2);
+  if (index >= 0) {
+    const value = args[index + 1];
+    if (value === undefined || value.startsWith("--")) throw new Error(`Missing value for ${name}`);
+    args.splice(index, 2);
+    return value;
+  }
+  const prefix = `${name}=`;
+  const attachedIndex = args.findIndex((arg) => arg.startsWith(prefix));
+  if (attachedIndex < 0) return undefined;
+  const attached = args[attachedIndex];
+  if (attached === undefined) return undefined;
+  const value = attached.slice(prefix.length);
+  if (value.length === 0) throw new Error(`Missing value for ${name}`);
+  args.splice(attachedIndex, 1);
   return value;
 }
 
