@@ -5,7 +5,7 @@ import {
   copyFile,
   lstat,
   mkdir,
-  readdir,
+  opendir,
   realpath,
   symlink,
 } from "node:fs/promises";
@@ -191,10 +191,8 @@ async function collectEntry(
   const entry = await selectedEntry(sourceRoot, relative, state);
   if (entry.kind === "directory") {
     if (traversal === "scaffold") return;
-    const children = (await readdir(entry.sourcePath, { withFileTypes: true })).sort(
-      (left, right) => left.name.localeCompare(right.name),
-    );
-    for (const child of children) {
+    const directory = await opendir(entry.sourcePath);
+    for await (const child of directory) {
       const name = child.name;
       const childRelative = `${relative}/${name}`;
       const childParts = childRelative.split("/");
