@@ -175,6 +175,17 @@ function terminateEvalProcessTree(child: ChildProcess, signal: NodeJS.Signals): 
   child.kill(signal);
 }
 
+function decodeBoundedUtf8(chunks: readonly Buffer[], limit: number): string {
+  if (limit <= 0) return "";
+  let encoded = Buffer.concat(chunks).subarray(0, limit);
+  for (;;) {
+    const decoded = encoded.toString("utf8");
+    const normalized = Buffer.from(decoded, "utf8");
+    if (normalized.length <= limit) return decoded;
+    encoded = normalized.subarray(0, limit - 1);
+  }
+}
+
 export async function captureEvalProcess(
   argv: readonly [string, ...string[]],
   cwd: string,
@@ -213,8 +224,8 @@ export async function captureEvalProcess(
     let onSigterm: (() => void) | undefined;
 
     const output = (): { readonly stdout: string; readonly stderr: string } => ({
-      stdout: Buffer.concat(stdout).toString("utf8"),
-      stderr: Buffer.concat(stderr).toString("utf8"),
+      stdout: decodeBoundedUtf8(stdout, EVAL_MAX_STDOUT_BYTES),
+      stderr: decodeBoundedUtf8(stderr, EVAL_MAX_STDERR_BYTES),
     });
     const cleanup = (): void => {
       if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);

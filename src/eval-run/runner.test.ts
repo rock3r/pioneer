@@ -126,6 +126,21 @@ describe("eval process capture", () => {
     expect(Buffer.byteLength(result.stderr)).toBeLessThanOrEqual(64 * 1024);
   });
 
+  it("keeps decoded UTF-8 output inside the stdout byte bound", async () => {
+    const result = await captureEvalProcess(
+      actor(
+        "process.stdout.write(Buffer.concat([Buffer.alloc(4 * 1024 * 1024 - 1, 120), Buffer.from([0xe2, 0x82])]));",
+      ),
+      process.cwd(),
+      process.env,
+      2_000,
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("[EVAL_OUTPUT_LIMIT]");
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(4 * 1024 * 1024);
+  });
+
   it("reports a stable spawn diagnostic", async () => {
     await expect(
       captureEvalProcess(["/path/that/does/not/exist"], process.cwd(), process.env, 1_000),
