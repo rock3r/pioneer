@@ -73,6 +73,17 @@ describe("diagnostics", () => {
     );
   });
 
+  it("redacts cookie and session credential assignments", () => {
+    const sanitized = sanitizeDiagnostic(
+      "Set-Cookie: session=private-cookie\nSESSION_ID=private-session session_token=private-token",
+    );
+
+    expect(sanitized).not.toContain("private-cookie");
+    expect(sanitized).not.toContain("private-session");
+    expect(sanitized).not.toContain("private-token");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(3);
+  });
+
   it("redacts credentials behind quoted JSON keys", () => {
     const sanitized = sanitizeDiagnostic(
       '{"api_key":"google-private","access_token":"access-private"}',
