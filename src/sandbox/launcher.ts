@@ -164,9 +164,7 @@ export function buildLinuxSandboxArgv(
       : [
           "--dir",
           LINUX_RUNTIME_ROOT_PATH,
-          "--perms",
-          "0555",
-          "--file",
+          "--ro-bind-fd",
           String(runtimeFileDescriptor),
           LINUX_RUNTIME_EXECUTABLE_PATH,
         ]),
