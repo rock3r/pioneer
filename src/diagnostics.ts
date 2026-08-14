@@ -27,11 +27,14 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
     );
   sanitized = sanitized.replaceAll(/\s+/g, " ");
   for (const secret of secrets) {
-    const normalized = secret.replaceAll(/\s+/g, " ").trim();
-    if (normalized) sanitized = sanitized.replaceAll(normalized, "[REDACTED]");
+    const variants = [secret, JSON.stringify(secret).slice(1, -1)];
+    for (const variant of variants) {
+      const normalized = variant.replaceAll(/\s+/g, " ").trim();
+      if (normalized) sanitized = sanitized.replaceAll(normalized, "[REDACTED]");
+    }
   }
   const secretLabel =
-    "(?:[a-z0-9]+_)*(?:api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|token|password|secret)";
+    "(?:[a-z0-9]+_)*(?:api[-_ ]?key|private[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|token|password|secret)";
   return sanitized
     .replaceAll(
       /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi,

@@ -64,4 +64,20 @@ describe("diagnostics", () => {
     expect(sanitized).not.toContain("access-private");
     expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
   });
+
+  it("redacts JSON-escaped sensitive values", () => {
+    const prompt = "private first line\nprivate second line";
+    const sanitized = sanitizeDiagnostic(`failed ${JSON.stringify(prompt)}`, [prompt]);
+
+    expect(sanitized).toBe('failed "[REDACTED]"');
+  });
+
+  it("redacts quoted private-key fields", () => {
+    const sanitized = sanitizeDiagnostic(
+      '{"private_key":"-----BEGIN PRIVATE KEY-----\\nprivate-material\\n-----END PRIVATE KEY-----"}',
+    );
+
+    expect(sanitized).not.toContain("private-material");
+    expect(sanitized).toContain("[REDACTED]");
+  });
 });
