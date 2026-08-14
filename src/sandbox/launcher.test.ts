@@ -72,6 +72,21 @@ describe("direct sandbox launchers", () => {
     ).toBe(true);
   });
 
+  it("restores canonical Linux runtime linker aliases inside the empty root", () => {
+    const launch = buildLinuxSandboxArgv(
+      {
+        ...policy,
+        network: "none",
+        readOnlyPaths: ["/repo", "/usr", "/usr/lib", "/usr/lib64"],
+      },
+      ["/usr/bin/node", "actor.mjs"],
+      "/usr/bin/bwrap",
+    );
+
+    expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/lib", "/lib"]));
+    expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/lib64", "/lib64"]));
+  });
+
   it("can prohibit child-process creation for a controller-owned review", () => {
     const launch = buildMacosSandboxArgv({ ...policy, allowProcessFork: false }, [
       "/usr/bin/node",

@@ -134,6 +134,14 @@ export function buildLinuxSandboxArgv(
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
     ...(runtimeExecutable === undefined ? [] : [runtimeExecutable]),
   ];
+  const runtimeLinkerAliases = [
+    ...(policy.readOnlyPaths.includes("/usr/lib") && !policy.readOnlyPaths.includes("/lib")
+      ? ["--symlink", "usr/lib", "/lib"]
+      : []),
+    ...(policy.readOnlyPaths.includes("/usr/lib64") && !policy.readOnlyPaths.includes("/lib64")
+      ? ["--symlink", "usr/lib64", "/lib64"]
+      : []),
+  ];
   const args: string[] = [
     "--new-session",
     "--die-with-parent",
@@ -147,6 +155,7 @@ export function buildLinuxSandboxArgv(
     "ALL",
     "--tmpfs",
     "/",
+    ...runtimeLinkerAliases,
     ...ancestorDirectories(paths).flatMap((entry) => ["--dir", entry]),
     ...policy.readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
