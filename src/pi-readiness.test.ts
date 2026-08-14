@@ -331,8 +331,23 @@ describe("Pi readiness", () => {
     ]);
 
     const result = await checkPiReadiness({ runner, requestedModel: "missing" });
-    expect(JSON.stringify(result)).toContain("[REDACTED]");
+    expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
     expect(JSON.stringify(result)).not.toContain("provider-secret");
+  });
+
+  it("preserves a validated credential-shaped model identifier for execution", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nprovider  sk-abcdefgh 400K     128K     yes       yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner, requestedModel: "provider/sk-abcdefgh" });
+    expect(result).toMatchObject({ ready: true, resolvedModel: "provider/sk-abcdefgh" });
   });
 
   it("redacts credential-shaped metadata from accepted versions and warnings", async () => {

@@ -79,6 +79,7 @@ const OUTER_SANDBOX_INDICATORS = [
 
 const PI_READINESS_ENVIRONMENT_NAME =
   /^(?:PATH|PATHEXT|HOME|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|SYSTEMROOT|WINDIR|COMSPEC|LANG|LC_ALL|TMPDIR|TMP|TEMP|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|OPENSSL_CONF|PI_CODING_AGENT_DIR)$/i;
+const PI_MODEL_FIELD = /^[A-Za-z0-9][A-Za-z0-9._:@+/-]*$/;
 
 export function piReadinessEnvironment(
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -142,7 +143,9 @@ function configuredModels(output: string): readonly PiConfiguredModel[] | undefi
     const columns = line.split(/\s+/);
     const provider = columns[0];
     const id = columns[1];
-    if (!provider || !id) return undefined;
+    if (!provider || !id || !PI_MODEL_FIELD.test(provider) || !PI_MODEL_FIELD.test(id)) {
+      return undefined;
+    }
     models.push({ provider, id });
   }
   return models;
@@ -321,10 +324,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
   }
 
   const probedModels = configuredModels(modelsResult.stdout);
-  const models = probedModels?.map((model) => ({
-    provider: sanitizeDiagnostic(model.provider),
-    id: sanitizeDiagnostic(model.id),
-  }));
+  const models = probedModels;
   if (models?.length === 0) {
     const agentDir = defaultPiAgentDir(options.environment ?? process.env);
     const configAccess = await (options.configAccessProbe ?? probePiConfigAccess)(agentDir);
@@ -378,7 +378,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       ready: true,
       version,
       modelCount,
-      resolvedModel: sanitizeDiagnostic(resolution.qualifiedName),
+      resolvedModel: resolution.qualifiedName,
       models,
       ...versionWarning,
       errors: [],

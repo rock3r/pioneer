@@ -65,6 +65,13 @@ describe("diagnostics", () => {
     expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
   });
 
+  it("redacts credential fields behind nested JSON escaping", () => {
+    const sanitized = sanitizeDiagnostic('{\\"api_key\\":\\"google-private\\"}');
+
+    expect(sanitized).not.toContain("google-private");
+    expect(sanitized).toContain("[REDACTED]");
+  });
+
   it("redacts JSON-escaped sensitive values", () => {
     const prompt = "private first line\nprivate second line";
     const sanitized = sanitizeDiagnostic(`failed ${JSON.stringify(prompt)}`, [prompt]);
