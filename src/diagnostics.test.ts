@@ -94,6 +94,23 @@ describe("diagnostics", () => {
     expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
   });
 
+  it("redacts signed-URL query credentials", () => {
+    const sanitized = sanitizeDiagnostic(
+      "https://s3.test/object?X-Amz-Credential=private-access&X-Amz-Signature=private-signature https://storage.test/object?X-Goog-Credential=private-google&X-Goog-Signature=private-google-signature https://blob.test/object?sig=private-azure",
+    );
+
+    for (const secret of [
+      "private-access",
+      "private-signature",
+      "private-google",
+      "private-google-signature",
+      "private-azure",
+    ]) {
+      expect(sanitized).not.toContain(secret);
+    }
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(5);
+  });
+
   it("redacts credentials behind quoted JSON keys", () => {
     const sanitized = sanitizeDiagnostic(
       '{"api_key":"google-private","access_token":"access-private"}',

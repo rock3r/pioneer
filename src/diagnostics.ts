@@ -44,6 +44,10 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
       (_match, scheme: string) => `${scheme}[REDACTED]@`,
     )
     .replaceAll(
+      /([?&](?:(?:x-amz|x-goog)-)?(?:credential|signature|security-token|sig)=)[^&#\s]+/gi,
+      "$1[REDACTED]",
+    )
+    .replaceAll(
       new RegExp(
         `(["']?)\\b(${secretLabel})\\1\\s*[:=]\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`,
         "gi",
