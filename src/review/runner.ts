@@ -4,7 +4,7 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { diagnosticMessage, sanitizeDiagnostic } from "../diagnostics.js";
+import { diagnosticMessage } from "../diagnostics.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import {
@@ -378,7 +378,6 @@ function isAssistantMessage(value: unknown): boolean {
 function recordAssistantFailure(
   value: unknown,
   diagnostics: string[],
-  sensitiveValues: readonly string[],
   requireAssistantRole = true,
 ): void {
   if (typeof value !== "object" || value === null) return;
@@ -397,18 +396,10 @@ function recordAssistantFailure(
     return;
   }
   clearAssistantFailures(diagnostics);
-  const detail =
-    typeof message.errorMessage === "string"
-      ? sanitizeDiagnostic(message.errorMessage, sensitiveValues)
-      : "no detail";
-  diagnostics.push(`assistant stopReason=${String(message.stopReason)}: ${detail}`);
+  diagnostics.push(`assistant stopReason=${String(message.stopReason)}`);
 }
 
-function recordAssistantEventFailure(
-  value: unknown,
-  diagnostics: string[],
-  sensitiveValues: readonly string[],
-): void {
+function recordAssistantEventFailure(value: unknown, diagnostics: string[]): void {
   if (typeof value !== "object" || value === null) return;
   const event = value as Record<string, unknown>;
   if (event.type !== "error" || (event.reason !== "error" && event.reason !== "aborted")) return;
@@ -418,22 +409,20 @@ function recordAssistantEventFailure(
     recordAssistantFailure(
       { ...(error as Record<string, unknown>), role: "assistant", stopReason: event.reason },
       diagnostics,
-      sensitiveValues,
     );
     return;
   }
 
   clearAssistantFailures(diagnostics);
-  diagnostics.push(`assistant stopReason=${event.reason}: no detail`);
+  diagnostics.push(`assistant stopReason=${event.reason}`);
 }
 
 function processOutcomeContext(
   exitCode: number | null,
   signal: NodeJS.Signals | null,
   stderr: string,
-  sensitiveValues: readonly string[] = [],
 ): string {
-  return `exit ${exitCode ?? "unknown"}; signal ${signal ?? "none"}; stderr: ${sanitizeDiagnostic(stderr, sensitiveValues) || "none"}`;
+  return `exit ${exitCode ?? "unknown"}; signal ${signal ?? "none"}; stderr: ${stderr.trim() ? "present" : "none"}`;
 }
 
 function terminateProcessTree(child: ReturnType<typeof spawn>): void {
@@ -491,8 +480,6 @@ export async function runReviewRpc(
     let stdoutBytes = 0;
     const stdoutDecoder = new StringDecoder("utf8");
     let stderr = "";
-    let stderrPending = "";
-    const stderrDecoder = new StringDecoder("utf8");
     let report = "";
     let finalReport: string | undefined;
     let settled = false;
@@ -518,63 +505,6 @@ export async function runReviewRpc(
       options.escalateProcess ??
       ((runningChild: ReturnType<typeof spawn>) => runningChild.kill("SIGKILL"));
     const workLogSecrets = [prompt, ...(options.sensitiveValues ?? [])];
-    const stderrSecretVariants = [
-      ...new Set(
-        workLogSecrets.flatMap((secret) => {
-          const escaped = JSON.stringify(secret).slice(1, -1);
-          return [
-            secret,
-            escaped,
-            secret.replaceAll(/\s+/g, " ").trim(),
-            escaped.replaceAll(/\s+/g, " ").trim(),
-          ];
-        }),
-      ),
-    ].filter((secret) => secret.length > 0);
-    const maximumStderrSecretCharacters = Math.max(
-      0,
-      ...stderrSecretVariants.map((secret) => secret.length),
-    );
-    const appendRetainedStderr = (value: string, flush = false): void => {
-      stderrPending += value;
-      if (stderrSecretVariants.length === 0) {
-        stderr = (stderr + stderrPending).slice(-64 * 1024);
-        stderrPending = "";
-        return;
-      }
-
-      const safeStartLimit = flush
-        ? stderrPending.length
-        : Math.max(0, stderrPending.length - maximumStderrSecretCharacters + 1);
-      let cursor = 0;
-      let emitted = "";
-      while (cursor < safeStartLimit) {
-        let matchIndex = -1;
-        let matchedSecret = "";
-        for (const secret of stderrSecretVariants) {
-          const index = stderrPending.indexOf(secret, cursor);
-          if (
-            index >= 0 &&
-            index < safeStartLimit &&
-            (matchIndex < 0 ||
-              index < matchIndex ||
-              (index === matchIndex && secret.length > matchedSecret.length))
-          ) {
-            matchIndex = index;
-            matchedSecret = secret;
-          }
-        }
-        if (matchIndex < 0) {
-          emitted += stderrPending.slice(cursor, safeStartLimit);
-          cursor = safeStartLimit;
-          break;
-        }
-        emitted += `${stderrPending.slice(cursor, matchIndex)}[REDACTED]`;
-        cursor = matchIndex + matchedSecret.length;
-      }
-      stderr = (stderr + emitted).slice(-64 * 1024);
-      stderrPending = stderrPending.slice(cursor);
-    };
     const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
       if (options.workLog === undefined || workLogFailure !== undefined) return;
       try {
@@ -668,20 +598,13 @@ export async function runReviewRpc(
         if (workLogFailure !== undefined) return;
         if (typeof record.type === "string") eventTypes.add(record.type);
         if (record.type === "response" && record.success === false) {
-          terminate(
-            new Error(
-              `Pi RPC rejected the review prompt: ${sanitizeDiagnostic(
-                String(record.error ?? "unknown error"),
-                workLogSecrets,
-              )}`,
-            ),
-          );
+          terminate(new Error("Pi RPC rejected the review prompt"));
           return;
         }
         if (record.type === "message_update") {
           const update = record.assistantMessageEvent;
-          recordAssistantFailure(record.message, diagnostics, workLogSecrets);
-          recordAssistantEventFailure(update, diagnostics, workLogSecrets);
+          recordAssistantFailure(record.message, diagnostics);
+          recordAssistantEventFailure(update, diagnostics);
           if (typeof update === "object" && update !== null) {
             const typed = update as Record<string, unknown>;
             if (typed.type === "start") {
@@ -691,7 +614,7 @@ export async function runReviewRpc(
             }
             if (typed.type === "done") {
               finalReport = assistantText(typed.message) ?? "";
-              recordAssistantFailure(typed.message, diagnostics, workLogSecrets);
+              recordAssistantFailure(typed.message, diagnostics);
             }
             if (typed.type === "text_delta" && typeof typed.delta === "string")
               report += typed.delta;
@@ -699,18 +622,18 @@ export async function runReviewRpc(
         }
         if (record.type === "message_end") {
           if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
-          recordAssistantFailure(record.message, diagnostics, workLogSecrets);
+          recordAssistantFailure(record.message, diagnostics);
         }
         if (record.type === "extension_error") diagnostics.push("extension_error");
         if (record.type === "turn_end") {
           if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
-          recordAssistantFailure(record.message, diagnostics, workLogSecrets);
+          recordAssistantFailure(record.message, diagnostics);
         }
         if (record.type === "agent_end" && Array.isArray(record.messages)) {
           for (const message of [...record.messages].reverse()) {
             if (!isAssistantMessage(message)) continue;
             const text = assistantText(message);
-            recordAssistantFailure(message, diagnostics, workLogSecrets);
+            recordAssistantFailure(message, diagnostics);
             finalReport = text ?? "";
             break;
           }
@@ -735,7 +658,7 @@ export async function runReviewRpc(
     child.stderr.on("data", (chunk: Buffer) => {
       stderrBytes += chunk.length;
       recordWorkLog("pi_stderr", { chunkBytes: chunk.length, totalBytes: stderrBytes });
-      appendRetainedStderr(stderrDecoder.write(chunk));
+      stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
     });
     child.once("error", (error) => {
       recordWorkLog("pi_process_error", {
@@ -760,7 +683,6 @@ export async function runReviewRpc(
     });
     child.once("close", (code, signal) => {
       if (settled) return;
-      appendRetainedStderr(stderrDecoder.end(), true);
       if (terminalFailure === undefined && !timedOut) {
         stdout += stdoutDecoder.end();
         consume();
@@ -774,7 +696,7 @@ export async function runReviewRpc(
           new Error(
             diagnosticMessage(
               "REVIEW_TIMEOUT",
-              `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr, workLogSecrets)})`,
+              `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr)})`,
             ),
           ),
         );
@@ -782,9 +704,7 @@ export async function runReviewRpc(
       }
       if (terminalFailure !== undefined) {
         finish(
-          new Error(
-            `${terminalFailure.message} (${processOutcomeContext(code, signal, stderr, workLogSecrets)})`,
-          ),
+          new Error(`${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`),
         );
         return;
       }

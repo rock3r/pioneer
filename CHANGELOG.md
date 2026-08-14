@@ -4,7 +4,7 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
-- Redact credential-shaped Pi/provider diagnostics and authenticated URLs before readiness or review failures reach caller stderr.
+- Suppress provider-controlled response, assistant-error, and stderr text from review failures, and redact credential-shaped readiness metadata and authenticated URLs before diagnostics reach callers.
 - Keep eval control files and copied Pi configuration out of the persistent actor run, mount selected Pi configuration read-only with separate ephemeral writable home/tmp scratch, remove it on every exit path, and apply Pi-home exclusions case-insensitively on macOS and Windows.
 - Reject broad, protected-system, or overlapping eval grants, actor-writable Pi package overlaps, unsafe portable `skill_name` path components, and output paths whose canonical parent enters the source skill or changes during creation.
 - Fix macOS eval actor launch resolution and process-tree timeout containment while preserving narrow native sandbox grants and bounded diagnostics; reject cyclic, excessively deep, or unterminated env shebang resolution safely.

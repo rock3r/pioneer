@@ -126,6 +126,25 @@ process.stdin.on("data", (chunk) => {
   ];
 }
 
+function stderrPromptExcerptPi(characters: number): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+let input = "";
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  const newline = input.indexOf("\\n");
+  if (newline < 0) return;
+  const message = JSON.parse(input.slice(0, newline)).message;
+  process.stderr.write(message.slice(0, ${characters}), () => {
+    process.stdout.write(JSON.stringify({ type: "response", success: false, error: "provider rejected" }) + "\\n");
+  });
+});
+`,
+  ];
+}
+
 function pipeHoldingDescendantPi(): readonly [string, ...string[]] {
   return [
     process.execPath,
@@ -553,7 +572,7 @@ describe("review RPC runner", () => {
     let message = "";
     try {
       await runReviewRpc(
-        fakePiRpc([{ type: "response", success: false, error: userPrompt }]),
+        fakePiRpc([{ type: "response", success: false, error: userPrompt.slice(0, 25) }]),
         process.cwd(),
         process.env,
         `Pioneer instructions\n\n${userPrompt}`,
@@ -563,7 +582,7 @@ describe("review RPC runner", () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    expect(message).toContain("[REDACTED]");
+    expect(message).toContain("Pi RPC rejected the review prompt");
     expect(message).not.toContain("Project Falcon");
     expect(JSON.stringify(records)).not.toContain("Project Falcon");
   });
@@ -577,7 +596,7 @@ describe("review RPC runner", () => {
       message = error instanceof Error ? error.message : String(error);
     }
 
-    expect(message).toContain("[REDACTED]");
+    expect(message).toContain("stderr: present");
     expect(message).not.toContain("private prompt");
     expect(message).not.toContain("x".repeat(100));
   });
@@ -593,7 +612,21 @@ describe("review RPC runner", () => {
 
     expect(message).not.toContain("private prompt");
     expect(message).not.toContain("x".repeat(100));
-    expect(message).toContain("z".repeat(100));
+    expect(message).toContain("stderr: present");
+  });
+
+  it("suppresses a prompt excerpt echoed to stderr", async () => {
+    const prompt = "private Project Falcon prompt that continues beyond the excerpt";
+    let message = "";
+    try {
+      await runReviewRpc(stderrPromptExcerptPi(30), process.cwd(), process.env, prompt, 2_000);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("stderr: present");
+    expect(message).not.toContain(prompt.slice(0, 30));
+    expect(message).not.toContain("Project Falcon");
   });
 
   it("emits real-time heartbeats while Pi is silent", async () => {
@@ -943,12 +976,12 @@ describe("review RPC runner", () => {
       message = error instanceof Error ? error.message : String(error);
     }
 
-    expect(message).toContain("[REDACTED]");
+    expect(message).toContain("diagnostics: 1");
     expect(message).not.toContain("provider-secret");
     expect(message).not.toContain("private prompt");
   });
 
-  it("redacts an echoed long prompt before assistant diagnostics are bounded", async () => {
+  it("suppresses an upstream-truncated prompt excerpt from assistant diagnostics", async () => {
     const longPrompt = `private prompt ${"x".repeat(700)}`;
     let message = "";
     try {
@@ -956,7 +989,11 @@ describe("review RPC runner", () => {
         fakePiRpc([
           {
             type: "message_end",
-            message: { role: "assistant", stopReason: "error", errorMessage: longPrompt },
+            message: {
+              role: "assistant",
+              stopReason: "error",
+              errorMessage: longPrompt.slice(0, 400),
+            },
           },
           { type: "agent_settled" },
         ]),
@@ -969,7 +1006,7 @@ describe("review RPC runner", () => {
       message = error instanceof Error ? error.message : String(error);
     }
 
-    expect(message).toContain("[REDACTED]");
+    expect(message).toContain("diagnostics: 1");
     expect(message).not.toContain("private prompt");
     expect(message).not.toContain("x".repeat(100));
   });
@@ -1107,9 +1144,7 @@ describe("review RPC runner", () => {
   it("includes the final child termination state for a rejected prompt", async () => {
     await expect(
       runReviewRpc(rejectedPromptPi(), process.cwd(), process.env, "Review the source", 1_000),
-    ).rejects.toThrow(
-      /Pi RPC rejected the review prompt: provider rejected .*exit .*signal (?:SIGKILL|none)/s,
-    );
+    ).rejects.toThrow(/Pi RPC rejected the review prompt .*exit .*signal (?:SIGKILL|none)/s);
   });
 
   it("terminates the isolated child tree when Pioneer receives SIGINT", async () => {

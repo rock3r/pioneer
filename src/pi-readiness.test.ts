@@ -305,7 +305,7 @@ describe("Pi readiness", () => {
 
     const result = await checkPiReadiness({ runner });
     const message = result.errors.join("\n");
-    expect(message).toContain("[REDACTED]");
+    expect(message).toContain("output: present");
     expect(message).not.toContain("secret-token");
     expect(message).not.toContain("refresh-me");
     expect(message).not.toContain("user:pass");
@@ -333,5 +333,21 @@ describe("Pi readiness", () => {
     const result = await checkPiReadiness({ runner, requestedModel: "missing" });
     expect(JSON.stringify(result)).toContain("[REDACTED]");
     expect(JSON.stringify(result)).not.toContain("provider-secret");
+  });
+
+  it("redacts credential-shaped metadata from accepted versions and warnings", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.3+sk-abcdefgh\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nopenai    gpt-5.5     400K     128K     yes       yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(JSON.stringify(result)).toContain("[REDACTED]");
+    expect(JSON.stringify(result)).not.toContain("sk-abcdefgh");
   });
 });

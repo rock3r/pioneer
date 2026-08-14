@@ -121,11 +121,10 @@ function outerSandboxIndicator(environment: Readonly<NodeJS.ProcessEnv>): string
 }
 
 function summarizeFailure(result: PiProbeResult): string {
-  const detail = sanitizeDiagnostic(result.stderr || result.stdout);
-  const suffix = detail.length > 0 ? `: ${detail}` : "";
+  const output = result.stderr || result.stdout;
   return diagnosticMessage(
     "PI_PROBE_FAILED",
-    `Pi could not start successfully (exit ${result.exitCode ?? "unknown"})${suffix}`,
+    `Pi could not start successfully (exit ${result.exitCode ?? "unknown"}; output: ${output.trim() ? "present" : "none"})`,
   );
 }
 
@@ -276,9 +275,11 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       errors: [sanitizeDiagnostic(versionValidation.error)],
     };
   }
-  const version = probedVersion;
+  const version = sanitizeDiagnostic(probedVersion);
   const versionWarning =
-    versionValidation.warning === undefined ? {} : { warning: versionValidation.warning };
+    versionValidation.warning === undefined
+      ? {}
+      : { warning: sanitizeDiagnostic(versionValidation.warning) };
   const modelsResult = await runProbe([
     "--offline",
     "--no-approve",

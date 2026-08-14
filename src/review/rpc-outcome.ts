@@ -1,4 +1,4 @@
-import { diagnosticMessage, sanitizeDiagnostic } from "../diagnostics.js";
+import { diagnosticMessage } from "../diagnostics.js";
 
 interface ReviewRpcOutcome {
   readonly completed: boolean;
@@ -11,22 +11,13 @@ interface ReviewRpcOutcome {
   readonly sensitiveValues?: readonly string[];
 }
 
-function summary(values: readonly string[]): string {
-  return values.length > 0 ? values.join(", ") : "none";
-}
-
-function stderrSummary(stderr: string): string {
-  return stderr.trim() || "none";
-}
-
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
   const report = outcome.report.trim();
-  const sensitiveValues = outcome.sensitiveValues ?? [];
-  const context = `events: ${summary(outcome.eventTypes.map((value) => sanitizeDiagnostic(value, sensitiveValues)))}; diagnostics: ${summary(outcome.diagnostics.map((value) => sanitizeDiagnostic(value, sensitiveValues)))}; stderr: ${stderrSummary(sanitizeDiagnostic(outcome.stderr, sensitiveValues))}`;
+  const context = `events: ${outcome.eventTypes.length}; diagnostics: ${outcome.diagnostics.length}; stderr: ${outcome.stderr.trim() ? "present" : "none"}`;
   const assistantFailed = outcome.diagnostics.some(
     (diagnostic) =>
-      diagnostic.startsWith("assistant stopReason=error:") ||
-      diagnostic.startsWith("assistant stopReason=aborted:"),
+      diagnostic.startsWith("assistant stopReason=error") ||
+      diagnostic.startsWith("assistant stopReason=aborted"),
   );
   if (outcome.completed && report) {
     if (outcome.exitCode === 0 && outcome.signal === null && assistantFailed) {
