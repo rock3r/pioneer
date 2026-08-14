@@ -21,6 +21,8 @@ npm run sandbox:smoke
 
 The smoke test uses harmless disposable files. It checks ordinary read-only access to `.idea` and `.vscode`, source immutability, outside content and leaf-metadata denial, scratch writes, mediated public egress, and direct-loopback denial. Pioneer has no special filename or editor-directory deny list.
 
+Issue #17 live macOS acceptance on 2026-08-14 used Pi 0.84.1 with `openai-codex/gpt-5.6-luna`: exit 0, stdout exactly `OK` plus one newline, no eval diagnostic, and 9.65 seconds wall time against the 90-second timeout. The disposable run directory was removed after capture. The final native timeout capture returned `[EVAL_TIMEOUT]` with both pre-timeout markers in 1.167 seconds, and the retained-pipe capture returned `[EVAL_PROCESS_CONTAINMENT_FAILED]` with its marker in 1.012 seconds; both were nonzero and left no disposable actor running.
+
 ## Native implementation
 
 macOS invokes `/usr/bin/sandbox-exec` directly with a generated Seatbelt profile. The profile starts at `deny default`, permits only the caller's canonical read/write grants and required runtime paths, and permits outbound TCP only to the per-run authenticated proxy port.
@@ -44,6 +46,10 @@ Every eval run first proves that the sandboxed process:
 - can execute with the requested runtime grants.
 
 The actor does not start if a dependency, canonicalization step, model preflight, or mandatory probe fails. There is no unconfined eval fallback.
+
+The actor executable is resolved before the run directory receives launch artifacts. Bare names use the sanitized controller `PATH`; relative paths use the validated actor run directory; absolute paths are validated directly. Symlink launchers are canonicalized, with only the exact lexical launcher and canonical target added as read-only grants. `/usr/bin/env` shebang inspection reads a bounded prefix and rejects cyclic or excessively deep interpreter chains. Missing, non-executable, directory, broken-link, NUL-containing, and escaping relative paths fail closed.
+
+Eval output preserves partial stdout and stderr. The controller retains at most 4 MiB of stdout and 64 KiB of stderr; exceeding either limit returns nonzero with `[EVAL_OUTPUT_LIMIT]`. A timeout returns `[EVAL_TIMEOUT]`, interruption returns `[EVAL_INTERRUPTED]`, a failed launch returns `[EVAL_SPAWN_FAILED]`, cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` chains return `[EVAL_SHEBANG_RESOLUTION_FAILED]`, and retained inherited pipes return `[EVAL_PROCESS_CONTAINMENT_FAILED]`. These diagnostics never include the full environment, Pi configuration, or authenticated proxy URL.
 
 ## Network policy
 
@@ -118,4 +124,4 @@ Eval `doctor` reports unsupported and `run` stops before actor launch or ACL mut
 
 - macOS uses the legacy `sandbox-exec` interface, for which Apple provides no public drop-in replacement for dynamically sandboxing arbitrary CLI processes. Its behavior is therefore covered by mandatory release smoke tests.
 - Provider-aware tools must honor standard HTTP(S) proxy variables to use mediated egress. Raw TCP is intentionally unavailable inside Linux's isolated network namespace.
-- The harness prepares and isolates eval arms; complete grading/orchestration remains separate work.
+- The harness prepares and isolates eval arms; complete grading/orchestration remains separate work. The native smoke also runs a provider-free disposable actor through `runEvalCommand`, including bare executable resolution, the production path, native policy, and output propagation. Live provider acceptance remains a separate operator-controlled check.

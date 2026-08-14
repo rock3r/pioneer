@@ -90,8 +90,28 @@ function authorized(request: IncomingMessage, token: string): boolean {
 }
 
 function reject(response: ServerResponse, status: number, message: string): void {
+  if (response.destroyed || response.headersSent) return;
   response.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
   response.end(`${message}\n`);
+}
+
+interface ProxyLifecycle {
+  closing: boolean;
+  readonly sockets: Set<net.Socket>;
+  readonly requests: Set<http.ClientRequest>;
+}
+
+function trackSocket(lifecycle: ProxyLifecycle, socket: net.Socket): void {
+  lifecycle.sockets.add(socket);
+  socket.once("close", () => lifecycle.sockets.delete(socket));
+  if (lifecycle.closing) socket.destroy();
+}
+
+function trackRequest(lifecycle: ProxyLifecycle, request: http.ClientRequest): void {
+  lifecycle.requests.add(request);
+  request.once("close", () => lifecycle.requests.delete(request));
+  request.on("socket", (socket) => trackSocket(lifecycle, socket));
+  if (lifecycle.closing) request.destroy();
 }
 
 async function forwardHttp(
@@ -99,7 +119,13 @@ async function forwardHttp(
   response: ServerResponse,
   token: string,
   resolveTarget: EgressTargetResolver,
+  lifecycle: ProxyLifecycle,
 ): Promise<void> {
+  if (lifecycle.closing) {
+    request.destroy();
+    response.destroy();
+    return;
+  }
   if (!authorized(request, token)) {
     reject(response, 407, "Proxy authentication required");
     return;
@@ -119,6 +145,11 @@ async function forwardHttp(
 
   try {
     const resolved = await resolveTarget(target.hostname);
+    if (lifecycle.closing) {
+      request.destroy();
+      response.destroy();
+      return;
+    }
     const headers = { ...request.headers, host: target.host };
     delete headers["proxy-authorization"];
     const upstream = http.request(
@@ -131,6 +162,10 @@ async function forwardHttp(
         headers,
       },
       (upstreamResponse) => {
+        if (lifecycle.closing || response.destroyed) {
+          upstreamResponse.resume();
+          return;
+        }
         response.writeHead(
           upstreamResponse.statusCode ?? 502,
           upstreamResponse.statusMessage,
@@ -139,8 +174,15 @@ async function forwardHttp(
         upstreamResponse.pipe(response);
       },
     );
+    trackRequest(lifecycle, upstream);
     upstream.on("error", (error) => reject(response, 502, error.message));
-    request.pipe(upstream);
+    if (lifecycle.closing) {
+      upstream.destroy();
+      request.destroy();
+      response.destroy();
+    } else {
+      request.pipe(upstream);
+    }
   } catch (error) {
     reject(response, 403, error instanceof Error ? error.message : "Destination denied");
   }
@@ -152,7 +194,12 @@ async function forwardConnect(
   head: Buffer,
   token: string,
   resolveTarget: EgressTargetResolver,
+  lifecycle: ProxyLifecycle,
 ): Promise<void> {
+  if (lifecycle.closing) {
+    client.destroy();
+    return;
+  }
   if (!authorized(request, token)) {
     client.end("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n");
     return;
@@ -173,12 +220,22 @@ async function forwardConnect(
 
   try {
     const resolved = await resolveTarget(hostname);
+    if (lifecycle.closing) {
+      client.destroy();
+      return;
+    }
     const upstream = net.connect({
       host: resolved.address,
       family: resolved.family,
       port,
     });
+    trackSocket(lifecycle, upstream);
     upstream.once("connect", () => {
+      if (lifecycle.closing) {
+        upstream.destroy();
+        client.destroy();
+        return;
+      }
       client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       if (head.length > 0) {
         upstream.write(head);
@@ -192,6 +249,7 @@ async function forwardConnect(
       client.destroy();
     });
     client.on("error", () => upstream.destroy());
+    client.on("close", () => upstream.destroy());
   } catch (error) {
     if (process.env.PIONEER_DEBUG) {
       console.error(
@@ -213,11 +271,19 @@ export async function startEgressProxy(
   if (token.length < 32) {
     throw new Error("Public egress proxy token must contain at least 32 characters");
   }
+  const lifecycle: ProxyLifecycle = {
+    closing: false,
+    sockets: new Set(),
+    requests: new Set(),
+  };
   const server = http.createServer((request, response) => {
-    void forwardHttp(request, response, token, resolveTarget);
+    void forwardHttp(request, response, token, resolveTarget, lifecycle);
+  });
+  server.on("connection", (socket) => {
+    trackSocket(lifecycle, socket);
   });
   server.on("connect", (request, socket, head) => {
-    void forwardConnect(request, socket, head, token, resolveTarget);
+    void forwardConnect(request, socket, head, token, resolveTarget, lifecycle);
   });
   await new Promise<void>((resolve, rejectPromise) => {
     server.once("error", rejectPromise);
@@ -231,11 +297,22 @@ export async function startEgressProxy(
     server.close();
     throw new Error("Public egress proxy did not bind a TCP port");
   }
+  let closePromise: Promise<void> | undefined;
   return {
     url: `http://pioneer:${token}@127.0.0.1:${address.port}`,
-    close: () =>
-      new Promise<void>((resolve, rejectPromise) => {
-        server.close((error) => (error === undefined ? resolve() : rejectPromise(error)));
-      }),
+    close: () => {
+      closePromise ??= (async () => {
+        lifecycle.closing = true;
+        for (const request of lifecycle.requests) request.destroy();
+        for (const socket of lifecycle.sockets) socket.destroy();
+        await new Promise<void>((resolve, rejectPromise) =>
+          server.close((error) => (error === undefined ? resolve() : rejectPromise(error))),
+        );
+        while (lifecycle.requests.size > 0 || lifecycle.sockets.size > 0) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      })();
+      return closePromise;
+    },
   };
 }

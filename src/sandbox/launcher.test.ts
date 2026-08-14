@@ -41,6 +41,15 @@ describe("direct sandbox launchers", () => {
     expect(launch.argv.some((entry) => entry.endsWith("linux-network-supervisor.js"))).toBe(true);
   });
 
+  it("leaves session creation to the detached capture process", () => {
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, network: "none" },
+      ["/usr/bin/node", "actor.mjs"],
+      "/usr/bin/bwrap",
+    );
+    expect(launch.argv).not.toContain("--new-session");
+  });
+
   it("leaves networking absent when the policy is offline", () => {
     const offline = {
       readOnlyPaths: policy.readOnlyPaths,
@@ -51,6 +60,50 @@ describe("direct sandbox launchers", () => {
     const linux = buildLinuxSandboxArgv(offline, ["/usr/bin/true"], "/usr/bin/bwrap");
     expect(mac.profile).not.toContain("network-outbound");
     expect(linux.argv).toContain("--unshare-net");
+  });
+
+  it("binds only the Linux runtime executable", () => {
+    const runtime = "/opt/node/bin/node";
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, network: "none", readOnlyPaths: [...policy.readOnlyPaths, runtime] },
+      [runtime, runtime, "actor.mjs"],
+      "/usr/bin/bwrap",
+      undefined,
+      runtime,
+    );
+
+    expect(launch.argv.slice(-3)).toEqual([runtime, runtime, "actor.mjs"]);
+    expect(launch.argv).toEqual(expect.arrayContaining(["--ro-bind", runtime, runtime]));
+    expect(
+      launch.argv.some(
+        (entry, index) => entry === "--ro-bind" && launch.argv[index + 1] === runtime,
+      ),
+    ).toBe(true);
+  });
+
+  it("restores canonical Linux runtime linker aliases inside the empty root", () => {
+    const launch = buildLinuxSandboxArgv(
+      {
+        ...policy,
+        network: "none",
+        readOnlyPaths: ["/repo", "/usr", "/usr/lib", "/usr/lib64"],
+      },
+      ["/usr/bin/node", "actor.mjs"],
+      "/usr/bin/bwrap",
+    );
+
+    expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/lib", "/lib"]));
+    expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/lib64", "/lib64"]));
+  });
+
+  it("restores lib64 when usrmerge canonicalizes it to usr/lib", () => {
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, network: "none", readOnlyPaths: ["/repo", "/usr", "/usr/lib"] },
+      ["/usr/bin/node", "actor.mjs"],
+      "/usr/bin/bwrap",
+    );
+
+    expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/lib", "/lib64"]));
   });
 
   it("can prohibit child-process creation for a controller-owned review", () => {

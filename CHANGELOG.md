@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Fix macOS eval actor launch resolution and process-tree timeout containment while preserving narrow native sandbox grants and bounded diagnostics; reject cyclic, excessively deep, or unterminated env shebang resolution safely.
+
 ## 0.1.7 - 2026-08-11
 
 - Add controller-owned, real-time review work logs with platform-standard default storage, `--work-log` custom targets, immediate path discovery, five-second hang-detection heartbeats, sanitized Pi RPC diagnostics, bounded private files, and automatic default-log retention.

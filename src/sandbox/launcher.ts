@@ -120,6 +120,7 @@ export function buildLinuxSandboxArgv(
   command: readonly [string, ...string[]],
   bwrapPath: string,
   proxySocketPath?: string,
+  runtimeExecutable?: string,
 ): SandboxLaunch {
   const proxy = parsedProxy(policy);
   if (policy.network === "proxy" && proxySocketPath === undefined) {
@@ -131,9 +132,21 @@ export function buildLinuxSandboxArgv(
     ...policy.writablePaths,
     ...(proxySocketPath === undefined ? [] : [proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
+    ...(runtimeExecutable === undefined ? [] : [runtimeExecutable]),
+  ];
+  const libTarget = policy.readOnlyPaths.includes("/usr/lib") ? "usr/lib" : undefined;
+  const lib64Target = policy.readOnlyPaths.includes("/usr/lib64") ? "usr/lib64" : libTarget;
+  const runtimeLinkerAliases = [
+    ...(libTarget !== undefined && !policy.readOnlyPaths.includes("/lib")
+      ? ["--symlink", libTarget, "/lib"]
+      : []),
+    ...(lib64Target !== undefined && !policy.readOnlyPaths.includes("/lib64")
+      ? ["--symlink", lib64Target, "/lib64"]
+      : []),
   ];
   const args: string[] = [
-    "--new-session",
+    // captureEvalProcess starts Bubblewrap detached, giving it the dedicated
+    // session/process group used for containment and termination.
     "--die-with-parent",
     "--unshare-user",
     "--unshare-pid",
@@ -145,6 +158,7 @@ export function buildLinuxSandboxArgv(
     "ALL",
     "--tmpfs",
     "/",
+    ...runtimeLinkerAliases,
     ...ancestorDirectories(paths).flatMap((entry) => ["--dir", entry]),
     ...policy.readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
@@ -160,7 +174,13 @@ export function buildLinuxSandboxArgv(
   if (proxySocketPath === undefined) {
     args.push("--", ...command);
   } else {
-    args.push("--", process.execPath, supervisorPath, proxySocketPath, ...command);
+    args.push(
+      "--",
+      runtimeExecutable === undefined ? process.execPath : runtimeExecutable,
+      supervisorPath,
+      proxySocketPath,
+      ...command,
+    );
   }
   return { argv: [bwrapPath, ...args], environment };
 }

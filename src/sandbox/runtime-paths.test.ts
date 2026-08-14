@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { executableRuntimeRoot } from "./runtime-paths.js";
 
 describe("executableRuntimeRoot", () => {
-  it("grants the canonical executable directory on Linux", async () => {
+  it("grants the canonical Node installation prefix on Linux", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "pioneer-runtime-"));
     const runtime = path.join(root, "opt", "hostedtoolcache", "node", "22", "x64", "bin");
     const executable = path.join(runtime, "node");
@@ -14,9 +14,7 @@ describe("executableRuntimeRoot", () => {
     await writeFile(executable, "");
     await symlink(executable, linkedExecutable);
 
-    expect(await executableRuntimeRoot(linkedExecutable, "linux")).toBe(
-      path.dirname(await realpath(executable)),
-    );
+    expect(await executableRuntimeRoot(linkedExecutable, "linux")).toBe(await realpath(executable));
   });
 
   it("grants the package prefix for a macOS executable", async () => {
