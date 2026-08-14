@@ -53,7 +53,7 @@ describe("direct sandbox launchers", () => {
     expect(linux.argv).toContain("--unshare-net");
   });
 
-  it("rewrites only the Linux runtime executable slot", () => {
+  it("preserves the Linux runtime executable slot", () => {
     const runtime = "/opt/node/bin/node";
     const launch = buildLinuxSandboxArgv(
       { ...policy, network: "none" },
@@ -63,20 +63,8 @@ describe("direct sandbox launchers", () => {
       runtime,
     );
 
-    expect(launch.argv.slice(-3)).toEqual(["/pioneer-runtime/node", runtime, "actor.mjs"]);
-    expect(
-      launch.argv.some(
-        (entry, index) => entry === "--dir" && launch.argv[index + 1] === "/pioneer-runtime",
-      ),
-    ).toBe(true);
-    expect(launch.argv).toEqual(
-      expect.arrayContaining(["--ro-bind", "/opt/node/bin", "/pioneer-runtime"]),
-    );
-    expect(
-      launch.argv.some(
-        (entry, index) => entry === "--ro-bind" && launch.argv[index + 1] === "/opt/node",
-      ),
-    ).toBe(false);
+    expect(launch.argv.slice(-3)).toEqual([runtime, runtime, "actor.mjs"]);
+    expect(launch.argv).toEqual(expect.arrayContaining(["--ro-bind", runtime, runtime]));
   });
 
   it("can prohibit child-process creation for a controller-owned review", () => {

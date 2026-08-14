@@ -19,7 +19,6 @@ import { isPiExecutable, optimizePiStartupCommand, requestedPiModel } from "../p
 import {
   buildLinuxSandboxArgv,
   buildMacosSandboxArgv,
-  LINUX_RUNTIME_EXECUTABLE_PATH,
   type SandboxPolicy,
 } from "../sandbox/launcher.js";
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
@@ -393,10 +392,7 @@ export async function runEvalCommand(
     ...(resolvedExecutable.command ?? [resolvedExecutable.commandPath]),
     ...optimizedPi.command.slice(1),
   ] as [string, ...string[]];
-  const sandboxCommand =
-    process.platform === "linux" && resolvedCommand[0] === sandboxRuntimeExecutable
-      ? [LINUX_RUNTIME_EXECUTABLE_PATH, ...resolvedCommand.slice(1)]
-      : resolvedCommand;
+  const sandboxCommand = resolvedCommand;
   const piActor = isPiExecutable(spec.command[0]);
   const controllerPiInstallation = piActor
     ? await (async () => {
