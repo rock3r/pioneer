@@ -147,8 +147,11 @@ function parseEnvShebang(firstLine: string): ParsedEnvShebang | undefined {
   const match = firstLine.match(/^#!\s*\/usr\/bin\/env\s+(.+?)\s*$/);
   if (!match?.[1]) return undefined;
   const tokens = splitEnvShebangArguments(match[1]);
-  if (tokens[0] === "-S") tokens.shift();
-  else if (tokens.length !== 1) throw new Error(SHEBANG_RESOLUTION_FAILURE);
+  const firstToken = tokens[0];
+  if (firstToken === "-S") {
+    tokens.shift();
+    if (tokens[0] === "--") tokens.shift();
+  } else if (tokens.length !== 1) throw new Error(SHEBANG_RESOLUTION_FAILURE);
   if (!tokens[0] || tokens[0].startsWith("-")) {
     throw new Error(SHEBANG_RESOLUTION_FAILURE);
   }

@@ -126,7 +126,7 @@ describe("validateEvalRunSpec", () => {
     await writeFile(interpreter, "#!/bin/sh\n", { mode: 0o755 });
     await writeFile(
       actor,
-      "#!/usr/bin/env -S deno run --config 'my config.json' --mode=\"fast\\_mode\"\n",
+      "#!/usr/bin/env -S -- deno run --config 'my config.json' --mode=\"fast\\_mode\"\n",
       { mode: 0o755 },
     );
 
