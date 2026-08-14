@@ -18,7 +18,7 @@ Pioneer invokes the native sandbox mechanisms directly. It does not depend on An
 
 ## Quick start
 
-Pioneer requires Node.js 22.19.0 or newer, npm, and a configured Pi installation. Pi `0.80.6` is the minimum; this release is tested through Pi `0.84.1` and warns rather than blocks on newer versions. Install the CLI with:
+Pioneer requires Node.js 22.19.0 or newer, npm, and a configured Pi installation. Pi `0.80.6` is the minimum; this release is tested through Pi `0.84.2` and warns rather than blocks on newer versions. Install the CLI with:
 
 ```bash
 npm install -g @rock3r/pioneer

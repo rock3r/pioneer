@@ -130,7 +130,7 @@ try {
   await writeFile(evalPackageSecret, "package-secret\n");
   await writeFile(
     evalPi,
-    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.1; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.2; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
     { mode: 0o755 },
   );
   const nestedInterpreter =
