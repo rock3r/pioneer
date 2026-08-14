@@ -65,11 +65,11 @@ describe("diagnostics", () => {
 
   it("redacts provider-prefixed credential assignments", () => {
     const sanitized = sanitizeDiagnostic(
-      "GOOGLE_API_KEY=google-private AWS_SECRET_ACCESS_KEY=aws-private GITHUB_TOKEN=github-private",
+      "GOOGLE_API_KEY=google-private AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE AWS_SECRET_ACCESS_KEY=aws-private GITHUB_TOKEN=github-private",
     );
 
     expect(sanitized).toBe(
-      "GOOGLE_API_KEY=[REDACTED] AWS_SECRET_ACCESS_KEY=[REDACTED] GITHUB_TOKEN=[REDACTED]",
+      "GOOGLE_API_KEY=[REDACTED] AWS_ACCESS_KEY_ID=[REDACTED] AWS_SECRET_ACCESS_KEY=[REDACTED] GITHUB_TOKEN=[REDACTED]",
     );
   });
 
