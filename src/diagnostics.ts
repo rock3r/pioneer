@@ -7,6 +7,7 @@ export interface Diagnostic {
 }
 
 const DIAGNOSTIC_PREFIX = /^\[([A-Z][A-Z0-9_]*)\]\s+(.*)$/s;
+const MAX_SERIALIZATION_DEPTH = 16;
 const SECRET_LABEL =
   "(?:[a-z0-9]+_)*(?:api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|cookie|passphrase|token|password|secret)";
 
@@ -27,6 +28,31 @@ function redactUnquotedPassphrase(value: string): string {
   );
 }
 
+function unescapeSerializedDelimiterLayer(value: string): string {
+  return value.replaceAll(/\\([\\/"'])/g, "$1");
+}
+
+function redactSerializedCredentialAssignments(value: string): string {
+  let sanitized = redactUnquotedPassphrase(value);
+  for (let depth = 0; depth < MAX_SERIALIZATION_DEPTH; depth += 1) {
+    sanitized = redactQuotedCredentialAssignments(sanitized);
+    const unescaped = unescapeSerializedDelimiterLayer(sanitized);
+    if (unescaped === sanitized) return sanitized;
+    sanitized = unescaped;
+  }
+  return redactQuotedCredentialAssignments(sanitized);
+}
+
+function unescapeSerializedDelimiters(value: string): string {
+  let unescaped = value;
+  for (let depth = 0; depth < MAX_SERIALIZATION_DEPTH; depth += 1) {
+    const next = unescapeSerializedDelimiterLayer(unescaped);
+    if (next === unescaped) return unescaped;
+    unescaped = next;
+  }
+  return unescaped;
+}
+
 export class CliUsageError extends Error {}
 
 export function diagnosticMessage(id: string, message: string): string {
@@ -35,8 +61,7 @@ export function diagnosticMessage(id: string, message: string): string {
 }
 
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
-  let sanitized = redactQuotedCredentialAssignments(redactUnquotedPassphrase(value))
-    .replaceAll(/\\+(?=[/"'])/g, "")
+  let sanitized = redactSerializedCredentialAssignments(value)
     .replaceAll(
       /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
       "[REDACTED]",
@@ -51,7 +76,7 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
   for (const secret of secrets) {
     const variants = [secret, JSON.stringify(secret).slice(1, -1)];
     for (const variant of variants) {
-      const normalized = variant.replaceAll(/\s+/g, " ").trim();
+      const normalized = unescapeSerializedDelimiters(variant).replaceAll(/\s+/g, " ").trim();
       if (normalized) sanitized = sanitized.replaceAll(normalized, "[REDACTED]");
     }
   }

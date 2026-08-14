@@ -144,6 +144,18 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("status");
   });
 
+  it("redacts doubly serialized credentials containing escaped quotes", () => {
+    const serialized = JSON.stringify(
+      JSON.stringify({ password: 'prefix" private leaked-suffix', status: "failed" }),
+    );
+    const sanitized = sanitizeDiagnostic(serialized);
+
+    expect(sanitized).not.toContain("private");
+    expect(sanitized).not.toContain("leaked-suffix");
+    expect(sanitized).toContain("[REDACTED]");
+    expect(sanitized).toContain("status");
+  });
+
   it("redacts authenticated URLs with JSON-escaped slashes", () => {
     const sanitized = sanitizeDiagnostic("https:\\/\\/user:password@example.test/path");
 
