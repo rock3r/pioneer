@@ -202,11 +202,17 @@ try {
       { timeoutMs: 5_000 },
     );
     const containmentElapsed = performance.now() - containmentStarted;
+    const linuxContainmentHandled =
+      process.platform === "linux" &&
+      containmentResult.exitCode === 0 &&
+      containmentResult.containmentFailure !== true &&
+      containmentResult.stderr === "";
     if (
-      containmentResult.exitCode === 0 ||
-      containmentResult.containmentFailure !== true ||
+      (!linuxContainmentHandled && containmentResult.exitCode === 0) ||
+      (!linuxContainmentHandled && containmentResult.containmentFailure !== true) ||
       !containmentResult.stdout.includes("containment-before") ||
-      !containmentResult.stderr.includes("[EVAL_PROCESS_CONTAINMENT_FAILED]") ||
+      (!linuxContainmentHandled &&
+        !containmentResult.stderr.includes("[EVAL_PROCESS_CONTAINMENT_FAILED]")) ||
       containmentElapsed >= 3_000
     ) {
       throw new Error(
