@@ -83,7 +83,7 @@ describe("Pi readiness", () => {
 
   it("warns but remains ready for a newer untested Pi", async () => {
     const runner = runnerWith([
-      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      { exitCode: 0, stdout: "0.84.3\n", stderr: "" },
       {
         exitCode: 0,
         stdout:
@@ -96,6 +96,25 @@ describe("Pi readiness", () => {
 
     expect(result.ready).toBe(true);
     expect(result.warning).toContain("[PI_VERSION_UNTESTED]");
+    expect(result.errors).toEqual([]);
+  });
+
+  it("remains ready for the tested maximum without a warning", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nopenai    gpt-5.5     400K     128K     yes       yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+
+    expect(result.ready).toBe(true);
+    expect(result.version).toBe("0.84.2");
+    expect(result.warning).toBeUndefined();
     expect(result.errors).toEqual([]);
   });
 
