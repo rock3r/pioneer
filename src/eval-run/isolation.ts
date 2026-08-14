@@ -1,4 +1,4 @@
-import { access, constants } from "node:fs";
+import { access, constants, realpathSync } from "node:fs";
 import { lstat, open, readdir, realpath, stat } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
@@ -50,7 +50,81 @@ export function isTrustedPiInstallation(
   );
 }
 
-const BROAD_POSIX_PATHS = new Set(["/", "/Users", "/home", "/private", "/tmp", "/var"]);
+const BROAD_READ_POSIX_PATHS = new Set([
+  "/",
+  "/Users",
+  "/dev",
+  "/etc",
+  "/home",
+  "/private",
+  "/private/etc",
+  "/private/tmp",
+  "/private/var",
+  "/private/var/folders",
+  "/private/var/tmp",
+  "/root",
+  "/run",
+  "/tmp",
+  "/var",
+  "/var/tmp",
+]);
+const BROAD_WRITABLE_POSIX_PATHS = new Set([
+  ...BROAD_READ_POSIX_PATHS,
+  "/Applications",
+  "/Library",
+  "/Network",
+  "/System",
+  "/Volumes",
+  "/bin",
+  "/boot",
+  "/cores",
+  "/lib",
+  "/lib64",
+  "/media",
+  "/mnt",
+  "/opt",
+  "/proc",
+  "/sbin",
+  "/srv",
+  "/sys",
+  "/usr",
+]);
+const PROTECTED_WRITABLE_POSIX_ROOTS = [
+  "/Applications",
+  "/Library",
+  "/Network",
+  "/System",
+  "/Volumes",
+  "/bin",
+  "/boot",
+  "/cores",
+  "/dev",
+  "/etc",
+  "/lib",
+  "/lib64",
+  "/media",
+  "/mnt",
+  "/opt",
+  "/private/etc",
+  "/private/var",
+  "/proc",
+  "/root",
+  "/run",
+  "/sbin",
+  "/srv",
+  "/sys",
+  "/usr",
+  "/var",
+] as const;
+const COMMON_DISPOSABLE_WRITABLE_TEMP_ROOTS = ["/tmp", "/var/tmp"] as const;
+const DARWIN_DISPOSABLE_WRITABLE_TEMP_ROOTS = ["/private/tmp", "/private/var/tmp"] as const;
+const CANONICAL_HOME_DIR = (() => {
+  try {
+    return realpathSync.native(os.homedir());
+  } catch {
+    return path.resolve(os.homedir());
+  }
+})();
 export const MAX_SHEBANG_READ_BYTES = 4_096;
 export const MAX_SHEBANG_RESOLUTION_DEPTH = 16;
 const SHEBANG_RESOLUTION_FAILURE = diagnosticMessage(
@@ -419,7 +493,9 @@ export async function findValidatedPiPackageRoot(
         "name" in manifest &&
         manifest.name === PI_PACKAGE_NAME &&
         !isBroadRuntimePath(current) &&
-        (canonicalExcludedRunDir === undefined || !isWithin(current, canonicalExcludedRunDir))
+        (canonicalExcludedRunDir === undefined ||
+          (!isWithin(current, canonicalExcludedRunDir) &&
+            !isWithin(canonicalExcludedRunDir, current)))
       ) {
         return { packageRoot: current };
       }
@@ -446,12 +522,57 @@ async function assertNoSymlinks(root: string): Promise<void> {
   }
 }
 
-function isBroadRuntimePath(candidate: string): boolean {
-  if (process.platform === "win32") {
+function isBroadRuntimePath(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform === "win32") {
     const parsed = path.win32.parse(candidate);
     return candidate.toLowerCase() === parsed.root.toLowerCase();
   }
-  return BROAD_POSIX_PATHS.has(candidate) || candidate === os.homedir();
+  return (
+    BROAD_READ_POSIX_PATHS.has(candidate) ||
+    candidate === path.resolve(os.homedir()) ||
+    candidate === CANONICAL_HOME_DIR
+  );
+}
+
+function isBroadWritablePath(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (isBroadRuntimePath(candidate, platform)) return true;
+  const disposableTempRoots =
+    platform === "darwin"
+      ? [...COMMON_DISPOSABLE_WRITABLE_TEMP_ROOTS, ...DARWIN_DISPOSABLE_WRITABLE_TEMP_ROOTS]
+      : COMMON_DISPOSABLE_WRITABLE_TEMP_ROOTS;
+  if (
+    platform !== "win32" &&
+    (disposableTempRoots.some((root) => isWithin(root, candidate)) ||
+      (platform === "darwin" && isDarwinPerUserTempDescendant(candidate)))
+  ) {
+    return false;
+  }
+  return (
+    BROAD_WRITABLE_POSIX_PATHS.has(candidate) ||
+    (platform !== "win32" &&
+      PROTECTED_WRITABLE_POSIX_ROOTS.some((root) => isWithin(root, candidate)))
+  );
+}
+
+function isDarwinPerUserTempDescendant(candidate: string): boolean {
+  const relative = path.posix.relative("/private/var/folders", candidate);
+  const parts = relative.split("/");
+  return (
+    !relative.startsWith("../") &&
+    !path.posix.isAbsolute(relative) &&
+    parts[2] === "T" &&
+    parts.length > 3
+  );
+}
+
+function pathsOverlap(first: string, second: string): boolean {
+  return isWithin(first, second) || isWithin(second, first);
 }
 
 export async function validateEvalRunSpec(spec: EvalRunSpec): Promise<ValidatedEvalRunSpec> {
@@ -459,6 +580,9 @@ export async function validateEvalRunSpec(spec: EvalRunSpec): Promise<ValidatedE
     throw new Error("Eval command must contain non-NUL argv entries");
   }
   const runDir = await realpath(spec.runDir);
+  if (isBroadWritablePath(runDir)) {
+    throw new Error(`Refusing broad eval run directory: ${runDir}`);
+  }
   const stats = await lstat(runDir);
   if (!stats.isDirectory()) {
     throw new Error(`Eval run directory is not a directory: ${runDir}`);
@@ -470,6 +594,11 @@ export async function validateEvalRunSpec(spec: EvalRunSpec): Promise<ValidatedE
     const canonical = await realpath(runtimePath);
     if (isBroadRuntimePath(canonical)) {
       throw new Error(`Refusing broad runtime read path: ${canonical}`);
+    }
+    if (pathsOverlap(runDir, canonical)) {
+      throw new Error(
+        `Runtime read path must not overlap the writable run directory: ${canonical}`,
+      );
     }
     if (!runtimeReadPaths.includes(canonical)) {
       runtimeReadPaths.push(canonical);
@@ -617,9 +746,24 @@ export function buildEvalSandboxConfig(options: EvalSandboxConfigOptions): Sandb
   if (options.platform === "win32") {
     throw new Error("Strict eval filesystem isolation is unavailable on Windows");
   }
-  const allowRead = [options.runDir, ...options.runtimeReadPaths];
+  if (isBroadWritablePath(options.runDir, options.platform)) {
+    throw new Error(`Refusing broad eval run directory: ${options.runDir}`);
+  }
+  const readOnlyPaths: string[] = [];
+  for (const runtimePath of options.runtimeReadPaths) {
+    if (isBroadRuntimePath(runtimePath, options.platform)) {
+      throw new Error(`Refusing broad runtime read path: ${runtimePath}`);
+    }
+    if (isWithin(options.runDir, runtimePath)) continue;
+    if (isWithin(runtimePath, options.runDir)) {
+      throw new Error(
+        `Runtime read path must not overlap the writable run directory: ${runtimePath}`,
+      );
+    }
+    readOnlyPaths.push(runtimePath);
+  }
   return {
-    readOnlyPaths: allowRead.filter((entry) => entry !== options.runDir),
+    readOnlyPaths,
     writablePaths: [options.runDir],
     network: "proxy",
     proxyUrl: options.parentProxyUrl,

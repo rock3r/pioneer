@@ -23,13 +23,13 @@ Place an `evals/evals.json` file inside the skill directory:
 }
 ```
 
-`id` must be an integer unique within the file. `prompt` is required. `files` is optional and contains paths below the skill directory. Controller-only fields such as `expected_output` and `expectations` may coexist in the source definition, but Pioneer never stages them into an actor run.
+`skill_name` must be one non-empty portable path component of at most 255 UTF-8 bytes without `/` or `\\`; absolute paths, dot names, Windows reserved device names and invalid characters, and names ending in a dot or space are rejected. `id` must be an integer unique within the file. `prompt` is required. `files` is optional and contains paths below the skill directory. Controller-only fields such as `expected_output` and `expectations` may coexist in the source definition, but Pioneer never stages them into an actor run.
 
 The complete source skill must be free of symbolic links. Generated eval workspaces and `evals/` content are excluded from the with-skill copy.
 
 ## Prepare a battery
 
-Choose a new output directory outside the source skill:
+Choose a new output directory whose canonical parent is outside the source skill. Pioneer revalidates the created destination before populating it:
 
 ```bash
 pioneer eval prepare \
@@ -75,7 +75,7 @@ pioneer eval run \
   -- your-agent-adapter --case case.json
 ```
 
-Repeat with the `with-skill` directory. The command after `--` is passed as discrete arguments, not interpreted by a shell. `--runtime-read` is repeatable, read-only, and intended for narrow tool runtimes; home roots, filesystem roots, `/tmp`, `/var`, and similarly broad paths are rejected.
+Repeat with the `with-skill` directory. The command after `--` is passed as discrete arguments, not interpreted by a shell. The writable `--run-dir` must identify one narrow actor directory. `--runtime-read` is repeatable, read-only, and intended for narrow non-overlapping tool runtimes. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and their canonical aliases, are rejected; narrow read-only system runtimes and disposable temporary descendants remain supported.
 
 `--deny-read-probe` is also repeatable. Use it for every controller-side answer key or sensitive reference whose invisibility you want the mandatory preflight to prove.
 

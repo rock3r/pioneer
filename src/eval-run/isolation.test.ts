@@ -368,6 +368,22 @@ describe("validateEvalRunSpec", () => {
     await expect(findValidatedPiPackageRoot(executable, runDir)).resolves.toBeUndefined();
   });
 
+  it("rejects an actor-spoofed Pi package root inside the writable run directory", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-package-"));
+    const runDir = path.join(temp, "run");
+    const packageRoot = path.join(runDir, "package");
+    const binDir = path.join(packageRoot, "bin");
+    const executable = path.join(binDir, "pi");
+    await mkdir(binDir, { recursive: true });
+    await writeFile(executable, "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(
+      path.join(packageRoot, "package.json"),
+      JSON.stringify({ name: "@earendil-works/pi-coding-agent" }),
+    );
+
+    await expect(findValidatedPiPackageRoot(executable, runDir)).resolves.toBeUndefined();
+  });
+
   it("accepts only a Pi package root matching the controller-trusted installation", () => {
     const trusted = { packageRoot: "/opt/pi" };
     expect(isTrustedPiInstallation(trusted, trusted)).toBe(true);
@@ -390,6 +406,11 @@ describe("validateEvalRunSpec", () => {
       const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-"));
       const runDir = path.join(temp, "run");
       await mkdir(runDir);
+      await mkdir(path.join(runDir, "runtime"));
+
+      await expect(
+        validateEvalRunSpec({ runDir: "/tmp", command: ["/usr/bin/true"] }),
+      ).rejects.toThrow(/broad eval run directory/i);
 
       await expect(
         validateEvalRunSpec({
@@ -399,12 +420,32 @@ describe("validateEvalRunSpec", () => {
         }),
       ).rejects.toThrow(/broad runtime read path/i);
 
-      const spec = await validateEvalRunSpec({
-        runDir,
-        command: ["/usr/bin/true"],
-        runtimeReadPaths: ["/usr"],
-      });
-      expect(spec.runDir).toBe(await realpath(runDir));
+      for (const broadPath of ["/etc", "/run"]) {
+        if (!(await import("node:fs")).existsSync(broadPath)) continue;
+        await expect(
+          validateEvalRunSpec({
+            runDir,
+            command: ["/usr/bin/true"],
+            runtimeReadPaths: [broadPath],
+          }),
+        ).rejects.toThrow(/broad runtime read path/i);
+      }
+
+      await expect(
+        validateEvalRunSpec({
+          runDir,
+          command: ["/usr/bin/true"],
+          runtimeReadPaths: [temp],
+        }),
+      ).rejects.toThrow(/overlap.*run directory/i);
+
+      await expect(
+        validateEvalRunSpec({
+          runDir,
+          command: ["/usr/bin/true"],
+          runtimeReadPaths: [path.join(runDir, "runtime")],
+        }),
+      ).rejects.toThrow(/overlap.*run directory/i);
     },
   );
 
@@ -428,8 +469,98 @@ describe("validateEvalRunSpec", () => {
 
 describe("cross-platform sandbox config", () => {
   it.each([
-    ["darwin", "/", "/private/tmp/eval-run", ["/System", "/usr"]],
-    ["linux", "/", "/tmp/eval-run", ["/usr", "/lib"]],
+    ["darwin", "/"],
+    ["darwin", "/private/etc"],
+    ["darwin", "/usr"],
+    ["darwin", "/private/tmp"],
+    ["darwin", "/private/var"],
+    ["linux", "/"],
+    ["linux", "/etc"],
+    ["linux", "/run"],
+    ["linux", "/usr"],
+    ["linux", "/tmp"],
+    ["linux", "/var"],
+  ] as const)("rejects broad writable eval run directories on %s", (platform, runDir) => {
+    expect(() =>
+      buildEvalSandboxConfig({
+        platform,
+        runDir,
+        runtimeReadPaths: [],
+        parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+      }),
+    ).toThrow(/broad eval run directory/i);
+  });
+
+  it.each([
+    ["darwin", "/usr/local/eval-run"],
+    ["darwin", "/Applications/Pioneer Eval.app"],
+    ["darwin", "/Volumes/Data"],
+    ["darwin", "/private/var/folders/ab/hash/C/pioneer-eval"],
+    ["darwin", "/private/var/db/pioneer-eval"],
+    ["linux", "/usr/local/eval-run"],
+    ["linux", "/etc/pioneer-eval"],
+    ["linux", "/private/var/folders/fake/pioneer-eval"],
+    ["linux", "/var/lib/pioneer-eval"],
+  ] as const)(
+    "rejects writable eval directories below protected roots on %s",
+    (platform, runDir) => {
+      expect(() =>
+        buildEvalSandboxConfig({
+          platform,
+          runDir,
+          runtimeReadPaths: [],
+          parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+        }),
+      ).toThrow(/broad eval run directory/i);
+    },
+  );
+
+  it.each([
+    ["darwin", "/private/tmp/pioneer-eval/run"],
+    ["darwin", "/private/var/folders/ab/hash/T/pioneer-eval/run"],
+    ["linux", "/tmp/pioneer-eval/run"],
+    ["linux", "/var/tmp/pioneer-eval/run"],
+  ] as const)(
+    "allows writable eval directories below disposable temp roots on %s",
+    (platform, runDir) => {
+      expect(
+        buildEvalSandboxConfig({
+          platform,
+          runDir,
+          runtimeReadPaths: [],
+          parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+        }).writablePaths,
+      ).toEqual([runDir]);
+    },
+  );
+
+  it.each(["darwin", "linux"] as const)(
+    "rejects runtime-read grants that overlap the writable run directory on %s",
+    (platform) => {
+      const runDir = "/narrow/eval/run";
+      expect(() =>
+        buildEvalSandboxConfig({
+          platform,
+          runDir,
+          runtimeReadPaths: ["/narrow/eval"],
+          parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+        }),
+      ).toThrow(/overlap.*run directory/i);
+
+      expect(
+        buildEvalSandboxConfig({
+          platform,
+          runDir,
+          runtimeReadPaths: ["/narrow/eval/run/runtime"],
+          parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+        }).readOnlyPaths,
+      ).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["darwin", "/", "/private/tmp/eval-run", ["/opt/tool/runtime", "/usr/bin/tool"]],
+    ["linux", "/", "/tmp/eval-run", ["/opt/tool/runtime", "/usr/bin/tool"]],
   ] as const)(
     "denies the platform root and re-allows only the run and runtime on %s",
     (platform, deniedRoot, runDir, runtimeReadPaths) => {

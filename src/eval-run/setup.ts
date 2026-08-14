@@ -25,9 +25,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function hasInvalidWindowsFilenameCharacter(value: string): boolean {
+  return [...value].some(
+    (character) => (character.codePointAt(0) ?? 0) <= 0x1f || '<>:"/\\|?*'.includes(character),
+  );
+}
+
+function isSafeSkillName(value: string): boolean {
+  const windowsReservedName =
+    /^(?:con|prn|aux|nul|conin\$|conout\$|clock\$|com(?:[1-9]|[¹²³])|lpt(?:[1-9]|[¹²³]))(?:\.|$)/i;
+  return (
+    value.length > 0 &&
+    Buffer.byteLength(value, "utf8") <= 255 &&
+    value !== "." &&
+    value !== ".." &&
+    !hasInvalidWindowsFilenameCharacter(value) &&
+    !/[. ]$/u.test(value) &&
+    !windowsReservedName.test(value) &&
+    !path.posix.isAbsolute(value) &&
+    !path.win32.isAbsolute(value) &&
+    path.posix.basename(value) === value &&
+    path.win32.basename(value) === value
+  );
+}
+
 function parseEvalCases(value: unknown): { skillName: string; evals: EvalCase[] } {
   if (!isRecord(value) || typeof value.skill_name !== "string" || !Array.isArray(value.evals)) {
     throw new Error("Invalid evals.json: expected skill_name and evals");
+  }
+  if (!isSafeSkillName(value.skill_name)) {
+    throw new Error("Invalid evals.json: skill_name must be one safe path component");
   }
   const evals = value.evals.map((entry, index) => {
     if (!isRecord(entry) || !Number.isInteger(entry.id) || typeof entry.prompt !== "string") {
@@ -46,9 +73,16 @@ function parseEvalCases(value: unknown): { skillName: string; evals: EvalCase[] 
   return { skillName: value.skill_name, evals };
 }
 
-function ensureWithin(root: string, candidate: string, label: string): void {
+function isWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+function ensureWithin(root: string, candidate: string, label: string): void {
+  if (!isWithin(root, candidate)) {
     throw new Error(`${label} escapes its allowed root: ${candidate}`);
   }
 }
@@ -103,22 +137,29 @@ export async function prepareEvalBattery(
   const evalsPath = await realpath(options.evalsPath);
   ensureWithin(skillDir, evalsPath, "evals path");
   await assertTreeHasNoSymlinks(skillDir);
+  const parsed = parseEvalCases(JSON.parse(await readFile(evalsPath, "utf8")) as unknown);
 
-  const outputRoot = path.resolve(options.outputRoot);
-  ensureWithin(path.dirname(outputRoot), outputRoot, "output root");
-  if (
-    path.relative(skillDir, outputRoot) === "" ||
-    !path.relative(skillDir, outputRoot).startsWith("..")
-  ) {
+  const requestedOutputRoot = path.resolve(options.outputRoot);
+  const outputParent = await realpath(path.dirname(requestedOutputRoot));
+  let outputRoot = path.join(outputParent, path.basename(requestedOutputRoot));
+  ensureWithin(outputParent, outputRoot, "output root");
+  if (isWithin(skillDir, outputRoot)) {
     throw new Error("Eval battery output must be outside the source skill");
   }
   await mkdir(outputRoot);
+  const createdOutputRoot = await realpath(outputRoot);
+  if (path.dirname(createdOutputRoot) !== outputParent) {
+    throw new Error("Eval battery output parent changed while the output was created");
+  }
+  if (isWithin(skillDir, createdOutputRoot)) {
+    throw new Error("Eval battery output must be outside the source skill");
+  }
+  outputRoot = createdOutputRoot;
   const actorRunsDir = path.join(outputRoot, "actor-runs");
   const controllerDir = path.join(outputRoot, "controller");
   await mkdir(actorRunsDir);
   await mkdir(controllerDir);
 
-  const parsed = parseEvalCases(JSON.parse(await readFile(evalsPath, "utf8")) as unknown);
   for (const evalCase of parsed.evals) {
     for (const arm of ["baseline", "with-skill"] as const) {
       const runDir = path.join(actorRunsDir, `eval-${evalCase.id}`, arm);
@@ -149,7 +190,10 @@ export async function prepareEvalBattery(
         { flag: "wx" },
       );
       if (arm === "with-skill") {
-        await copySanitizedSkill(skillDir, path.join(runDir, "skills", parsed.skillName));
+        const skillsDir = path.join(runDir, "skills");
+        const skillDestination = path.join(skillsDir, parsed.skillName);
+        ensureWithin(skillsDir, skillDestination, "skill destination");
+        await copySanitizedSkill(skillDir, skillDestination);
       }
     }
   }

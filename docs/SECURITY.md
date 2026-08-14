@@ -32,7 +32,7 @@ For reviews:
 - grant paths must exist, be directories, and not themselves be symbolic links;
 - all accepted paths are canonicalized before policy construction.
 
-For evals, the actor run directory is the only persistent writable tree. Runtime reads must be narrow, existing canonical paths; broad roots such as `/`, `/Users`, `/home`, `/tmp`, `/var`, and the user's home directory are rejected. Actor-visible eval trees may not contain symlinks.
+For evals, the actor run directory is the only persistent writable tree. The run directory and caller-supplied runtime reads must be narrow, existing canonical paths and must not overlap. Controller-derived executable reads already covered by the writable run tree are omitted rather than widened into redundant grants. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and their canonical platform aliases, are rejected before sandbox construction; narrow read-only system runtimes and disposable temporary descendants remain available where execution requires them. A validated Pi package root may not contain or be contained by the writable run tree. Eval preparation canonicalizes the proposed output parent, requires it to remain outside the source skill, and revalidates the created destination before writing descendants. It accepts `skill_name` only as one non-empty, non-dot, cross-platform-safe path component within the 255-byte filename limit, including rejection of Windows reserved device names, invalid characters, and trailing dots or spaces, then verifies destination containment before copying. Actor-visible eval trees may not contain symlinks.
 
 ## Pi configuration and credentials
 
