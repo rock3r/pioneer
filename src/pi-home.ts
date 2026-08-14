@@ -40,7 +40,7 @@ const DEFAULT_ROOT_FILES = [
   "AGENTS.md",
 ] as const;
 const HARD_EXCLUDED_NAMES = new Set(["sessions", "logs", ".npm", ".cache", "tmp", ".tmp", "temp"]);
-const DEFAULT_SKIPPED_NAMES = new Set(["node_modules", ".git", "npm", "git"]);
+const DEFAULT_SKIPPED_NAMES = new Set(["node_modules", ".git"]);
 
 interface SelectedEntry {
   readonly relativePath: string;
@@ -92,7 +92,12 @@ function invalidInclude(include: string, reason: string): Error {
 
 function ensureInside(sourceRoot: string, candidate: string, include: string): string {
   const relative = path.relative(sourceRoot, candidate);
-  if (relative === "" || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  if (
+    relative === "" ||
+    relative === ".." ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
     throw invalidInclude(include, "escapes the selected Pi home");
   }
   return relative.split(path.sep).join("/");
@@ -134,6 +139,7 @@ function symlinkTargetRelative(
   const relativeTarget = path.relative(sourceRoot, target);
   if (
     relativeTarget === "" ||
+    relativeTarget === ".." ||
     relativeTarget.startsWith(`..${path.sep}`) ||
     path.isAbsolute(relativeTarget)
   ) {

@@ -24,6 +24,8 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
   const destination = path.join(root, "run", "pi");
   await mkdir(path.join(source, "skills", "review"), { recursive: true });
   await mkdir(path.join(source, "skills", "review", "guide.log"));
+  await mkdir(path.join(source, "skills", "review", "git"));
+  await mkdir(path.join(source, "skills", "review", "npm"));
   await mkdir(path.join(source, "skills", "review", "node_modules", "tmp"), { recursive: true });
   await mkdir(path.join(source, "sessions"));
   await mkdir(path.join(source, "tmp", "package", "node_modules"), { recursive: true });
@@ -40,6 +42,8 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
   await writeFile(path.join(source, "unknown-root.txt"), "unknown");
   await writeFile(path.join(source, "skills", "review", "SKILL.md"), "review skill");
   await writeFile(path.join(source, "skills", "review", "guide.log", "SKILL.md"), "guide skill");
+  await writeFile(path.join(source, "skills", "review", "git", "SKILL.md"), "git skill");
+  await writeFile(path.join(source, "skills", "review", "npm", "SKILL.md"), "npm skill");
   await writeFile(
     path.join(source, "skills", "review", "node_modules", "tmp", "required.js"),
     "runtime dependency",
@@ -78,6 +82,12 @@ describe("prepareIsolatedPiHome", () => {
     await expect(
       readFile(path.join(prepared.agentDir, "skills", "review", "guide.log", "SKILL.md"), "utf8"),
     ).resolves.toBe("guide skill");
+    await expect(
+      readFile(path.join(prepared.agentDir, "skills", "review", "git", "SKILL.md"), "utf8"),
+    ).resolves.toBe("git skill");
+    await expect(
+      readFile(path.join(prepared.agentDir, "skills", "review", "npm", "SKILL.md"), "utf8"),
+    ).resolves.toBe("npm skill");
     await expect(readFile(path.join(prepared.agentDir, "models-store.json"), "utf8")).resolves.toBe(
       "{}",
     );
@@ -165,6 +175,20 @@ describe("prepareIsolatedPiHome", () => {
         piHomeIncludes: ["escape"],
       }),
     ).rejects.toThrow(/symbolic link/i);
+  });
+
+  it("rejects a symbolic link that resolves to the Pi home parent", async () => {
+    const { source, destination } = await fixture();
+    await symlink("..", path.join(source, "parent"));
+
+    await expect(
+      prepareIsolatedPiHome({
+        sourceDir: source,
+        destination,
+        mode: "review",
+        piHomeIncludes: ["parent"],
+      }),
+    ).rejects.toThrow(/escaping symbolic link/i);
   });
 
   it("omits a symlinked agent-bin Pi launcher because Pioneer launches host Pi", async () => {
