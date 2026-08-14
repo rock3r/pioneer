@@ -125,7 +125,9 @@ describe("validateEvalRunSpec", () => {
     const target = path.join(temp, "actor-target");
     const launcher = path.join(binDir, "actor");
     await writeFile(interpreter, "#!/bin/sh\n", { mode: 0o755 });
-    await writeFile(target, `#!/usr/bin/env ${interpreter}\n`, { mode: 0o755 });
+    await writeFile(target, `#!/usr/bin/env ${interpreter.replaceAll(path.sep, "/")}\n`, {
+      mode: 0o755,
+    });
     await import("node:fs/promises").then(({ symlink }) => symlink(target, launcher));
 
     await expect(resolveEvalExecutable(launcher, runDir, "")).resolves.toEqual({
