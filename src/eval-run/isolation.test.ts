@@ -62,6 +62,23 @@ describe("validateEvalRunSpec", () => {
     });
   });
 
+  it.skipIf(process.platform !== "win32")(
+    "expands a bare PATH executable through PATHEXT on Windows",
+    async () => {
+      const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-windows-path-"));
+      const runDir = path.join(temp, "run");
+      const binDir = path.join(temp, "bin");
+      await mkdir(runDir);
+      await mkdir(binDir);
+      const executable = path.join(binDir, "actor.cmd");
+      await writeFile(executable, "@echo off\r\n", { mode: 0o755 });
+
+      await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toMatchObject({
+        commandPath: await realpath(executable),
+      });
+    },
+  );
+
   it("rewrites env shebang scripts to an explicit canonical interpreter", async () => {
     const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
     const runDir = path.join(temp, "run");

@@ -64,24 +64,13 @@ function isWithin(root: string, candidate: string): boolean {
   );
 }
 
-function hasWindowsExecutableExtension(candidate: string): boolean {
-  const extension = path.win32.extname(candidate).toLowerCase();
-  const pathExtensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
-    .split(";")
-    .map((value) => value.trim().toLowerCase())
-    .filter((value) => value.length > 0);
-  return extension.length > 0 && pathExtensions.includes(extension);
-}
-
 async function assertExecutable(candidate: string): Promise<string> {
   let canonical: string;
   try {
     canonical = await realpath(candidate);
     const details = await stat(canonical);
     if (!details.isFile()) throw new Error("not a regular file");
-    if (process.platform === "win32") {
-      if (!hasWindowsExecutableExtension(canonical)) throw new Error("not a Windows executable");
-    } else {
+    if (process.platform !== "win32") {
       await new Promise<void>((resolve, reject) =>
         access(canonical, constants.X_OK, (error) => (error ? reject(error) : resolve())),
       );
@@ -90,6 +79,16 @@ async function assertExecutable(candidate: string): Promise<string> {
     throw new Error(`Eval actor executable is missing or not executable: ${candidate}`);
   }
   return canonical;
+}
+
+function selectedPathCandidates(entry: string, executable: string): string[] {
+  const base = path.join(entry, executable);
+  if (process.platform !== "win32" || path.win32.extname(executable).length > 0) return [base];
+  const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  return [base, ...extensions.map((extension) => `${base}${extension}`)];
 }
 
 async function readShebangFirstLine(executable: string): Promise<string> {
@@ -185,15 +184,16 @@ async function resolveEvalExecutableInternal(
   if (lexicalPath === undefined) {
     for (const entry of selectedPath.split(path.delimiter)) {
       if (entry.length === 0 || !path.isAbsolute(entry)) continue;
-      const candidate = path.join(entry, executable);
-      let canonical: string;
-      try {
-        canonical = await assertExecutable(candidate);
-      } catch {
-        // Continue through explicitly selected PATH entries only when this candidate was not executable.
-        continue;
+      for (const candidate of selectedPathCandidates(entry, executable)) {
+        let canonical: string;
+        try {
+          canonical = await assertExecutable(candidate);
+        } catch {
+          // Continue through explicitly selected PATH entries only when this candidate was not executable.
+          continue;
+        }
+        return await buildResolvedExecutable(candidate, canonical, selectedPath, context);
       }
-      return await buildResolvedExecutable(candidate, canonical, selectedPath, context);
     }
     throw new Error(`Eval actor executable was not found on the selected PATH: ${executable}`);
   }
