@@ -45,6 +45,16 @@ describe("diagnostics", () => {
     ).toBe("Authorization=[REDACTED] request failed");
   });
 
+  it("redacts serialized Digest authorization values with quoted fields", () => {
+    const sanitized = sanitizeDiagnostic(
+      '{"Authorization":"Digest username=\\"private\\", response=\\"credential\\""}',
+    );
+
+    expect(sanitized).not.toContain("private");
+    expect(sanitized).not.toContain("credential");
+    expect(sanitized).toContain("[REDACTED]");
+  });
+
   it("redacts provider-prefixed credential assignments", () => {
     const sanitized = sanitizeDiagnostic(
       "GOOGLE_API_KEY=google-private AWS_SECRET_ACCESS_KEY=aws-private GITHUB_TOKEN=github-private",
@@ -69,6 +79,13 @@ describe("diagnostics", () => {
     const sanitized = sanitizeDiagnostic('{\\"api_key\\":\\"google-private\\"}');
 
     expect(sanitized).not.toContain("google-private");
+    expect(sanitized).toContain("[REDACTED]");
+  });
+
+  it("redacts authenticated URLs with JSON-escaped slashes", () => {
+    const sanitized = sanitizeDiagnostic("https:\\/\\/user:password@example.test/path");
+
+    expect(sanitized).not.toContain("user:password");
     expect(sanitized).toContain("[REDACTED]");
   });
 

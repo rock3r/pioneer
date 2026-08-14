@@ -17,13 +17,13 @@ export function diagnosticMessage(id: string, message: string): string {
 
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
   let sanitized = value
-    .replaceAll(/\\+(?=["'])/g, "")
+    .replaceAll(/\\+(?=[/"'])/g, "")
     .replaceAll(
       /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY)-----|$)/gi,
       "[REDACTED]",
     )
     .replaceAll(
-      /(["']?)\bauthorization\1\s*[:=]\s*(?:digest|aws4-hmac-sha256)\b[^\r\n]*/gi,
+      /(["']?)\bauthorization\1\s*[:=]\s*["']?(?:digest|aws4-hmac-sha256)\b[^\r\n]*/gi,
       "Authorization=[REDACTED]",
     )
     .replaceAll(
