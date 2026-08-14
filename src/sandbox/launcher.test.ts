@@ -41,6 +41,15 @@ describe("direct sandbox launchers", () => {
     expect(launch.argv.some((entry) => entry.endsWith("linux-network-supervisor.js"))).toBe(true);
   });
 
+  it("leaves session creation to the detached capture process", () => {
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, network: "none" },
+      ["/usr/bin/node", "actor.mjs"],
+      "/usr/bin/bwrap",
+    );
+    expect(launch.argv).not.toContain("--new-session");
+  });
+
   it("leaves networking absent when the policy is offline", () => {
     const offline = {
       readOnlyPaths: policy.readOnlyPaths,

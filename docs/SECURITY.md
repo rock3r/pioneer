@@ -91,7 +91,7 @@ macOS uses the legacy `sandbox-exec` interface, for which Apple provides no publ
 
 ### Linux
 
-Bubblewrap creates an empty tmpfs root, explicit read-only and writable binds, new user/PID/network/IPC/UTS namespaces, private `/proc` and `/dev`, a new session, parent-death behavior, and no capabilities. Ubuntu systems that restrict unprivileged user namespaces can use the narrow root-owned Bubblewrap copy and AppArmor profile described in [EVALS.md](EVALS.md).
+Bubblewrap creates an empty tmpfs root, explicit read-only and writable binds, new user/PID/network/IPC/UTS namespaces, private `/proc` and `/dev`, parent-death behavior, and no capabilities. The detached controller capture process owns the dedicated session/process group used for containment and termination. Ubuntu systems that restrict unprivileged user namespaces can use the narrow root-owned Bubblewrap copy and AppArmor profile described in [EVALS.md](EVALS.md).
 
 ### Windows
 

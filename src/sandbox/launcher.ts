@@ -145,7 +145,8 @@ export function buildLinuxSandboxArgv(
       : []),
   ];
   const args: string[] = [
-    "--new-session",
+    // captureEvalProcess starts Bubblewrap detached, giving it the dedicated
+    // session/process group used for containment and termination.
     "--die-with-parent",
     "--unshare-user",
     "--unshare-pid",
