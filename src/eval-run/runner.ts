@@ -1,7 +1,16 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
@@ -313,11 +322,12 @@ async function sandboxAndCapture(
   timeoutMs: number,
   bwrapPath?: string,
   proxySocketPath?: string,
+  runtimeExecutable = process.execPath,
 ): Promise<EvalRunResult> {
   const launch =
     process.platform === "darwin"
       ? buildMacosSandboxArgv(policy, command)
-      : buildLinuxSandboxArgv(policy, command, bwrapPath ?? "", proxySocketPath);
+      : buildLinuxSandboxArgv(policy, command, bwrapPath ?? "", proxySocketPath, runtimeExecutable);
   return await captureEvalProcess(
     launch.argv,
     runDir,
@@ -350,6 +360,7 @@ export async function runEvalCommand(
 ): Promise<EvalRunResult> {
   const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
+  const sandboxRuntimeExecutable = await realpath(process.execPath);
   await assertNativeSandboxReady();
   const validated = await validateEvalRunSpec({
     ...spec,
@@ -451,11 +462,12 @@ export async function runEvalCommand(
     const timeoutMs = options.timeoutMs ?? 300_000;
     const probeResult = await sandboxAndCapture(
       config,
-      [process.execPath, probeScript, probeSpec],
+      [sandboxRuntimeExecutable, probeScript, probeSpec],
       validated.runDir,
       Math.min(timeoutMs, 30_000),
       linuxBwrapPath,
       bridge?.socketPath,
+      sandboxRuntimeExecutable,
     );
     if (probeResult.exitCode !== 0 || probeResult.stdout.trim() !== "isolation-ok") {
       throw new Error(
@@ -467,11 +479,12 @@ export async function runEvalCommand(
     }
     const result = await sandboxAndCapture(
       config,
-      [process.execPath, launcherScript, launchSpec],
+      [sandboxRuntimeExecutable, launcherScript, launchSpec],
       validated.runDir,
       timeoutMs,
       linuxBwrapPath,
       bridge?.socketPath,
+      sandboxRuntimeExecutable,
     );
     return {
       ...result,

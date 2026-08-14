@@ -85,7 +85,7 @@ describe("bounded eval shebang inspection", () => {
 
     await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toMatchObject({
       commandPath: await realpath(actor),
-      readPaths: [actor, await realpath(actor)],
+      readPaths: [...new Set([actor, await realpath(actor)])],
     });
   });
 });

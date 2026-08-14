@@ -40,26 +40,29 @@ describe("eval process capture", () => {
     expect(performance.now() - started).toBeLessThan(1_500);
   });
 
-  it("reports containment failure when a direct child exits while a descendant retains pipes", async () => {
-    const started = performance.now();
-    const result = await captureEvalProcess(
-      actor(`
+  it.skipIf(process.platform === "win32")(
+    "reports containment failure when a direct child exits while a descendant retains pipes",
+    async () => {
+      const started = performance.now();
+      const result = await captureEvalProcess(
+        actor(`
         const { spawn } = require("node:child_process");
         spawn(process.execPath, ["-e", "setTimeout(() => {}, 10_000)"], { stdio: "inherit" });
         process.stdout.write("early-output");
         process.exit(0);
       `),
-      process.cwd(),
-      process.env,
-      1_000,
-    );
+        process.cwd(),
+        process.env,
+        1_000,
+      );
 
-    expect(result.exitCode).not.toBe(0);
-    expect(result.containmentFailure).toBe(true);
-    expect(result.stdout).toContain("early-output");
-    expect(result.stderr).toContain("[EVAL_PROCESS_CONTAINMENT_FAILED]");
-    expect(performance.now() - started).toBeLessThan(1_500);
-  });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.containmentFailure).toBe(true);
+      expect(result.stdout).toContain("early-output");
+      expect(result.stderr).toContain("[EVAL_PROCESS_CONTAINMENT_FAILED]");
+      expect(performance.now() - started).toBeLessThan(1_500);
+    },
+  );
 
   it("forwards SIGINT to the launched process group and returns an interrupted failure", async () => {
     const resultPromise = captureEvalProcess(

@@ -64,15 +64,28 @@ function isWithin(root: string, candidate: string): boolean {
   );
 }
 
+function hasWindowsExecutableExtension(candidate: string): boolean {
+  const extension = path.win32.extname(candidate).toLowerCase();
+  const pathExtensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value.length > 0);
+  return extension.length > 0 && pathExtensions.includes(extension);
+}
+
 async function assertExecutable(candidate: string): Promise<string> {
   let canonical: string;
   try {
     canonical = await realpath(candidate);
     const details = await stat(canonical);
-    await new Promise<void>((resolve, reject) =>
-      access(canonical, constants.X_OK, (error) => (error ? reject(error) : resolve())),
-    );
     if (!details.isFile()) throw new Error("not a regular file");
+    if (process.platform === "win32") {
+      if (!hasWindowsExecutableExtension(canonical)) throw new Error("not a Windows executable");
+    } else {
+      await new Promise<void>((resolve, reject) =>
+        access(canonical, constants.X_OK, (error) => (error ? reject(error) : resolve())),
+      );
+    }
   } catch {
     throw new Error(`Eval actor executable is missing or not executable: ${candidate}`);
   }

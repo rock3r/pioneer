@@ -11,6 +11,10 @@ import {
   validateEvalRunSpec,
 } from "./isolation.js";
 
+function uniquePaths(paths: readonly string[]): string[] {
+  return [...new Set(paths)];
+}
+
 describe("validateEvalRunSpec", () => {
   it("resolves a bare executable through the selected PATH to a canonical file", async () => {
     const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
@@ -24,7 +28,7 @@ describe("validateEvalRunSpec", () => {
     const expected = await realpath(executable);
     await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toEqual({
       commandPath: expected,
-      readPaths: [path.join(binDir, "actor"), expected],
+      readPaths: uniquePaths([path.join(binDir, "actor"), expected]),
     });
   });
 
@@ -53,7 +57,7 @@ describe("validateEvalRunSpec", () => {
     const expected = await realpath(executable);
     await expect(resolveEvalExecutable("bin/actor", runDir, "")).resolves.toEqual({
       commandPath: expected,
-      readPaths: [path.join(runDir, "bin/actor"), expected],
+      readPaths: uniquePaths([path.join(runDir, "bin/actor"), expected]),
     });
   });
 
@@ -95,14 +99,14 @@ describe("validateEvalRunSpec", () => {
     await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toEqual({
       commandPath: actorCanonical,
       command: [finalCanonical, middleCanonical, actorCanonical],
-      readPaths: [
+      readPaths: uniquePaths([
         path.join(binDir, "actor"),
         actorCanonical,
         path.join(binDir, "middle"),
         middleCanonical,
         finalLauncher,
         finalCanonical,
-      ],
+      ]),
     });
   });
 

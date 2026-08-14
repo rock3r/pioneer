@@ -52,12 +52,13 @@ const runtimeCandidates =
     ? ["/System", "/usr", "/bin", "/sbin", "/opt/homebrew", "/private/etc/ssl"]
     : ["/usr", "/bin", "/lib", "/lib64", "/etc/ssl/certs"];
 const nodeRuntime = await executableRuntimeRoot(process.execPath);
+const nodeExecutable = await realpath(process.execPath);
 const policy = {
   readOnlyPaths: [source, ...runtimeCandidates.filter(existsSync), nodeRuntime],
   writablePaths: [scratch],
   network: "none",
 };
-const command = [process.execPath, "-e", actor, source, scratch];
+const command = [nodeExecutable, "-e", actor, source, scratch];
 const linuxBwrap = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
 if (process.platform === "linux" && linuxBwrap === undefined) {
   throw new Error("Linux sandbox smoke requires Bubblewrap");
@@ -65,7 +66,7 @@ if (process.platform === "linux" && linuxBwrap === undefined) {
 const launch =
   process.platform === "darwin"
     ? buildMacosSandboxArgv(policy, command)
-    : buildLinuxSandboxArgv(policy, command, linuxBwrap);
+    : buildLinuxSandboxArgv(policy, command, linuxBwrap, undefined, nodeExecutable);
 
 function capture(argv, environment) {
   return new Promise((resolve, reject) => {
@@ -132,8 +133,8 @@ try {
     '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.1; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
     { mode: 0o755 },
   );
-  const nestedInterpreter = `const { spawnSync } = require("node:child_process");\nconst [script, ...args] = process.argv.slice(2);\nconst child = spawnSync(${JSON.stringify(process.execPath)}, [script, ...args], { stdio: "inherit" });\nprocess.exit(child.status ?? 1);\n`;
-  await writeFile(evalFinal, `#!${process.execPath}\n${nestedInterpreter}`, { mode: 0o755 });
+  const nestedInterpreter = `const { spawnSync } = require("node:child_process");\nconst [script, ...args] = process.argv.slice(2);\nconst child = spawnSync(${JSON.stringify(nodeExecutable)}, [script, ...args], { stdio: "inherit" });\nprocess.exit(child.status ?? 1);\n`;
+  await writeFile(evalFinal, `#!${nodeExecutable}\n${nestedInterpreter}`, { mode: 0o755 });
   await writeFile(evalMiddle, `#!/usr/bin/env final\n${nestedInterpreter}`, { mode: 0o755 });
   await writeFile(
     evalActor,
@@ -142,12 +143,12 @@ try {
   );
   await writeFile(
     evalTimeoutActor,
-    `#!${process.execPath}\nconst { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("timeout-before\\n"); process.stderr.write("timeout-error-before\\n"); setInterval(() => {}, 10000);\n`,
+    `#!${nodeExecutable}\nconst { spawn } = require("node:child_process"); spawn(${JSON.stringify(nodeExecutable)}, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("timeout-before\\n"); process.stderr.write("timeout-error-before\\n"); setInterval(() => {}, 10000);\n`,
     { mode: 0o755 },
   );
   await writeFile(
     evalContainmentActor,
-    `#!${process.execPath}\nconst { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("containment-before\\n"); process.exit(0);\n`,
+    `#!${nodeExecutable}\nconst { spawn } = require("node:child_process"); spawn(${JSON.stringify(nodeExecutable)}, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("containment-before\\n"); process.exit(0);\n`,
     { mode: 0o755 },
   );
   const previousPath = process.env.PATH;
@@ -232,7 +233,7 @@ try {
 }
 `;
     const noForkLaunch = buildMacosSandboxArgv({ ...policy, allowProcessFork: false }, [
-      process.execPath,
+      nodeExecutable,
       "-e",
       forkActor,
     ]);
@@ -276,11 +277,17 @@ socket.once("error", () => { clearTimeout(timer); process.stdout.write(JSON.stri
       network: "proxy",
       proxyUrl: proxy.url,
     };
-    const networkCommand = [process.execPath, "-e", networkActor, String(localAddress.port)];
+    const networkCommand = [nodeExecutable, "-e", networkActor, String(localAddress.port)];
     const networkLaunch =
       process.platform === "darwin"
         ? buildMacosSandboxArgv(networkPolicy, networkCommand)
-        : buildLinuxSandboxArgv(networkPolicy, networkCommand, linuxBwrap, bridge.socketPath);
+        : buildLinuxSandboxArgv(
+            networkPolicy,
+            networkCommand,
+            linuxBwrap,
+            bridge.socketPath,
+            nodeExecutable,
+          );
     const networkCompleted = await capture(networkLaunch.argv, {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       ...(process.platform === "darwin"

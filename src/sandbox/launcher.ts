@@ -120,6 +120,7 @@ export function buildLinuxSandboxArgv(
   command: readonly [string, ...string[]],
   bwrapPath: string,
   proxySocketPath?: string,
+  runtimeExecutable = process.execPath,
 ): SandboxLaunch {
   const proxy = parsedProxy(policy);
   if (policy.network === "proxy" && proxySocketPath === undefined) {
@@ -160,7 +161,7 @@ export function buildLinuxSandboxArgv(
   if (proxySocketPath === undefined) {
     args.push("--", ...command);
   } else {
-    args.push("--", process.execPath, supervisorPath, proxySocketPath, ...command);
+    args.push("--", runtimeExecutable, supervisorPath, proxySocketPath, ...command);
   }
   return { argv: [bwrapPath, ...args], environment };
 }
