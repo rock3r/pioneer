@@ -23,6 +23,7 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
   const source = path.join(root, "source-agent");
   const destination = path.join(root, "run", "pi");
   await mkdir(path.join(source, "skills", "review"), { recursive: true });
+  await mkdir(path.join(source, "skills", "review", "guide.log"));
   await mkdir(path.join(source, "skills", "review", "node_modules", "tmp"), { recursive: true });
   await mkdir(path.join(source, "sessions"));
   await mkdir(path.join(source, "tmp", "package", "node_modules"), { recursive: true });
@@ -38,6 +39,7 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
   await writeFile(path.join(source, "AGENTS.md"), "agent instructions");
   await writeFile(path.join(source, "unknown-root.txt"), "unknown");
   await writeFile(path.join(source, "skills", "review", "SKILL.md"), "review skill");
+  await writeFile(path.join(source, "skills", "review", "guide.log", "SKILL.md"), "guide skill");
   await writeFile(
     path.join(source, "skills", "review", "node_modules", "tmp", "required.js"),
     "runtime dependency",
@@ -73,6 +75,9 @@ describe("prepareIsolatedPiHome", () => {
     await expect(
       readFile(path.join(prepared.agentDir, "skills", "review", "SKILL.md"), "utf8"),
     ).resolves.toBe("review skill");
+    await expect(
+      readFile(path.join(prepared.agentDir, "skills", "review", "guide.log", "SKILL.md"), "utf8"),
+    ).resolves.toBe("guide skill");
     await expect(readFile(path.join(prepared.agentDir, "models-store.json"), "utf8")).resolves.toBe(
       "{}",
     );

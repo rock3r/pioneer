@@ -49,6 +49,8 @@ interface SelectedEntry {
   readonly stats: Awaited<ReturnType<typeof lstat>>;
 }
 
+type EntryKind = SelectedEntry["kind"];
+
 interface SelectionState {
   readonly entries: Map<string, SelectedEntry>;
   readonly budget: SnapshotBudget;
@@ -67,13 +69,17 @@ function isLogFile(name: string): boolean {
   return name.endsWith(".log") || name.endsWith("-debug.log");
 }
 
-function isHardExcluded(parts: readonly string[]): boolean {
-  return parts.some((part) => HARD_EXCLUDED_NAMES.has(part) || isLogFile(part));
+function isHardExcluded(parts: readonly string[], kind: EntryKind): boolean {
+  return parts.some(
+    (part, index) =>
+      HARD_EXCLUDED_NAMES.has(part) ||
+      (index === parts.length - 1 && kind === "file" && isLogFile(part)),
+  );
 }
 
-function isDefaultSkipped(parts: readonly string[]): boolean {
+function isDefaultSkipped(parts: readonly string[], kind: EntryKind): boolean {
   const name = parts.at(-1);
-  return name !== undefined && (DEFAULT_SKIPPED_NAMES.has(name) || isHardExcluded(parts));
+  return name !== undefined && (DEFAULT_SKIPPED_NAMES.has(name) || isHardExcluded(parts, kind));
 }
 
 function formatInclude(include: string): string {
@@ -106,8 +112,18 @@ function normalizeInclude(include: string): string[] {
   return parts;
 }
 
-function assertNotHardExcluded(parts: readonly string[], include: string): void {
-  if (isHardExcluded(parts)) throw invalidInclude(include, "is a hard-excluded runtime path");
+function assertNotHardExcluded(parts: readonly string[], include: string, kind: EntryKind): void {
+  if (isHardExcluded(parts, kind)) throw invalidInclude(include, "is a hard-excluded runtime path");
+}
+
+function entryKind(stats: Awaited<ReturnType<typeof lstat>>): EntryKind | undefined {
+  return stats.isDirectory()
+    ? "directory"
+    : stats.isFile()
+      ? "file"
+      : stats.isSymbolicLink()
+        ? "symlink"
+        : undefined;
 }
 
 function symlinkTargetRelative(
@@ -145,13 +161,7 @@ async function selectedEntry(
     }
     throw error;
   }
-  const kind = stats.isDirectory()
-    ? "directory"
-    : stats.isFile()
-      ? "file"
-      : stats.isSymbolicLink()
-        ? "symlink"
-        : undefined;
+  const kind = entryKind(stats);
   if (kind === undefined) {
     throw new Error(`[PI_HOME_SPECIAL_FILE] Pi home contains a special file at ${relative}`);
   }
@@ -175,14 +185,26 @@ async function collectEntry(
   const entry = await selectedEntry(sourceRoot, relative, state);
   if (entry.kind === "directory") {
     if (traversal === "scaffold") return;
-    const children = (await readdir(entry.sourcePath, { withFileTypes: true }))
-      .map((child) => child.name)
-      .sort();
-    for (const name of children) {
+    const children = (await readdir(entry.sourcePath, { withFileTypes: true })).sort(
+      (left, right) => left.name.localeCompare(right.name),
+    );
+    for (const child of children) {
+      const name = child.name;
       const childRelative = `${relative}/${name}`;
       const childParts = childRelative.split("/");
-      if (traversal === "default" && isDefaultSkipped(childParts)) continue;
-      if (traversal !== "default" && isHardExcluded(childParts)) continue;
+      const childKind = child.isDirectory()
+        ? "directory"
+        : child.isFile()
+          ? "file"
+          : child.isSymbolicLink()
+            ? "symlink"
+            : undefined;
+      if (childKind === undefined) {
+        await collectEntry(sourceRoot, childRelative, state, traversal);
+        continue;
+      }
+      if (traversal === "default" && isDefaultSkipped(childParts, childKind)) continue;
+      if (traversal !== "default" && isHardExcluded(childParts, childKind)) continue;
       await collectEntry(sourceRoot, childRelative, state, traversal);
     }
     return;
@@ -211,7 +233,6 @@ async function validateExplicitInclude(
   state: SelectionState,
 ): Promise<void> {
   const parts = normalizeInclude(include);
-  assertNotHardExcluded(parts, include);
   const candidate = path.join(sourceRoot, ...parts);
   let lexicalStats: Awaited<ReturnType<typeof lstat>>;
   try {
@@ -222,6 +243,11 @@ async function validateExplicitInclude(
     }
     throw error;
   }
+  const lexicalKind = entryKind(lexicalStats);
+  if (lexicalKind === undefined) {
+    throw new Error(`[PI_HOME_SPECIAL_FILE] Pi home contains a special file at ${include}`);
+  }
+  assertNotHardExcluded(parts, include, lexicalKind);
   let canonicalCandidate: string;
   try {
     canonicalCandidate = await realpath(candidate);
@@ -244,7 +270,7 @@ async function validateExplicitInclude(
     }
     throw error;
   }
-  assertNotHardExcluded(relativeCanonical.split("/"), include);
+  assertNotHardExcluded(relativeCanonical.split("/"), include, lexicalKind);
   for (let index = 1; index < parts.length; index += 1) {
     await collectEntry(sourceRoot, relativePath(parts.slice(0, index)), state, "scaffold");
   }
@@ -272,7 +298,9 @@ async function validateSelectedSymlinks(sourceRoot: string, state: SelectionStat
     }
     const targetRelative = symlinkTargetRelative(sourceRoot, entry.relativePath, target);
     if (!state.entries.has(targetRelative)) {
-      if (isHardExcluded(targetRelative.split("/"))) {
+      const targetStats = await lstat(target);
+      const targetKind = entryKind(targetStats);
+      if (targetKind !== undefined && isHardExcluded(targetRelative.split("/"), targetKind)) {
         throw new Error(
           `[PI_HOME_SYMLINK_TARGET_EXCLUDED] Selected Pi home symlink ${entry.relativePath} targets hard-excluded path ${targetRelative}`,
         );
