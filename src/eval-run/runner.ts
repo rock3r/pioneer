@@ -454,6 +454,7 @@ export async function runEvalCommand(
       runDir: validated.runDir,
       runtimeReadPaths: [
         ...validated.runtimeReadPaths,
+        sandboxRuntimeExecutable,
         ...(await macosRuntimeReadPaths(process.execPath)),
         ...buildEvalExecutableReadPaths(resolvedExecutable, piInstallation),
       ],

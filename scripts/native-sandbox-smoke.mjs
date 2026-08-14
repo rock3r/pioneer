@@ -54,7 +54,7 @@ const runtimeCandidates =
 const nodeRuntime = await executableRuntimeRoot(process.execPath);
 const nodeExecutable = await realpath(process.execPath);
 const policy = {
-  readOnlyPaths: [source, ...runtimeCandidates.filter(existsSync), nodeRuntime],
+  readOnlyPaths: [source, ...runtimeCandidates.filter(existsSync), nodeRuntime, nodeExecutable],
   writablePaths: [scratch],
   network: "none",
 };

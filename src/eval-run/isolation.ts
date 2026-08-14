@@ -70,7 +70,12 @@ async function assertExecutable(candidate: string): Promise<string> {
     canonical = await realpath(candidate);
     const details = await stat(canonical);
     if (!details.isFile()) throw new Error("not a regular file");
-    if (process.platform !== "win32") {
+    if (process.platform === "win32") {
+      const extension = path.win32.extname(canonical).toLowerCase();
+      if (extension.length > 0 && !windowsPathExtensions().includes(extension)) {
+        throw new Error("not a Windows executable");
+      }
+    } else {
       await new Promise<void>((resolve, reject) =>
         access(canonical, constants.X_OK, (error) => (error ? reject(error) : resolve())),
       );
@@ -81,13 +86,17 @@ async function assertExecutable(candidate: string): Promise<string> {
   return canonical;
 }
 
+function windowsPathExtensions(): string[] {
+  return (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((value) => value.trim().toLowerCase())
+    .filter((value) => value.length > 0);
+}
+
 function selectedPathCandidates(entry: string, executable: string): string[] {
   const base = path.join(entry, executable);
   if (process.platform !== "win32" || path.win32.extname(executable).length > 0) return [base];
-  const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
-    .split(";")
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
+  const extensions = windowsPathExtensions();
   return [base, ...extensions.map((extension) => `${base}${extension}`)];
 }
 

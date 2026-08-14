@@ -208,7 +208,7 @@ describe("validateEvalRunSpec", () => {
     const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
     const runDir = path.join(temp, "run");
     await mkdir(runDir);
-    const nonExecutable = path.join(temp, "not-executable");
+    const nonExecutable = path.join(temp, "not-executable.txt");
     await writeFile(nonExecutable, "exit 0\n", { mode: 0o644 });
     const broken = path.join(temp, "broken");
     await import("node:fs/promises").then(({ symlink }) =>
