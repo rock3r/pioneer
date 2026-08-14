@@ -145,6 +145,16 @@ describe("diagnostics", () => {
     expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
   });
 
+  it("redacts camelCase provider-prefixed credential keys", () => {
+    const sanitized = sanitizeDiagnostic(
+      '{"openaiApiKey":"private-openai-key","awsSecretAccessKey":"private-aws-key"}',
+    );
+
+    expect(sanitized).not.toContain("private-openai-key");
+    expect(sanitized).not.toContain("private-aws-key");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
+  });
+
   it("redacts credential fields behind nested JSON escaping", () => {
     const sanitized = sanitizeDiagnostic('{\\"api_key\\":\\"google-private\\"}');
 
