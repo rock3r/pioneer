@@ -19,7 +19,7 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
   let sanitized = value
     .replaceAll(/\\+(?=[/"'])/g, "")
     .replaceAll(
-      /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY)-----|$)/gi,
+      /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
       "[REDACTED]",
     )
     .replaceAll(/(["']?)\bauthorization\1\s*[:=][^\r\n]*/gi, "Authorization=[REDACTED]");

@@ -131,4 +131,14 @@ describe("diagnostics", () => {
       expect(sanitized).toContain("request failed");
     }
   });
+
+  it("redacts complete PGP private-key armor blocks", () => {
+    const sanitized = sanitizeDiagnostic(
+      "PRIVATE_KEY=-----BEGIN PGP PRIVATE KEY BLOCK-----\\nprivate-material\\n-----END PGP PRIVATE KEY BLOCK----- request failed",
+    );
+
+    expect(sanitized).not.toContain("private-material");
+    expect(sanitized).toContain("[REDACTED]");
+    expect(sanitized).toContain("request failed");
+  });
 });
