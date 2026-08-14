@@ -738,19 +738,21 @@ export function buildEvalSandboxConfig(options: EvalSandboxConfigOptions): Sandb
   if (isBroadWritablePath(options.runDir, options.platform)) {
     throw new Error(`Refusing broad eval run directory: ${options.runDir}`);
   }
+  const readOnlyPaths: string[] = [];
   for (const runtimePath of options.runtimeReadPaths) {
     if (isBroadRuntimePath(runtimePath, options.platform)) {
       throw new Error(`Refusing broad runtime read path: ${runtimePath}`);
     }
-    if (pathsOverlap(options.runDir, runtimePath)) {
+    if (isWithin(options.runDir, runtimePath)) continue;
+    if (isWithin(runtimePath, options.runDir)) {
       throw new Error(
         `Runtime read path must not overlap the writable run directory: ${runtimePath}`,
       );
     }
+    readOnlyPaths.push(runtimePath);
   }
-  const allowRead = [options.runDir, ...options.runtimeReadPaths];
   return {
-    readOnlyPaths: allowRead.filter((entry) => entry !== options.runDir),
+    readOnlyPaths,
     writablePaths: [options.runDir],
     network: "proxy",
     proxyUrl: options.parentProxyUrl,

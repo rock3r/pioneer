@@ -537,16 +537,23 @@ describe("cross-platform sandbox config", () => {
     "rejects runtime-read grants that overlap the writable run directory on %s",
     (platform) => {
       const runDir = "/narrow/eval/run";
-      for (const runtimeReadPath of ["/narrow/eval", "/narrow/eval/run/runtime"]) {
-        expect(() =>
-          buildEvalSandboxConfig({
-            platform,
-            runDir,
-            runtimeReadPaths: [runtimeReadPath],
-            parentProxyUrl: "http://srt:token@127.0.0.1:43123",
-          }),
-        ).toThrow(/overlap.*run directory/i);
-      }
+      expect(() =>
+        buildEvalSandboxConfig({
+          platform,
+          runDir,
+          runtimeReadPaths: ["/narrow/eval"],
+          parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+        }),
+      ).toThrow(/overlap.*run directory/i);
+
+      expect(
+        buildEvalSandboxConfig({
+          platform,
+          runDir,
+          runtimeReadPaths: ["/narrow/eval/run/runtime"],
+          parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+        }).readOnlyPaths,
+      ).toEqual([]);
     },
   );
 
