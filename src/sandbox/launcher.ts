@@ -131,8 +131,12 @@ export function buildLinuxSandboxArgv(
     throw new Error("Linux proxy sandbox is missing its Unix bridge socket");
   }
   const supervisorPath = fileURLToPath(new URL("./linux-network-supervisor.js", import.meta.url));
+  const readOnlyPaths =
+    runtimeFileDescriptor === undefined
+      ? policy.readOnlyPaths
+      : policy.readOnlyPaths.filter((entry) => entry !== runtimeExecutable);
   const paths = [
-    ...policy.readOnlyPaths,
+    ...readOnlyPaths,
     ...policy.writablePaths,
     ...(proxySocketPath === undefined ? [] : [proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
@@ -140,12 +144,7 @@ export function buildLinuxSandboxArgv(
       ? []
       : [runtimeExecutable]),
   ];
-  const runtimeCommand =
-    runtimeExecutable === undefined ||
-    runtimeFileDescriptor === undefined ||
-    command[0] !== runtimeExecutable
-      ? command
-      : [LINUX_RUNTIME_EXECUTABLE_PATH, ...command.slice(1)];
+  const runtimeCommand = command;
   const args: string[] = [
     "--new-session",
     "--die-with-parent",
@@ -161,15 +160,13 @@ export function buildLinuxSandboxArgv(
     "/",
     ...(runtimeFileDescriptor === undefined
       ? []
-      : [
-          "--dir",
-          LINUX_RUNTIME_ROOT_PATH,
-          "--ro-bind-fd",
-          String(runtimeFileDescriptor),
-          LINUX_RUNTIME_EXECUTABLE_PATH,
-        ]),
-    ...ancestorDirectories(paths).flatMap((entry) => ["--dir", entry]),
-    ...policy.readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
+      : ["--ro-bind-fd", String(runtimeFileDescriptor), runtimeExecutable ?? command[0]]),
+    ...ancestorDirectories(
+      runtimeFileDescriptor === undefined || runtimeExecutable === undefined
+        ? paths
+        : [runtimeExecutable, ...paths],
+    ).flatMap((entry) => ["--dir", entry]),
+    ...readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", proxySocketPath, proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", supervisorPath, supervisorPath]),
@@ -185,11 +182,7 @@ export function buildLinuxSandboxArgv(
   } else {
     args.push(
       "--",
-      runtimeFileDescriptor === undefined
-        ? runtimeExecutable === undefined
-          ? process.execPath
-          : runtimeExecutable
-        : LINUX_RUNTIME_EXECUTABLE_PATH,
+      runtimeExecutable === undefined ? process.execPath : runtimeExecutable,
       supervisorPath,
       proxySocketPath,
       ...runtimeCommand,
