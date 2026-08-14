@@ -33,4 +33,15 @@ describe("diagnostics", () => {
     expect(sanitized).not.toContain("sk-projectedsecret");
     expect(sanitized).toContain("[REDACTED]");
   });
+
+  it("redacts complete multi-token Authorization field values", () => {
+    expect(sanitizeDiagnostic("Authorization: Basic dXNlcjpwYXNz\nrequest failed")).toBe(
+      "Authorization=[REDACTED] request failed",
+    );
+    expect(
+      sanitizeDiagnostic(
+        'Authorization: Digest username="private", response="credential"\nrequest failed',
+      ),
+    ).toBe("Authorization=[REDACTED] request failed");
+  });
 });

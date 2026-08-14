@@ -901,6 +901,32 @@ describe("review RPC runner", () => {
     expect(message).not.toContain("private prompt");
   });
 
+  it("redacts an echoed long prompt before assistant diagnostics are bounded", async () => {
+    const longPrompt = `private prompt ${"x".repeat(700)}`;
+    let message = "";
+    try {
+      await runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_end",
+            message: { role: "assistant", stopReason: "error", errorMessage: longPrompt },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        longPrompt,
+        1_000,
+      );
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("[REDACTED]");
+    expect(message).not.toContain("private prompt");
+    expect(message).not.toContain("x".repeat(100));
+  });
+
   it("returns only a successful retry from a delta-only stream", async () => {
     await expect(
       runReviewRpc(

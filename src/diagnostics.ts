@@ -8,13 +8,24 @@ export interface Diagnostic {
 
 const DIAGNOSTIC_PREFIX = /^\[([A-Z][A-Z0-9_]*)\]\s+(.*)$/s;
 
+export class CliUsageError extends Error {}
+
 export function diagnosticMessage(id: string, message: string): string {
   if (!/^[A-Z][A-Z0-9_]*$/.test(id)) throw new Error(`Invalid diagnostic ID: ${id}`);
   return `[${id}] ${message}`;
 }
 
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
-  let sanitized = value.replaceAll(/\s+/g, " ");
+  let sanitized = value
+    .replaceAll(
+      /\bauthorization\s*[:=]\s*(?:digest|aws4-hmac-sha256)\b[^\r\n]*/gi,
+      "Authorization=[REDACTED]",
+    )
+    .replaceAll(
+      /\bauthorization\s*[:=]\s*(?!\[REDACTED\])(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+(?:\s+[^\s,;]+)?)/gi,
+      "Authorization=[REDACTED]",
+    );
+  sanitized = sanitized.replaceAll(/\s+/g, " ");
   for (const secret of secrets) {
     const normalized = secret.replaceAll(/\s+/g, " ").trim();
     if (normalized) sanitized = sanitized.replaceAll(normalized, "[REDACTED]");
@@ -27,17 +38,12 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
       (_match, scheme: string) => `${scheme}[REDACTED]@`,
     )
     .replaceAll(
-      /\bauthorization\s*[:=]\s*(?:bearer\s+)?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/gi,
-      "Authorization=[REDACTED]",
-    )
-    .replaceAll(
       new RegExp(
         `\\b(${secretLabel})\\s*[:=]\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`,
         "gi",
       ),
       (_match, label: string) => `${label}=[REDACTED]`,
     )
-    .replaceAll(/\bauthorization\s*[:=]\s*(?:bearer\s+)?[^\s,;]+/gi, "Authorization=[REDACTED]")
     .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     .replaceAll(
       new RegExp(`\\b(${secretLabel})\\s*[:=]\\s*[^\\s,;]+`, "gi"),

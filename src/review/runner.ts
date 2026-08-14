@@ -378,6 +378,7 @@ function isAssistantMessage(value: unknown): boolean {
 function recordAssistantFailure(
   value: unknown,
   diagnostics: string[],
+  sensitiveValues: readonly string[],
   requireAssistantRole = true,
 ): void {
   if (typeof value !== "object" || value === null) return;
@@ -398,12 +399,16 @@ function recordAssistantFailure(
   clearAssistantFailures(diagnostics);
   const detail =
     typeof message.errorMessage === "string"
-      ? message.errorMessage.replaceAll(/\s+/g, " ").slice(0, 500)
+      ? sanitizeDiagnostic(message.errorMessage, sensitiveValues)
       : "no detail";
   diagnostics.push(`assistant stopReason=${String(message.stopReason)}: ${detail}`);
 }
 
-function recordAssistantEventFailure(value: unknown, diagnostics: string[]): void {
+function recordAssistantEventFailure(
+  value: unknown,
+  diagnostics: string[],
+  sensitiveValues: readonly string[],
+): void {
   if (typeof value !== "object" || value === null) return;
   const event = value as Record<string, unknown>;
   if (event.type !== "error" || (event.reason !== "error" && event.reason !== "aborted")) return;
@@ -413,6 +418,7 @@ function recordAssistantEventFailure(value: unknown, diagnostics: string[]): voi
     recordAssistantFailure(
       { ...(error as Record<string, unknown>), role: "assistant", stopReason: event.reason },
       diagnostics,
+      sensitiveValues,
     );
     return;
   }
@@ -615,8 +621,8 @@ export async function runReviewRpc(
         }
         if (record.type === "message_update") {
           const update = record.assistantMessageEvent;
-          recordAssistantFailure(record.message, diagnostics);
-          recordAssistantEventFailure(update, diagnostics);
+          recordAssistantFailure(record.message, diagnostics, workLogSecrets);
+          recordAssistantEventFailure(update, diagnostics, workLogSecrets);
           if (typeof update === "object" && update !== null) {
             const typed = update as Record<string, unknown>;
             if (typed.type === "start") {
@@ -626,7 +632,7 @@ export async function runReviewRpc(
             }
             if (typed.type === "done") {
               finalReport = assistantText(typed.message) ?? "";
-              recordAssistantFailure(typed.message, diagnostics);
+              recordAssistantFailure(typed.message, diagnostics, workLogSecrets);
             }
             if (typed.type === "text_delta" && typeof typed.delta === "string")
               report += typed.delta;
@@ -634,18 +640,18 @@ export async function runReviewRpc(
         }
         if (record.type === "message_end") {
           if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
-          recordAssistantFailure(record.message, diagnostics);
+          recordAssistantFailure(record.message, diagnostics, workLogSecrets);
         }
         if (record.type === "extension_error") diagnostics.push("extension_error");
         if (record.type === "turn_end") {
           if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
-          recordAssistantFailure(record.message, diagnostics);
+          recordAssistantFailure(record.message, diagnostics, workLogSecrets);
         }
         if (record.type === "agent_end" && Array.isArray(record.messages)) {
           for (const message of [...record.messages].reverse()) {
             if (!isAssistantMessage(message)) continue;
             const text = assistantText(message);
-            recordAssistantFailure(message, diagnostics);
+            recordAssistantFailure(message, diagnostics, workLogSecrets);
             finalReport = text ?? "";
             break;
           }
