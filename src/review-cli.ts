@@ -6,13 +6,14 @@ import { formatModelCatalog, modelCatalogJson } from "./model-catalog-output.js"
 import { PIONEER_VERSION } from "./package-metadata.js";
 import { checkPiReadiness } from "./pi-readiness.js";
 import { runReview } from "./review/runner.js";
+import { parseReviewCliArgs } from "./review-cli-args.js";
 import { isThinkingLevel } from "./thinking-level.js";
 import { checkForUpdate, type UpdateCheckResult } from "./update-check.js";
 import { runUpdateCommand } from "./update-command.js";
 
 const REVIEW_USAGE = `Usage:
   pioneer review --source DIR --prompt TEXT [--model PROVIDER/MODEL] [--thinking LEVEL]
-    [--pi-home DIR] [--allow-read DIR] [--allow-write DIR]
+    [--pi-home DIR] [--pi-home-include RELATIVE_PATH]... [--allow-read DIR] [--allow-write DIR]
     [--report FILE] [--work-log FILE] [--network full|public|none] [--timeout-ms N]
     [--allow-unsandboxed-windows]
   pioneer doctor
@@ -34,15 +35,6 @@ function takeOption(args: string[], name: string): string | undefined {
   if (value === undefined || value.startsWith("--")) usage();
   args.splice(index, 2);
   return value;
-}
-
-function takeRepeated(args: string[], name: string): string[] {
-  const values: string[] = [];
-  for (;;) {
-    const value = takeOption(args, name);
-    if (value === undefined) return values;
-    values.push(path.resolve(value));
-  }
 }
 
 function takeFlag(args: string[], name: string): boolean {
@@ -134,26 +126,27 @@ async function main(): Promise<void> {
       return;
     }
     if (subcommand !== "review") usage();
-    const args = [...rawArgs];
-    const sourceDir = takeOption(args, "--source");
-    const prompt = takeOption(args, "--prompt");
-    const model = takeOption(args, "--model");
-    const thinkingText = takeOption(args, "--thinking");
-    const piHomeSource = takeOption(args, "--pi-home");
-    const allowReadPaths = takeRepeated(args, "--allow-read");
-    const allowWritePaths = takeRepeated(args, "--allow-write");
-    const reportPath = takeOption(args, "--report");
-    const workLogPath = takeOption(args, "--work-log");
-    const networkText = takeOption(args, "--network") ?? "full";
-    const timeoutText = takeOption(args, "--timeout-ms");
-    const unsafeIndex = args.indexOf("--allow-unsandboxed-windows");
-    const allowUnsandboxedWindows = unsafeIndex >= 0;
-    if (unsafeIndex >= 0) args.splice(unsafeIndex, 1);
+    const parsed = parseReviewCliArgs(rawArgs);
+    const {
+      sourceDir,
+      prompt,
+      model,
+      thinkingText,
+      piHomeSource,
+      piHomeIncludes,
+      allowReadPaths,
+      allowWritePaths,
+      reportPath,
+      workLogPath,
+      networkText,
+      timeoutText,
+      allowUnsandboxedWindows,
+    } = parsed;
     const timeoutMs = timeoutText === undefined ? undefined : Number(timeoutText);
     if (
       !sourceDir ||
       !prompt ||
-      args.length > 0 ||
+      parsed.remaining.length > 0 ||
       !["full", "public", "none"].includes(networkText) ||
       (thinkingText !== undefined && !isThinkingLevel(thinkingText)) ||
       (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1))
@@ -164,6 +157,7 @@ async function main(): Promise<void> {
       prompt,
       allowReadPaths,
       allowWritePaths,
+      piHomeIncludes,
       ...(reportPath === undefined ? {} : { reportPath }),
       ...(workLogPath === undefined ? {} : { workLogPath }),
       onWorkLogReady: (logPath) => process.stderr.write(`[PIONEER_WORK_LOG] ${logPath}\n`),

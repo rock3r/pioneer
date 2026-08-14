@@ -47,6 +47,7 @@ pioneer review --source DIR --prompt TEXT
   [--model PROVIDER/MODEL]
   [--thinking LEVEL]
   [--pi-home DIR]
+  [--pi-home-include RELATIVE_PATH]...
   [--allow-read DIR]...
   [--allow-write DIR]...
   [--report FILE]
@@ -63,6 +64,7 @@ pioneer review --source DIR --prompt TEXT
 | `--model NAME` | Pi default | Configured qualified model, unique model ID, or model with `:thinking` suffix |
 | `--thinking LEVEL` | model/Pi default | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
 | `--pi-home DIR` | `PI_CODING_AGENT_DIR` or `~/.pi/agent` | Source Pi agent directory to copy into the run |
+| `--pi-home-include RELATIVE_PATH` | none | Review-only, repeatable exact path relative to the selected Pi home; may select otherwise skipped content but not hard exclusions |
 | `--allow-read DIR` | none | Additional read-only directory; repeatable |
 | `--allow-write DIR` | none | Additional writable directory; repeatable and forbidden from overlapping read grants |
 | `--report FILE` | none | Absolute controller-owned output path for the final report; must not exist and must not be visible to the review actor |
@@ -112,6 +114,8 @@ Human output contains one sorted, qualified `provider/model` name per line. `--j
 ```
 
 `--pi-home` selects an alternative Pi agent directory without copying it. The command fails nonzero with the same readiness diagnostic used by reviews. In particular, Pioneer refuses to return a partial catalog when Pi reports that `models.json` is invalid.
+
+Review Pi-home snapshots copy only the known root configuration files and `skills/`; unknown root paths and dependency/runtime fluff are skipped. `--pi-home-include` names one existing relative file or directory exactly; use `--pi-home-include=--NAME` for an exact path beginning with `--`. It accepts no glob, negation, or persistent configuration syntax, and paths cannot be absolute, traverse with `..`, or escape the source home. Sessions, logs, `.npm`, `.cache`, `tmp`, `.tmp`, `temp`, and `*.log` paths are hard exclusions. Internal symlinks are retained only when their targets are also selected. Review includes are not accepted by eval commands.
 
 ## `pioneer doctor`
 
