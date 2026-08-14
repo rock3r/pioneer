@@ -507,4 +507,21 @@ describe("prepareIsolatedPiHome", () => {
       prepareIsolatedPiHome({ sourceDir: source, destination, mode: "review" }),
     ).rejects.toThrow(/already exists/i);
   });
+
+  it("stops snapshot traversal when the caller reports interruption", async () => {
+    const { source, destination } = await fixture();
+    let checks = 0;
+    const options = {
+      sourceDir: source,
+      destination,
+      mode: "review" as const,
+      checkAborted: (): void => {
+        checks += 1;
+        if (checks >= 4) throw new Error("snapshot-aborted");
+      },
+    };
+
+    await expect(prepareIsolatedPiHome(options)).rejects.toThrow("snapshot-aborted");
+    expect(checks).toBe(4);
+  });
 });

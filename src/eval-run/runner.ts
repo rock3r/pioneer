@@ -12,7 +12,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import net from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
@@ -31,6 +30,7 @@ import {
   type EvalRunSpec,
   findValidatedPiPackageRoot,
   isTrustedPiInstallation,
+  pathsOverlap,
   type ResolvedEvalExecutable,
   resolveEvalExecutable,
   validateEvalRunSpec,
@@ -458,9 +458,16 @@ async function runEvalCommandWithInterruption(
   throwIfEvalInterrupted(interruption);
   const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
+  const initialReadinessOptions = {
+    environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
+    ...(requestedModel === undefined ? {} : { requestedModel }),
+  };
   const sandboxRuntimeExecutable = await realpath(process.execPath);
   throwIfEvalInterrupted(interruption);
   await assertNativeSandboxReady();
+  throwIfEvalInterrupted(interruption);
+  let readiness =
+    spec.piHomeSource === undefined ? await assertPiReady(initialReadinessOptions) : undefined;
   throwIfEvalInterrupted(interruption);
   const validated = await validateEvalRunSpec({
     ...spec,
@@ -509,15 +516,30 @@ async function runEvalCommandWithInterruption(
     environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
     ...(requestedModel === undefined ? {} : { requestedModel }),
   };
-  const readiness = await assertPiReady(readinessOptions);
+  readiness ??= await assertPiReady(readinessOptions);
   throwIfEvalInterrupted(interruption);
-  const createdIsolationDir = await mkdtemp(path.join(tmpdir(), "pioneer-eval-control-"));
+  const controllerTempRoot = await realpath(
+    process.platform === "darwin" ? "/private/tmp" : "/tmp",
+  );
+  throwIfEvalInterrupted(interruption);
+  const createdIsolationDir = await mkdtemp(path.join(controllerTempRoot, "pioneer-eval-control-"));
   let isolationDir: string;
   try {
     isolationDir = await realpath(createdIsolationDir);
   } catch (error) {
     await rm(createdIsolationDir, { recursive: true, force: true });
     throw error;
+  }
+  const actorGrantPaths = [
+    validated.runDir,
+    ...validated.runtimeReadPaths,
+    sandboxRuntimeExecutable,
+    ...(await macosRuntimeReadPaths(process.execPath)),
+    ...buildEvalExecutableReadPaths(resolvedExecutable, piInstallation),
+  ];
+  if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
+    await rm(isolationDir, { recursive: true, force: true });
+    throw new Error("Eval controller directory must not overlap actor grants");
   }
   const throwIfSetupInterrupted = (): void => {
     throwIfEvalInterrupted(interruption);
@@ -545,6 +567,7 @@ async function runEvalCommandWithInterruption(
       sourceDir: validatedPiHomeSource,
       destination: path.join(actorScratchDir, "pi-home"),
       mode: "eval",
+      checkAborted: throwIfSetupInterrupted,
     });
     throwIfSetupInterrupted();
     await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
@@ -664,7 +687,7 @@ async function runEvalCommandWithInterruption(
     )?.reason;
   }
   if (cleanupFailure !== undefined) throw cleanupFailure;
-  if (interruption.signal !== undefined && completedResult?.interrupted === undefined) {
+  if (interruption.signal !== undefined && completedResult === undefined) {
     completedResult = interruptedEvalResult(interruption.signal);
   }
   if (completedResult === undefined) throw new Error("Eval run ended without a result");

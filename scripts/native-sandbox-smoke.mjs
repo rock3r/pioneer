@@ -133,7 +133,7 @@ try {
   await writeFile(evalPackageSecret, "package-secret\n");
   await writeFile(
     evalPi,
-    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.2; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.2; exit 0; fi\nif [ ! -d "$PI_CODING_AGENT_DIR" ]; then echo "No models available."; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
     { mode: 0o755 },
   );
   const nestedInterpreter =
@@ -203,6 +203,50 @@ try {
     }
     if (!defaultPiHomeOverlapRejected) {
       throw new Error("production eval path accepted a default Pi home overlapping the actor run");
+    }
+    const missingPiHome = path.join(root, "missing-pi-home");
+    process.env.PI_CODING_AGENT_DIR = missingPiHome;
+    let missingDefaultDiagnosticPreserved = false;
+    let missingDefaultError = "no error";
+    try {
+      await runEvalCommand(
+        { runDir: evalSetupInterruptionRun, command: ["eval-actor", "nested-argument"] },
+        { timeoutMs: 5_000 },
+      );
+    } catch (error) {
+      missingDefaultError = error instanceof Error ? error.message : String(error);
+      missingDefaultDiagnosticPreserved =
+        error instanceof Error &&
+        (error.message.includes("[PI_NO_MODELS]") ||
+          error.message.includes("[PI_CONFIG_HIDDEN_BY_SANDBOX]"));
+    } finally {
+      if (previousPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+    }
+    if (!missingDefaultDiagnosticPreserved) {
+      throw new Error(
+        `production eval path lost the missing-default Pi readiness diagnostic: ${missingDefaultError}`,
+      );
+    }
+    const previousTmpdir = process.env.TMPDIR;
+    process.env.TMPDIR = scratch;
+    try {
+      const environmentControlledTempResult = await runEvalCommand(
+        {
+          runDir: evalSetupInterruptionRun,
+          command: ["eval-actor", "nested-argument"],
+          piHomeSource: evalHome,
+        },
+        { timeoutMs: 5_000 },
+      );
+      if (environmentControlledTempResult.exitCode !== 0) {
+        throw new Error(
+          `production eval control temp followed TMPDIR: ${JSON.stringify(environmentControlledTempResult)}`,
+        );
+      }
+    } finally {
+      if (previousTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpdir;
     }
     const setupInterruptionPromise = runEvalCommand(
       {

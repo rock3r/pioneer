@@ -572,7 +572,7 @@ function isDarwinPerUserTempDescendant(candidate: string): boolean {
   );
 }
 
-function pathsOverlap(first: string, second: string): boolean {
+export function pathsOverlap(first: string, second: string): boolean {
   return isWithin(first, second) || isWithin(second, first);
 }
 

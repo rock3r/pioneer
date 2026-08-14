@@ -19,6 +19,7 @@ export interface PreparePiHomeOptions {
   readonly mode: PiHomeMode;
   readonly sourceDir?: string;
   readonly piHomeIncludes?: readonly string[];
+  readonly checkAborted?: () => void;
 }
 
 export interface PreparedPiHome {
@@ -54,6 +55,7 @@ type EntryKind = SelectedEntry["kind"];
 interface SelectionState {
   readonly entries: Map<string, SelectedEntry>;
   readonly budget: SnapshotBudget;
+  readonly checkAborted: () => void;
 }
 
 interface SnapshotBudget {
@@ -167,12 +169,14 @@ async function selectedEntry(
   relative: string,
   state: SelectionState,
 ): Promise<SelectedEntry> {
+  state.checkAborted();
   const existing = state.entries.get(selectionKey(relative));
   if (existing !== undefined) return existing;
   const source = path.join(sourceRoot, ...relative.split("/"));
   let stats: Awaited<ReturnType<typeof lstat>>;
   try {
     stats = await lstat(source);
+    state.checkAborted();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error(`[PI_HOME_SNAPSHOT_MISSING] Pi home path is missing: ${relative}`);
@@ -204,7 +208,9 @@ async function collectEntry(
   if (entry.kind === "directory") {
     if (traversal === "scaffold") return;
     const directory = await opendir(entry.sourcePath);
+    state.checkAborted();
     for await (const child of directory) {
+      state.checkAborted();
       const name = child.name;
       const childRelative = `${relative}/${name}`;
       const childParts = childRelative.split("/");
@@ -222,6 +228,7 @@ async function collectEntry(
       if (traversal === "default" && isDefaultSkipped(childParts, childKind)) continue;
       if (traversal !== "default" && isHardExcluded(childParts, childKind)) continue;
       await collectEntry(sourceRoot, childRelative, state, traversal);
+      state.checkAborted();
     }
     return;
   }
@@ -229,6 +236,7 @@ async function collectEntry(
     let target: string;
     try {
       target = await realpath(entry.sourcePath);
+      state.checkAborted();
     } catch {
       throw new Error(
         `[PI_HOME_SYMLINK_BROKEN] Pi home contains a broken symbolic link at ${relative}`,
@@ -236,6 +244,7 @@ async function collectEntry(
     }
     const targetRelative = symlinkTargetRelative(sourceRoot, relative, target);
     const targetStats = await lstat(target);
+    state.checkAborted();
     if (!targetStats.isFile() && !targetStats.isDirectory()) {
       throw new Error(`[PI_HOME_SPECIAL_FILE] Pi home symlink target is special at ${relative}`);
     }
@@ -248,11 +257,13 @@ async function validateExplicitInclude(
   include: string,
   state: SelectionState,
 ): Promise<void> {
+  state.checkAborted();
   const parts = normalizeInclude(include);
   const candidate = path.join(sourceRoot, ...parts);
   let lexicalStats: Awaited<ReturnType<typeof lstat>>;
   try {
     lexicalStats = await lstat(candidate);
+    state.checkAborted();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw invalidInclude(include, "does not exist");
@@ -267,6 +278,7 @@ async function validateExplicitInclude(
   let canonicalCandidate: string;
   try {
     canonicalCandidate = await realpath(candidate);
+    state.checkAborted();
   } catch {
     if (lexicalStats.isSymbolicLink()) {
       throw new Error(
@@ -305,6 +317,7 @@ async function validateExplicitInclude(
 
 async function validateSelectedSymlinks(sourceRoot: string, state: SelectionState): Promise<void> {
   for (const entry of state.entries.values()) {
+    state.checkAborted();
     if (entry.kind !== "symlink") continue;
     const target = await realpath(entry.sourcePath).catch(() => undefined);
     if (target === undefined) {
@@ -327,6 +340,7 @@ async function validateSelectedSymlinks(sourceRoot: string, state: SelectionStat
     }
   }
   for (const entry of state.entries.values()) {
+    state.checkAborted();
     const parts = entry.relativePath.split("/");
     for (let index = 1; index < parts.length; index += 1) {
       const parent = state.entries.get(selectionKey(relativePath(parts.slice(0, index))));
@@ -361,6 +375,7 @@ async function buildSelection(
   sourceRoot: string,
   mode: PiHomeMode,
   includes: readonly string[],
+  checkAborted: () => void,
 ): Promise<SelectionState> {
   if (mode === "eval" && includes.length > 0) {
     throw new Error(
@@ -370,8 +385,10 @@ async function buildSelection(
   const state: SelectionState = {
     entries: new Map(),
     budget: { entries: 0, bytes: 0 },
+    checkAborted,
   };
   for (const name of DEFAULT_ROOT_FILES) {
+    state.checkAborted();
     try {
       await collectDefaultFile(sourceRoot, name, state);
     } catch (error) {
@@ -388,7 +405,10 @@ async function buildSelection(
         throw error;
     }
   }
-  for (const include of includes) await validateExplicitInclude(sourceRoot, include, state);
+  for (const include of includes) {
+    state.checkAborted();
+    await validateExplicitInclude(sourceRoot, include, state);
+  }
   await validateSelectedSymlinks(sourceRoot, state);
   return state;
 }
@@ -404,9 +424,11 @@ async function copySelection(
     return depthDifference || left.relativePath.localeCompare(right.relativePath);
   });
   for (const entry of entries) {
+    state.checkAborted();
     const destination = path.join(destinationRoot, ...entry.relativePath.split("/"));
     if (entry.kind === "directory") {
       await mkdir(destination, { mode: 0o700, recursive: true });
+      state.checkAborted();
     } else if (entry.kind === "file") {
       await copyFile(
         entry.sourcePath,
@@ -414,8 +436,10 @@ async function copySelection(
         constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
       );
       await chmod(destination, Number(entry.stats.mode) & 0o777);
+      state.checkAborted();
     } else {
       const target = await realpath(entry.sourcePath);
+      state.checkAborted();
       const targetRelative = symlinkTargetRelative(sourceRoot, entry.relativePath, target);
       const selectedTarget = state.entries.get(selectionKey(targetRelative));
       if (selectedTarget === undefined) {
@@ -428,6 +452,7 @@ async function copySelection(
         ...selectedTarget.relativePath.split("/"),
       );
       await symlink(path.relative(path.dirname(destination), targetDestination), destination);
+      state.checkAborted();
     }
   }
 }
@@ -450,24 +475,43 @@ async function assertMissing(candidate: string): Promise<void> {
 export async function prepareIsolatedPiHome(
   options: PreparePiHomeOptions,
 ): Promise<PreparedPiHome> {
+  const checkAborted = options.checkAborted ?? (() => undefined);
+  checkAborted();
   const sourceDir = await realpath(options.sourceDir ?? defaultPiAgentDir());
+  checkAborted();
   const sourceStats = await lstat(sourceDir);
+  checkAborted();
   if (!sourceStats.isDirectory())
     throw new Error(`Pi home source is not a directory: ${sourceDir}`);
-  const selection = await buildSelection(sourceDir, options.mode, options.piHomeIncludes ?? []);
+  const selection = await buildSelection(
+    sourceDir,
+    options.mode,
+    options.piHomeIncludes ?? [],
+    checkAborted,
+  );
+  checkAborted();
   const requestedRoot = path.resolve(options.destination);
   await assertMissing(requestedRoot);
+  checkAborted();
   await mkdir(path.dirname(requestedRoot), { recursive: true });
+  checkAborted();
   await mkdir(requestedRoot, { mode: 0o700 });
+  checkAborted();
   const root = await realpath(requestedRoot);
+  checkAborted();
   const agentDir = path.join(root, "agent");
   const homeDir = path.join(root, "home");
   const tmpDir = path.join(root, "tmp");
   await mkdir(agentDir, { mode: 0o700 });
+  checkAborted();
   await copySelection(sourceDir, selection, agentDir);
+  checkAborted();
   await mkdir(homeDir, { mode: 0o700 });
+  checkAborted();
   await mkdir(tmpDir, { mode: 0o700 });
+  checkAborted();
   await access(agentDir, constants.R_OK | constants.W_OK);
+  checkAborted();
   return {
     root,
     agentDir,
