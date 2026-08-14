@@ -146,6 +146,11 @@ async function readShebangFirstLine(executable: string): Promise<string> {
 function parseEnvShebang(firstLine: string): ParsedEnvShebang | undefined {
   const match = firstLine.match(/^#!\s*\/usr\/bin\/env\s+(.+?)\s*$/);
   if (!match?.[1]) return undefined;
+  const shebangArguments = match[1].trim();
+  if (!/^-S(?:\s|$)/.test(shebangArguments)) {
+    if (shebangArguments.startsWith("-")) throw new Error(SHEBANG_RESOLUTION_FAILURE);
+    return { interpreter: shebangArguments, arguments: [] };
+  }
   const tokens = splitEnvShebangArguments(match[1]);
   const firstToken = tokens[0];
   if (firstToken === "-S") {
@@ -259,10 +264,10 @@ async function resolveShebangInterpreter(
   if (parsed.arguments.length === 0) return interpreter;
   return {
     ...interpreter,
-    command: [...(interpreter.command ?? [interpreter.commandPath]), ...parsed.arguments] as [
-      string,
-      ...string[],
-    ],
+    command: [
+      ...(interpreter.command ?? [interpreter.readPaths[0] ?? interpreter.commandPath]),
+      ...parsed.arguments,
+    ] as [string, ...string[]],
   };
 }
 
@@ -285,10 +290,10 @@ async function buildResolvedExecutable(
     ...(interpreter === undefined
       ? {}
       : {
-          command: [...(interpreter.command ?? [interpreter.commandPath]), lexicalPath] as [
-            string,
-            ...string[],
-          ],
+          command: [
+            ...(interpreter.command ?? [interpreter.readPaths[0] ?? interpreter.commandPath]),
+            lexicalPath,
+          ] as [string, ...string[]],
         }),
     readPaths: [lexicalPath, canonical, ...(interpreter?.readPaths ?? [])].filter(
       (value, index, all) => all.indexOf(value) === index,

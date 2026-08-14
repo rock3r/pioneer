@@ -76,7 +76,7 @@ describe("validateEvalRunSpec", () => {
     const actorCanonical = await realpath(actor);
     await expect(resolveEvalExecutable(actor, runDir, "")).resolves.toEqual({
       commandPath: actorCanonical,
-      command: [interpreterCanonical, actor],
+      command: [interpreter, actor],
       readPaths: uniquePaths([actor, actorCanonical, interpreter, interpreterCanonical]),
     });
   });
@@ -110,9 +110,21 @@ describe("validateEvalRunSpec", () => {
     await writeFile(script, "#!/usr/bin/env node\n", { mode: 0o755 });
 
     await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toMatchObject({
-      command: [await realpath(interpreter), script],
+      command: [interpreter, script],
       readPaths: expect.arrayContaining([await realpath(interpreter), await realpath(script)]),
     });
+  });
+
+  it("does not tokenize a non-`-S` env command name", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-env-plain-"));
+    const runDir = path.join(temp, "run");
+    const binDir = path.join(temp, "bin");
+    await mkdir(runDir);
+    await mkdir(binDir);
+    await writeFile(path.join(binDir, "node"), "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(path.join(binDir, "actor"), '#!/usr/bin/env "node"\n', { mode: 0o755 });
+
+    await expect(resolveEvalExecutable("actor", runDir, binDir)).rejects.toThrow(/not found/);
   });
 
   it("preserves the lexical script path for a symlinked env shebang actor", async () => {
@@ -132,7 +144,7 @@ describe("validateEvalRunSpec", () => {
 
     await expect(resolveEvalExecutable(launcher, runDir, "")).resolves.toEqual({
       commandPath: await realpath(target),
-      command: [await realpath(interpreter), launcher],
+      command: [interpreter, launcher],
       readPaths: uniquePaths([
         launcher,
         await realpath(target),
@@ -161,14 +173,7 @@ describe("validateEvalRunSpec", () => {
     const actorCanonical = await realpath(actor);
     await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toEqual({
       commandPath: actorCanonical,
-      command: [
-        interpreterCanonical,
-        "run",
-        "--config",
-        "my config.json",
-        "--mode=fast mode",
-        actor,
-      ],
+      command: [interpreter, "run", "--config", "my config.json", "--mode=fast mode", actor],
       readPaths: uniquePaths([
         path.join(binDir, "actor"),
         actorCanonical,
@@ -230,7 +235,7 @@ describe("validateEvalRunSpec", () => {
     const actorCanonical = await realpath(actor);
     await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toEqual({
       commandPath: actorCanonical,
-      command: [finalCanonical, middle, actor],
+      command: [finalLauncher, middle, actor],
       readPaths: uniquePaths([
         path.join(binDir, "actor"),
         actorCanonical,
