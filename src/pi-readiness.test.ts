@@ -292,4 +292,22 @@ describe("Pi readiness", () => {
     expect(result.errors[0]).toContain("Pi could not start");
     expect(result.errors[0]?.length).toBeLessThan(700);
   });
+
+  it("redacts credentials from Pi startup diagnostics", async () => {
+    const runner = runnerWith([
+      {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "Authorization: Bearer secret-token access_token=refresh-me https://user:pass@example.test/private",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    const message = result.errors.join("\n");
+    expect(message).toContain("[REDACTED]");
+    expect(message).not.toContain("secret-token");
+    expect(message).not.toContain("refresh-me");
+    expect(message).not.toContain("user:pass");
+  });
 });

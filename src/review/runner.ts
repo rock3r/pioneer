@@ -4,7 +4,7 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { diagnosticMessage } from "../diagnostics.js";
+import { diagnosticMessage, sanitizeDiagnostic } from "../diagnostics.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import {
@@ -425,8 +425,9 @@ function processOutcomeContext(
   exitCode: number | null,
   signal: NodeJS.Signals | null,
   stderr: string,
+  sensitiveValues: readonly string[] = [],
 ): string {
-  return `exit ${exitCode ?? "unknown"}; signal ${signal ?? "none"}; stderr: ${stderr.trim() || "none"}`;
+  return `exit ${exitCode ?? "unknown"}; signal ${signal ?? "none"}; stderr: ${sanitizeDiagnostic(stderr, sensitiveValues) || "none"}`;
 }
 
 function terminateProcessTree(child: ReturnType<typeof spawn>): void {
@@ -704,7 +705,7 @@ export async function runReviewRpc(
           new Error(
             diagnosticMessage(
               "REVIEW_TIMEOUT",
-              `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr)})`,
+              `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr, [prompt])})`,
             ),
           ),
         );
@@ -712,7 +713,9 @@ export async function runReviewRpc(
       }
       if (terminalFailure !== undefined) {
         finish(
-          new Error(`${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`),
+          new Error(
+            `${terminalFailure.message} (${processOutcomeContext(code, signal, stderr, [prompt])})`,
+          ),
         );
         return;
       }
@@ -736,6 +739,7 @@ export async function runReviewRpc(
           eventTypes: [...eventTypes],
           diagnostics,
           stderr,
+          sensitiveValues: [prompt],
         });
         finish();
       } catch (error) {

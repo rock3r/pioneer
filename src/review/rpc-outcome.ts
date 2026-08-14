@@ -1,4 +1,4 @@
-import { diagnosticMessage } from "../diagnostics.js";
+import { diagnosticMessage, sanitizeDiagnostic } from "../diagnostics.js";
 
 interface ReviewRpcOutcome {
   readonly completed: boolean;
@@ -8,6 +8,7 @@ interface ReviewRpcOutcome {
   readonly eventTypes: readonly string[];
   readonly diagnostics: readonly string[];
   readonly stderr: string;
+  readonly sensitiveValues?: readonly string[];
 }
 
 function summary(values: readonly string[]): string {
@@ -20,7 +21,8 @@ function stderrSummary(stderr: string): string {
 
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
   const report = outcome.report.trim();
-  const context = `events: ${summary(outcome.eventTypes)}; diagnostics: ${summary(outcome.diagnostics)}; stderr: ${stderrSummary(outcome.stderr)}`;
+  const sensitiveValues = outcome.sensitiveValues ?? [];
+  const context = `events: ${summary(outcome.eventTypes.map((value) => sanitizeDiagnostic(value, sensitiveValues)))}; diagnostics: ${summary(outcome.diagnostics.map((value) => sanitizeDiagnostic(value, sensitiveValues)))}; stderr: ${stderrSummary(sanitizeDiagnostic(outcome.stderr, sensitiveValues))}`;
   const assistantFailed = outcome.diagnostics.some(
     (diagnostic) =>
       diagnostic.startsWith("assistant stopReason=error:") ||

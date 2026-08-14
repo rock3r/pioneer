@@ -79,4 +79,38 @@ describe("review RPC completion", () => {
       "[REVIEW_PROCESS_FAILED] Pi exited unsuccessfully after settling (exit 2; signal: none; events: message_end, agent_settled; diagnostics: none; stderr: provider cleanup failed)",
     );
   });
+
+  it("redacts provider credentials and caller secrets from failure context", () => {
+    expect(() =>
+      completeReviewRpc({
+        completed: false,
+        report: "",
+        exitCode: 2,
+        signal: null,
+        eventTypes: ["response"],
+        diagnostics: ["assistant stopReason=error: token=provider-secret private prompt"],
+        stderr: "Authorization: Bearer stderr-secret https://user:pass@example.test/private",
+        sensitiveValues: ["private prompt"],
+      }),
+    ).toThrow(/\[REDACTED\]/);
+
+    try {
+      completeReviewRpc({
+        completed: false,
+        report: "",
+        exitCode: 2,
+        signal: null,
+        eventTypes: ["response"],
+        diagnostics: ["assistant stopReason=error: token=provider-secret private prompt"],
+        stderr: "Authorization: Bearer stderr-secret https://user:pass@example.test/private",
+        sensitiveValues: ["private prompt"],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toContain("provider-secret");
+      expect(message).not.toContain("private prompt");
+      expect(message).not.toContain("stderr-secret");
+      expect(message).not.toContain("user:pass");
+    }
+  });
 });

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import path from "node:path";
+import { sanitizeDiagnostic } from "./diagnostics.js";
 import { runDoctor } from "./doctor.js";
 import { runEvalCli } from "./eval-command.js";
 import { formatModelCatalog, modelCatalogJson } from "./model-catalog-output.js";
@@ -187,6 +188,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(
+    `${sanitizeDiagnostic(error instanceof Error ? error.message : String(error))}\n`,
+  );
   process.exitCode = 1;
 });

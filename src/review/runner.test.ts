@@ -862,6 +862,40 @@ describe("review RPC runner", () => {
     ).rejects.toThrow("[REVIEW_ASSISTANT_FAILED]");
   });
 
+  it("redacts provider and prompt secrets from assistant failure diagnostics", async () => {
+    let message = "";
+    try {
+      await runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_update",
+            assistantMessageEvent: {
+              type: "error",
+              reason: "error",
+              error: {
+                role: "assistant",
+                stopReason: "error",
+                errorMessage:
+                  "Authorization: Bearer provider-secret while processing private prompt",
+              },
+            },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        "private prompt",
+        1_000,
+      );
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("[REDACTED]");
+    expect(message).not.toContain("provider-secret");
+    expect(message).not.toContain("private prompt");
+  });
+
   it("returns only a successful retry from a delta-only stream", async () => {
     await expect(
       runReviewRpc(

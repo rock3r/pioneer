@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { diagnosticMessage } from "./diagnostics.js";
+import { diagnosticMessage, sanitizeDiagnostic } from "./diagnostics.js";
 import { defaultPiAgentDir } from "./pi-home.js";
 import { type PiConfiguredModel, resolvePiModel } from "./pi-model-selection.js";
 import { validatePiVersion } from "./pi-version-policy.js";
@@ -121,7 +121,7 @@ function outerSandboxIndicator(environment: Readonly<NodeJS.ProcessEnv>): string
 }
 
 function summarizeFailure(result: PiProbeResult): string {
-  const detail = (result.stderr || result.stdout).replaceAll(/\s+/g, " ").trim().slice(0, 500);
+  const detail = sanitizeDiagnostic(result.stderr || result.stdout);
   const suffix = detail.length > 0 ? `: ${detail}` : "";
   return diagnosticMessage(
     "PI_PROBE_FAILED",

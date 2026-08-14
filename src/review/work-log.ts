@@ -17,6 +17,7 @@ import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
+import { sanitizeDiagnostic } from "../diagnostics.js";
 
 const MAX_WORK_LOG_BYTES = 16 * 1024 * 1024;
 const MIN_WORK_LOG_BYTES = 1_024;
@@ -562,29 +563,7 @@ export async function prepareDefaultReviewWorkLogPath(
 }
 
 export function sanitizeWorkLogDiagnostic(value: string, secrets: readonly string[] = []): string {
-  let sanitized = value.replaceAll(/\s+/g, " ");
-  for (const secret of secrets) {
-    const normalized = secret.replaceAll(/\s+/g, " ").trim();
-    if (normalized) sanitized = sanitized.replaceAll(normalized, "[REDACTED]");
-  }
-  return sanitized
-    .replaceAll(
-      /\bauthorization\s*[:=]\s*(?:bearer\s+)?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/gi,
-      "Authorization=[REDACTED]",
-    )
-    .replaceAll(
-      /\b(api[-_ ]?key|token|password|secret)\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/gi,
-      (_match, label: string) => `${label}=[REDACTED]`,
-    )
-    .replaceAll(/\bauthorization\s*[:=]\s*(?:bearer\s+)?[^\s,;]+/gi, "Authorization=[REDACTED]")
-    .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
-    .replaceAll(
-      /\b(api[-_ ]?key|token|password|secret)\s*[:=]\s*[^\s,;]+/gi,
-      (_match, label: string) => `${label}=[REDACTED]`,
-    )
-    .replaceAll(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
-    .trim()
-    .slice(0, 500);
+  return sanitizeDiagnostic(value, secrets);
 }
 
 function stringField(record: Record<string, unknown>, name: string): string | undefined {
