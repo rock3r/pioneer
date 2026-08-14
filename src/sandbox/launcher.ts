@@ -15,7 +15,8 @@ export interface SandboxLaunch {
   readonly profile?: string;
 }
 
-export const LINUX_RUNTIME_EXECUTABLE_PATH = "/pioneer-node";
+export const LINUX_RUNTIME_ROOT_PATH = "/pioneer-runtime";
+export const LINUX_RUNTIME_EXECUTABLE_PATH = `${LINUX_RUNTIME_ROOT_PATH}/bin/node`;
 
 function quoted(value: string): string {
   return JSON.stringify(value);
@@ -134,7 +135,9 @@ export function buildLinuxSandboxArgv(
     ...policy.writablePaths,
     ...(proxySocketPath === undefined ? [] : [proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
-    ...(runtimeExecutable === undefined ? [] : [runtimeExecutable]),
+    ...(runtimeExecutable === undefined
+      ? []
+      : [path.resolve(path.dirname(runtimeExecutable), "..")]),
   ];
   const runtimeCommand =
     runtimeExecutable === undefined
@@ -162,7 +165,11 @@ export function buildLinuxSandboxArgv(
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", supervisorPath, supervisorPath]),
     ...(runtimeExecutable === undefined
       ? []
-      : ["--ro-bind", runtimeExecutable, LINUX_RUNTIME_EXECUTABLE_PATH]),
+      : [
+          "--ro-bind",
+          path.resolve(path.dirname(runtimeExecutable), ".."),
+          LINUX_RUNTIME_ROOT_PATH,
+        ]),
     "--proc",
     "/proc",
     "--dev",
