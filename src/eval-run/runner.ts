@@ -153,6 +153,16 @@ const EVAL_PIPE_CLOSE_GRACE_MS = 400;
 const EVAL_MAX_STDOUT_BYTES = 4 * 1024 * 1024;
 const EVAL_MAX_STDERR_BYTES = 64 * 1024;
 
+function stderrWithDiagnostic(stderr: string, diagnostic: string): string {
+  const diagnosticSuffix = `${diagnostic}\n`;
+  const prefixBudget = Math.max(0, EVAL_MAX_STDERR_BYTES - Buffer.byteLength(diagnosticSuffix) - 1);
+  const prefix = Buffer.from(stderr).subarray(0, prefixBudget).toString("utf8");
+  const separator = prefix.length === 0 || prefix.endsWith("\n") ? "" : "\n";
+  return Buffer.from(`${prefix}${separator}${diagnosticSuffix}`)
+    .subarray(0, EVAL_MAX_STDERR_BYTES)
+    .toString("utf8");
+}
+
 function terminateEvalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
   if (process.platform !== "win32" && child.pid !== undefined) {
     try {
@@ -230,7 +240,7 @@ export async function captureEvalProcess(
         stderr:
           diagnostic === undefined
             ? captured.stderr
-            : `${captured.stderr}${captured.stderr.endsWith("\n") || captured.stderr.length === 0 ? "" : "\n"}${diagnostic}\n`,
+            : stderrWithDiagnostic(captured.stderr, diagnostic),
         ...(timedOut ? { timedOut: true } : {}),
         ...(containmentFailure ? { containmentFailure: true } : {}),
         ...(interrupted === undefined ? {} : { interrupted }),

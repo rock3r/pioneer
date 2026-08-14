@@ -113,6 +113,19 @@ describe("eval process capture", () => {
     expect(result.stderr).toContain("[EVAL_OUTPUT_LIMIT]");
   });
 
+  it("keeps terminal diagnostics inside the stderr byte bound", async () => {
+    const result = await captureEvalProcess(
+      actor("process.stderr.write('x'.repeat(64 * 1024)); setInterval(() => {}, 10_000)"),
+      process.cwd(),
+      process.env,
+      100,
+    );
+
+    expect(result.timedOut).toBe(true);
+    expect(result.stderr).toContain("[EVAL_TIMEOUT]");
+    expect(Buffer.byteLength(result.stderr)).toBeLessThanOrEqual(64 * 1024);
+  });
+
   it("reports a stable spawn diagnostic", async () => {
     await expect(
       captureEvalProcess(["/path/that/does/not/exist"], process.cwd(), process.env, 1_000),
