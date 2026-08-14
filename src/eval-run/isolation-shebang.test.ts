@@ -47,7 +47,7 @@ describe("bounded eval shebang inspection", () => {
     await writeFile(actor, `#!/usr/bin/env node\n${"x".repeat(8 * 1024 * 1024)}`, { mode: 0o755 });
 
     await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toMatchObject({
-      command: [await realpath(interpreter), await realpath(actor)],
+      command: [await realpath(interpreter), actor],
     });
     expect(observation.readLengths).toEqual([MAX_SHEBANG_READ_BYTES, MAX_SHEBANG_READ_BYTES]);
   });

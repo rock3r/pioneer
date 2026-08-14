@@ -76,7 +76,7 @@ describe("validateEvalRunSpec", () => {
     const actorCanonical = await realpath(actor);
     await expect(resolveEvalExecutable(actor, runDir, "")).resolves.toEqual({
       commandPath: actorCanonical,
-      command: [interpreterCanonical, actorCanonical],
+      command: [interpreterCanonical, actor],
       readPaths: uniquePaths([actor, actorCanonical, interpreter, interpreterCanonical]),
     });
   });
@@ -110,8 +110,33 @@ describe("validateEvalRunSpec", () => {
     await writeFile(script, "#!/usr/bin/env node\n", { mode: 0o755 });
 
     await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toMatchObject({
-      command: [await realpath(interpreter), await realpath(script)],
+      command: [await realpath(interpreter), script],
       readPaths: expect.arrayContaining([await realpath(interpreter), await realpath(script)]),
+    });
+  });
+
+  it("preserves the lexical script path for a symlinked env shebang actor", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-lexical-shebang-"));
+    const runDir = path.join(temp, "run");
+    const binDir = path.join(temp, "bin");
+    await mkdir(runDir);
+    await mkdir(binDir);
+    const interpreter = path.join(binDir, "node");
+    const target = path.join(temp, "actor-target");
+    const launcher = path.join(binDir, "actor");
+    await writeFile(interpreter, "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(target, `#!/usr/bin/env ${interpreter}\n`, { mode: 0o755 });
+    await import("node:fs/promises").then(({ symlink }) => symlink(target, launcher));
+
+    await expect(resolveEvalExecutable(launcher, runDir, "")).resolves.toEqual({
+      commandPath: await realpath(target),
+      command: [await realpath(interpreter), launcher],
+      readPaths: uniquePaths([
+        launcher,
+        await realpath(target),
+        interpreter,
+        await realpath(interpreter),
+      ]),
     });
   });
 
@@ -140,7 +165,7 @@ describe("validateEvalRunSpec", () => {
         "--config",
         "my config.json",
         "--mode=fast mode",
-        actorCanonical,
+        actor,
       ],
       readPaths: uniquePaths([
         path.join(binDir, "actor"),
@@ -172,6 +197,15 @@ describe("validateEvalRunSpec", () => {
     await expect(resolveEvalExecutable("actor", runDir, binDir)).rejects.toThrow(
       "[EVAL_SHEBANG_RESOLUTION_FAILED]",
     );
+
+    await writeFile(
+      path.join(binDir, "actor"),
+      `#!/usr/bin/env -S deno --config=${["$", "{HOME}"].join("")}/config.json\n`,
+      { mode: 0o755 },
+    );
+    await expect(resolveEvalExecutable("actor", runDir, binDir)).rejects.toThrow(
+      "[EVAL_SHEBANG_RESOLUTION_FAILED]",
+    );
   });
 
   it("preserves a complete nested env shebang command and every exact read grant", async () => {
@@ -194,7 +228,7 @@ describe("validateEvalRunSpec", () => {
     const actorCanonical = await realpath(actor);
     await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toEqual({
       commandPath: actorCanonical,
-      command: [finalCanonical, middleCanonical, actorCanonical],
+      command: [finalCanonical, middle, actor],
       readPaths: uniquePaths([
         path.join(binDir, "actor"),
         actorCanonical,

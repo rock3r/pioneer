@@ -149,6 +149,7 @@ function parseEnvShebang(firstLine: string): ParsedEnvShebang | undefined {
   const tokens = splitEnvShebangArguments(match[1]);
   const firstToken = tokens[0];
   if (firstToken === "-S") {
+    if (match[1].includes("$")) throw new Error(SHEBANG_RESOLUTION_FAILURE);
     tokens.shift();
     if (tokens[0] === "--") tokens.shift();
   } else if (tokens.length !== 1) throw new Error(SHEBANG_RESOLUTION_FAILURE);
@@ -284,7 +285,7 @@ async function buildResolvedExecutable(
     ...(interpreter === undefined
       ? {}
       : {
-          command: [...(interpreter.command ?? [interpreter.commandPath]), canonical] as [
+          command: [...(interpreter.command ?? [interpreter.commandPath]), lexicalPath] as [
             string,
             ...string[],
           ],
