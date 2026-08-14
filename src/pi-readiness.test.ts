@@ -350,6 +350,28 @@ describe("Pi readiness", () => {
     expect(result).toMatchObject({ ready: true, resolvedModel: "provider/sk-abcdefgh" });
   });
 
+  it("preserves the complete validated model catalog in resolution errors", async () => {
+    const modelRows = Array.from(
+      { length: 40 },
+      (_, index) =>
+        `provider${index.toString().padStart(2, "0")} model${index.toString().padStart(2, "0")} 400K 128K yes yes`,
+    );
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout: ["provider  model       context  max-out  thinking  images", ...modelRows, ""].join(
+          "\n",
+        ),
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner, requestedModel: "missing" });
+    expect(result.errors[0]).toContain("- provider00/model00");
+    expect(result.errors[0]).toContain("- provider39/model39");
+  });
+
   it("rejects authenticated URLs in model catalog fields without exposing credentials", async () => {
     const runner = runnerWith([
       { exitCode: 0, stdout: "0.84.2\n", stderr: "" },

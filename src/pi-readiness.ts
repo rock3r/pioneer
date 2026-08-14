@@ -375,7 +375,11 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
 
   const modelCount = models.length;
   if (options.requestedModel !== undefined) {
-    const resolution = resolvePiModel(options.requestedModel, probedModels ?? []);
+    const resolution = resolvePiModel(
+      options.requestedModel,
+      probedModels ?? [],
+      sanitizeDiagnostic(options.requestedModel),
+    );
     if (!resolution.ok) {
       return {
         ready: false,
@@ -383,7 +387,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
         modelCount,
         models,
         ...versionWarning,
-        errors: [sanitizeDiagnostic(resolution.error)],
+        errors: [resolution.error],
       };
     }
     return {

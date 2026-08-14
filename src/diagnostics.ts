@@ -23,7 +23,11 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
       "[REDACTED]",
     )
     .replaceAll(/(["']?)\bauthorization\1\s*[:=][^\r\n]*/gi, "Authorization=[REDACTED]")
-    .replaceAll(/(["']?)\b(?:set-cookie|cookie)\1\s*[:=][^\r\n]*/gi, "Cookie=[REDACTED]");
+    .replaceAll(/(["']?)\b(?:set-cookie|cookie)\1\s*[:=][^\r\n]*/gi, "Cookie=[REDACTED]")
+    .replaceAll(
+      /(["']?)\b(?:[a-z0-9]+_)*connection[-_ ]?string\1\s*[:=][^\r\n]*/gi,
+      "CONNECTION_STRING=[REDACTED]",
+    );
   sanitized = sanitized.replaceAll(/\s+/g, " ");
   for (const secret of secrets) {
     const variants = [secret, JSON.stringify(secret).slice(1, -1)];
@@ -33,7 +37,7 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
     }
   }
   const secretLabel =
-    "(?:[a-z0-9]+_)*(?:api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|cookie|token|password|secret)";
+    "(?:[a-z0-9]+_)*(?:api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|cookie|passphrase|token|password|secret)";
   return sanitized
     .replaceAll(
       /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi,

@@ -84,6 +84,16 @@ describe("diagnostics", () => {
     expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(3);
   });
 
+  it("redacts passphrase and connection-string assignments", () => {
+    const sanitized = sanitizeDiagnostic(
+      "PASSPHRASE=private-passphrase\nCONNECTION_STRING=AccountName=x;AccountKey=private-key",
+    );
+
+    expect(sanitized).not.toContain("private-passphrase");
+    expect(sanitized).not.toContain("AccountKey=private-key");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
+  });
+
   it("redacts credentials behind quoted JSON keys", () => {
     const sanitized = sanitizeDiagnostic(
       '{"api_key":"google-private","access_token":"access-private"}',
