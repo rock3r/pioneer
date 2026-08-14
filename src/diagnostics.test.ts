@@ -96,7 +96,7 @@ describe("diagnostics", () => {
 
   it("redacts signed-URL query credentials", () => {
     const sanitized = sanitizeDiagnostic(
-      "https://s3.test/object?X-Amz-Credential=private-access&X-Amz-Signature=private-signature https://storage.test/object?X-Goog-Credential=private-google&X-Goog-Signature=private-google-signature https://blob.test/object?sig=private-azure",
+      "https://s3.test/object?X-Amz-Credential=private-access&X-Amz-Signature=private-signature https://storage.test/object?X-Goog-Credential=private-google&X-Goog-Signature=private-google-signature https://blob.test/object?sig=private-azure https://escaped.test/object?X-Amz-Algorithm=v\\u0026X-Amz-Credential=private-escaped\\u0026X-Amz-Signature=private-escaped-signature https://html.test/object?X-Amz-Algorithm=v&amp;X-Amz-Credential=private-html&amp;X-Amz-Signature=private-html-signature",
     );
 
     for (const secret of [
@@ -105,10 +105,14 @@ describe("diagnostics", () => {
       "private-google",
       "private-google-signature",
       "private-azure",
+      "private-escaped",
+      "private-escaped-signature",
+      "private-html",
+      "private-html-signature",
     ]) {
       expect(sanitized).not.toContain(secret);
     }
-    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(5);
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(9);
   });
 
   it("redacts credentials behind quoted JSON keys", () => {

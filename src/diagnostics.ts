@@ -18,6 +18,7 @@ export function diagnosticMessage(id: string, message: string): string {
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
   let sanitized = value
     .replaceAll(/\\+(?=[/"'])/g, "")
+    .replaceAll(/\\u0026|&(?:amp|#0*38|#x0*26);/gi, "&")
     .replaceAll(
       /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
       "[REDACTED]",
