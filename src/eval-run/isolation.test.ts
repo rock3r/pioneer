@@ -115,6 +115,31 @@ describe("validateEvalRunSpec", () => {
     });
   });
 
+  it("preserves arguments from an env -S shebang in exec order", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-env-shebang-"));
+    const runDir = path.join(temp, "run");
+    const binDir = path.join(temp, "bin");
+    await mkdir(runDir);
+    await mkdir(binDir);
+    const interpreter = path.join(binDir, "deno");
+    const actor = path.join(binDir, "actor");
+    await writeFile(interpreter, "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(actor, "#!/usr/bin/env -S deno run\n", { mode: 0o755 });
+
+    const interpreterCanonical = await realpath(interpreter);
+    const actorCanonical = await realpath(actor);
+    await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toEqual({
+      commandPath: actorCanonical,
+      command: [interpreterCanonical, "run", actorCanonical],
+      readPaths: uniquePaths([
+        path.join(binDir, "actor"),
+        actorCanonical,
+        path.join(binDir, "deno"),
+        interpreterCanonical,
+      ]),
+    });
+  });
+
   it("preserves a complete nested env shebang command and every exact read grant", async () => {
     const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-nested-shebang-"));
     const runDir = path.join(temp, "run");

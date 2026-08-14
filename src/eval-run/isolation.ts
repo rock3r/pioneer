@@ -63,6 +63,11 @@ interface ShebangResolutionContext {
   readonly canonicalPaths: ReadonlySet<string>;
 }
 
+interface ParsedEnvShebang {
+  readonly interpreter: string;
+  readonly arguments: readonly string[];
+}
+
 function hasPathSeparator(value: string): boolean {
   return value.includes("/") || (process.platform === "win32" && value.includes("\\"));
 }
@@ -138,6 +143,16 @@ async function readShebangFirstLine(executable: string): Promise<string> {
   }
 }
 
+function parseEnvShebang(firstLine: string): ParsedEnvShebang | undefined {
+  const match = firstLine.match(/^#!\s*\/usr\/bin\/env\s+(.+?)\s*$/);
+  if (!match?.[1]) return undefined;
+  const tokens = match[1].split(/\s+/);
+  if (tokens[0] === "-S") tokens.shift();
+  else if (tokens.length !== 1) return undefined;
+  if (!tokens[0] || tokens[0].startsWith("-")) return undefined;
+  return { interpreter: tokens[0], arguments: tokens.slice(1) };
+}
+
 async function resolveShebangInterpreter(
   executable: string,
   runDir: string,
@@ -145,13 +160,25 @@ async function resolveShebangInterpreter(
   context: ShebangResolutionContext,
 ): Promise<ResolvedEvalExecutable | undefined> {
   const firstLine = await readShebangFirstLine(executable);
-  const match = firstLine.match(/^#!\s*\/usr\/bin\/env\s+([^\s]+)\s*$/);
-  if (!match?.[1]) return undefined;
-  const interpreter = await resolveEvalExecutableInternal(match[1], runDir, selectedPath, {
-    depth: context.depth + 1,
-    canonicalPaths: new Set([...context.canonicalPaths, executable]),
-  });
-  return interpreter;
+  const parsed = parseEnvShebang(firstLine);
+  if (parsed === undefined) return undefined;
+  const interpreter = await resolveEvalExecutableInternal(
+    parsed.interpreter,
+    runDir,
+    selectedPath,
+    {
+      depth: context.depth + 1,
+      canonicalPaths: new Set([...context.canonicalPaths, executable]),
+    },
+  );
+  if (parsed.arguments.length === 0) return interpreter;
+  return {
+    ...interpreter,
+    command: [...(interpreter.command ?? [interpreter.commandPath]), ...parsed.arguments] as [
+      string,
+      ...string[],
+    ],
+  };
 }
 
 async function buildResolvedExecutable(
