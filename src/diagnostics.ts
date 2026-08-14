@@ -66,7 +66,10 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
       /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
       "[REDACTED]",
     )
-    .replaceAll(/(["']?)\bauthorization\1\s*[:=][^\r\n]*/gi, "Authorization=[REDACTED]")
+    .replaceAll(
+      /(["']?)\b(?:proxy[-_ ]?)?authorization\1\s*[:=][^\r\n]*/gi,
+      "Authorization=[REDACTED]",
+    )
     .replaceAll(/(["']?)\b(?:set-cookie|cookie)\1\s*[:=][^\r\n]*/gi, "Cookie=[REDACTED]")
     .replaceAll(
       /(["']?)\b(?:[a-z0-9]+_)*connection[-_ ]?string\1\s*[:=][^\r\n]*/gi,

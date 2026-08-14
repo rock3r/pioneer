@@ -202,6 +202,13 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("[REDACTED]");
   });
 
+  it("redacts quoted JSON Proxy-Authorization headers", () => {
+    const sanitized = sanitizeDiagnostic('{"Proxy-Authorization":"Basic cHJveHk6c2VjcmV0"}');
+
+    expect(sanitized).not.toContain("cHJveHk6c2VjcmV0");
+    expect(sanitized).toContain("[REDACTED]");
+  });
+
   it("redacts complete unquoted private-key assignments", () => {
     for (const lineBreak of ["\n", "\\n"]) {
       const sanitized = sanitizeDiagnostic(
