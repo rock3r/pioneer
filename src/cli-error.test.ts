@@ -8,7 +8,16 @@ describe("CLI error formatting", () => {
       "\n",
     );
 
-    expect(cliErrorMessage(new PiReadinessError(catalog))).toContain("- provider/model-39");
+    expect(cliErrorMessage(new PiReadinessError(catalog, true))).toContain("- provider/model-39");
+  });
+
+  it("bounds and redacts ordinary readiness errors", () => {
+    const message = cliErrorMessage(
+      new PiReadinessError(`path /tmp/token=private ${"x".repeat(1_000)}`),
+    );
+
+    expect(message).not.toContain("private");
+    expect(message.length).toBeLessThanOrEqual(500);
   });
 
   it("bounds and redacts generic errors", () => {

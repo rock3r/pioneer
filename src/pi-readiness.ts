@@ -68,7 +68,15 @@ export interface PiReadinessOptions {
   readonly timeoutMs?: number;
 }
 
-export class PiReadinessError extends Error {}
+export class PiReadinessError extends Error {
+  readonly preserveCliMessage: boolean;
+
+  constructor(message: string, preserveCliMessage = false) {
+    super(message);
+    this.name = "PiReadinessError";
+    this.preserveCliMessage = preserveCliMessage;
+  }
+}
 
 const MAX_CAPTURE_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -408,6 +416,13 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
 
 export async function assertPiReady(options: PiReadinessOptions = {}): Promise<PiReadiness> {
   const readiness = await checkPiReadiness(options);
-  if (!readiness.ready) throw new PiReadinessError(readiness.errors.join("; "));
+  if (!readiness.ready) {
+    const preservesValidatedCatalog =
+      options.requestedModel !== undefined &&
+      readiness.models !== undefined &&
+      readiness.errors.length === 1 &&
+      readiness.errors[0]?.includes("Configured Pi models:\n");
+    throw new PiReadinessError(readiness.errors.join("; "), preservesValidatedCatalog);
+  }
   return readiness;
 }
