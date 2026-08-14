@@ -1,5 +1,5 @@
 import { access, constants } from "node:fs";
-import { lstat, open, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, open, readdir, realpath, stat } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -239,6 +239,27 @@ export function buildEvalExecutableReadPaths(
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const MAX_PI_PACKAGE_MANIFEST_BYTES = 64 * 1024;
 
+async function readBoundedPiPackageManifest(manifestPath: string): Promise<string | undefined> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(manifestPath, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    const details = await handle.stat();
+    if (!details.isFile() || details.size > MAX_PI_PACKAGE_MANIFEST_BYTES) return undefined;
+    const buffer = Buffer.alloc(details.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) return undefined;
+      offset += bytesRead;
+    }
+    return buffer.toString("utf8");
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
 export async function findValidatedPiPackageRoot(
   executablePath: string,
 ): Promise<ValidatedPiInstallation | undefined> {
@@ -246,9 +267,9 @@ export async function findValidatedPiPackageRoot(
   for (;;) {
     try {
       const manifestPath = path.join(current, "package.json");
-      const manifestStats = await stat(manifestPath);
-      if (manifestStats.size > MAX_PI_PACKAGE_MANIFEST_BYTES) throw new Error("manifest too large");
-      const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
+      const contents = await readBoundedPiPackageManifest(manifestPath);
+      if (contents === undefined) throw new Error("manifest unavailable");
+      const manifest = JSON.parse(contents) as unknown;
       if (
         typeof manifest === "object" &&
         manifest !== null &&
