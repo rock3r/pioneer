@@ -117,11 +117,7 @@ const PROTECTED_WRITABLE_POSIX_ROOTS = [
   "/var",
 ] as const;
 const COMMON_DISPOSABLE_WRITABLE_TEMP_ROOTS = ["/tmp", "/var/tmp"] as const;
-const DARWIN_DISPOSABLE_WRITABLE_TEMP_ROOTS = [
-  "/private/tmp",
-  "/private/var/folders",
-  "/private/var/tmp",
-] as const;
+const DARWIN_DISPOSABLE_WRITABLE_TEMP_ROOTS = ["/private/tmp", "/private/var/tmp"] as const;
 const CANONICAL_HOME_DIR = (() => {
   try {
     return realpathSync.native(os.homedir());
@@ -550,13 +546,28 @@ function isBroadWritablePath(
     platform === "darwin"
       ? [...COMMON_DISPOSABLE_WRITABLE_TEMP_ROOTS, ...DARWIN_DISPOSABLE_WRITABLE_TEMP_ROOTS]
       : COMMON_DISPOSABLE_WRITABLE_TEMP_ROOTS;
-  if (platform !== "win32" && disposableTempRoots.some((root) => isWithin(root, candidate))) {
+  if (
+    platform !== "win32" &&
+    (disposableTempRoots.some((root) => isWithin(root, candidate)) ||
+      (platform === "darwin" && isDarwinPerUserTempDescendant(candidate)))
+  ) {
     return false;
   }
   return (
     BROAD_WRITABLE_POSIX_PATHS.has(candidate) ||
     (platform !== "win32" &&
       PROTECTED_WRITABLE_POSIX_ROOTS.some((root) => isWithin(root, candidate)))
+  );
+}
+
+function isDarwinPerUserTempDescendant(candidate: string): boolean {
+  const relative = path.posix.relative("/private/var/folders", candidate);
+  const parts = relative.split("/");
+  return (
+    !relative.startsWith("../") &&
+    !path.posix.isAbsolute(relative) &&
+    parts[2] === "T" &&
+    parts.length > 3
   );
 }
 

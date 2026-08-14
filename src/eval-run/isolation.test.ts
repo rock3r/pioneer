@@ -495,6 +495,7 @@ describe("cross-platform sandbox config", () => {
     ["darwin", "/usr/local/eval-run"],
     ["darwin", "/Applications/Pioneer Eval.app"],
     ["darwin", "/Volumes/Data"],
+    ["darwin", "/private/var/folders/ab/hash/C/pioneer-eval"],
     ["darwin", "/private/var/db/pioneer-eval"],
     ["linux", "/usr/local/eval-run"],
     ["linux", "/etc/pioneer-eval"],
@@ -516,7 +517,7 @@ describe("cross-platform sandbox config", () => {
 
   it.each([
     ["darwin", "/private/tmp/pioneer-eval/run"],
-    ["darwin", "/private/var/folders/user-temp/pioneer-eval/run"],
+    ["darwin", "/private/var/folders/ab/hash/T/pioneer-eval/run"],
     ["linux", "/tmp/pioneer-eval/run"],
     ["linux", "/var/tmp/pioneer-eval/run"],
   ] as const)(

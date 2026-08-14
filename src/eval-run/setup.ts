@@ -32,7 +32,8 @@ function hasInvalidWindowsFilenameCharacter(value: string): boolean {
 }
 
 function isSafeSkillName(value: string): boolean {
-  const windowsReservedName = /^(?:con|prn|aux|nul|com(?:[1-9]|[¹²³])|lpt(?:[1-9]|[¹²³]))(?:\.|$)/i;
+  const windowsReservedName =
+    /^(?:con|prn|aux|nul|conin\$|conout\$|clock\$|com(?:[1-9]|[¹²³])|lpt(?:[1-9]|[¹²³]))(?:\.|$)/i;
   return (
     value.length > 0 &&
     Buffer.byteLength(value, "utf8") <= 255 &&
