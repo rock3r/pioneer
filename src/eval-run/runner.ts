@@ -30,6 +30,7 @@ import {
   buildEvalSandboxConfig,
   type EvalRunSpec,
   findValidatedPiPackageRoot,
+  isTrustedPiInstallation,
   resolveEvalExecutable,
   validateEvalRunSpec,
 } from "./isolation.js";
@@ -387,10 +388,24 @@ export async function runEvalCommand(
       ? [LINUX_RUNTIME_EXECUTABLE_PATH, ...resolvedCommand.slice(1)]
       : resolvedCommand;
   const piActor = isPiExecutable(spec.command[0]);
+  const controllerPiInstallation = piActor
+    ? await (async () => {
+        try {
+          const controllerPi = await resolveEvalExecutable(
+            "pi",
+            validated.runDir,
+            sanitizedBrokerEnvironment(process.env).PATH ?? "",
+          );
+          return await findValidatedPiPackageRoot(controllerPi.commandPath);
+        } catch {
+          return undefined;
+        }
+      })()
+    : undefined;
   const piInstallation = piActor
     ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath, validated.runDir)
     : undefined;
-  if (piActor && piInstallation === undefined) {
+  if (piActor && !isTrustedPiInstallation(piInstallation, controllerPiInstallation)) {
     throw new Error("Pi eval actor is not a validated Pi installation");
   }
   const readinessOptions = {

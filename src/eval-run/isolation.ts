@@ -39,6 +39,17 @@ export interface ValidatedPiInstallation {
   readonly packageRoot: string;
 }
 
+export function isTrustedPiInstallation(
+  candidate: ValidatedPiInstallation | undefined,
+  trusted: ValidatedPiInstallation | undefined,
+): boolean {
+  return (
+    candidate !== undefined &&
+    trusted !== undefined &&
+    candidate.packageRoot === trusted.packageRoot
+  );
+}
+
 const BROAD_POSIX_PATHS = new Set(["/", "/Users", "/home", "/private", "/tmp", "/var"]);
 export const MAX_SHEBANG_READ_BYTES = 4_096;
 export const MAX_SHEBANG_RESOLUTION_DEPTH = 16;

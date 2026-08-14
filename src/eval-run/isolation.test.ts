@@ -7,6 +7,7 @@ import {
   buildEvalSandboxConfig,
   findValidatedPiPackageRoot,
   isPublicInternetAddress,
+  isTrustedPiInstallation,
   MAX_SHEBANG_RESOLUTION_DEPTH,
   resolveEvalExecutable,
   validateEvalRunSpec,
@@ -247,6 +248,13 @@ describe("validateEvalRunSpec", () => {
     );
 
     await expect(findValidatedPiPackageRoot(executable, runDir)).resolves.toBeUndefined();
+  });
+
+  it("accepts only a Pi package root matching the controller-trusted installation", () => {
+    const trusted = { packageRoot: "/opt/pi" };
+    expect(isTrustedPiInstallation(trusted, trusted)).toBe(true);
+    expect(isTrustedPiInstallation({ packageRoot: "/workspace/pi" }, trusted)).toBe(false);
+    expect(isTrustedPiInstallation(undefined, trusted)).toBe(false);
   });
 
   it("rejects NUL argv and relative paths that escape the run directory", async () => {
