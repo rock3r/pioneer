@@ -23,7 +23,7 @@ function redactQuotedCredentialAssignments(value: string): string {
 
 function redactUnquotedPassphrase(value: string): string {
   return value.replaceAll(
-    /(["']?)\b(?:[a-z0-9]+[-_.:/ ])*passphrase\1\s*[:=]\s*(?!["'])[^\r\n]*/gi,
+    /(["']?)\b(?:[a-z0-9]+[-_.:/ ])*passphrase\1\s*[:=]\s*(?!["']|\[REDACTED\])[^\r\n]*/gi,
     "PASSPHRASE=[REDACTED]",
   );
 }
@@ -33,14 +33,14 @@ function unescapeSerializedDelimiterLayer(value: string): string {
 }
 
 function redactSerializedCredentialAssignments(value: string): string {
-  let sanitized = redactUnquotedPassphrase(value);
+  let sanitized = value;
   for (let depth = 0; depth < MAX_SERIALIZATION_DEPTH; depth += 1) {
-    sanitized = redactQuotedCredentialAssignments(sanitized);
+    sanitized = redactUnquotedPassphrase(redactQuotedCredentialAssignments(sanitized));
     const unescaped = unescapeSerializedDelimiterLayer(sanitized);
     if (unescaped === sanitized) return sanitized;
     sanitized = unescaped;
   }
-  return redactQuotedCredentialAssignments(sanitized);
+  return redactUnquotedPassphrase(redactQuotedCredentialAssignments(sanitized));
 }
 
 function unescapeSerializedDelimiters(value: string): string {

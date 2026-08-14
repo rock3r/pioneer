@@ -95,6 +95,15 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("request failed");
   });
 
+  it("redacts unquoted passphrases revealed by serialized-key unescaping", () => {
+    const sanitized = sanitizeDiagnostic(
+      String.raw`{\"passphrase\": correct horse battery staple}`,
+    );
+
+    expect(sanitized).not.toContain("horse battery staple");
+    expect(sanitized).toContain("[REDACTED]");
+  });
+
   it("redacts signed-URL query credentials", () => {
     const sanitized = sanitizeDiagnostic(
       "https://s3.test/object?X-Amz-Credential=private-access&X-Amz-Signature=private-signature https://storage.test/object?X-Goog-Credential=private-google&X-Goog-Signature=private-google-signature https://blob.test/object?sig=private-azure https://escaped.test/object?X-Amz-Algorithm=v\\u0026X-Amz-Credential=private-escaped\\u0026X-Amz-Signature=private-escaped-signature https://html.test/object?X-Amz-Algorithm=v&amp;X-Amz-Credential=private-html&amp;X-Amz-Signature=private-html-signature",
