@@ -164,6 +164,8 @@ class EvalSetupInterrupted extends Error {
   }
 }
 
+class EvalCleanupFailed extends AggregateError {}
+
 function interruptedEvalResult(signal: NodeJS.Signals, completed?: EvalRunResult): EvalRunResult {
   return {
     exitCode: 1,
@@ -451,6 +453,7 @@ export async function runEvalCommand(
   try {
     return await runEvalCommandWithInterruption(spec, options, interruption);
   } catch (error) {
+    if (error instanceof EvalCleanupFailed) throw error;
     if (interruption.signal !== undefined) return interruptedEvalResult(interruption.signal);
     if (error instanceof EvalSetupInterrupted) return interruptedEvalResult(error.signal);
     throw error;
@@ -524,7 +527,15 @@ async function runEvalCommandWithInterruption(
     throw new Error("Pi eval actor is not a validated Pi installation");
   }
   const executableReadPaths = buildEvalExecutableReadPaths(resolvedExecutable, piInstallation);
-  assertPiHomeSeparatedFromActorGrants(validatedPiHomeSource, executableReadPaths);
+  const platformRuntimeReadPaths = await macosRuntimeReadPaths(process.execPath);
+  throwIfEvalInterrupted(interruption);
+  const completeActorReadPaths = [
+    ...validated.runtimeReadPaths,
+    sandboxRuntimeExecutable,
+    ...platformRuntimeReadPaths,
+    ...executableReadPaths,
+  ];
+  assertPiHomeSeparatedFromActorGrants(validatedPiHomeSource, completeActorReadPaths);
   const readinessOptions = {
     environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
     ...(requestedModel === undefined ? {} : { requestedModel }),
@@ -564,13 +575,7 @@ async function runEvalCommandWithInterruption(
   let primaryFailure: unknown;
   let cleanupFailure: unknown;
   try {
-    const actorGrantPaths = [
-      validated.runDir,
-      ...validated.runtimeReadPaths,
-      sandboxRuntimeExecutable,
-      ...(await macosRuntimeReadPaths(process.execPath)),
-      ...executableReadPaths,
-    ];
+    const actorGrantPaths = [validated.runDir, ...completeActorReadPaths];
     if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
       throw new Error("Eval controller directory must not overlap actor grants");
     }
@@ -625,7 +630,7 @@ async function runEvalCommandWithInterruption(
     const sharedRuntimeReadPaths = [
       ...validated.runtimeReadPaths,
       sandboxRuntimeExecutable,
-      ...(await macosRuntimeReadPaths(process.execPath)),
+      ...platformRuntimeReadPaths,
     ];
     const probeConfig = buildEvalSandboxConfig({
       platform: process.platform as "darwin" | "linux" | "win32",
@@ -701,12 +706,14 @@ async function runEvalCommandWithInterruption(
     )?.reason;
   }
   if (primaryFailure !== undefined && cleanupFailure !== undefined) {
-    throw new AggregateError(
+    throw new EvalCleanupFailed(
       [primaryFailure, cleanupFailure],
       "Eval execution failed and temporary state cleanup also failed",
     );
   }
-  if (cleanupFailure !== undefined) throw cleanupFailure;
+  if (cleanupFailure !== undefined) {
+    throw new EvalCleanupFailed([cleanupFailure], "Eval temporary state cleanup failed");
+  }
   if (primaryFailure !== undefined) throw primaryFailure;
   if (interruption.signal !== undefined && completedResult?.interrupted === undefined) {
     completedResult = interruptedEvalResult(interruption.signal, completedResult);
