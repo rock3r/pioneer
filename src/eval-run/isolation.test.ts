@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  assertPiHomeSeparatedFromActorGrants,
   buildEvalExecutableReadPaths,
   buildEvalSandboxConfig,
   findValidatedPiPackageRoot,
@@ -494,6 +495,15 @@ describe("validateEvalRunSpec", () => {
       ).rejects.toThrow(/Pi home.*overlap/i);
     },
   );
+
+  it("rejects a Pi home nested inside a derived executable package grant", () => {
+    const packageRoot = path.resolve("/packages/pi-coding-agent");
+    const piHome = path.join(packageRoot, "private-agent-home");
+
+    expect(() => assertPiHomeSeparatedFromActorGrants(piHome, [packageRoot])).toThrow(
+      /Pi home.*overlap/i,
+    );
+  });
 });
 
 describe("cross-platform sandbox config", () => {

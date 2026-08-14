@@ -576,6 +576,15 @@ export function pathsOverlap(first: string, second: string): boolean {
   return isWithin(first, second) || isWithin(second, first);
 }
 
+export function assertPiHomeSeparatedFromActorGrants(
+  piHomeSource: string,
+  actorGrantPaths: readonly string[],
+): void {
+  if (actorGrantPaths.some((grantPath) => pathsOverlap(grantPath, piHomeSource))) {
+    throw new Error(`Pi home source must not overlap eval actor grants: ${piHomeSource}`);
+  }
+}
+
 export async function validateEvalRunSpec(spec: EvalRunSpec): Promise<ValidatedEvalRunSpec> {
   if (spec.command.length === 0 || spec.command.some((argument) => argument.includes("\0"))) {
     throw new Error("Eval command must contain non-NUL argv entries");
@@ -610,12 +619,8 @@ export async function validateEvalRunSpec(spec: EvalRunSpec): Promise<ValidatedE
   if (piHomeSource !== undefined && !(await lstat(piHomeSource)).isDirectory()) {
     throw new Error(`Pi home source is not a directory: ${piHomeSource}`);
   }
-  if (
-    piHomeSource !== undefined &&
-    (pathsOverlap(runDir, piHomeSource) ||
-      runtimeReadPaths.some((runtimePath) => pathsOverlap(runtimePath, piHomeSource)))
-  ) {
-    throw new Error(`Pi home source must not overlap eval actor grants: ${piHomeSource}`);
+  if (piHomeSource !== undefined) {
+    assertPiHomeSeparatedFromActorGrants(piHomeSource, [runDir, ...runtimeReadPaths]);
   }
   return {
     runDir,

@@ -25,6 +25,7 @@ import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-p
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { executableRuntimeRoot } from "../sandbox/runtime-paths.js";
 import {
+  assertPiHomeSeparatedFromActorGrants,
   buildEvalExecutableReadPaths,
   buildEvalSandboxConfig,
   type EvalRunSpec,
@@ -522,6 +523,8 @@ async function runEvalCommandWithInterruption(
   if (piActor && !isTrustedPiInstallation(piInstallation, controllerPiInstallation)) {
     throw new Error("Pi eval actor is not a validated Pi installation");
   }
+  const executableReadPaths = buildEvalExecutableReadPaths(resolvedExecutable, piInstallation);
+  assertPiHomeSeparatedFromActorGrants(validatedPiHomeSource, executableReadPaths);
   const readinessOptions = {
     environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
     ...(requestedModel === undefined ? {} : { requestedModel }),
@@ -566,7 +569,7 @@ async function runEvalCommandWithInterruption(
       ...validated.runtimeReadPaths,
       sandboxRuntimeExecutable,
       ...(await macosRuntimeReadPaths(process.execPath)),
-      ...buildEvalExecutableReadPaths(resolvedExecutable, piInstallation),
+      ...executableReadPaths,
     ];
     if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
       throw new Error("Eval controller directory must not overlap actor grants");
@@ -638,7 +641,7 @@ async function runEvalCommandWithInterruption(
         launcherScript,
         launchSpec,
         piHome.agentDir,
-        ...buildEvalExecutableReadPaths(resolvedExecutable, piInstallation),
+        ...executableReadPaths,
       ],
       writableScratchPaths: [piHome.homeDir, piHome.tmpDir],
       parentProxyUrl: proxy.url,

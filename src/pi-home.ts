@@ -254,12 +254,12 @@ async function collectEntry(
     let target: string;
     try {
       target = await realpath(entry.sourcePath);
-      state.checkAborted();
     } catch {
       throw new Error(
         `[PI_HOME_SYMLINK_BROKEN] Pi home contains a broken symbolic link at ${relative}`,
       );
     }
+    state.checkAborted();
     const targetRelative = symlinkTargetRelative(sourceRoot, relative, target);
     const targetStats = await lstat(target);
     state.checkAborted();
@@ -296,7 +296,6 @@ async function validateExplicitInclude(
   let canonicalCandidate: string;
   try {
     canonicalCandidate = await realpath(candidate);
-    state.checkAborted();
   } catch {
     if (lexicalStats.isSymbolicLink()) {
       throw new Error(
@@ -305,6 +304,7 @@ async function validateExplicitInclude(
     }
     throw invalidInclude(include, "could not be canonicalized");
   }
+  state.checkAborted();
   let relativeCanonical: string;
   try {
     relativeCanonical = ensureInside(sourceRoot, canonicalCandidate, include);
@@ -338,6 +338,7 @@ async function validateSelectedSymlinks(sourceRoot: string, state: SelectionStat
     state.checkAborted();
     if (entry.kind !== "symlink") continue;
     const target = await realpath(entry.sourcePath).catch(() => undefined);
+    state.checkAborted();
     if (target === undefined) {
       throw new Error(
         `[PI_HOME_SYMLINK_BROKEN] Pi home contains a broken symbolic link at ${entry.relativePath}`,
@@ -382,6 +383,7 @@ async function collectDefaultFile(
   }
   if (entry.kind === "symlink") {
     const target = await realpath(entry.sourcePath).catch(() => undefined);
+    state.checkAborted();
     if (target === undefined || !(await lstat(target)).isFile()) {
       throw new Error(`[PI_HOME_SPECIAL_FILE] Pi home default path is not a file: ${relative}`);
     }
