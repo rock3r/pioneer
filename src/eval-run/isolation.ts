@@ -103,7 +103,10 @@ function selectedPathCandidates(entry: string, executable: string): string[] {
 async function readShebangFirstLine(executable: string): Promise<string> {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    handle = await open(executable, "r");
+    handle = await open(executable, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+    const details = await handle.stat();
+    if (!details.isFile()) return "";
+    if (process.platform !== "win32" && (details.mode & 0o111) === 0) return "";
     const buffer = Buffer.alloc(MAX_SHEBANG_READ_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     const newlineIndex = buffer.subarray(0, bytesRead).indexOf(0x0a);
