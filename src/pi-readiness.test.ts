@@ -21,6 +21,33 @@ function runnerWith(results: readonly Awaited<ReturnType<PiProbeRunner>>[]): PiP
 
 describe("Pi readiness", () => {
   const configuredAgentDir = path.resolve("/configured/pi-agent");
+  it("passes cancellation to an in-flight Pi probe", async () => {
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const runner: PiProbeRunner = async (_args, signal?: AbortSignal) => {
+      observedSignal = signal;
+      if (signal === undefined) {
+        return await new Promise((resolve) =>
+          setTimeout(() => resolve({ exitCode: null, stdout: "", stderr: "uncancelled" }), 50),
+        );
+      }
+      return await new Promise((resolve) => {
+        signal.addEventListener(
+          "abort",
+          () =>
+            resolve({ exitCode: null, stdout: "", stderr: "cancelled", errorCode: "ABORT_ERR" }),
+          { once: true },
+        );
+      });
+    };
+
+    const readiness = checkPiReadiness({ runner, signal: controller.signal });
+    controller.abort();
+
+    await expect(readiness).resolves.toMatchObject({ ready: false });
+    expect(observedSignal).toBe(controller.signal);
+  });
+
   it("fails with installation instructions when Pi is not on PATH", async () => {
     const runner = runnerWith([{ exitCode: null, stdout: "", stderr: "", errorCode: "ENOENT" }]);
 

@@ -43,7 +43,10 @@ export interface PiProbeResult {
   readonly errorCode?: string;
 }
 
-export type PiProbeRunner = (args: readonly string[]) => Promise<PiProbeResult>;
+export type PiProbeRunner = (
+  args: readonly string[],
+  signal?: AbortSignal,
+) => Promise<PiProbeResult>;
 
 export interface PiReadiness {
   readonly ready: boolean;
@@ -61,6 +64,7 @@ export interface PiReadinessOptions {
   readonly executable?: string;
   readonly runner?: PiProbeRunner;
   readonly requestedModel?: string;
+  readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
 }
 
@@ -160,7 +164,7 @@ function createRunner(
   timeoutMs: number,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): PiProbeRunner {
-  return async (args) =>
+  return async (args, signal) =>
     await new Promise((resolve) => {
       const child = spawn(executable, args, {
         env: {
@@ -176,11 +180,23 @@ function createRunner(
       let stdoutBytes = 0;
       let stderrBytes = 0;
       let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+
+      const onAbort = (): void => {
+        child.kill("SIGKILL");
+        finish({
+          exitCode: null,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: "Pi readiness probe was interrupted",
+          errorCode: "ABORT_ERR",
+        });
+      };
 
       const finish = (result: PiProbeResult): void => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        if (timer !== undefined) clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         resolve(result);
       };
       const append = (chunks: Buffer[], chunk: Buffer, currentBytes: number): number => {
@@ -211,7 +227,13 @@ function createRunner(
         });
       });
 
-      const timer = setTimeout(() => {
+      if (signal?.aborted === true) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      timer = setTimeout(() => {
         child.kill("SIGKILL");
         finish({
           exitCode: null,
@@ -230,7 +252,9 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       options.environment ?? process.env,
     );
-  const versionResult = await runner(["--version"]);
+  const runProbe = async (args: readonly string[]): Promise<PiProbeResult> =>
+    options.signal === undefined ? await runner(args) : await runner(args, options.signal);
+  const versionResult = await runProbe(["--version"]);
   if (versionResult.errorCode === "ENOENT") {
     return { ready: false, modelCount: 0, errors: [PI_NOT_FOUND_ERROR] };
   }
@@ -249,7 +273,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
   }
   const versionWarning =
     versionValidation.warning === undefined ? {} : { warning: versionValidation.warning };
-  const modelsResult = await runner([
+  const modelsResult = await runProbe([
     "--offline",
     "--no-approve",
     "--no-extensions",

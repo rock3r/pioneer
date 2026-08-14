@@ -163,17 +163,22 @@ class EvalSetupInterrupted extends Error {
   }
 }
 
-function interruptedEvalResult(signal: NodeJS.Signals): EvalRunResult {
+function interruptedEvalResult(signal: NodeJS.Signals, completed?: EvalRunResult): EvalRunResult {
   return {
     exitCode: 1,
     signal: null,
-    stdout: "",
-    stderr: `[EVAL_INTERRUPTED] Eval actor interrupted by ${signal}\n`,
+    stdout: completed?.stdout ?? "",
+    stderr: stderrWithDiagnostic(
+      completed?.stderr ?? "",
+      `[EVAL_INTERRUPTED] Eval actor interrupted by ${signal}`,
+    ),
     interrupted: signal,
+    ...(completed?.warning === undefined ? {} : { warning: completed.warning }),
   };
 }
 
 interface EvalInterruptionState {
+  readonly abortSignal: AbortSignal;
   signal?: NodeJS.Signals;
 }
 
@@ -430,18 +435,22 @@ export async function runEvalCommand(
   spec: EvalRunSpec,
   options: RunEvalOptions = {},
 ): Promise<EvalRunResult> {
-  const interruption: EvalInterruptionState = {};
+  const abortController = new AbortController();
+  const interruption: EvalInterruptionState = { abortSignal: abortController.signal };
   const onSigint = (): void => {
     interruption.signal ??= "SIGINT";
+    abortController.abort();
   };
   const onSigterm = (): void => {
     interruption.signal ??= "SIGTERM";
+    abortController.abort();
   };
   process.on("SIGINT", onSigint);
   process.on("SIGTERM", onSigterm);
   try {
     return await runEvalCommandWithInterruption(spec, options, interruption);
   } catch (error) {
+    if (interruption.signal !== undefined) return interruptedEvalResult(interruption.signal);
     if (error instanceof EvalSetupInterrupted) return interruptedEvalResult(error.signal);
     throw error;
   } finally {
@@ -461,6 +470,7 @@ async function runEvalCommandWithInterruption(
   const initialReadinessOptions = {
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
     ...(requestedModel === undefined ? {} : { requestedModel }),
+    signal: interruption.abortSignal,
   };
   const sandboxRuntimeExecutable = await realpath(process.execPath);
   throwIfEvalInterrupted(interruption);
@@ -515,6 +525,7 @@ async function runEvalCommandWithInterruption(
   const readinessOptions = {
     environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
     ...(requestedModel === undefined ? {} : { requestedModel }),
+    signal: interruption.abortSignal,
   };
   readiness ??= await assertPiReady(readinessOptions);
   throwIfEvalInterrupted(interruption);
@@ -547,6 +558,7 @@ async function runEvalCommandWithInterruption(
   let bridge: LinuxProxyBridge | undefined;
   let bridgeRoot: string | undefined;
   let completedResult: EvalRunResult | undefined;
+  let primaryFailure: unknown;
   let cleanupFailure: unknown;
   try {
     const actorGrantPaths = [
@@ -670,7 +682,7 @@ async function runEvalCommandWithInterruption(
   } catch (error) {
     if (error instanceof EvalSetupInterrupted)
       completedResult = interruptedEvalResult(error.signal);
-    else throw error;
+    else primaryFailure = error;
   } finally {
     delete process.env.PIONEER_HOST_SECRET;
     const cleanupResults = await Promise.allSettled([
@@ -685,9 +697,16 @@ async function runEvalCommandWithInterruption(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     )?.reason;
   }
+  if (primaryFailure !== undefined && cleanupFailure !== undefined) {
+    throw new AggregateError(
+      [primaryFailure, cleanupFailure],
+      "Eval execution failed and temporary state cleanup also failed",
+    );
+  }
   if (cleanupFailure !== undefined) throw cleanupFailure;
-  if (interruption.signal !== undefined && completedResult === undefined) {
-    completedResult = interruptedEvalResult(interruption.signal);
+  if (primaryFailure !== undefined) throw primaryFailure;
+  if (interruption.signal !== undefined && completedResult?.interrupted === undefined) {
+    completedResult = interruptedEvalResult(interruption.signal, completedResult);
   }
   if (completedResult === undefined) throw new Error("Eval run ended without a result");
   return completedResult;

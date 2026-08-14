@@ -170,9 +170,27 @@ async function selectedEntry(
   state: SelectionState,
 ): Promise<SelectedEntry> {
   state.checkAborted();
-  const existing = state.entries.get(selectionKey(relative));
-  if (existing !== undefined) return existing;
   const source = path.join(sourceRoot, ...relative.split("/"));
+  const existing = state.entries.get(selectionKey(relative));
+  if (existing !== undefined) {
+    if (existing.relativePath === relative) return existing;
+    let variantStats: Awaited<ReturnType<typeof lstat>>;
+    try {
+      variantStats = await lstat(source);
+      state.checkAborted();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        throw new Error(`[PI_HOME_SNAPSHOT_MISSING] Pi home path is missing: ${relative}`);
+      }
+      throw error;
+    }
+    if (variantStats.dev === existing.stats.dev && variantStats.ino === existing.stats.ino) {
+      return existing;
+    }
+    throw new Error(
+      `[PI_HOME_CASE_COLLISION] Pi home paths ${existing.relativePath} and ${relative} collide under platform path policy`,
+    );
+  }
   let stats: Awaited<ReturnType<typeof lstat>>;
   try {
     stats = await lstat(source);
