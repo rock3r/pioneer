@@ -75,3 +75,5 @@ pioneer review \
 Pioneer validates that directory, copies it into the run, and makes the copy writable. The original is never used as the actor's home.
 
 Review copies retain configured Pi skills. Eval copies intentionally omit them so the baseline and candidate arms are controlled by the eval harness.
+
+For a review that needs one additional Pi-home path, repeat `--pi-home-include RELATIVE_PATH`. The path is exact and relative to the selected Pi home; it may select a normally skipped package directory, but not sessions, logs, caches, transient directories, or log files. Evals intentionally have no equivalent option.

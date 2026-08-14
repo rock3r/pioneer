@@ -45,6 +45,7 @@ export interface ReviewRequest {
   readonly model?: string;
   readonly thinking?: ThinkingLevel;
   readonly piHomeSource?: string;
+  readonly piHomeIncludes?: readonly string[];
   readonly allowReadPaths?: readonly string[];
   readonly allowWritePaths?: readonly string[];
   readonly reportPath?: string;
@@ -886,6 +887,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
         sourceDir: piHomeSource,
         destination: path.join(scratch, "pi-home"),
         mode: "review",
+        ...(request.piHomeIncludes === undefined ? {} : { piHomeIncludes: request.piHomeIncludes }),
       });
       recordReviewWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
       const model = readiness.resolvedModel;

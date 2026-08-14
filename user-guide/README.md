@@ -19,7 +19,7 @@ For implementation details and the threat model, see the [technical documentatio
 - detects Pi and configured models before creating review state;
 - rejects missing or ambiguous requested models with the configured model list;
 - supports `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` thinking;
-- copies your Pi agent directory into a private writable run area;
+- selectively copies the required Pi configuration and review skills into a private writable run area;
 - gives Pi read-only access to source/reference directories and a private writable scratch directory;
 - mediates networking through an authenticated proxy;
 - writes a private real-time work log with five-second liveness heartbeats;

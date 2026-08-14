@@ -19,9 +19,12 @@ const result = await runReview({
   prompt: "Review the current changes",
   model: "provider/model",
   thinking: "high",
+  piHomeIncludes: ["skills/my-local-skill"],
   onWorkLogReady: (path) => console.error(`work log: ${path}`),
 });
 ```
+
+`ReviewRequest.piHomeIncludes` is a repeatable exact-path opt-in relative to the selected Pi home. It is intended for a narrowly required additional file or directory, including a managed package directory; it does not support globs, negation, or persistent configuration. The shared snapshot applies the same hard exclusions and symlink checks as the CLI.
 
 `ReviewRequest.workLogPath` selects an absolute create-only work-log target. `onWorkLogReady` runs synchronously after that file is open and before long-running readiness or actor work. `ReviewResult` contains the Markdown `report`, the absolute `workLogPath`, optional effective `model` and `thinking`, a `sandboxed` boolean, an optional Windows warning, an optional `reportWriteError` when transport succeeds but requested report persistence fails, and an optional `workLogWriteError` when a close-time sync or retention failure occurs after the report has already been verified. Callers must still surface the report before treating either persistence error as terminal.
 

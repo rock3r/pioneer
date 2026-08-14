@@ -22,9 +22,11 @@ The private scratch and copied Pi home are deleted when the review finishes. Use
 
 ## Isolated Pi home
 
-By default, Pioneer copies `PI_CODING_AGENT_DIR`, or `~/.pi/agent` when the variable is unset, into the private run area. This gives the actor the authentication and provider configuration Pi expects without mounting your live agent directory.
+By default, Pioneer selectively copies `PI_CODING_AGENT_DIR`, or `~/.pi/agent` when the variable is unset, into the private run area. The root allowlist is `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`; review snapshots also include a sanitized `skills/` tree, while eval snapshots do not. Dependency/runtime fluff such as `node_modules/`, `npm/`, `git/`, `.git/`, transient directories, and log files is skipped during default traversal.
 
-Review snapshots include configured Pi skills. Eval snapshots deliberately exclude skills, sessions, logs, and caches. Both modes exclude root temporary trees and cap the copied tree at 500,000 entries and 1 GiB. Pi-managed package directories and nested `node_modules` are retained for skill resources, but Pioneer disables optional extension discovery for both review and eval actors.
+For reviews, repeat `--pi-home-include RELATIVE_PATH` to select one exact existing file or directory relative to the selected Pi home. This can opt into normally skipped package content, but not hard exclusions: `sessions/`, `logs/`, `.npm/`, `.cache/`, `tmp/`, `.tmp/`, `temp/`, and `*.log` paths. Includes do not accept globs, negation, or configuration files. Internal symlinks are copied only when their targets are selected; broken, escaping, special-file, unselected-target, and ambiguous-collision cases fail closed. Evals have no include opt-in.
+
+Both modes cap selected content at 500,000 entries and 1 GiB; skipped content does not consume those budgets. Opting into large or machine-specific directories increases storage, runtime, and portability risk. Optional extension discovery remains disabled for both review and eval actors.
 
 Use `--pi-home /absolute/path` to select a prepared source directory. Pioneer still validates and copies it; it never points the actor directly at the original.
 

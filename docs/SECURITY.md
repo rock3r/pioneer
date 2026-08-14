@@ -38,18 +38,11 @@ For evals, the actor run directory is the only persistent writable tree. Runtime
 
 The controller copies the selected Pi agent directory into the private run area and sets `PI_CODING_AGENT_DIR` to the copy. It never mounts the real directory into the actor.
 
-Always excluded:
+The snapshot is positive by default. It copies only root `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`; review snapshots additionally traverse `skills/`, while eval snapshots exclude it. Default traversal skips `node_modules/`, `npm/`, `git/`, `.git/`, `.npm/`, `.cache/`, `tmp`, `.tmp`, `temp`, and log files at every depth. Review callers can add repeated `--pi-home-include RELATIVE_PATH` exact paths to select otherwise skipped `node_modules/`, `npm/`, `git/`, `.git/`, or unknown files/directories. Paths are relative to the selected source Pi home; globs, negation, configuration files, and eval opt-ins are not supported.
 
-- sessions;
-- logs and `*.log` files;
-- `.npm` and `.cache` directories;
-- root-level `tmp`, `.tmp`, and `temp` trees.
+The hard exclusions that cannot be overridden are `sessions/`, `logs/`, `.npm/`, `.cache/`, `tmp/`, `.tmp/`, `temp/`, and files ending in `.log` (including debug logs), at any depth. The controller deduplicates overlapping selections, rejects destination collisions, and counts only selected entries and file bytes toward the 500,000-entry and 1 GiB backstops. Opting in large or machine-specific package trees increases review time, storage, and portability risk.
 
-Pi's managed `npm/`, `git/`, and nested `node_modules/` content is retained because configured review skills may refer to package resources. Pioneer nevertheless starts review and eval actors with extension discovery disabled; review completion never depends on an optional extension.
-
-Eval snapshots additionally exclude `skills`. Review snapshots retain configured skills because they can be relevant to code review.
-
-The copy rejects special files, broken links, and links escaping the Pi home. Symlinked Pi launcher names directly under `bin/` are omitted instead: Pioneer launches the separately resolved host Pi executable, so copying those launchers is unnecessary and following an external managed-runtime link would weaken the snapshot boundary. Other agent-bin helpers remain subject to the normal link rules.
+The copy rejects special files, broken links, and links escaping the Pi home. An internal symlink is preserved only when its resolved target is also selected; otherwise the snapshot fails with a relative target and an opt-in diagnostic where policy permits. This prevents a selected skill from silently pulling an excluded package store into the snapshot. Symlinked Pi launcher names directly under an unselected `bin/` tree are not copied; Pioneer launches the separately resolved host Pi executable.
 
 The copy is bounded to 500,000 entries and 1 GiB after exclusions. Provider authentication should therefore be configured in Pi's agent directory, normally through `pi` and `/login`. Host API-key environment variables are intentionally not copied wholesale into sandboxed runs.
 
