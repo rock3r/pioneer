@@ -63,6 +63,24 @@ describe("validateEvalRunSpec", () => {
     });
   });
 
+  it("resolves a relative env interpreter from the actor run directory", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-relative-interpreter-"));
+    const runDir = path.join(temp, "run");
+    const interpreter = path.join(runDir, "interpreter");
+    const actor = path.join(temp, "actor");
+    await mkdir(runDir);
+    await writeFile(interpreter, "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(actor, "#!/usr/bin/env ./interpreter\n", { mode: 0o755 });
+
+    const interpreterCanonical = await realpath(interpreter);
+    const actorCanonical = await realpath(actor);
+    await expect(resolveEvalExecutable(actor, runDir, "")).resolves.toEqual({
+      commandPath: actorCanonical,
+      command: [interpreterCanonical, actorCanonical],
+      readPaths: uniquePaths([actor, actorCanonical, interpreter, interpreterCanonical]),
+    });
+  });
+
   it.skipIf(process.platform !== "win32")(
     "expands a bare PATH executable through PATHEXT on Windows",
     async () => {

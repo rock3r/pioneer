@@ -140,34 +140,31 @@ async function readShebangFirstLine(executable: string): Promise<string> {
 
 async function resolveShebangInterpreter(
   executable: string,
+  runDir: string,
   selectedPath: string,
   context: ShebangResolutionContext,
 ): Promise<ResolvedEvalExecutable | undefined> {
   const firstLine = await readShebangFirstLine(executable);
   const match = firstLine.match(/^#!\s*\/usr\/bin\/env\s+([^\s]+)\s*$/);
   if (!match?.[1]) return undefined;
-  const interpreter = await resolveEvalExecutableInternal(
-    match[1],
-    path.dirname(executable),
-    selectedPath,
-    {
-      depth: context.depth + 1,
-      canonicalPaths: new Set([...context.canonicalPaths, executable]),
-    },
-  );
+  const interpreter = await resolveEvalExecutableInternal(match[1], runDir, selectedPath, {
+    depth: context.depth + 1,
+    canonicalPaths: new Set([...context.canonicalPaths, executable]),
+  });
   return interpreter;
 }
 
 async function buildResolvedExecutable(
   lexicalPath: string,
   canonical: string,
+  runDir: string,
   selectedPath: string,
   context: ShebangResolutionContext,
 ): Promise<ResolvedEvalExecutable> {
   if (context.depth >= MAX_SHEBANG_RESOLUTION_DEPTH || context.canonicalPaths.has(canonical)) {
     throw new Error(SHEBANG_RESOLUTION_FAILURE);
   }
-  const interpreter = await resolveShebangInterpreter(canonical, selectedPath, {
+  const interpreter = await resolveShebangInterpreter(canonical, runDir, selectedPath, {
     depth: context.depth,
     canonicalPaths: new Set([...context.canonicalPaths, canonical]),
   });
@@ -215,13 +212,13 @@ async function resolveEvalExecutableInternal(
           // Continue through explicitly selected PATH entries only when this candidate was not executable.
           continue;
         }
-        return await buildResolvedExecutable(candidate, canonical, selectedPath, context);
+        return await buildResolvedExecutable(candidate, canonical, runDir, selectedPath, context);
       }
     }
     throw new Error(`Eval actor executable was not found on the selected PATH: ${executable}`);
   }
   const canonical = await assertExecutable(lexicalPath);
-  return await buildResolvedExecutable(lexicalPath, canonical, selectedPath, context);
+  return await buildResolvedExecutable(lexicalPath, canonical, runDir, selectedPath, context);
 }
 
 export async function resolveEvalExecutable(
