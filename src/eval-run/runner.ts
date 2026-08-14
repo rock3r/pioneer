@@ -530,17 +530,6 @@ async function runEvalCommandWithInterruption(
     await rm(createdIsolationDir, { recursive: true, force: true });
     throw error;
   }
-  const actorGrantPaths = [
-    validated.runDir,
-    ...validated.runtimeReadPaths,
-    sandboxRuntimeExecutable,
-    ...(await macosRuntimeReadPaths(process.execPath)),
-    ...buildEvalExecutableReadPaths(resolvedExecutable, piInstallation),
-  ];
-  if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
-    await rm(isolationDir, { recursive: true, force: true });
-    throw new Error("Eval controller directory must not overlap actor grants");
-  }
   const throwIfSetupInterrupted = (): void => {
     throwIfEvalInterrupted(interruption);
   };
@@ -560,6 +549,16 @@ async function runEvalCommandWithInterruption(
   let completedResult: EvalRunResult | undefined;
   let cleanupFailure: unknown;
   try {
+    const actorGrantPaths = [
+      validated.runDir,
+      ...validated.runtimeReadPaths,
+      sandboxRuntimeExecutable,
+      ...(await macosRuntimeReadPaths(process.execPath)),
+      ...buildEvalExecutableReadPaths(resolvedExecutable, piInstallation),
+    ];
+    if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
+      throw new Error("Eval controller directory must not overlap actor grants");
+    }
     throwIfSetupInterrupted();
     await mkdir(actorScratchDir, { mode: 0o700 });
     throwIfSetupInterrupted();
