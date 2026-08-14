@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
@@ -6,7 +6,7 @@ import net from "node:net";
 import path from "node:path";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
-import { optimizePiStartupCommand, requestedPiModel } from "../pi-startup.js";
+import { isPiExecutable, optimizePiStartupCommand, requestedPiModel } from "../pi-startup.js";
 import {
   buildLinuxSandboxArgv,
   buildMacosSandboxArgv,
@@ -15,7 +15,14 @@ import {
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { executableRuntimeRoot } from "../sandbox/runtime-paths.js";
-import { buildEvalSandboxConfig, type EvalRunSpec, validateEvalRunSpec } from "./isolation.js";
+import {
+  buildEvalExecutableReadPaths,
+  buildEvalSandboxConfig,
+  type EvalRunSpec,
+  findValidatedPiPackageRoot,
+  resolveEvalExecutable,
+  validateEvalRunSpec,
+} from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
 import { macosRuntimeReadPaths } from "./macos-runtime.js";
 import { startPublicEgressProxy } from "./public-egress-proxy.js";
@@ -25,6 +32,9 @@ export interface EvalRunResult {
   readonly signal: NodeJS.Signals | null;
   readonly stdout: string;
   readonly stderr: string;
+  readonly timedOut?: boolean;
+  readonly containmentFailure?: boolean;
+  readonly interrupted?: NodeJS.Signals;
   readonly warning?: string;
 }
 
@@ -128,7 +138,23 @@ function sanitizedBrokerEnvironment(runtimeEnvironment: NodeJS.ProcessEnv): Node
   return sanitized;
 }
 
-async function capture(
+const EVAL_PIPE_CLOSE_GRACE_MS = 400;
+const EVAL_MAX_STDOUT_BYTES = 4 * 1024 * 1024;
+const EVAL_MAX_STDERR_BYTES = 64 * 1024;
+
+function terminateEvalProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (process.platform !== "win32" && child.pid !== undefined) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // The process group may already have exited; signal the direct child below.
+    }
+  }
+  child.kill(signal);
+}
+
+export async function captureEvalProcess(
   argv: readonly [string, ...string[]],
   cwd: string,
   env: NodeJS.ProcessEnv,
@@ -139,23 +165,144 @@ async function capture(
       cwd,
       env,
       shell: false,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.once("error", reject);
-    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-    child.once("exit", (exitCode, signal) => {
-      clearTimeout(timer);
-      resolve({
-        exitCode: exitCode ?? 1,
-        signal,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
-      });
+    let settled = false;
+    let childExited = false;
+    let timedOut = false;
+    let containmentFailure = false;
+    let outputLimit = false;
+    let interrupted: NodeJS.Signals | undefined;
+    let exitCode: number | null = null;
+    let signal: NodeJS.Signals | null = null;
+    let timeoutTimer: NodeJS.Timeout | undefined;
+    let graceTimer: NodeJS.Timeout | undefined;
+    let onSigint: (() => void) | undefined;
+    let onSigterm: (() => void) | undefined;
+
+    const output = (): { readonly stdout: string; readonly stderr: string } => ({
+      stdout: Buffer.concat(stdout).toString("utf8"),
+      stderr: Buffer.concat(stderr).toString("utf8"),
     });
+    const cleanup = (): void => {
+      if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+      if (graceTimer !== undefined) clearTimeout(graceTimer);
+      if (onSigint !== undefined) process.off("SIGINT", onSigint);
+      if (onSigterm !== undefined) process.off("SIGTERM", onSigterm);
+    };
+    const settle = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      const captured = output();
+      const diagnostic = timedOut
+        ? `[EVAL_TIMEOUT] Eval actor timed out after ${timeoutMs}ms`
+        : containmentFailure
+          ? "[EVAL_PROCESS_CONTAINMENT_FAILED] Pioneer could not prove the eval actor process tree stopped"
+          : outputLimit
+            ? `[EVAL_OUTPUT_LIMIT] Eval actor output exceeded the ${EVAL_MAX_STDOUT_BYTES}-byte stdout or ${EVAL_MAX_STDERR_BYTES}-byte stderr limit`
+            : interrupted === undefined
+              ? undefined
+              : `[EVAL_INTERRUPTED] Eval actor interrupted by ${interrupted}`;
+      resolve({
+        exitCode:
+          diagnostic === undefined && (exitCode ?? 1) === 0
+            ? 0
+            : diagnostic === undefined
+              ? (exitCode ?? 1)
+              : 1,
+        signal,
+        stdout: captured.stdout,
+        stderr:
+          diagnostic === undefined
+            ? captured.stderr
+            : `${captured.stderr}${captured.stderr.endsWith("\n") || captured.stderr.length === 0 ? "" : "\n"}${diagnostic}\n`,
+        ...(timedOut ? { timedOut: true } : {}),
+        ...(containmentFailure ? { containmentFailure: true } : {}),
+        ...(interrupted === undefined ? {} : { interrupted }),
+      });
+    };
+    const containmentDeadline = (): void => {
+      if (settled) return;
+      containmentFailure = true;
+      terminateEvalProcessTree(child, "SIGKILL");
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      settle();
+    };
+    const startGrace = (): void => {
+      if (graceTimer !== undefined || settled) return;
+      graceTimer = setTimeout(containmentDeadline, EVAL_PIPE_CLOSE_GRACE_MS);
+    };
+    const terminate = (kind: "timeout" | NodeJS.Signals): void => {
+      if (settled) return;
+      if (kind === "timeout") timedOut = true;
+      else interrupted = kind;
+      terminateEvalProcessTree(child, kind === "timeout" ? "SIGKILL" : kind);
+      startGrace();
+    };
+
+    const appendOutput = (
+      chunks: Buffer[],
+      chunk: Buffer,
+      retainedBytes: number,
+      limit: number,
+    ): number => {
+      const remaining = limit - retainedBytes;
+      if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
+      if (retainedBytes + chunk.length > limit && !outputLimit) {
+        outputLimit = true;
+        terminateEvalProcessTree(child, "SIGKILL");
+        startGrace();
+      }
+      return retainedBytes + chunk.length;
+    };
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutBytes = appendOutput(stdout, chunk, stdoutBytes, EVAL_MAX_STDOUT_BYTES);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderrBytes = appendOutput(stderr, chunk, stderrBytes, EVAL_MAX_STDERR_BYTES);
+    });
+    child.once("error", (error) => {
+      if (settled) return;
+      cleanup();
+      settled = true;
+      reject(
+        new Error(
+          `[EVAL_SPAWN_FAILED] Pioneer could not start the eval sandbox process: ${error.message.replaceAll(/\s+/g, " ").slice(0, 300)}`,
+        ),
+      );
+    });
+    child.once("exit", (code, childSignal) => {
+      childExited = true;
+      exitCode = code;
+      signal = childSignal;
+      if (graceTimer !== undefined) clearTimeout(graceTimer);
+      graceTimer = undefined;
+      startGrace();
+      if (childSignal !== null || code !== null) {
+        // `close` below remains authoritative because descendants may retain the pipes.
+      }
+    });
+    child.once("close", (code, childSignal) => {
+      childExited = true;
+      exitCode = code;
+      signal = childSignal;
+      if (!timedOut && !containmentFailure && interrupted === undefined) settle();
+      else settle();
+    });
+    onSigint = () => terminate("SIGINT");
+    onSigterm = () => terminate("SIGTERM");
+    process.once("SIGINT", onSigint);
+    process.once("SIGTERM", onSigterm);
+    timeoutTimer = setTimeout(() => terminate("timeout"), timeoutMs);
+    void childExited;
   });
 }
 
@@ -171,7 +318,7 @@ async function sandboxAndCapture(
     process.platform === "darwin"
       ? buildMacosSandboxArgv(policy, command)
       : buildLinuxSandboxArgv(policy, command, bwrapPath ?? "", proxySocketPath);
-  return await capture(
+  return await captureEvalProcess(
     launch.argv,
     runDir,
     { ...sanitizedBrokerEnvironment(process.env), ...launch.environment },
@@ -203,16 +350,37 @@ export async function runEvalCommand(
 ): Promise<EvalRunResult> {
   const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
-  const readinessOptions = {
-    environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
-    ...(requestedModel === undefined ? {} : { requestedModel }),
-  };
-  const readiness = await assertPiReady(readinessOptions);
   await assertNativeSandboxReady();
   const validated = await validateEvalRunSpec({
     ...spec,
     runtimeReadPaths: [...(spec.runtimeReadPaths ?? []), ...(await existingRuntimePaths())],
   });
+  const optimizedPi = optimizePiStartupCommand(validated.command, {
+    disableExtensions: true,
+    disableSkills: true,
+  });
+  const resolvedExecutable = await resolveEvalExecutable(
+    optimizedPi.command[0],
+    validated.runDir,
+    sanitizedBrokerEnvironment(process.env).PATH ?? "",
+  );
+  const resolvedCommand = [
+    ...(resolvedExecutable.command ?? [resolvedExecutable.commandPath]),
+    ...optimizedPi.command.slice(1),
+  ] as [string, ...string[]];
+  const piActor = isPiExecutable(spec.command[0]);
+  const piInstallation = piActor
+    ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath)
+    : undefined;
+  if (piActor && piInstallation === undefined) {
+    throw new Error("Pi eval actor is not a validated Pi installation");
+  }
+  const readinessOptions = {
+    environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
+    ...(piActor ? { executable: resolvedExecutable.commandPath } : {}),
+    ...(requestedModel === undefined ? {} : { requestedModel }),
+  };
+  const readiness = await assertPiReady(readinessOptions);
   const isolationDir = path.join(validated.runDir, ".isolation");
   await mkdir(isolationDir);
   const piHome = await prepareIsolatedPiHome({
@@ -231,14 +399,10 @@ export async function runEvalCommand(
   await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
   await writeFile(probeScript, PROBE_SOURCE, { flag: "wx", mode: 0o500 });
   await writeFile(launcherScript, LAUNCHER_SOURCE, { flag: "wx", mode: 0o500 });
-  const optimizedPi = optimizePiStartupCommand(validated.command, {
-    disableExtensions: true,
-    disableSkills: true,
-  });
   await writeFile(
     launchSpec,
     JSON.stringify({
-      command: optimizedPi.command,
+      command: resolvedCommand,
       cwd: validated.runDir,
       environment: {
         ...optimizedPi.environment,
@@ -279,6 +443,7 @@ export async function runEvalCommand(
       runtimeReadPaths: [
         ...validated.runtimeReadPaths,
         ...(await macosRuntimeReadPaths(process.execPath)),
+        ...buildEvalExecutableReadPaths(resolvedExecutable, piInstallation),
       ],
       parentProxyUrl: proxy.url,
     });

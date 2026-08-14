@@ -129,6 +129,10 @@ The default is 900,000 ms (15 minutes). Retry with a larger positive integer onl
 
 Timeout cleanup kills Pi and removes the private run state.
 
+## Eval timed out or returned a containment diagnostic
+
+Eval timeout errors begin with `[EVAL_TIMEOUT]` and preserve actor output captured before termination. `[EVAL_PROCESS_CONTAINMENT_FAILED]` means a descendant retained an inherited stdout/stderr pipe beyond the bounded cleanup grace; the run is nonzero and Pioneer stops accepting output. `[EVAL_SHEBANG_RESOLUTION_FAILED]` means `/usr/bin/env` interpreter resolution detected a cycle, exceeded its bounded depth, or began an unterminated overlong shebang; fix the actor's shebang chain. `[EVAL_INTERRUPTED]`, `[EVAL_SPAWN_FAILED]`, and `[EVAL_OUTPUT_LIMIT]` identify interruption, native launch failure, and bounded-output overflow respectively. Retry only after checking the actor's process creation and output behavior; do not add broad runtime grants or disable native isolation.
+
 ## Review appears to hang
 
 Preserve the `[PIONEER_WORK_LOG] ABSOLUTE_PATH` line that Pioneer prints on stderr, then inspect the final records in that JSONL file. Fresh five-second `heartbeat` records mean the controller is alive; advancing `rpcBytes`, `stderrBytes`, or `lastPiEvent` means Pi is still active. Missing heartbeats indicate a stalled controller or event loop, while fresh heartbeats with a growing `idleMs` indicate a live controller waiting on silent Pi activity.

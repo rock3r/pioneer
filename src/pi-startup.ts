@@ -18,7 +18,7 @@ function executableName(executable: string): string {
   return executable.replaceAll("\\", "/").split("/").at(-1)?.toLowerCase() ?? "";
 }
 
-function isPiExecutable(executable: string): boolean {
+export function isPiExecutable(executable: string): boolean {
   return ["pi", "pi.exe", "pi.cmd", "pi.bat"].includes(executableName(executable));
 }
 

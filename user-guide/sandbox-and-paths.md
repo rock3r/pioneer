@@ -16,6 +16,8 @@ Pioneer treats the review actor as untrusted. On macOS and Linux, it starts from
 
 Pioneer canonicalizes grants before launch. It rejects a source grant that is a symbolic link, grants that overlap with conflicting access, and unsafe broad eval runtime grants. An explicit writable path is a real host capability, so grant the narrowest directory that meets the request.
 
+Eval actor commands are validated before launch artifacts are created. Bare executable names are found only through Pioneer's sanitized `PATH`; relative paths are resolved below the actor run directory; absolute symlink launchers retain only exact lexical and canonical read grants. Missing or non-executable targets fail closed, and Pioneer's timeout/containment handling terminates the native process group rather than waiting on inherited output pipes.
+
 The private scratch and copied Pi home are deleted when the review finishes. Use `--report /absolute/path/report.md` when you need Pioneer to preserve the final Markdown report; that does not require giving Pi another writable path.
 
 ## Isolated Pi home

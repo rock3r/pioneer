@@ -3,12 +3,209 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  buildEvalExecutableReadPaths,
   buildEvalSandboxConfig,
   isPublicInternetAddress,
+  MAX_SHEBANG_RESOLUTION_DEPTH,
+  resolveEvalExecutable,
   validateEvalRunSpec,
 } from "./isolation.js";
 
 describe("validateEvalRunSpec", () => {
+  it("resolves a bare executable through the selected PATH to a canonical file", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const runDir = path.join(temp, "run");
+    const binDir = path.join(temp, "bin");
+    await mkdir(runDir);
+    await mkdir(binDir);
+    const executable = path.join(binDir, "actor");
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const expected = await realpath(executable);
+    await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toEqual({
+      commandPath: expected,
+      readPaths: [path.join(binDir, "actor"), expected],
+    });
+  });
+
+  it("resolves an absolute symlink to its executable target and grants both identities", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const runDir = path.join(temp, "run");
+    await mkdir(runDir);
+    const target = path.join(temp, "actor.js");
+    const launcher = path.join(temp, "actor");
+    await writeFile(target, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    await import("node:fs/promises").then(({ symlink }) => symlink(target, launcher));
+
+    await expect(resolveEvalExecutable(launcher, runDir, "")).resolves.toEqual({
+      commandPath: await realpath(target),
+      readPaths: [launcher, await realpath(target)],
+    });
+  });
+
+  it("resolves a relative path against the validated actor run directory", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const runDir = path.join(temp, "run");
+    await mkdir(path.join(runDir, "bin"), { recursive: true });
+    const executable = path.join(runDir, "bin", "actor");
+    await writeFile(executable, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const expected = await realpath(executable);
+    await expect(resolveEvalExecutable("bin/actor", runDir, "")).resolves.toEqual({
+      commandPath: expected,
+      readPaths: [path.join(runDir, "bin/actor"), expected],
+    });
+  });
+
+  it("rewrites env shebang scripts to an explicit canonical interpreter", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const runDir = path.join(temp, "run");
+    const binDir = path.join(temp, "bin");
+    await mkdir(runDir);
+    await mkdir(binDir);
+    const interpreter = path.join(binDir, "node");
+    const script = path.join(binDir, "actor");
+    await writeFile(interpreter, "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(script, "#!/usr/bin/env node\n", { mode: 0o755 });
+
+    await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toMatchObject({
+      command: [await realpath(interpreter), await realpath(script)],
+      readPaths: expect.arrayContaining([await realpath(interpreter), await realpath(script)]),
+    });
+  });
+
+  it("preserves a complete nested env shebang command and every exact read grant", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-nested-shebang-"));
+    const runDir = path.join(temp, "run");
+    const binDir = path.join(temp, "bin");
+    await mkdir(runDir);
+    await mkdir(binDir);
+    const finalTarget = path.join(temp, "final-target");
+    const finalLauncher = path.join(binDir, "final");
+    const middle = path.join(binDir, "middle");
+    const actor = path.join(binDir, "actor");
+    await writeFile(finalTarget, "#!/bin/sh\n", { mode: 0o755 });
+    await import("node:fs/promises").then(({ symlink }) => symlink(finalTarget, finalLauncher));
+    await writeFile(middle, "#!/usr/bin/env final\n", { mode: 0o755 });
+    await writeFile(actor, "#!/usr/bin/env middle\n", { mode: 0o755 });
+
+    const finalCanonical = await realpath(finalTarget);
+    const middleCanonical = await realpath(middle);
+    const actorCanonical = await realpath(actor);
+    await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toEqual({
+      commandPath: actorCanonical,
+      command: [finalCanonical, middleCanonical, actorCanonical],
+      readPaths: [
+        path.join(binDir, "actor"),
+        actorCanonical,
+        path.join(binDir, "middle"),
+        middleCanonical,
+        finalLauncher,
+        finalCanonical,
+      ],
+    });
+  });
+
+  it("fails closed when the first PATH executable has an unresolvable interpreter", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const runDir = path.join(temp, "run");
+    const firstBin = path.join(temp, "first-bin");
+    const secondBin = path.join(temp, "second-bin");
+    await mkdir(runDir);
+    await mkdir(firstBin);
+    await mkdir(secondBin);
+    await writeFile(path.join(firstBin, "actor"), "#!/usr/bin/env missing-interpreter\n", {
+      mode: 0o755,
+    });
+    await writeFile(path.join(secondBin, "actor"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    await expect(
+      resolveEvalExecutable("actor", runDir, [firstBin, secondBin].join(path.delimiter)),
+    ).rejects.toThrow(/interpreter|not found/i);
+  });
+
+  it("fails closed with a stable diagnostic for a self-referential env shebang", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-shebang-cycle-"));
+    const runDir = path.join(temp, "run");
+    const binDir = path.join(temp, "bin");
+    await mkdir(runDir);
+    await mkdir(binDir);
+    await writeFile(path.join(binDir, "actor"), "#!/usr/bin/env actor\n", { mode: 0o755 });
+
+    await expect(resolveEvalExecutable("actor", runDir, binDir)).rejects.toThrow(
+      "[EVAL_SHEBANG_RESOLUTION_FAILED]",
+    );
+  }, 1_000);
+
+  it("fails closed with a stable diagnostic for a two-file env shebang cycle", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-shebang-cycle-"));
+    const runDir = path.join(temp, "run");
+    const binDir = path.join(temp, "bin");
+    await mkdir(runDir);
+    await mkdir(binDir);
+    await writeFile(path.join(binDir, "first"), "#!/usr/bin/env second\n", { mode: 0o755 });
+    await writeFile(path.join(binDir, "second"), "#!/usr/bin/env first\n", { mode: 0o755 });
+
+    await expect(resolveEvalExecutable("first", runDir, binDir)).rejects.toThrow(
+      "[EVAL_SHEBANG_RESOLUTION_FAILED]",
+    );
+  }, 1_000);
+
+  it("fails closed when env shebang resolution exceeds its explicit depth bound", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-shebang-depth-"));
+    const runDir = path.join(temp, "run");
+    const binDir = path.join(temp, "bin");
+    await mkdir(runDir);
+    await mkdir(binDir);
+    const chainLength = MAX_SHEBANG_RESOLUTION_DEPTH + 1;
+    for (let index = 0; index < chainLength; index += 1) {
+      await writeFile(path.join(binDir, `actor-${index}`), `#!/usr/bin/env actor-${index + 1}\n`, {
+        mode: 0o755,
+      });
+    }
+    await writeFile(path.join(binDir, `actor-${chainLength}`), "#!/bin/sh\n", {
+      mode: 0o755,
+    });
+
+    await expect(resolveEvalExecutable("actor-0", runDir, binDir)).rejects.toThrow(
+      "[EVAL_SHEBANG_RESOLUTION_FAILED]",
+    );
+  });
+
+  it.each([
+    ["missing", "missing"],
+    ["directory", "."],
+  ])("fails closed for a %s executable", async (_label, executable) => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const runDir = path.join(temp, "run");
+    await mkdir(runDir);
+    await expect(resolveEvalExecutable(executable, runDir, "")).rejects.toThrow(/executable/i);
+  });
+
+  it("fails closed for a non-executable and broken symlink", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const runDir = path.join(temp, "run");
+    await mkdir(runDir);
+    const nonExecutable = path.join(temp, "not-executable");
+    await writeFile(nonExecutable, "exit 0\n", { mode: 0o644 });
+    const broken = path.join(temp, "broken");
+    await import("node:fs/promises").then(({ symlink }) =>
+      symlink(path.join(temp, "gone"), broken),
+    );
+
+    await expect(resolveEvalExecutable(nonExecutable, runDir, "")).rejects.toThrow(/executable/i);
+    await expect(resolveEvalExecutable(broken, runDir, "")).rejects.toThrow(/executable/i);
+  });
+
+  it("rejects NUL argv and relative paths that escape the run directory", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const runDir = path.join(temp, "run");
+    await mkdir(runDir);
+
+    await expect(resolveEvalExecutable("actor\0", runDir, "")).rejects.toThrow(/NUL/i);
+    await expect(resolveEvalExecutable("../actor", runDir, "")).rejects.toThrow(/run directory/i);
+  });
+
   it.skipIf(process.platform === "win32")(
     "canonicalizes the run directory and rejects broad runtime grants",
     async () => {
@@ -81,6 +278,60 @@ describe("cross-platform sandbox config", () => {
         parentProxyUrl: "http://srt:token.0.0.1:43123",
       }),
     ).toThrow(/unavailable on Windows/i);
+  });
+
+  it("keeps executable grants narrow when the lexical path differs from its target", () => {
+    const config = buildEvalSandboxConfig({
+      platform: "darwin",
+      runDir: "/private/tmp/eval-run",
+      runtimeReadPaths: ["/opt/homebrew/bin/pi", "/opt/homebrew/lib/node_modules/pi/dist/cli.js"],
+      parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+    });
+    expect(config.readOnlyPaths).toEqual([
+      "/opt/homebrew/bin/pi",
+      "/opt/homebrew/lib/node_modules/pi/dist/cli.js",
+    ]);
+    expect(config.readOnlyPaths).not.toContain("/opt/homebrew");
+  });
+
+  it("permits an exact executable script directory without granting its broad parent", () => {
+    const config = buildEvalSandboxConfig({
+      platform: "darwin",
+      runDir: "/private/tmp/eval-run",
+      runtimeReadPaths: ["/opt/homebrew/lib/node_modules/pi/dist"],
+      parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+    });
+    expect(config.readOnlyPaths).toEqual(["/opt/homebrew/lib/node_modules/pi/dist"]);
+    expect(config.readOnlyPaths).not.toContain("/opt/homebrew");
+  });
+
+  it("keeps a package dependency grant scoped to the resolved actor package", () => {
+    const config = buildEvalSandboxConfig({
+      platform: "darwin",
+      runDir: "/private/tmp/eval-run",
+      runtimeReadPaths: ["/opt/homebrew/lib/node_modules/pi-coding-agent"],
+      parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+    });
+    expect(config.readOnlyPaths).toEqual(["/opt/homebrew/lib/node_modules/pi-coding-agent"]);
+    expect(config.readOnlyPaths).not.toContain("/opt/homebrew/lib/node_modules");
+  });
+
+  it("does not grant arbitrary actors their sibling directory or package root", () => {
+    const actor = {
+      commandPath: "/private/tmp/unrelated-package/bin/actor",
+      readPaths: ["/private/tmp/unrelated-package/bin/actor"],
+    } as const;
+    const runtimeReadPaths = buildEvalExecutableReadPaths(actor);
+    const config = buildEvalSandboxConfig({
+      platform: "darwin",
+      runDir: "/private/tmp/eval-run",
+      runtimeReadPaths,
+      parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+    });
+
+    expect(config.readOnlyPaths).toEqual([actor.commandPath]);
+    expect(config.readOnlyPaths).not.toContain("/private/tmp/unrelated-package/bin");
+    expect(config.readOnlyPaths).not.toContain("/private/tmp/unrelated-package");
   });
 });
 

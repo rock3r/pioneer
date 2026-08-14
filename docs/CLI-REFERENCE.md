@@ -184,7 +184,9 @@ pioneer eval run --run-dir DIR
   -- COMMAND [ARG ...]
 ```
 
-The command after `--` is executed as discrete argv in the strict sandbox. The runner first performs mandatory filesystem, environment, and loopback probes. Actor stdout, stderr, exit status, and terminating signal are propagated.
+The command after `--` is executed as discrete argv in the strict sandbox. The runner first performs mandatory filesystem, environment, and loopback probes. Before creating launch artifacts it validates the executable: bare names use the selected sanitized `PATH`, relative paths are anchored to the run directory, and absolute/symlinked launchers are canonicalized with narrow exact grants. Actor stdout and stderr observed before termination are propagated within a 4 MiB stdout and 64 KiB stderr bound; exit status and terminating signal are also returned.
+
+Eval failures return nonzero. Stable stderr diagnostics are `[EVAL_TIMEOUT]` for timeout, `[EVAL_INTERRUPTED]` for SIGINT/SIGTERM, `[EVAL_SPAWN_FAILED]` for sandbox launch failure, `[EVAL_SHEBANG_RESOLUTION_FAILED]` for a cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` interpreter chain, `[EVAL_PROCESS_CONTAINMENT_FAILED]` when inherited pipes prevent proving the process tree stopped, and `[EVAL_OUTPUT_LIMIT]` when the output bound is exceeded. These diagnostics do not print the actor environment, Pi configuration, or authenticated proxy URL.
 
 When the actor executable is Pi, fast-start flags are added automatically and skills are disabled. Runtime read paths must be narrow and are mounted read-only. Eval networking is always public-only.
 

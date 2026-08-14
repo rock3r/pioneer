@@ -1,7 +1,9 @@
-import { lstat, readdir, realpath } from "node:fs/promises";
+import { access, constants } from "node:fs";
+import { lstat, open, readdir, readFile, realpath, stat } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { diagnosticMessage } from "../diagnostics.js";
 import type { SandboxPolicy } from "../sandbox/launcher.js";
 
 export type EvalPlatform = "darwin" | "linux" | "win32";
@@ -20,6 +22,12 @@ export interface ValidatedEvalRunSpec {
   readonly piHomeSource?: string;
 }
 
+export interface ResolvedEvalExecutable {
+  readonly commandPath: string;
+  readonly command?: readonly [string, ...string[]];
+  readonly readPaths: readonly string[];
+}
+
 export interface EvalSandboxConfigOptions {
   readonly platform: EvalPlatform;
   readonly runDir: string;
@@ -27,7 +35,213 @@ export interface EvalSandboxConfigOptions {
   readonly parentProxyUrl: string;
 }
 
+export interface ValidatedPiInstallation {
+  readonly packageRoot: string;
+}
+
 const BROAD_POSIX_PATHS = new Set(["/", "/Users", "/home", "/private", "/tmp", "/var"]);
+export const MAX_SHEBANG_READ_BYTES = 4_096;
+export const MAX_SHEBANG_RESOLUTION_DEPTH = 16;
+const SHEBANG_RESOLUTION_FAILURE = diagnosticMessage(
+  "EVAL_SHEBANG_RESOLUTION_FAILED",
+  "Eval actor shebang resolution exceeded its safe cycle or depth bound",
+);
+
+interface ShebangResolutionContext {
+  readonly depth: number;
+  readonly canonicalPaths: ReadonlySet<string>;
+}
+
+function hasPathSeparator(value: string): boolean {
+  return value.includes("/") || (process.platform === "win32" && value.includes("\\"));
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+async function assertExecutable(candidate: string): Promise<string> {
+  let canonical: string;
+  try {
+    canonical = await realpath(candidate);
+    const details = await stat(canonical);
+    await new Promise<void>((resolve, reject) =>
+      access(canonical, constants.X_OK, (error) => (error ? reject(error) : resolve())),
+    );
+    if (!details.isFile()) throw new Error("not a regular file");
+  } catch {
+    throw new Error(`Eval actor executable is missing or not executable: ${candidate}`);
+  }
+  return canonical;
+}
+
+async function readShebangFirstLine(executable: string): Promise<string> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(executable, "r");
+    const buffer = Buffer.alloc(MAX_SHEBANG_READ_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const newlineIndex = buffer.subarray(0, bytesRead).indexOf(0x0a);
+    if (newlineIndex >= 0) {
+      return buffer.subarray(0, newlineIndex).toString("utf8");
+    }
+    const prefix = buffer.subarray(0, bytesRead).toString("utf8");
+    const { size } = await handle.stat();
+    if (bytesRead === buffer.length && size > buffer.length && prefix.startsWith("#!")) {
+      throw new Error(SHEBANG_RESOLUTION_FAILURE);
+    }
+    return prefix;
+  } catch (error) {
+    if (error instanceof Error && error.message === SHEBANG_RESOLUTION_FAILURE) throw error;
+    return "";
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+async function resolveShebangInterpreter(
+  executable: string,
+  selectedPath: string,
+  context: ShebangResolutionContext,
+): Promise<ResolvedEvalExecutable | undefined> {
+  const firstLine = await readShebangFirstLine(executable);
+  const match = firstLine.match(/^#!\s*\/usr\/bin\/env\s+([^\s]+)\s*$/);
+  if (!match?.[1]) return undefined;
+  const interpreter = await resolveEvalExecutableInternal(
+    match[1],
+    path.dirname(executable),
+    selectedPath,
+    {
+      depth: context.depth + 1,
+      canonicalPaths: new Set([...context.canonicalPaths, executable]),
+    },
+  );
+  return interpreter;
+}
+
+async function buildResolvedExecutable(
+  lexicalPath: string,
+  canonical: string,
+  selectedPath: string,
+  context: ShebangResolutionContext,
+): Promise<ResolvedEvalExecutable> {
+  if (context.depth >= MAX_SHEBANG_RESOLUTION_DEPTH || context.canonicalPaths.has(canonical)) {
+    throw new Error(SHEBANG_RESOLUTION_FAILURE);
+  }
+  const interpreter = await resolveShebangInterpreter(canonical, selectedPath, {
+    depth: context.depth,
+    canonicalPaths: new Set([...context.canonicalPaths, canonical]),
+  });
+  return {
+    commandPath: canonical,
+    ...(interpreter === undefined
+      ? {}
+      : {
+          command: [...(interpreter.command ?? [interpreter.commandPath]), canonical] as [
+            string,
+            ...string[],
+          ],
+        }),
+    readPaths: [lexicalPath, canonical, ...(interpreter?.readPaths ?? [])].filter(
+      (value, index, all) => all.indexOf(value) === index,
+    ),
+  };
+}
+
+async function resolveEvalExecutableInternal(
+  executable: string,
+  runDir: string,
+  selectedPath: string,
+  context: ShebangResolutionContext,
+): Promise<ResolvedEvalExecutable> {
+  if (executable.length === 0 || executable.includes("\0")) {
+    throw new Error("Eval actor executable must be a non-empty, non-NUL path");
+  }
+  const lexicalPath = path.isAbsolute(executable)
+    ? path.normalize(executable)
+    : hasPathSeparator(executable)
+      ? path.resolve(runDir, executable)
+      : undefined;
+  if (lexicalPath !== undefined && !path.isAbsolute(executable) && !isWithin(runDir, lexicalPath)) {
+    throw new Error("Eval actor relative executable must remain inside its run directory");
+  }
+  if (lexicalPath === undefined) {
+    for (const entry of selectedPath.split(path.delimiter)) {
+      if (entry.length === 0 || !path.isAbsolute(entry)) continue;
+      const candidate = path.join(entry, executable);
+      let canonical: string;
+      try {
+        canonical = await assertExecutable(candidate);
+      } catch {
+        // Continue through explicitly selected PATH entries only when this candidate was not executable.
+        continue;
+      }
+      return await buildResolvedExecutable(candidate, canonical, selectedPath, context);
+    }
+    throw new Error(`Eval actor executable was not found on the selected PATH: ${executable}`);
+  }
+  const canonical = await assertExecutable(lexicalPath);
+  return await buildResolvedExecutable(lexicalPath, canonical, selectedPath, context);
+}
+
+export async function resolveEvalExecutable(
+  executable: string,
+  runDir: string,
+  selectedPath: string,
+): Promise<ResolvedEvalExecutable> {
+  return await resolveEvalExecutableInternal(executable, runDir, selectedPath, {
+    depth: 0,
+    canonicalPaths: new Set(),
+  });
+}
+
+export function buildEvalExecutableReadPaths(
+  resolved: ResolvedEvalExecutable,
+  piInstallation?: ValidatedPiInstallation,
+): string[] {
+  const readPaths = [...resolved.readPaths];
+  if (piInstallation !== undefined) {
+    const scriptDirectory = path.dirname(resolved.commandPath);
+    if (!isWithin(piInstallation.packageRoot, scriptDirectory)) {
+      throw new Error("Validated Pi package root does not contain its executable");
+    }
+    readPaths.push(scriptDirectory, piInstallation.packageRoot);
+  }
+  return readPaths.filter((value, index, all) => all.indexOf(value) === index);
+}
+
+const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
+
+export async function findValidatedPiPackageRoot(
+  executablePath: string,
+): Promise<ValidatedPiInstallation | undefined> {
+  let current = path.dirname(executablePath);
+  for (;;) {
+    try {
+      const manifest = JSON.parse(
+        await readFile(path.join(current, "package.json"), "utf8"),
+      ) as unknown;
+      if (
+        typeof manifest === "object" &&
+        manifest !== null &&
+        "name" in manifest &&
+        manifest.name === PI_PACKAGE_NAME &&
+        !isBroadRuntimePath(current)
+      ) {
+        return { packageRoot: current };
+      }
+    } catch {
+      // An unreadable or invalid manifest does not identify a validated Pi installation.
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
 
 async function assertNoSymlinks(root: string): Promise<void> {
   const entries = await readdir(root, { withFileTypes: true });

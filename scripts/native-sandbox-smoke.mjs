@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { resolveLinuxBwrapPath } from "../dist/eval-run/linux-install.js";
 import { startPublicEgressProxy } from "../dist/eval-run/public-egress-proxy.js";
+import { runEvalCommand } from "../dist/eval-run/runner.js";
 import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../dist/sandbox/launcher.js";
 import { startLinuxProxyBridge } from "../dist/sandbox/linux-proxy-bridge.js";
 import { executableRuntimeRoot } from "../dist/sandbox/runtime-paths.js";
@@ -102,6 +103,118 @@ try {
     sourceContent === "unchanged\n" &&
     scratchContent === "scratch-ok\n";
   if (!passed) throw new Error(`filesystem probe failed: ${JSON.stringify(result)}`);
+
+  const evalHome = path.join(root, "eval-pi-home");
+  const evalPackageRoot = path.join(root, "unrelated-package");
+  const evalBin = path.join(evalPackageRoot, "bin");
+  const evalSiblingSecret = path.join(evalBin, "sibling-secret.txt");
+  const evalPackageSecret = path.join(evalPackageRoot, "package-secret.txt");
+  const evalPi = path.join(evalBin, "pi");
+  const evalFinal = path.join(evalBin, "final");
+  const evalMiddle = path.join(evalBin, "middle");
+  const evalActor = path.join(evalBin, "eval-actor");
+  const evalTimeoutActor = path.join(evalBin, "eval-timeout-actor");
+  const evalContainmentActor = path.join(evalBin, "eval-containment-actor");
+  const evalTimeoutRun = path.join(root, "timeout-run");
+  const evalContainmentRun = path.join(root, "containment-run");
+  await mkdir(evalHome);
+  await mkdir(evalBin, { recursive: true });
+  await mkdir(evalTimeoutRun);
+  await mkdir(evalContainmentRun);
+  await writeFile(
+    path.join(evalPackageRoot, "package.json"),
+    JSON.stringify({ name: "unrelated-eval-actor" }),
+  );
+  await writeFile(evalSiblingSecret, "sibling-secret\n");
+  await writeFile(evalPackageSecret, "package-secret\n");
+  await writeFile(
+    evalPi,
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.1; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
+    { mode: 0o755 },
+  );
+  const nestedInterpreter = `const { spawnSync } = require("node:child_process");\nconst [script, ...args] = process.argv.slice(2);\nconst child = spawnSync(${JSON.stringify(process.execPath)}, [script, ...args], { stdio: "inherit" });\nprocess.exit(child.status ?? 1);\n`;
+  await writeFile(evalFinal, `#!${process.execPath}\n${nestedInterpreter}`, { mode: 0o755 });
+  await writeFile(evalMiddle, `#!/usr/bin/env final\n${nestedInterpreter}`, { mode: 0o755 });
+  await writeFile(
+    evalActor,
+    `#!/usr/bin/env middle\nconst fs = require("node:fs");\nconst probes = ${JSON.stringify([evalSiblingSecret, evalPackageSecret])};\nconst leaked = probes.filter((probe) => { try { fs.readFileSync(probe); return true; } catch { return false; } });\nif (leaked.length > 0) { process.stdout.write("implicit-read-allowed:" + leaked.join(",") + "\\n"); process.exit(1); }\nif (process.argv.at(-1) !== "nested-argument") { process.stdout.write("nested-argument-lost\\n"); process.exit(1); }\nprocess.stdout.write("eval-production-path-ok\\n"); process.stderr.write("eval-production-path-err\\n");\n`,
+    { mode: 0o755 },
+  );
+  await writeFile(
+    evalTimeoutActor,
+    `#!${process.execPath}\nconst { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("timeout-before\\n"); process.stderr.write("timeout-error-before\\n"); setInterval(() => {}, 10000);\n`,
+    { mode: 0o755 },
+  );
+  await writeFile(
+    evalContainmentActor,
+    `#!${process.execPath}\nconst { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("containment-before\\n"); process.exit(0);\n`,
+    { mode: 0o755 },
+  );
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${evalBin}${path.delimiter}${previousPath ?? ""}`;
+  try {
+    const evalResult = await runEvalCommand(
+      {
+        runDir: scratch,
+        command: ["eval-actor", "nested-argument"],
+        piHomeSource: evalHome,
+      },
+      { timeoutMs: 5_000 },
+    );
+    if (
+      evalResult.exitCode !== 0 ||
+      evalResult.stdout !== "eval-production-path-ok\n" ||
+      evalResult.stderr !== "eval-production-path-err\n"
+    ) {
+      throw new Error(`production eval path failed: ${JSON.stringify(evalResult)}`);
+    }
+    const timeoutStarted = performance.now();
+    const timeoutResult = await runEvalCommand(
+      {
+        runDir: evalTimeoutRun,
+        command: ["eval-timeout-actor"],
+        piHomeSource: evalHome,
+      },
+      { timeoutMs: 500 },
+    );
+    const timeoutElapsed = performance.now() - timeoutStarted;
+    if (
+      timeoutResult.exitCode === 0 ||
+      timeoutResult.timedOut !== true ||
+      !timeoutResult.stdout.includes("timeout-before") ||
+      !timeoutResult.stderr.includes("timeout-error-before") ||
+      !timeoutResult.stderr.includes("[EVAL_TIMEOUT]") ||
+      timeoutElapsed >= 3_000
+    ) {
+      throw new Error(
+        `production eval timeout path failed (${Math.round(timeoutElapsed)}ms): ${JSON.stringify(timeoutResult)}`,
+      );
+    }
+    const containmentStarted = performance.now();
+    const containmentResult = await runEvalCommand(
+      {
+        runDir: evalContainmentRun,
+        command: ["eval-containment-actor"],
+        piHomeSource: evalHome,
+      },
+      { timeoutMs: 5_000 },
+    );
+    const containmentElapsed = performance.now() - containmentStarted;
+    if (
+      containmentResult.exitCode === 0 ||
+      containmentResult.containmentFailure !== true ||
+      !containmentResult.stdout.includes("containment-before") ||
+      !containmentResult.stderr.includes("[EVAL_PROCESS_CONTAINMENT_FAILED]") ||
+      containmentElapsed >= 3_000
+    ) {
+      throw new Error(
+        `production eval containment path failed (${Math.round(containmentElapsed)}ms): ${JSON.stringify(containmentResult)}`,
+      );
+    }
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
 
   if (process.platform === "darwin") {
     const forkActor = `

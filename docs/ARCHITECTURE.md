@@ -83,6 +83,10 @@ See [REVIEW-TRANSPORT.md](REVIEW-TRANSPORT.md) for the RPC contract and [SECURIT
 
 Eval preparation creates controller-only metadata plus independent `baseline` and `with-skill` actor directories. Only the with-skill arm receives a sanitized skill copy. Before every actor launch, the runner proves that the sandbox cannot read or modify an outside sentinel, inherit a host-only secret, or connect directly to a host loopback listener.
 
+Before isolation artifacts are created, eval resolves the actor executable in controller-owned code using the selected sanitized `PATH`, the validated run directory for relative paths, or an explicit absolute path. It validates a regular executable and passes the canonical target to the sandboxed launcher. `/usr/bin/env` shebang inspection reads only a bounded prefix and follows canonical interpreters through a small cycle/depth bound. If a lexical launcher differs from its target, both exact paths are granted read-only; no parent root is widened. Pi model detection and startup optimization use the original command before this identity rewrite.
+
+The capture controller starts the native sandbox in a distinct process group on macOS and Linux, waits for close after stdio closure, and forwards timeout or interruption signals to the group. A bounded pipe-close grace period detects descendants that retain inherited pipes; those runs fail with `[EVAL_PROCESS_CONTAINMENT_FAILED]`. Timeout, interruption, spawn, and output-limit failures remain nonzero and preserve bounded partial stdout/stderr.
+
 The eval runner is an isolation primitive. It does not schedule all cases, call a grader, compare scores, or publish a report. See [EVALS.md](EVALS.md).
 
 ## Extension points
