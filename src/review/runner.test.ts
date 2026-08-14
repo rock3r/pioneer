@@ -531,16 +531,21 @@ describe("review RPC runner", () => {
     const { log, records } = recordingWorkLog();
     const userPrompt = "Review confidential Project Falcon migration";
 
-    await expect(
-      runReviewRpc(
-        fakePiRpc([{ type: "response", success: false, error: "Project Falcon blocked" }]),
+    let message = "";
+    try {
+      await runReviewRpc(
+        fakePiRpc([{ type: "response", success: false, error: userPrompt }]),
         process.cwd(),
         process.env,
         `Pioneer instructions\n\n${userPrompt}`,
         1_000,
         { workLog: log, sensitiveValues: [userPrompt] },
-      ),
-    ).rejects.toThrow(/Project Falcon blocked/);
+      );
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("[REDACTED]");
+    expect(message).not.toContain("Project Falcon");
     expect(JSON.stringify(records)).not.toContain("Project Falcon");
   });
 

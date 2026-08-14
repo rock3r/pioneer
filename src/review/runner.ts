@@ -605,7 +605,10 @@ export async function runReviewRpc(
         if (record.type === "response" && record.success === false) {
           terminate(
             new Error(
-              `Pi RPC rejected the review prompt: ${String(record.error ?? "unknown error")}`,
+              `Pi RPC rejected the review prompt: ${sanitizeDiagnostic(
+                String(record.error ?? "unknown error"),
+                workLogSecrets,
+              )}`,
             ),
           );
           return;
@@ -705,7 +708,7 @@ export async function runReviewRpc(
           new Error(
             diagnosticMessage(
               "REVIEW_TIMEOUT",
-              `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr, [prompt])})`,
+              `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr, workLogSecrets)})`,
             ),
           ),
         );
@@ -714,7 +717,7 @@ export async function runReviewRpc(
       if (terminalFailure !== undefined) {
         finish(
           new Error(
-            `${terminalFailure.message} (${processOutcomeContext(code, signal, stderr, [prompt])})`,
+            `${terminalFailure.message} (${processOutcomeContext(code, signal, stderr, workLogSecrets)})`,
           ),
         );
         return;
@@ -739,7 +742,7 @@ export async function runReviewRpc(
           eventTypes: [...eventTypes],
           diagnostics,
           stderr,
-          sensitiveValues: [prompt],
+          sensitiveValues: workLogSecrets,
         });
         finish();
       } catch (error) {

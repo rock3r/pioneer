@@ -25,8 +25,10 @@ const REVIEW_USAGE = `Usage:
   pioneer eval install-linux
   pioneer eval run --run-dir DIR [options] -- COMMAND [ARG ...]`;
 
+class UsageError extends Error {}
+
 function usage(): never {
-  throw new Error(REVIEW_USAGE);
+  throw new UsageError(REVIEW_USAGE);
 }
 
 function takeOption(args: string[], name: string): string | undefined {
@@ -188,8 +190,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  process.stderr.write(
-    `${sanitizeDiagnostic(error instanceof Error ? error.message : String(error))}\n`,
-  );
+  const message = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`${error instanceof UsageError ? message : sanitizeDiagnostic(message)}\n`);
   process.exitCode = 1;
 });
