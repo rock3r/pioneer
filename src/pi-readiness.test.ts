@@ -310,4 +310,28 @@ describe("Pi readiness", () => {
     expect(message).not.toContain("refresh-me");
     expect(message).not.toContain("user:pass");
   });
+
+  it("redacts successful malformed version output before returning readiness errors", async () => {
+    const runner = runnerWith([{ exitCode: 0, stdout: "token=provider-secret\n", stderr: "" }]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(JSON.stringify(result)).toContain("[REDACTED]");
+    expect(JSON.stringify(result)).not.toContain("provider-secret");
+  });
+
+  it("redacts successful model fields before returning resolution errors", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\ntoken=provider-secret model-id 400K 128K yes yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner, requestedModel: "missing" });
+    expect(JSON.stringify(result)).toContain("[REDACTED]");
+    expect(JSON.stringify(result)).not.toContain("provider-secret");
+  });
 });

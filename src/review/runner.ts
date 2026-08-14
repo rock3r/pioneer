@@ -516,6 +516,12 @@ export async function runReviewRpc(
       options.escalateProcess ??
       ((runningChild: ReturnType<typeof spawn>) => runningChild.kill("SIGKILL"));
     const workLogSecrets = [prompt, ...(options.sensitiveValues ?? [])];
+    const stderrRetentionCharacters =
+      64 * 1024 +
+      Math.max(
+        0,
+        ...workLogSecrets.flatMap((secret) => [secret.length, JSON.stringify(secret).length - 2]),
+      );
     const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
       if (options.workLog === undefined || workLogFailure !== undefined) return;
       try {
@@ -676,7 +682,7 @@ export async function runReviewRpc(
     child.stderr.on("data", (chunk: Buffer) => {
       stderrBytes += chunk.length;
       recordWorkLog("pi_stderr", { chunkBytes: chunk.length, totalBytes: stderrBytes });
-      stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
+      stderr = (stderr + chunk.toString("utf8")).slice(-stderrRetentionCharacters);
     });
     child.once("error", (error) => {
       recordWorkLog("pi_process_error", {

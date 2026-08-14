@@ -107,6 +107,25 @@ function rejectedPromptPi(): readonly [string, ...string[]] {
   ];
 }
 
+function stderrEchoPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+let input = "";
+process.stdin.on("data", (chunk) => {
+  input += chunk;
+  const newline = input.indexOf("\\n");
+  if (newline < 0) return;
+  const message = JSON.parse(input.slice(0, newline)).message;
+  process.stderr.write(message, () => {
+    process.stdout.write(JSON.stringify({ type: "response", success: false, error: "provider rejected" }) + "\\n");
+  });
+});
+`,
+  ];
+}
+
 function pipeHoldingDescendantPi(): readonly [string, ...string[]] {
   return [
     process.execPath,
@@ -547,6 +566,20 @@ describe("review RPC runner", () => {
     expect(message).toContain("[REDACTED]");
     expect(message).not.toContain("Project Falcon");
     expect(JSON.stringify(records)).not.toContain("Project Falcon");
+  });
+
+  it("redacts a long prompt echoed to stderr before retaining the diagnostic tail", async () => {
+    const prompt = `private prompt ${"x".repeat(70 * 1024)}`;
+    let message = "";
+    try {
+      await runReviewRpc(stderrEchoPi(), process.cwd(), process.env, prompt, 2_000);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("[REDACTED]");
+    expect(message).not.toContain("private prompt");
+    expect(message).not.toContain("x".repeat(100));
   });
 
   it("emits real-time heartbeats while Pi is silent", async () => {

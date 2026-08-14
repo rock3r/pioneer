@@ -266,11 +266,17 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     };
   }
 
-  const version = versionResult.stdout.trim().split(/\r?\n/, 1)[0] || "unknown";
-  const versionValidation = validatePiVersion(version);
+  const probedVersion = versionResult.stdout.trim().split(/\r?\n/, 1)[0] || "unknown";
+  const versionValidation = validatePiVersion(probedVersion);
   if (versionValidation.error !== undefined) {
-    return { ready: false, version, modelCount: 0, errors: [versionValidation.error] };
+    return {
+      ready: false,
+      version: sanitizeDiagnostic(probedVersion),
+      modelCount: 0,
+      errors: [sanitizeDiagnostic(versionValidation.error)],
+    };
   }
+  const version = probedVersion;
   const versionWarning =
     versionValidation.warning === undefined ? {} : { warning: versionValidation.warning };
   const modelsResult = await runProbe([
@@ -313,7 +319,11 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     };
   }
 
-  const models = configuredModels(modelsResult.stdout);
+  const probedModels = configuredModels(modelsResult.stdout);
+  const models = probedModels?.map((model) => ({
+    provider: sanitizeDiagnostic(model.provider),
+    id: sanitizeDiagnostic(model.id),
+  }));
   if (models?.length === 0) {
     const agentDir = defaultPiAgentDir(options.environment ?? process.env);
     const configAccess = await (options.configAccessProbe ?? probePiConfigAccess)(agentDir);
@@ -352,7 +362,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
 
   const modelCount = models.length;
   if (options.requestedModel !== undefined) {
-    const resolution = resolvePiModel(options.requestedModel, models);
+    const resolution = resolvePiModel(options.requestedModel, probedModels ?? []);
     if (!resolution.ok) {
       return {
         ready: false,
@@ -360,14 +370,14 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
         modelCount,
         models,
         ...versionWarning,
-        errors: [resolution.error],
+        errors: [sanitizeDiagnostic(resolution.error)],
       };
     }
     return {
       ready: true,
       version,
       modelCount,
-      resolvedModel: resolution.qualifiedName,
+      resolvedModel: sanitizeDiagnostic(resolution.qualifiedName),
       models,
       ...versionWarning,
       errors: [],
