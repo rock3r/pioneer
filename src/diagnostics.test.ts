@@ -146,6 +146,12 @@ describe("diagnostics", () => {
     expect(sanitized).toBe('failed "[REDACTED]"');
   });
 
+  it("preserves escaped ampersands while redacting exact caller secrets", () => {
+    for (const secret of ["private&amp;value", "private\\u0026value"]) {
+      expect(sanitizeDiagnostic(`failed ${secret}`, [secret])).toBe("failed [REDACTED]");
+    }
+  });
+
   it("redacts quoted private-key fields", () => {
     const sanitized = sanitizeDiagnostic(
       '{"private_key":"-----BEGIN PRIVATE KEY-----\\nprivate-material\\n-----END PRIVATE KEY-----"}',
