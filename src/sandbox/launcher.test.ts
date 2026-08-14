@@ -64,6 +64,11 @@ describe("direct sandbox launchers", () => {
     );
 
     expect(launch.argv.slice(-3)).toEqual(["/pioneer-runtime/bin/node", runtime, "actor.mjs"]);
+    expect(
+      launch.argv.some(
+        (entry, index) => entry === "--dir" && launch.argv[index + 1] === "/pioneer-runtime",
+      ),
+    ).toBe(true);
   });
 
   it("can prohibit child-process creation for a controller-owned review", () => {

@@ -157,6 +157,7 @@ export function buildLinuxSandboxArgv(
     "--tmpfs",
     "/",
     ...ancestorDirectories(paths).flatMap((entry) => ["--dir", entry]),
+    ...(runtimeExecutable === undefined ? [] : ["--dir", LINUX_RUNTIME_ROOT_PATH]),
     ...policy.readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", proxySocketPath, proxySocketPath]),
