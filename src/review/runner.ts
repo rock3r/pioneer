@@ -491,6 +491,8 @@ export async function runReviewRpc(
     let stdoutBytes = 0;
     const stdoutDecoder = new StringDecoder("utf8");
     let stderr = "";
+    let stderrPending = "";
+    const stderrDecoder = new StringDecoder("utf8");
     let report = "";
     let finalReport: string | undefined;
     let settled = false;
@@ -516,12 +518,63 @@ export async function runReviewRpc(
       options.escalateProcess ??
       ((runningChild: ReturnType<typeof spawn>) => runningChild.kill("SIGKILL"));
     const workLogSecrets = [prompt, ...(options.sensitiveValues ?? [])];
-    const stderrRetentionCharacters =
-      64 * 1024 +
-      Math.max(
-        0,
-        ...workLogSecrets.flatMap((secret) => [secret.length, JSON.stringify(secret).length - 2]),
-      );
+    const stderrSecretVariants = [
+      ...new Set(
+        workLogSecrets.flatMap((secret) => {
+          const escaped = JSON.stringify(secret).slice(1, -1);
+          return [
+            secret,
+            escaped,
+            secret.replaceAll(/\s+/g, " ").trim(),
+            escaped.replaceAll(/\s+/g, " ").trim(),
+          ];
+        }),
+      ),
+    ].filter((secret) => secret.length > 0);
+    const maximumStderrSecretCharacters = Math.max(
+      0,
+      ...stderrSecretVariants.map((secret) => secret.length),
+    );
+    const appendRetainedStderr = (value: string, flush = false): void => {
+      stderrPending += value;
+      if (stderrSecretVariants.length === 0) {
+        stderr = (stderr + stderrPending).slice(-64 * 1024);
+        stderrPending = "";
+        return;
+      }
+
+      const safeStartLimit = flush
+        ? stderrPending.length
+        : Math.max(0, stderrPending.length - maximumStderrSecretCharacters + 1);
+      let cursor = 0;
+      let emitted = "";
+      while (cursor < safeStartLimit) {
+        let matchIndex = -1;
+        let matchedSecret = "";
+        for (const secret of stderrSecretVariants) {
+          const index = stderrPending.indexOf(secret, cursor);
+          if (
+            index >= 0 &&
+            index < safeStartLimit &&
+            (matchIndex < 0 ||
+              index < matchIndex ||
+              (index === matchIndex && secret.length > matchedSecret.length))
+          ) {
+            matchIndex = index;
+            matchedSecret = secret;
+          }
+        }
+        if (matchIndex < 0) {
+          emitted += stderrPending.slice(cursor, safeStartLimit);
+          cursor = safeStartLimit;
+          break;
+        }
+        emitted += `${stderrPending.slice(cursor, matchIndex)}[REDACTED]`;
+        cursor = matchIndex + matchedSecret.length;
+      }
+      stderr = (stderr + emitted).slice(-64 * 1024);
+      stderrPending = stderrPending.slice(cursor);
+    };
     const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
       if (options.workLog === undefined || workLogFailure !== undefined) return;
       try {
@@ -682,7 +735,7 @@ export async function runReviewRpc(
     child.stderr.on("data", (chunk: Buffer) => {
       stderrBytes += chunk.length;
       recordWorkLog("pi_stderr", { chunkBytes: chunk.length, totalBytes: stderrBytes });
-      stderr = (stderr + chunk.toString("utf8")).slice(-stderrRetentionCharacters);
+      appendRetainedStderr(stderrDecoder.write(chunk));
     });
     child.once("error", (error) => {
       recordWorkLog("pi_process_error", {
@@ -707,6 +760,7 @@ export async function runReviewRpc(
     });
     child.once("close", (code, signal) => {
       if (settled) return;
+      appendRetainedStderr(stderrDecoder.end(), true);
       if (terminalFailure === undefined && !timedOut) {
         stdout += stdoutDecoder.end();
         consume();

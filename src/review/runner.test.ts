@@ -107,7 +107,7 @@ function rejectedPromptPi(): readonly [string, ...string[]] {
   ];
 }
 
-function stderrEchoPi(): readonly [string, ...string[]] {
+function stderrEchoPi(trailingBytes = 0): readonly [string, ...string[]] {
   return [
     process.execPath,
     "-e",
@@ -118,7 +118,7 @@ process.stdin.on("data", (chunk) => {
   const newline = input.indexOf("\\n");
   if (newline < 0) return;
   const message = JSON.parse(input.slice(0, newline)).message;
-  process.stderr.write(message, () => {
+  process.stderr.write(message + "z".repeat(${trailingBytes}), () => {
     process.stdout.write(JSON.stringify({ type: "response", success: false, error: "provider rejected" }) + "\\n");
   });
 });
@@ -580,6 +580,20 @@ describe("review RPC runner", () => {
     expect(message).toContain("[REDACTED]");
     expect(message).not.toContain("private prompt");
     expect(message).not.toContain("x".repeat(100));
+  });
+
+  it("does not retain a split prompt fragment when later stderr exceeds the tail bound", async () => {
+    const prompt = `private prompt ${"x".repeat(70 * 1024)}`;
+    let message = "";
+    try {
+      await runReviewRpc(stderrEchoPi(66 * 1024), process.cwd(), process.env, prompt, 2_000);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).not.toContain("private prompt");
+    expect(message).not.toContain("x".repeat(100));
+    expect(message).toContain("z".repeat(100));
   });
 
   it("emits real-time heartbeats while Pi is silent", async () => {
