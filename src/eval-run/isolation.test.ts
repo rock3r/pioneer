@@ -124,13 +124,24 @@ describe("validateEvalRunSpec", () => {
     const interpreter = path.join(binDir, "deno");
     const actor = path.join(binDir, "actor");
     await writeFile(interpreter, "#!/bin/sh\n", { mode: 0o755 });
-    await writeFile(actor, "#!/usr/bin/env -S deno run\n", { mode: 0o755 });
+    await writeFile(
+      actor,
+      "#!/usr/bin/env -S deno run --config 'my config.json' --mode=fast\\ mode\n",
+      { mode: 0o755 },
+    );
 
     const interpreterCanonical = await realpath(interpreter);
     const actorCanonical = await realpath(actor);
     await expect(resolveEvalExecutable("actor", runDir, binDir)).resolves.toEqual({
       commandPath: actorCanonical,
-      command: [interpreterCanonical, "run", actorCanonical],
+      command: [
+        interpreterCanonical,
+        "run",
+        "--config",
+        "my config.json",
+        "--mode=fast mode",
+        actorCanonical,
+      ],
       readPaths: uniquePaths([
         path.join(binDir, "actor"),
         actorCanonical,

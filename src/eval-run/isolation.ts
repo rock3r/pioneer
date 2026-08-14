@@ -146,11 +146,58 @@ async function readShebangFirstLine(executable: string): Promise<string> {
 function parseEnvShebang(firstLine: string): ParsedEnvShebang | undefined {
   const match = firstLine.match(/^#!\s*\/usr\/bin\/env\s+(.+?)\s*$/);
   if (!match?.[1]) return undefined;
-  const tokens = match[1].split(/\s+/);
+  const tokens = splitEnvShebangArguments(match[1]);
   if (tokens[0] === "-S") tokens.shift();
-  else if (tokens.length !== 1) return undefined;
-  if (!tokens[0] || tokens[0].startsWith("-")) return undefined;
+  else if (tokens.length !== 1) throw new Error(SHEBANG_RESOLUTION_FAILURE);
+  if (!tokens[0] || tokens[0].startsWith("-")) {
+    throw new Error(SHEBANG_RESOLUTION_FAILURE);
+  }
   return { interpreter: tokens[0], arguments: tokens.slice(1) };
+}
+
+function splitEnvShebangArguments(value: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  let tokenStarted = false;
+  for (const character of value) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+      tokenStarted = true;
+      continue;
+    }
+    if (character === "\\" && quote !== "'") {
+      escaped = true;
+      tokenStarted = true;
+      continue;
+    }
+    if (quote !== undefined) {
+      if (character === quote) quote = undefined;
+      else current += character;
+      tokenStarted = true;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      tokenStarted = true;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      if (tokenStarted) {
+        tokens.push(current);
+        current = "";
+        tokenStarted = false;
+      }
+      continue;
+    }
+    current += character;
+    tokenStarted = true;
+  }
+  if (escaped || quote !== undefined) throw new Error(SHEBANG_RESOLUTION_FAILURE);
+  if (tokenStarted) tokens.push(current);
+  return tokens;
 }
 
 async function resolveShebangInterpreter(
