@@ -25,11 +25,13 @@ import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-p
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { executableRuntimeRoot } from "../sandbox/runtime-paths.js";
 import {
+  assertPiHomeSeparatedFromActorGrants,
   buildEvalExecutableReadPaths,
   buildEvalSandboxConfig,
   type EvalRunSpec,
   findValidatedPiPackageRoot,
   isTrustedPiInstallation,
+  pathsOverlap,
   type ResolvedEvalExecutable,
   resolveEvalExecutable,
   validateEvalRunSpec,
@@ -152,6 +154,42 @@ function sanitizedBrokerEnvironment(runtimeEnvironment: NodeJS.ProcessEnv): Node
 const EVAL_PIPE_CLOSE_GRACE_MS = 400;
 const EVAL_MAX_STDOUT_BYTES = 4 * 1024 * 1024;
 const EVAL_MAX_STDERR_BYTES = 64 * 1024;
+
+class EvalSetupInterrupted extends Error {
+  readonly signal: NodeJS.Signals;
+
+  constructor(signal: NodeJS.Signals) {
+    super(`Eval setup interrupted by ${signal}`);
+    this.signal = signal;
+  }
+}
+
+class EvalCleanupFailed extends AggregateError {}
+
+function interruptedEvalResult(signal: NodeJS.Signals, completed?: EvalRunResult): EvalRunResult {
+  return {
+    exitCode: 1,
+    signal: null,
+    stdout: completed?.stdout ?? "",
+    stderr: stderrWithDiagnostic(
+      completed?.stderr ?? "",
+      `[EVAL_INTERRUPTED] Eval actor interrupted by ${signal}`,
+    ),
+    interrupted: signal,
+    ...(completed?.warning === undefined ? {} : { warning: completed.warning }),
+  };
+}
+
+interface EvalInterruptionState {
+  readonly abortSignal: AbortSignal;
+  signal?: NodeJS.Signals;
+}
+
+function throwIfEvalInterrupted(interruption: EvalInterruptionState): void {
+  if (interruption.signal !== undefined) {
+    throw new EvalSetupInterrupted(interruption.signal);
+  }
+}
 
 function stderrWithDiagnostic(stderr: string, diagnostic: string): string {
   const diagnosticSuffix = `${diagnostic}\n`;
@@ -400,14 +438,61 @@ export async function runEvalCommand(
   spec: EvalRunSpec,
   options: RunEvalOptions = {},
 ): Promise<EvalRunResult> {
+  const abortController = new AbortController();
+  const interruption: EvalInterruptionState = { abortSignal: abortController.signal };
+  const onSigint = (): void => {
+    interruption.signal ??= "SIGINT";
+    abortController.abort();
+  };
+  const onSigterm = (): void => {
+    interruption.signal ??= "SIGTERM";
+    abortController.abort();
+  };
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
+  try {
+    return await runEvalCommandWithInterruption(spec, options, interruption);
+  } catch (error) {
+    if (error instanceof EvalCleanupFailed) throw error;
+    if (interruption.signal !== undefined) return interruptedEvalResult(interruption.signal);
+    if (error instanceof EvalSetupInterrupted) return interruptedEvalResult(error.signal);
+    throw error;
+  } finally {
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
+  }
+}
+
+async function runEvalCommandWithInterruption(
+  spec: EvalRunSpec,
+  options: RunEvalOptions,
+  interruption: EvalInterruptionState,
+): Promise<EvalRunResult> {
+  throwIfEvalInterrupted(interruption);
   const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
+  const initialReadinessOptions = {
+    environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
+    ...(requestedModel === undefined ? {} : { requestedModel }),
+    signal: interruption.abortSignal,
+  };
   const sandboxRuntimeExecutable = await realpath(process.execPath);
+  throwIfEvalInterrupted(interruption);
   await assertNativeSandboxReady();
+  throwIfEvalInterrupted(interruption);
+  let readiness =
+    spec.piHomeSource === undefined ? await assertPiReady(initialReadinessOptions) : undefined;
+  throwIfEvalInterrupted(interruption);
   const validated = await validateEvalRunSpec({
     ...spec,
+    piHomeSource,
     runtimeReadPaths: [...(spec.runtimeReadPaths ?? []), ...(await existingRuntimePaths())],
   });
+  throwIfEvalInterrupted(interruption);
+  const validatedPiHomeSource = validated.piHomeSource;
+  if (validatedPiHomeSource === undefined) {
+    throw new Error("Validated eval Pi home source is unavailable");
+  }
   const optimizedPi = optimizePiStartupCommand(validated.command, {
     disableExtensions: true,
     disableSkills: true,
@@ -417,6 +502,7 @@ export async function runEvalCommand(
     validated.runDir,
     sanitizedBrokerEnvironment(process.env).PATH ?? "",
   );
+  throwIfEvalInterrupted(interruption);
   const sandboxCommand = buildEvalLaunchCommand(resolvedExecutable, optimizedPi.command.slice(1));
   const piActor = isPiExecutable(spec.command[0]);
   const controllerPiInstallation = piActor
@@ -436,21 +522,43 @@ export async function runEvalCommand(
   const piInstallation = piActor
     ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath, validated.runDir)
     : undefined;
+  throwIfEvalInterrupted(interruption);
   if (piActor && !isTrustedPiInstallation(piInstallation, controllerPiInstallation)) {
     throw new Error("Pi eval actor is not a validated Pi installation");
   }
+  const executableReadPaths = buildEvalExecutableReadPaths(resolvedExecutable, piInstallation);
+  const platformRuntimeReadPaths = await macosRuntimeReadPaths(process.execPath);
+  throwIfEvalInterrupted(interruption);
+  const completeActorReadPaths = [
+    ...validated.runtimeReadPaths,
+    sandboxRuntimeExecutable,
+    ...platformRuntimeReadPaths,
+    ...executableReadPaths,
+  ];
+  assertPiHomeSeparatedFromActorGrants(validatedPiHomeSource, completeActorReadPaths);
   const readinessOptions = {
-    environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
+    environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
     ...(requestedModel === undefined ? {} : { requestedModel }),
+    signal: interruption.abortSignal,
   };
-  const readiness = await assertPiReady(readinessOptions);
-  const isolationDir = path.join(validated.runDir, ".isolation");
-  await mkdir(isolationDir);
-  const piHome = await prepareIsolatedPiHome({
-    sourceDir: validated.piHomeSource ?? piHomeSource,
-    destination: path.join(isolationDir, "pi-home"),
-    mode: "eval",
-  });
+  readiness ??= await assertPiReady(readinessOptions);
+  throwIfEvalInterrupted(interruption);
+  const controllerTempRoot = await realpath(
+    process.platform === "darwin" ? "/private/tmp" : "/tmp",
+  );
+  throwIfEvalInterrupted(interruption);
+  const createdIsolationDir = await mkdtemp(path.join(controllerTempRoot, "pioneer-eval-control-"));
+  let isolationDir: string;
+  try {
+    isolationDir = await realpath(createdIsolationDir);
+  } catch (error) {
+    await rm(createdIsolationDir, { recursive: true, force: true });
+    throw error;
+  }
+  const throwIfSetupInterrupted = (): void => {
+    throwIfEvalInterrupted(interruption);
+  };
+  const actorScratchDir = path.join(isolationDir, "actor-scratch");
   const probeScript = path.join(isolationDir, "probe.mjs");
   const probeSpec = path.join(isolationDir, "probe.json");
   const launcherScript = path.join(isolationDir, "launch.mjs");
@@ -459,39 +567,57 @@ export async function runEvalCommand(
     path.dirname(validated.runDir),
     `.escape-${randomBytes(8).toString("hex")}`,
   );
-  await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
-  await writeFile(probeScript, PROBE_SOURCE, { flag: "wx", mode: 0o500 });
-  await writeFile(launcherScript, LAUNCHER_SOURCE, { flag: "wx", mode: 0o500 });
-  await writeFile(
-    launchSpec,
-    JSON.stringify({
-      command: sandboxCommand,
-      cwd: validated.runDir,
-      environment: {
-        ...optimizedPi.environment,
-        ...piHome.environment,
-        HOME: piHome.homeDir,
-        TMPDIR: piHome.tmpDir,
-      },
-    }),
-    { flag: "wx", mode: 0o400 },
-  );
-
-  const lanProbe = await listenForLanProbe();
-  await writeFile(
-    probeSpec,
-    JSON.stringify({
-      deniedReadPaths: [deniedWritePath, ...(options.deniedReadProbePaths ?? [])],
-      deniedWritePath,
-      localPort: lanProbe.port,
-    }),
-    { flag: "wx", mode: 0o400 },
-  );
-
-  const proxy = await startPublicEgressProxy(randomBytes(32).toString("hex"));
+  let lanProbe: Awaited<ReturnType<typeof listenForLanProbe>> | undefined;
+  let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
   let bridge: LinuxProxyBridge | undefined;
   let bridgeRoot: string | undefined;
+  let completedResult: EvalRunResult | undefined;
+  let primaryFailure: unknown;
+  let cleanupFailure: unknown;
   try {
+    const actorGrantPaths = [validated.runDir, ...completeActorReadPaths];
+    if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
+      throw new Error("Eval controller directory must not overlap actor grants");
+    }
+    throwIfSetupInterrupted();
+    await mkdir(actorScratchDir, { mode: 0o700 });
+    throwIfSetupInterrupted();
+    const piHome = await prepareIsolatedPiHome({
+      sourceDir: validatedPiHomeSource,
+      destination: path.join(actorScratchDir, "pi-home"),
+      mode: "eval",
+      checkAborted: throwIfSetupInterrupted,
+    });
+    throwIfSetupInterrupted();
+    await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
+    await writeFile(probeScript, PROBE_SOURCE, { flag: "wx", mode: 0o500 });
+    await writeFile(launcherScript, LAUNCHER_SOURCE, { flag: "wx", mode: 0o500 });
+    await writeFile(
+      launchSpec,
+      JSON.stringify({
+        command: sandboxCommand,
+        cwd: validated.runDir,
+        environment: { ...optimizedPi.environment, ...piHome.environment },
+      }),
+      { flag: "wx", mode: 0o400 },
+    );
+    throwIfSetupInterrupted();
+
+    lanProbe = await listenForLanProbe();
+    throwIfSetupInterrupted();
+    await writeFile(
+      probeSpec,
+      JSON.stringify({
+        deniedReadPaths: [deniedWritePath, ...(options.deniedReadProbePaths ?? [])],
+        deniedWritePath,
+        localPort: lanProbe.port,
+      }),
+      { flag: "wx", mode: 0o400 },
+    );
+    throwIfSetupInterrupted();
+
+    proxy = await startPublicEgressProxy(randomBytes(32).toString("hex"));
+    throwIfSetupInterrupted();
     const linuxBwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
     if (process.platform === "linux" && linuxBwrapPath === undefined) {
       throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");
@@ -499,22 +625,37 @@ export async function runEvalCommand(
     if (process.platform === "linux") {
       bridgeRoot = await mkdtemp("/tmp/pir-bridge-");
       bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
+      throwIfSetupInterrupted();
     }
-    const config = buildEvalSandboxConfig({
+    const sharedRuntimeReadPaths = [
+      ...validated.runtimeReadPaths,
+      sandboxRuntimeExecutable,
+      ...platformRuntimeReadPaths,
+    ];
+    const probeConfig = buildEvalSandboxConfig({
+      platform: process.platform as "darwin" | "linux" | "win32",
+      runDir: validated.runDir,
+      runtimeReadPaths: [...sharedRuntimeReadPaths, probeScript, probeSpec],
+      parentProxyUrl: proxy.url,
+    });
+    const actorConfig = buildEvalSandboxConfig({
       platform: process.platform as "darwin" | "linux" | "win32",
       runDir: validated.runDir,
       runtimeReadPaths: [
-        ...validated.runtimeReadPaths,
-        sandboxRuntimeExecutable,
-        ...(await macosRuntimeReadPaths(process.execPath)),
-        ...buildEvalExecutableReadPaths(resolvedExecutable, piInstallation),
+        ...sharedRuntimeReadPaths,
+        launcherScript,
+        launchSpec,
+        piHome.agentDir,
+        ...executableReadPaths,
       ],
+      writableScratchPaths: [piHome.homeDir, piHome.tmpDir],
       parentProxyUrl: proxy.url,
     });
     process.env.PIONEER_HOST_SECRET = randomBytes(32).toString("hex");
     const timeoutMs = options.timeoutMs ?? 300_000;
+    throwIfSetupInterrupted();
     const probeResult = await sandboxAndCapture(
-      config,
+      probeConfig,
       [sandboxRuntimeExecutable, probeScript, probeSpec],
       validated.runDir,
       Math.min(timeoutMs, 30_000),
@@ -522,33 +663,61 @@ export async function runEvalCommand(
       bridge?.socketPath,
       sandboxRuntimeExecutable,
     );
-    if (probeResult.exitCode !== 0 || probeResult.stdout.trim() !== "isolation-ok") {
+    if (probeResult.interrupted !== undefined) {
+      completedResult = probeResult;
+    } else if (probeResult.exitCode !== 0 || probeResult.stdout.trim() !== "isolation-ok") {
       throw new Error(
         `Eval isolation probe failed closed: ${probeResult.stderr || probeResult.stdout}`,
       );
-    }
-    if ((await readFile(deniedWritePath, "utf8")) !== OUTSIDE_SENTINEL_CONTENT) {
+    } else if ((await readFile(deniedWritePath, "utf8")) !== OUTSIDE_SENTINEL_CONTENT) {
       throw new Error("Eval isolation probe failed closed: host sentinel was modified");
+    } else {
+      throwIfSetupInterrupted();
+      const result = await sandboxAndCapture(
+        actorConfig,
+        [sandboxRuntimeExecutable, launcherScript, launchSpec],
+        validated.runDir,
+        timeoutMs,
+        linuxBwrapPath,
+        bridge?.socketPath,
+        sandboxRuntimeExecutable,
+      );
+      completedResult = {
+        ...result,
+        ...(readiness.warning === undefined ? {} : { warning: readiness.warning }),
+      };
     }
-    const result = await sandboxAndCapture(
-      config,
-      [sandboxRuntimeExecutable, launcherScript, launchSpec],
-      validated.runDir,
-      timeoutMs,
-      linuxBwrapPath,
-      bridge?.socketPath,
-      sandboxRuntimeExecutable,
-    );
-    return {
-      ...result,
-      ...(readiness.warning === undefined ? {} : { warning: readiness.warning }),
-    };
+  } catch (error) {
+    if (error instanceof EvalSetupInterrupted)
+      completedResult = interruptedEvalResult(error.signal);
+    else primaryFailure = error;
   } finally {
     delete process.env.PIONEER_HOST_SECRET;
-    await bridge?.close();
-    if (bridgeRoot !== undefined) await rm(bridgeRoot, { recursive: true, force: true });
-    await proxy.close();
-    await lanProbe.close();
-    await unlink(deniedWritePath).catch(() => undefined);
+    const cleanupResults = await Promise.allSettled([
+      bridge?.close(),
+      bridgeRoot === undefined ? undefined : rm(bridgeRoot, { recursive: true, force: true }),
+      proxy?.close(),
+      lanProbe?.close(),
+      unlink(deniedWritePath).catch(() => undefined),
+      rm(isolationDir, { recursive: true, force: true }),
+    ]);
+    cleanupFailure = cleanupResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    )?.reason;
   }
+  if (primaryFailure !== undefined && cleanupFailure !== undefined) {
+    throw new EvalCleanupFailed(
+      [primaryFailure, cleanupFailure],
+      "Eval execution failed and temporary state cleanup also failed",
+    );
+  }
+  if (cleanupFailure !== undefined) {
+    throw new EvalCleanupFailed([cleanupFailure], "Eval temporary state cleanup failed");
+  }
+  if (primaryFailure !== undefined) throw primaryFailure;
+  if (interruption.signal !== undefined && completedResult?.interrupted === undefined) {
+    completedResult = interruptedEvalResult(interruption.signal, completedResult);
+  }
+  if (completedResult === undefined) throw new Error("Eval run ended without a result");
+  return completedResult;
 }

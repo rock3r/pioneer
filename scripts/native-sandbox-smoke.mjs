@@ -118,10 +118,13 @@ try {
   const evalContainmentActor = path.join(evalBin, "eval-containment-actor");
   const evalTimeoutRun = path.join(root, "timeout-run");
   const evalContainmentRun = path.join(root, "containment-run");
+  const evalSetupInterruptionRun = path.join(root, "setup-interruption-run");
   await mkdir(evalHome);
   await mkdir(evalBin, { recursive: true });
   await mkdir(evalTimeoutRun);
   await mkdir(evalContainmentRun);
+  await mkdir(evalSetupInterruptionRun);
+  await writeFile(path.join(evalHome, "auth.json"), '{"marker":"eval-auth-secret"}\n');
   await writeFile(
     path.join(evalPackageRoot, "package.json"),
     JSON.stringify({ name: "unrelated-eval-actor" }),
@@ -130,7 +133,7 @@ try {
   await writeFile(evalPackageSecret, "package-secret\n");
   await writeFile(
     evalPi,
-    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.2; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.2; exit 0; fi\nif [ ! -d "$PI_CODING_AGENT_DIR" ]; then echo "No models available."; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
     { mode: 0o755 },
   );
   const nestedInterpreter =
@@ -139,7 +142,7 @@ try {
   await writeFile(evalMiddle, `#!/usr/bin/env final\n${nestedInterpreter}`, { mode: 0o755 });
   await writeFile(
     evalActor,
-    `#!/usr/bin/env middle\nconst fs = require("node:fs");\nconst probes = ${JSON.stringify([evalSiblingSecret, evalPackageSecret])};\nconst leaked = probes.filter((probe) => { try { fs.readFileSync(probe); return true; } catch { return false; } });\nif (leaked.length > 0) { process.stdout.write("implicit-read-allowed:" + leaked.join(",") + "\\n"); process.exit(1); }\nif (process.argv.at(-1) !== "nested-argument") { process.stdout.write("nested-argument-lost\\n"); process.exit(1); }\nprocess.stdout.write("eval-production-path-ok\\n"); process.stderr.write("eval-production-path-err\\n");\n`,
+    `#!/usr/bin/env middle\nconst fs = require("node:fs");\nconst path = require("node:path");\nconst probes = ${JSON.stringify([evalSiblingSecret, evalPackageSecret])};\nconst leaked = probes.filter((probe) => { try { fs.readFileSync(probe); return true; } catch { return false; } });\nif (leaked.length > 0) { process.stdout.write("implicit-read-allowed:" + leaked.join(",") + "\\n"); process.exit(1); }\nconst piAgentDir = process.env.PI_CODING_AGENT_DIR;\nif (!piAgentDir || !path.relative(process.cwd(), piAgentDir).startsWith("..")) { process.stdout.write("pi-home-not-externalized\\n"); process.exit(1); }\ntry { fs.writeFileSync(path.join(piAgentDir, "auth.json"), "tampered"); process.stdout.write("pi-auth-writable\\n"); process.exit(1); } catch {}\nfs.writeFileSync(path.join(process.cwd(), "pi-home-path.txt"), path.dirname(piAgentDir));\nif (fs.existsSync(path.join(process.cwd(), ".isolation"))) { process.stdout.write("controller-artifacts-visible\\n"); process.exit(1); }\nif (process.argv.at(-1) !== "nested-argument") { process.stdout.write("nested-argument-lost\\n"); process.exit(1); }\nprocess.stdout.write("eval-production-path-ok\\n"); process.stderr.write("eval-production-path-err\\n");\n`,
     { mode: 0o755 },
   );
   await writeFile(
@@ -169,6 +172,101 @@ try {
       evalResult.stderr !== "eval-production-path-err\n"
     ) {
       throw new Error(`production eval path failed: ${JSON.stringify(evalResult)}`);
+    }
+    if (existsSync(path.join(scratch, ".isolation"))) {
+      throw new Error("production eval path retained controller artifacts in the actor run");
+    }
+    const copiedPiHome = (await readFile(path.join(scratch, "pi-home-path.txt"), "utf8")).trim();
+    if (existsSync(copiedPiHome)) {
+      throw new Error("production eval path retained its copied Pi home after actor completion");
+    }
+    if (
+      (await readFile(path.join(evalHome, "auth.json"), "utf8")) !==
+      '{"marker":"eval-auth-secret"}\n'
+    ) {
+      throw new Error("production eval path modified the source Pi credentials");
+    }
+    const previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
+    process.env.PI_CODING_AGENT_DIR = scratch;
+    let defaultPiHomeOverlapRejected = false;
+    try {
+      await runEvalCommand(
+        { runDir: scratch, command: ["eval-actor", "nested-argument"] },
+        { timeoutMs: 5_000 },
+      );
+    } catch (error) {
+      defaultPiHomeOverlapRejected =
+        error instanceof Error && /Pi home.*overlap/i.test(error.message);
+    } finally {
+      if (previousPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+    }
+    if (!defaultPiHomeOverlapRejected) {
+      throw new Error("production eval path accepted a default Pi home overlapping the actor run");
+    }
+    const missingPiHome = path.join(root, "missing-pi-home");
+    process.env.PI_CODING_AGENT_DIR = missingPiHome;
+    let missingDefaultDiagnosticPreserved = false;
+    let missingDefaultError = "no error";
+    try {
+      await runEvalCommand(
+        { runDir: evalSetupInterruptionRun, command: ["eval-actor", "nested-argument"] },
+        { timeoutMs: 5_000 },
+      );
+    } catch (error) {
+      missingDefaultError = error instanceof Error ? error.message : String(error);
+      missingDefaultDiagnosticPreserved =
+        error instanceof Error &&
+        (error.message.includes("[PI_NO_MODELS]") ||
+          error.message.includes("[PI_CONFIG_HIDDEN_BY_SANDBOX]"));
+    } finally {
+      if (previousPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = previousPiAgentDir;
+    }
+    if (!missingDefaultDiagnosticPreserved) {
+      throw new Error(
+        `production eval path lost the missing-default Pi readiness diagnostic: ${missingDefaultError}`,
+      );
+    }
+    const previousTmpdir = process.env.TMPDIR;
+    process.env.TMPDIR = scratch;
+    try {
+      const environmentControlledTempResult = await runEvalCommand(
+        {
+          runDir: evalSetupInterruptionRun,
+          command: ["eval-actor", "nested-argument"],
+          piHomeSource: evalHome,
+        },
+        { timeoutMs: 5_000 },
+      );
+      if (environmentControlledTempResult.exitCode !== 0) {
+        throw new Error(
+          `production eval control temp followed TMPDIR: ${JSON.stringify(environmentControlledTempResult)}`,
+        );
+      }
+    } finally {
+      if (previousTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpdir;
+    }
+    const setupInterruptionPromise = runEvalCommand(
+      {
+        runDir: evalSetupInterruptionRun,
+        command: ["eval-actor", "nested-argument"],
+        piHomeSource: evalHome,
+      },
+      { timeoutMs: 5_000 },
+    );
+    process.emit("SIGTERM");
+    const setupInterruptionResult = await setupInterruptionPromise;
+    if (
+      setupInterruptionResult.exitCode === 0 ||
+      setupInterruptionResult.interrupted !== "SIGTERM" ||
+      !setupInterruptionResult.stderr.includes("[EVAL_INTERRUPTED]") ||
+      existsSync(path.join(evalSetupInterruptionRun, ".isolation"))
+    ) {
+      throw new Error(
+        `production eval setup interruption failed: ${JSON.stringify(setupInterruptionResult)}`,
+      );
     }
     const timeoutStarted = performance.now();
     const timeoutResult = await runEvalCommand(

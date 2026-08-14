@@ -32,6 +32,7 @@ export interface EvalSandboxConfigOptions {
   readonly platform: EvalPlatform;
   readonly runDir: string;
   readonly runtimeReadPaths: readonly string[];
+  readonly writableScratchPaths?: readonly string[];
   readonly parentProxyUrl: string;
 }
 
@@ -571,8 +572,17 @@ function isDarwinPerUserTempDescendant(candidate: string): boolean {
   );
 }
 
-function pathsOverlap(first: string, second: string): boolean {
+export function pathsOverlap(first: string, second: string): boolean {
   return isWithin(first, second) || isWithin(second, first);
+}
+
+export function assertPiHomeSeparatedFromActorGrants(
+  piHomeSource: string,
+  actorGrantPaths: readonly string[],
+): void {
+  if (actorGrantPaths.some((grantPath) => pathsOverlap(grantPath, piHomeSource))) {
+    throw new Error(`Pi home source must not overlap eval actor grants: ${piHomeSource}`);
+  }
 }
 
 export async function validateEvalRunSpec(spec: EvalRunSpec): Promise<ValidatedEvalRunSpec> {
@@ -608,6 +618,9 @@ export async function validateEvalRunSpec(spec: EvalRunSpec): Promise<ValidatedE
     spec.piHomeSource === undefined ? undefined : await realpath(spec.piHomeSource);
   if (piHomeSource !== undefined && !(await lstat(piHomeSource)).isDirectory()) {
     throw new Error(`Pi home source is not a directory: ${piHomeSource}`);
+  }
+  if (piHomeSource !== undefined) {
+    assertPiHomeSeparatedFromActorGrants(piHomeSource, [runDir, ...runtimeReadPaths]);
   }
   return {
     runDir,
@@ -762,9 +775,18 @@ export function buildEvalSandboxConfig(options: EvalSandboxConfigOptions): Sandb
     }
     readOnlyPaths.push(runtimePath);
   }
+  const writableScratchPaths = options.writableScratchPaths ?? [];
+  for (const scratchPath of writableScratchPaths) {
+    if (isBroadWritablePath(scratchPath, options.platform)) {
+      throw new Error(`Refusing broad eval scratch directory: ${scratchPath}`);
+    }
+    if (pathsOverlap(options.runDir, scratchPath)) {
+      throw new Error(`Eval scratch directory must not overlap the writable run: ${scratchPath}`);
+    }
+  }
   return {
     readOnlyPaths,
-    writablePaths: [options.runDir],
+    writablePaths: [options.runDir, ...writableScratchPaths],
     network: "proxy",
     proxyUrl: options.parentProxyUrl,
   };

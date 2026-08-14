@@ -21,7 +21,7 @@ Use test-driven development for behavior changes:
 
 Security-sensitive changes should include negative tests for malformed JSONL, unsupported thinking levels, invalid model IDs, path escapes, invalid refs, oversized output, subprocess failure, timeout, and cancellation isolation as applicable.
 
-Pi-home snapshot changes must test the positive root allowlist, review/eval skill difference, recursive default exclusions, sparse skipped content, exact repeated review includes, overlap accounting, hard exclusions, special files, and broken, escaping, selected, and unselected symlink targets. Snapshot tests must use sparse or mocked oversized fixtures rather than allocating a real gigabyte.
+Pi-home snapshot changes must test the positive root allowlist, review/eval skill difference, recursive default exclusions, platform case semantics, identity-checked case-folded selection and symlink-target deduplication, case-fold collision rejection, sparse skipped content, exact repeated review includes, overlap accounting, hard exclusions, special files, and broken, escaping, selected, and unselected symlink targets. Eval snapshot tests must also prove the real Pi home cannot overlap actor grants, controller artifacts stay outside the persistent actor run, selected configuration is read-only, writable scratch is separate, and temporary credentials are removed after completion or setup interruption. Snapshot tests must use sparse or mocked oversized fixtures rather than allocating a real gigabyte.
 
 Tests must not read real credential files, contact model providers by default, or depend on the user's current repositories.
 

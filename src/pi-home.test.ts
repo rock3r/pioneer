@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readlink,
   realpath,
   symlink,
   truncate,
@@ -26,7 +27,13 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
   await mkdir(path.join(source, "skills", "review", "guide.log"));
   await mkdir(path.join(source, "skills", "review", "git"));
   await mkdir(path.join(source, "skills", "review", "npm"));
-  await mkdir(path.join(source, "skills", "review", "node_modules", "tmp"), { recursive: true });
+  const dependencyDirectory = process.platform === "linux" ? "node_modules" : "Node_Modules";
+  await mkdir(path.join(source, "skills", "review", dependencyDirectory, "tmp"), {
+    recursive: true,
+  });
+  await mkdir(path.join(source, "skills", "review", ".GIT"));
+  await mkdir(path.join(source, "skills", "review", ".CACHE"));
+  await mkdir(path.join(source, "skills", "review", "Sessions"));
   await mkdir(path.join(source, "sessions"));
   await mkdir(path.join(source, "tmp", "package", "node_modules"), { recursive: true });
   await mkdir(path.join(source, "node_modules", "root-package"), { recursive: true });
@@ -45,9 +52,13 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
   await writeFile(path.join(source, "skills", "review", "git", "SKILL.md"), "git skill");
   await writeFile(path.join(source, "skills", "review", "npm", "SKILL.md"), "npm skill");
   await writeFile(
-    path.join(source, "skills", "review", "node_modules", "tmp", "required.js"),
+    path.join(source, "skills", "review", dependencyDirectory, "tmp", "required.js"),
     "runtime dependency",
   );
+  await writeFile(path.join(source, "skills", "review", ".GIT", "config"), "git metadata");
+  await writeFile(path.join(source, "skills", "review", ".CACHE", "secret"), "cache secret");
+  await writeFile(path.join(source, "skills", "review", "Sessions", "old.jsonl"), "history");
+  await writeFile(path.join(source, "skills", "review", "SECRET.LOG"), "secret log");
   await writeFile(path.join(source, "sessions", "old.jsonl"), "history");
   await writeFile(path.join(source, "tmp", "package", "node_modules", "transient.js"), "cache");
   await writeFile(path.join(source, "node_modules", "root-package", "index.js"), "root dependency");
@@ -138,6 +149,88 @@ describe("prepareIsolatedPiHome", () => {
       readFile(path.join(prepared.agentDir, "skills", "review", "SKILL.md")),
     ).rejects.toThrow();
   });
+
+  it.skipIf(process.platform === "linux")(
+    "matches default and hard exclusions case-insensitively on macOS and Windows",
+    async () => {
+      const { source, destination } = await fixture();
+      const prepared = await prepareIsolatedPiHome({
+        sourceDir: source,
+        destination,
+        mode: "review",
+      });
+
+      for (const relative of [
+        "skills/review/Node_Modules/tmp/required.js",
+        "skills/review/.GIT/config",
+        "skills/review/.CACHE/secret",
+        "skills/review/Sessions/old.jsonl",
+        "skills/review/SECRET.LOG",
+      ]) {
+        await expect(
+          readFile(path.join(prepared.agentDir, ...relative.split("/"))),
+        ).rejects.toThrow();
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "linux")(
+    "rejects case-variant hard exclusions in explicit includes",
+    async () => {
+      const { source, destination } = await fixture();
+      for (const [index, include] of [
+        "skills/review/.CACHE",
+        "skills/review/Sessions",
+        "skills/review/SECRET.LOG",
+      ].entries()) {
+        await expect(
+          prepareIsolatedPiHome({
+            sourceDir: source,
+            destination: `${destination}-${index}`,
+            mode: "review",
+            piHomeIncludes: [include],
+          }),
+        ).rejects.toThrow(/hard-excluded/i);
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "linux")(
+    "deduplicates case-variant selections on macOS and Windows",
+    async () => {
+      const { source, destination } = await fixture();
+      await expect(
+        prepareIsolatedPiHome({
+          sourceDir: source,
+          destination,
+          mode: "review",
+          piHomeIncludes: ["skills/review", "SKILLS/REVIEW"],
+        }),
+      ).resolves.toBeDefined();
+    },
+  );
+
+  it.skipIf(process.platform === "linux")(
+    "preserves the selected spelling for case-folded symlink targets",
+    async () => {
+      const { source, destination } = await fixture();
+      await writeFile(path.join(source, "Extra.json"), "extra");
+      await symlink("Extra.json", path.join(source, "extra-link.json"));
+      const prepared = await prepareIsolatedPiHome({
+        sourceDir: source,
+        destination,
+        mode: "review",
+        piHomeIncludes: ["EXTRA.JSON", "extra-link.json"],
+      });
+
+      await expect(readlink(path.join(prepared.agentDir, "extra-link.json"))).resolves.toBe(
+        "EXTRA.JSON",
+      );
+      await expect(readFile(path.join(prepared.agentDir, "EXTRA.JSON"), "utf8")).resolves.toBe(
+        "extra",
+      );
+    },
+  );
 
   it("does not allow eval snapshots to opt Pi skills back in", async () => {
     const { source, destination } = await fixture();
@@ -413,5 +506,22 @@ describe("prepareIsolatedPiHome", () => {
     await expect(
       prepareIsolatedPiHome({ sourceDir: source, destination, mode: "review" }),
     ).rejects.toThrow(/already exists/i);
+  });
+
+  it("stops snapshot traversal when the caller reports interruption", async () => {
+    const { source, destination } = await fixture();
+    let checks = 0;
+    const options = {
+      sourceDir: source,
+      destination,
+      mode: "review" as const,
+      checkAborted: (): void => {
+        checks += 1;
+        if (checks >= 4) throw new Error("snapshot-aborted");
+      },
+    };
+
+    await expect(prepareIsolatedPiHome(options)).rejects.toThrow("snapshot-aborted");
+    expect(checks).toBe(4);
   });
 });
