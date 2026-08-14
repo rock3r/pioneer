@@ -15,6 +15,9 @@ export interface SandboxLaunch {
   readonly profile?: string;
 }
 
+export const LINUX_RUNTIME_ROOT_PATH = "/pioneer-runtime";
+export const LINUX_RUNTIME_EXECUTABLE_PATH = `${LINUX_RUNTIME_ROOT_PATH}/node`;
+
 function quoted(value: string): string {
   return JSON.stringify(value);
 }
@@ -121,6 +124,7 @@ export function buildLinuxSandboxArgv(
   bwrapPath: string,
   proxySocketPath?: string,
   runtimeExecutable?: string,
+  runtimeFileDescriptor?: number,
 ): SandboxLaunch {
   const proxy = parsedProxy(policy);
   if (policy.network === "proxy" && proxySocketPath === undefined) {
@@ -132,8 +136,16 @@ export function buildLinuxSandboxArgv(
     ...policy.writablePaths,
     ...(proxySocketPath === undefined ? [] : [proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
-    ...(runtimeExecutable === undefined ? [] : [runtimeExecutable]),
+    ...(runtimeExecutable === undefined || runtimeFileDescriptor !== undefined
+      ? []
+      : [runtimeExecutable]),
   ];
+  const runtimeCommand =
+    runtimeExecutable === undefined ||
+    runtimeFileDescriptor === undefined ||
+    command[0] !== runtimeExecutable
+      ? command
+      : [LINUX_RUNTIME_EXECUTABLE_PATH, ...command.slice(1)];
   const args: string[] = [
     "--new-session",
     "--die-with-parent",
@@ -147,6 +159,15 @@ export function buildLinuxSandboxArgv(
     "ALL",
     "--tmpfs",
     "/",
+    ...(runtimeFileDescriptor === undefined
+      ? []
+      : [
+          "--dir",
+          LINUX_RUNTIME_ROOT_PATH,
+          "--ro-bind-data",
+          String(runtimeFileDescriptor),
+          LINUX_RUNTIME_EXECUTABLE_PATH,
+        ]),
     ...ancestorDirectories(paths).flatMap((entry) => ["--dir", entry]),
     ...policy.readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
@@ -160,14 +181,18 @@ export function buildLinuxSandboxArgv(
   if (proxy !== undefined) proxy.port = "3128";
   const environment = proxyEnvironment(proxy?.toString());
   if (proxySocketPath === undefined) {
-    args.push("--", ...command);
+    args.push("--", ...runtimeCommand);
   } else {
     args.push(
       "--",
-      runtimeExecutable === undefined ? process.execPath : runtimeExecutable,
+      runtimeFileDescriptor === undefined
+        ? runtimeExecutable === undefined
+          ? process.execPath
+          : runtimeExecutable
+        : LINUX_RUNTIME_EXECUTABLE_PATH,
       supervisorPath,
       proxySocketPath,
-      ...command,
+      ...runtimeCommand,
     );
   }
   return { argv: [bwrapPath, ...args], environment };

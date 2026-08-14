@@ -5,6 +5,7 @@ import {
   access,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   realpath,
   rm,
@@ -179,6 +180,7 @@ export async function captureEvalProcess(
   cwd: string,
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
+  inheritedFileDescriptors: readonly number[] = [],
 ): Promise<EvalRunResult> {
   return await new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
@@ -186,8 +188,15 @@ export async function captureEvalProcess(
       env,
       shell: false,
       detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", ...inheritedFileDescriptors],
     });
+    const childStdout = child.stdout;
+    const childStderr = child.stderr;
+    if (childStdout === null || childStderr === null) {
+      child.kill();
+      reject(new Error("[EVAL_CAPTURE_FAILED] Eval process pipes were unavailable"));
+      return;
+    }
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let settled = false;
@@ -283,10 +292,10 @@ export async function captureEvalProcess(
     let stdoutBytes = 0;
     let stderrBytes = 0;
 
-    child.stdout.on("data", (chunk: Buffer) => {
+    childStdout.on("data", (chunk: Buffer) => {
       stdoutBytes = appendOutput(stdout, chunk, stdoutBytes, EVAL_MAX_STDOUT_BYTES);
     });
-    child.stderr.on("data", (chunk: Buffer) => {
+    childStderr.on("data", (chunk: Buffer) => {
       stderrBytes = appendOutput(stderr, chunk, stderrBytes, EVAL_MAX_STDERR_BYTES);
     });
     child.once("error", (error) => {
@@ -337,16 +346,30 @@ async function sandboxAndCapture(
   proxySocketPath?: string,
   runtimeExecutable = process.execPath,
 ): Promise<EvalRunResult> {
-  const launch =
-    process.platform === "darwin"
-      ? buildMacosSandboxArgv(policy, command)
-      : buildLinuxSandboxArgv(policy, command, bwrapPath ?? "", proxySocketPath, runtimeExecutable);
-  return await captureEvalProcess(
-    launch.argv,
-    runDir,
-    { ...sanitizedBrokerEnvironment(process.env), ...launch.environment },
-    timeoutMs,
-  );
+  const runtimeHandle =
+    process.platform === "linux" ? await open(runtimeExecutable, constants.O_RDONLY) : undefined;
+  try {
+    const launch =
+      process.platform === "darwin"
+        ? buildMacosSandboxArgv(policy, command)
+        : buildLinuxSandboxArgv(
+            policy,
+            command,
+            bwrapPath ?? "",
+            proxySocketPath,
+            runtimeExecutable,
+            runtimeHandle === undefined ? undefined : 3,
+          );
+    return await captureEvalProcess(
+      launch.argv,
+      runDir,
+      { ...sanitizedBrokerEnvironment(process.env), ...launch.environment },
+      timeoutMs,
+      runtimeHandle === undefined ? [] : [runtimeHandle.fd],
+    );
+  } finally {
+    await runtimeHandle?.close();
+  }
 }
 
 async function listenForLanProbe(): Promise<{ port: number; close(): Promise<void> }> {
