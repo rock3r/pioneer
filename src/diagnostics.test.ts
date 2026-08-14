@@ -54,4 +54,14 @@ describe("diagnostics", () => {
       "GOOGLE_API_KEY=[REDACTED] AWS_SECRET_ACCESS_KEY=[REDACTED] GITHUB_TOKEN=[REDACTED]",
     );
   });
+
+  it("redacts credentials behind quoted JSON keys", () => {
+    const sanitized = sanitizeDiagnostic(
+      '{"api_key":"google-private","access_token":"access-private"}',
+    );
+
+    expect(sanitized).not.toContain("google-private");
+    expect(sanitized).not.toContain("access-private");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
+  });
 });

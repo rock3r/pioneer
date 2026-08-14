@@ -39,15 +39,15 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
     )
     .replaceAll(
       new RegExp(
-        `\\b(${secretLabel})\\s*[:=]\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`,
+        `(["']?)\\b(${secretLabel})\\1\\s*[:=]\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`,
         "gi",
       ),
-      (_match, label: string) => `${label}=[REDACTED]`,
+      (_match, quote: string, label: string) => `${quote}${label}${quote}=[REDACTED]`,
     )
     .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     .replaceAll(
-      new RegExp(`\\b(${secretLabel})\\s*[:=]\\s*[^\\s,;]+`, "gi"),
-      (_match, label: string) => `${label}=[REDACTED]`,
+      new RegExp(`(["']?)\\b(${secretLabel})\\1\\s*[:=]\\s*[^\\s,;]+`, "gi"),
+      (_match, quote: string, label: string) => `${quote}${label}${quote}=[REDACTED]`,
     )
     .replaceAll(
       /\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,})\b/g,
