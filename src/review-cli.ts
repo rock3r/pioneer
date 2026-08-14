@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
-import { CliUsageError, sanitizeDiagnostic } from "./diagnostics.js";
+import { cliErrorMessage } from "./cli-error.js";
+import { CliUsageError } from "./diagnostics.js";
 import { runDoctor } from "./doctor.js";
 import { runEvalCli } from "./eval-command.js";
 import { formatModelCatalog, modelCatalogJson } from "./model-catalog-output.js";
@@ -188,9 +189,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(
-    `${error instanceof CliUsageError ? message : sanitizeDiagnostic(message)}\n`,
-  );
+  process.stderr.write(`${cliErrorMessage(error)}\n`);
   process.exitCode = 1;
 });

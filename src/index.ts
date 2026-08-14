@@ -37,6 +37,7 @@ export {
   type PiConfigAccess,
   type PiConfigAccessProbe,
   type PiReadiness,
+  PiReadinessError,
   type PiReadinessOptions,
   piConfigSandboxError,
   probePiConfigAccess,

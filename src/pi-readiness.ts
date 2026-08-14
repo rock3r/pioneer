@@ -68,6 +68,8 @@ export interface PiReadinessOptions {
   readonly timeoutMs?: number;
 }
 
+export class PiReadinessError extends Error {}
+
 const MAX_CAPTURE_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const PI_CONFIG_MARKERS = ["auth.json", "models-store.json", "settings.json"] as const;
@@ -406,6 +408,6 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
 
 export async function assertPiReady(options: PiReadinessOptions = {}): Promise<PiReadiness> {
   const readiness = await checkPiReadiness(options);
-  if (!readiness.ready) throw new Error(readiness.errors.join("; "));
+  if (!readiness.ready) throw new PiReadinessError(readiness.errors.join("; "));
   return readiness;
 }
