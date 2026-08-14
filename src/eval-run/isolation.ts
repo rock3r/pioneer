@@ -159,23 +159,53 @@ function splitEnvShebangArguments(value: string): string[] {
   const tokens: string[] = [];
   let current = "";
   let quote: "'" | '"' | undefined;
-  let escaped = false;
   let tokenStarted = false;
-  for (const character of value) {
-    if (escaped) {
-      current += character;
-      escaped = false;
+  const pushToken = (): void => {
+    if (!tokenStarted) return;
+    tokens.push(current);
+    current = "";
+    tokenStarted = false;
+  };
+  const appendEscape = (character: string, insideDoubleQuotes: boolean): void => {
+    const escapedValues: Readonly<Record<string, string>> = {
+      $: "$",
+      "'": "'",
+      '"': '"',
+      "\\": "\\",
+      _: insideDoubleQuotes ? " " : "",
+      " ": " ",
+      "#": "#",
+      f: "\f",
+      n: "\n",
+      r: "\r",
+      t: "\t",
+      v: "\v",
+    };
+    const replacement = escapedValues[character];
+    if (replacement === undefined) throw new Error(SHEBANG_RESOLUTION_FAILURE);
+    current += replacement;
+    tokenStarted = true;
+  };
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index] ?? "";
+    if (quote === "'") {
+      if (character === "'") quote = undefined;
+      else if (character === "\\" && ["'", "\\"].includes(value[index + 1] ?? "")) {
+        current += value[index + 1];
+        index += 1;
+      } else current += character;
       tokenStarted = true;
       continue;
     }
-    if (character === "\\" && quote !== "'") {
-      escaped = true;
-      tokenStarted = true;
-      continue;
-    }
-    if (quote !== undefined) {
-      if (character === quote) quote = undefined;
-      else current += character;
+    if (quote === '"') {
+      if (character === '"') quote = undefined;
+      else if (character === "\\") {
+        index += 1;
+        if (index >= value.length) throw new Error(SHEBANG_RESOLUTION_FAILURE);
+        const escapedCharacter = value[index];
+        if (escapedCharacter === undefined) throw new Error(SHEBANG_RESOLUTION_FAILURE);
+        appendEscape(escapedCharacter, true);
+      } else current += character;
       tokenStarted = true;
       continue;
     }
@@ -184,19 +214,25 @@ function splitEnvShebangArguments(value: string): string[] {
       tokenStarted = true;
       continue;
     }
-    if (/\s/.test(character)) {
-      if (tokenStarted) {
-        tokens.push(current);
-        current = "";
-        tokenStarted = false;
-      }
+    if (character === "\\") {
+      index += 1;
+      if (index >= value.length) throw new Error(SHEBANG_RESOLUTION_FAILURE);
+      const escapedCharacter = value[index];
+      if (escapedCharacter === undefined) throw new Error(SHEBANG_RESOLUTION_FAILURE);
+      if (escapedCharacter === "_") pushToken();
+      else appendEscape(escapedCharacter, false);
       continue;
     }
+    if (/\s/.test(character)) {
+      pushToken();
+      continue;
+    }
+    if (character === "#" && !tokenStarted) break;
     current += character;
     tokenStarted = true;
   }
-  if (escaped || quote !== undefined) throw new Error(SHEBANG_RESOLUTION_FAILURE);
-  if (tokenStarted) tokens.push(current);
+  if (quote !== undefined) throw new Error(SHEBANG_RESOLUTION_FAILURE);
+  pushToken();
   return tokens;
 }
 
