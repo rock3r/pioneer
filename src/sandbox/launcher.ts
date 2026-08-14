@@ -134,12 +134,14 @@ export function buildLinuxSandboxArgv(
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
     ...(runtimeExecutable === undefined ? [] : [runtimeExecutable]),
   ];
+  const libTarget = policy.readOnlyPaths.includes("/usr/lib") ? "usr/lib" : undefined;
+  const lib64Target = policy.readOnlyPaths.includes("/usr/lib64") ? "usr/lib64" : libTarget;
   const runtimeLinkerAliases = [
-    ...(policy.readOnlyPaths.includes("/usr/lib") && !policy.readOnlyPaths.includes("/lib")
-      ? ["--symlink", "usr/lib", "/lib"]
+    ...(libTarget !== undefined && !policy.readOnlyPaths.includes("/lib")
+      ? ["--symlink", libTarget, "/lib"]
       : []),
-    ...(policy.readOnlyPaths.includes("/usr/lib64") && !policy.readOnlyPaths.includes("/lib64")
-      ? ["--symlink", "usr/lib64", "/lib64"]
+    ...(lib64Target !== undefined && !policy.readOnlyPaths.includes("/lib64")
+      ? ["--symlink", lib64Target, "/lib64"]
       : []),
   ];
   const args: string[] = [

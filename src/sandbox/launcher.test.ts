@@ -87,6 +87,16 @@ describe("direct sandbox launchers", () => {
     expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/lib64", "/lib64"]));
   });
 
+  it("restores lib64 when usrmerge canonicalizes it to usr/lib", () => {
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, network: "none", readOnlyPaths: ["/repo", "/usr", "/usr/lib"] },
+      ["/usr/bin/node", "actor.mjs"],
+      "/usr/bin/bwrap",
+    );
+
+    expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/lib", "/lib64"]));
+  });
+
   it("can prohibit child-process creation for a controller-owned review", () => {
     const launch = buildMacosSandboxArgv({ ...policy, allowProcessFork: false }, [
       "/usr/bin/node",
