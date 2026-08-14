@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildEvalExecutableReadPaths,
   buildEvalSandboxConfig,
+  findValidatedPiPackageRoot,
   isPublicInternetAddress,
   MAX_SHEBANG_RESOLUTION_DEPTH,
   resolveEvalExecutable,
@@ -199,6 +200,21 @@ describe("validateEvalRunSpec", () => {
 
     await expect(resolveEvalExecutable(nonExecutable, runDir, "")).rejects.toThrow(/executable/i);
     await expect(resolveEvalExecutable(broken, runDir, "")).rejects.toThrow(/executable/i);
+  });
+
+  it("does not parse an oversized Pi package manifest", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-package-"));
+    const packageRoot = path.join(temp, "package");
+    const binDir = path.join(packageRoot, "bin");
+    await mkdir(binDir, { recursive: true });
+    const executable = path.join(binDir, "pi");
+    await writeFile(executable, "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(
+      path.join(packageRoot, "package.json"),
+      JSON.stringify({ name: "@earendil-works/pi-coding-agent", padding: "x".repeat(70 * 1024) }),
+    );
+
+    await expect(findValidatedPiPackageRoot(executable)).resolves.toBeUndefined();
   });
 
   it("rejects NUL argv and relative paths that escape the run directory", async () => {

@@ -228,6 +228,7 @@ export function buildEvalExecutableReadPaths(
 }
 
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
+const MAX_PI_PACKAGE_MANIFEST_BYTES = 64 * 1024;
 
 export async function findValidatedPiPackageRoot(
   executablePath: string,
@@ -235,9 +236,10 @@ export async function findValidatedPiPackageRoot(
   let current = path.dirname(executablePath);
   for (;;) {
     try {
-      const manifest = JSON.parse(
-        await readFile(path.join(current, "package.json"), "utf8"),
-      ) as unknown;
+      const manifestPath = path.join(current, "package.json");
+      const manifestStats = await stat(manifestPath);
+      if (manifestStats.size > MAX_PI_PACKAGE_MANIFEST_BYTES) throw new Error("manifest too large");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
       if (
         typeof manifest === "object" &&
         manifest !== null &&

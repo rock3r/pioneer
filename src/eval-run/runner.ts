@@ -247,7 +247,7 @@ export async function captureEvalProcess(
       graceTimer = setTimeout(containmentDeadline, EVAL_PIPE_CLOSE_GRACE_MS);
     };
     const terminate = (kind: "timeout" | NodeJS.Signals): void => {
-      if (settled) return;
+      if (settled || childExited) return;
       if (kind === "timeout") timedOut = true;
       else interrupted = kind;
       terminateEvalProcessTree(child, kind === "timeout" ? "SIGKILL" : kind);
@@ -292,6 +292,8 @@ export async function captureEvalProcess(
       childExited = true;
       exitCode = code;
       signal = childSignal;
+      if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
+      timeoutTimer = undefined;
       if (graceTimer !== undefined) clearTimeout(graceTimer);
       graceTimer = undefined;
       startGrace();
@@ -388,7 +390,6 @@ export async function runEvalCommand(
   }
   const readinessOptions = {
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
-    ...(piActor ? { executable: resolvedExecutable.commandPath } : {}),
     ...(requestedModel === undefined ? {} : { requestedModel }),
   };
   const readiness = await assertPiReady(readinessOptions);

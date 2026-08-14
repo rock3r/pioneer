@@ -64,6 +64,27 @@ describe("eval process capture", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")(
+    "does not turn a late pipe close into a timeout after the child exits",
+    async () => {
+      const result = await captureEvalProcess(
+        actor(`
+          const { spawn } = require("node:child_process");
+          spawn(process.execPath, ["-e", "setTimeout(() => {}, 10_000)"], { stdio: "inherit" });
+          setTimeout(() => process.exit(0), 700);
+        `),
+        process.cwd(),
+        process.env,
+        1_000,
+      );
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.timedOut).toBeUndefined();
+      expect(result.containmentFailure).toBe(true);
+      expect(result.stderr).toContain("[EVAL_PROCESS_CONTAINMENT_FAILED]");
+    },
+  );
+
   it("forwards SIGINT to the launched process group and returns an interrupted failure", async () => {
     const resultPromise = captureEvalProcess(
       actor("process.stdout.write('live'); setInterval(() => {}, 10_000)"),
