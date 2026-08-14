@@ -9,7 +9,7 @@ export interface Diagnostic {
 const DIAGNOSTIC_PREFIX = /^\[([A-Z][A-Z0-9_]*)\]\s+(.*)$/s;
 const MAX_SERIALIZATION_DEPTH = 16;
 const SECRET_LABEL =
-  "(?:[a-z0-9]+_)*(?:api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|cookie|passphrase|token|password|secret)";
+  "(?:[a-z0-9]+[-_.:/ ])*(?:api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|cookie|passphrase|token|password|secret)";
 
 function redactQuotedCredentialAssignments(value: string): string {
   return value.replaceAll(
@@ -23,7 +23,7 @@ function redactQuotedCredentialAssignments(value: string): string {
 
 function redactUnquotedPassphrase(value: string): string {
   return value.replaceAll(
-    /(["']?)\b(?:[a-z0-9]+_)*passphrase\1\s*[:=]\s*(?!["'])[^\r\n]*/gi,
+    /(["']?)\b(?:[a-z0-9]+[-_.:/ ])*passphrase\1\s*[:=]\s*(?!["'])[^\r\n]*/gi,
     "PASSPHRASE=[REDACTED]",
   );
 }

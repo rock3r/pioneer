@@ -126,6 +126,16 @@ describe("diagnostics", () => {
     expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
   });
 
+  it("redacts hyphen-prefixed quoted credential keys", () => {
+    const sanitized = sanitizeDiagnostic(
+      '{"X-API-Key":"private-x-key","openai-api-key":"private-openai-key"}',
+    );
+
+    expect(sanitized).not.toContain("private-x-key");
+    expect(sanitized).not.toContain("private-openai-key");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
+  });
+
   it("redacts credential fields behind nested JSON escaping", () => {
     const sanitized = sanitizeDiagnostic('{\\"api_key\\":\\"google-private\\"}');
 
