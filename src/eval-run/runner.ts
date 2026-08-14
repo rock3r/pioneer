@@ -30,6 +30,7 @@ import {
   type EvalRunSpec,
   findValidatedPiPackageRoot,
   isTrustedPiInstallation,
+  type ResolvedEvalExecutable,
   resolveEvalExecutable,
   validateEvalRunSpec,
 } from "./isolation.js";
@@ -367,6 +368,16 @@ async function sandboxAndCapture(
   );
 }
 
+export function buildEvalLaunchCommand(
+  resolved: Pick<ResolvedEvalExecutable, "command" | "commandPath" | "readPaths">,
+  actorArguments: readonly string[],
+): [string, ...string[]] {
+  return [
+    ...(resolved.command ?? [resolved.readPaths[0] ?? resolved.commandPath]),
+    ...actorArguments,
+  ] as [string, ...string[]];
+}
+
 async function listenForLanProbe(): Promise<{ port: number; close(): Promise<void> }> {
   const server = net.createServer((socket) => socket.end());
   await new Promise<void>((resolve, reject) => {
@@ -406,11 +417,7 @@ export async function runEvalCommand(
     validated.runDir,
     sanitizedBrokerEnvironment(process.env).PATH ?? "",
   );
-  const resolvedCommand = [
-    ...(resolvedExecutable.command ?? [resolvedExecutable.commandPath]),
-    ...optimizedPi.command.slice(1),
-  ] as [string, ...string[]];
-  const sandboxCommand = resolvedCommand;
+  const sandboxCommand = buildEvalLaunchCommand(resolvedExecutable, optimizedPi.command.slice(1));
   const piActor = isPiExecutable(spec.command[0]);
   const controllerPiInstallation = piActor
     ? await (async () => {

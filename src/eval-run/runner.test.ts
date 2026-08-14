@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { captureEvalProcess } from "./runner.js";
+import { buildEvalLaunchCommand, captureEvalProcess } from "./runner.js";
 
 function actor(source: string): readonly [string, ...string[]] {
   return [process.execPath, "-e", source];
 }
 
 describe("eval process capture", () => {
+  it("launches a symlinked executable through its lexical path", () => {
+    expect(
+      buildEvalLaunchCommand(
+        { commandPath: "/bin/target", readPaths: ["/bin/launcher", "/bin/target"] },
+        ["--flag"],
+      ),
+    ).toEqual(["/bin/launcher", "--flag"]);
+  });
+
   it("preserves stdout, stderr, exit status, and signal state", async () => {
     await expect(
       captureEvalProcess(
