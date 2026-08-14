@@ -126,7 +126,7 @@ describe("validateEvalRunSpec", () => {
     await writeFile(interpreter, "#!/bin/sh\n", { mode: 0o755 });
     await writeFile(
       actor,
-      "#!/usr/bin/env -S -- deno run --config 'my config.json' --mode=\"fast\\_mode\"\n",
+      "#!/usr/bin/env -S -- deno run --config 'my config.json' --mode=\"fast mode\"\n",
       { mode: 0o755 },
     );
 
@@ -149,6 +149,22 @@ describe("validateEvalRunSpec", () => {
         interpreterCanonical,
       ]),
     });
+  });
+
+  it("fails closed for unsupported env -S escape sequences", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-env-escape-"));
+    const runDir = path.join(temp, "run");
+    const binDir = path.join(temp, "bin");
+    await mkdir(runDir);
+    await mkdir(binDir);
+    await writeFile(path.join(binDir, "deno"), "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(path.join(binDir, "actor"), "#!/usr/bin/env -S deno --mode=fast\\_mode\n", {
+      mode: 0o755,
+    });
+
+    await expect(resolveEvalExecutable("actor", runDir, binDir)).rejects.toThrow(
+      "[EVAL_SHEBANG_RESOLUTION_FAILED]",
+    );
   });
 
   it("preserves a complete nested env shebang command and every exact read grant", async () => {

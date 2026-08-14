@@ -169,13 +169,13 @@ function splitEnvShebangArguments(value: string): string[] {
     current = "";
     tokenStarted = false;
   };
-  const appendEscape = (character: string, insideDoubleQuotes: boolean): void => {
+  const appendEscape = (character: string): void => {
+    if (character === "_") throw new Error(SHEBANG_RESOLUTION_FAILURE);
     const escapedValues: Readonly<Record<string, string>> = {
       $: "$",
       "'": "'",
       '"': '"',
       "\\": "\\",
-      _: insideDoubleQuotes ? " " : "",
       " ": " ",
       "#": "#",
       f: "\f",
@@ -207,7 +207,7 @@ function splitEnvShebangArguments(value: string): string[] {
         if (index >= value.length) throw new Error(SHEBANG_RESOLUTION_FAILURE);
         const escapedCharacter = value[index];
         if (escapedCharacter === undefined) throw new Error(SHEBANG_RESOLUTION_FAILURE);
-        appendEscape(escapedCharacter, true);
+        appendEscape(escapedCharacter);
       } else current += character;
       tokenStarted = true;
       continue;
@@ -222,8 +222,7 @@ function splitEnvShebangArguments(value: string): string[] {
       if (index >= value.length) throw new Error(SHEBANG_RESOLUTION_FAILURE);
       const escapedCharacter = value[index];
       if (escapedCharacter === undefined) throw new Error(SHEBANG_RESOLUTION_FAILURE);
-      if (escapedCharacter === "_") pushToken();
-      else appendEscape(escapedCharacter, false);
+      appendEscape(escapedCharacter);
       continue;
     }
     if (/\s/.test(character)) {
