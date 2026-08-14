@@ -6,6 +6,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rm,
   stat,
   symlink,
   unlink,
@@ -27,6 +28,8 @@ import {
   summarizePiEvent,
   windowsProcessInstanceIdentities,
 } from "./work-log.js";
+
+const WINDOWS_RETENTION_TEST_TIMEOUT_MS = 15_000;
 
 function processIdentityForTest(processId: number, platform: NodeJS.Platform): string {
   let rawIdentity: string;
@@ -287,55 +290,67 @@ describe("review work log", () => {
     }
   });
 
-  it("retains at most 100 auto-created review logs without touching other files", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
-      `pioneer-work-log-state-${process.pid}-${crypto.randomUUID()}`,
-    );
-    const platform = process.platform;
-    const environment =
-      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
-    const home = stateRoot;
-    const directory =
-      platform === "darwin"
-        ? path.join(home, "Library", "Logs", "Pioneer", "reviews")
-        : platform === "win32"
-          ? path.join(stateRoot, "Pioneer", "Logs", "reviews")
-          : path.join(stateRoot, "pioneer", "logs", "reviews");
-    await mkdir(directory, { recursive: true });
-    await Promise.all(
-      Array.from({ length: 101 }, (_, index) =>
-        writeFile(
-          path.join(
-            directory,
-            `review-20260801T000000000Z-00000000-0000-0000-0000-${String(index).padStart(12, "0")}.jsonl`,
+  it(
+    "retains at most 100 auto-created review logs without touching other files",
+    async () => {
+      const stateRoot = path.join(
+        tmpdir(),
+        `pioneer-work-log-state-${process.pid}-${crypto.randomUUID()}`,
+      );
+      let log: Awaited<ReturnType<typeof openReviewWorkLog>> | undefined;
+      try {
+        const platform = process.platform;
+        const environment =
+          platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+        const home = stateRoot;
+        const directory =
+          platform === "darwin"
+            ? path.join(home, "Library", "Logs", "Pioneer", "reviews")
+            : platform === "win32"
+              ? path.join(stateRoot, "Pioneer", "Logs", "reviews")
+              : path.join(stateRoot, "pioneer", "logs", "reviews");
+        await mkdir(directory, { recursive: true });
+        await Promise.all(
+          Array.from({ length: 101 }, (_, index) =>
+            writeFile(
+              path.join(
+                directory,
+                `review-20260801T000000000Z-00000000-0000-0000-0000-${String(index).padStart(12, "0")}.jsonl`,
+              ),
+              "old\n",
+            ),
           ),
-          "old\n",
-        ),
-      ),
-    );
-    await writeFile(path.join(directory, "keep-me.txt"), "unrelated\n");
-    await writeFile(path.join(directory, "review-custom.jsonl"), "custom\n");
+        );
+        await writeFile(path.join(directory, "keep-me.txt"), "unrelated\n");
+        await writeFile(path.join(directory, "review-custom.jsonl"), "custom\n");
 
-    const target = await prepareDefaultReviewWorkLogPath(
-      environment,
-      platform,
-      home,
-      new Date("2026-08-11T10:00:00.000Z"),
-      "00000000-0000-0000-0000-000000000101",
-    );
-    const log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
-    log.record("review_started");
-    log.close();
+        const target = await prepareDefaultReviewWorkLogPath(
+          environment,
+          platform,
+          home,
+          new Date("2026-08-11T10:00:00.000Z"),
+          "00000000-0000-0000-0000-000000000101",
+        );
+        log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
+        log.record("review_started");
+        log.close();
 
-    const entries = await readdir(directory);
-    expect(entries.filter((entry) => /^review-\d{8}T/.test(entry))).toHaveLength(100);
-    expect(entries).toContain("keep-me.txt");
-    expect(entries).toContain("review-custom.jsonl");
-    if (process.platform !== "win32") {
-      expect((await stat(directory)).mode & 0o777).toBe(0o700);
-    }
-  });
+        const entries = await readdir(directory);
+        expect(entries.filter((entry) => /^review-\d{8}T/.test(entry))).toHaveLength(100);
+        expect(entries).toContain("keep-me.txt");
+        expect(entries).toContain("review-custom.jsonl");
+        expect(entries).not.toContain(".pioneer-retention.lock");
+        expect(entries.some((entry) => entry.includes(".active"))).toBe(false);
+        if (process.platform !== "win32") {
+          expect((await stat(directory)).mode & 0o777).toBe(0o700);
+        }
+      } finally {
+        log?.close();
+        await rm(stateRoot, { force: true, recursive: true });
+      }
+    },
+    process.platform === "win32" ? WINDOWS_RETENTION_TEST_TIMEOUT_MS : undefined,
+  );
 
   it("retains at most 100 default logs across sequentially prepared concurrent reviews", async () => {
     const stateRoot = path.join(
