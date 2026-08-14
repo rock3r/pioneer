@@ -366,6 +366,22 @@ describe("Pi readiness", () => {
     expect(JSON.stringify(result)).not.toContain("user:pass");
   });
 
+  it("rejects namespaced authenticated URLs anywhere in model catalog fields", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nprovider:https://user:pass@host model-id 400K 128K yes yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
+    expect(JSON.stringify(result)).not.toContain("user:pass");
+  });
+
   it("redacts credential-shaped metadata from accepted versions and warnings", async () => {
     const runner = runnerWith([
       { exitCode: 0, stdout: "0.84.3+sk-abcdefgh\n", stderr: "" },

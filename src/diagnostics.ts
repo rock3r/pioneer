@@ -22,14 +22,7 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
       /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY)-----|$)/gi,
       "[REDACTED]",
     )
-    .replaceAll(
-      /(["']?)\bauthorization\1\s*[:=]\s*["']?(?:digest|aws4-hmac-sha256)\b[^\r\n]*/gi,
-      "Authorization=[REDACTED]",
-    )
-    .replaceAll(
-      /(["']?)\bauthorization\1\s*[:=]\s*(?!\[REDACTED\])(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+(?:\s+[^\s,;]+)?)/gi,
-      "Authorization=[REDACTED]",
-    );
+    .replaceAll(/(["']?)\bauthorization\1\s*[:=][^\r\n]*/gi, "Authorization=[REDACTED]");
   sanitized = sanitized.replaceAll(/\s+/g, " ");
   for (const secret of secrets) {
     const variants = [secret, JSON.stringify(secret).slice(1, -1)];

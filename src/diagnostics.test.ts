@@ -55,6 +55,14 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("[REDACTED]");
   });
 
+  it("redacts complete parameterized Authorization fields regardless of scheme", () => {
+    const sanitized = sanitizeDiagnostic(
+      'Authorization: Signature keyId="private",algorithm="rsa-sha256",signature="credential"\nrequest failed',
+    );
+
+    expect(sanitized).toBe("Authorization=[REDACTED] request failed");
+  });
+
   it("redacts provider-prefixed credential assignments", () => {
     const sanitized = sanitizeDiagnostic(
       "GOOGLE_API_KEY=google-private AWS_SECRET_ACCESS_KEY=aws-private GITHUB_TOKEN=github-private",
