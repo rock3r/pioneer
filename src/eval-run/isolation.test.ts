@@ -465,6 +465,35 @@ describe("validateEvalRunSpec", () => {
       );
     },
   );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a Pi home that overlaps the actor run or runtime reads",
+    async () => {
+      const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-pi-home-"));
+      const runDir = path.join(temp, "run");
+      const nestedPiHome = path.join(runDir, "pi-home");
+      const separatePiHome = path.join(temp, "separate-pi-home");
+      await mkdir(nestedPiHome, { recursive: true });
+      await mkdir(separatePiHome);
+
+      await expect(
+        validateEvalRunSpec({
+          runDir,
+          command: ["/usr/bin/true"],
+          piHomeSource: nestedPiHome,
+        }),
+      ).rejects.toThrow(/Pi home.*overlap/i);
+
+      await expect(
+        validateEvalRunSpec({
+          runDir,
+          command: ["/usr/bin/true"],
+          runtimeReadPaths: [separatePiHome],
+          piHomeSource: separatePiHome,
+        }),
+      ).rejects.toThrow(/Pi home.*overlap/i);
+    },
+  );
 });
 
 describe("cross-platform sandbox config", () => {
@@ -555,6 +584,33 @@ describe("cross-platform sandbox config", () => {
           parentProxyUrl: "http://srt:token@127.0.0.1:43123",
         }).readOnlyPaths,
       ).toEqual([]);
+    },
+  );
+
+  it.each(["darwin", "linux"] as const)(
+    "adds only a separate narrow controller-created actor scratch on %s",
+    (platform) => {
+      const runDir = "/tmp/pioneer-eval/run";
+      const scratchDir = "/tmp/pioneer-control/actor-scratch";
+      expect(
+        buildEvalSandboxConfig({
+          platform,
+          runDir,
+          runtimeReadPaths: [],
+          writableScratchPaths: [scratchDir],
+          parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+        }).writablePaths,
+      ).toEqual([runDir, scratchDir]);
+
+      expect(() =>
+        buildEvalSandboxConfig({
+          platform,
+          runDir,
+          runtimeReadPaths: [],
+          writableScratchPaths: ["/tmp/pioneer-eval"],
+          parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+        }),
+      ).toThrow(/scratch.*overlap/i);
     },
   );
 

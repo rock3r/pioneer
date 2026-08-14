@@ -103,7 +103,7 @@ Do not rely on a symbolic-link shortcut in the source tree. The sandbox resolves
 
 ## Pi home exceeds a snapshot limit
 
-Pioneer selects only the known root configuration files and, for reviews, the sanitized `skills/` tree. Default traversal skips package/runtime fluff; sessions, logs, `.npm`, `.cache`, transient directories, and log files are hard exclusions. The 500,000-entry and 1 GiB limits count selected content only. If a review genuinely needs a package or machine-specific directory, add its exact path with repeated `--pi-home-include RELATIVE_PATH`; understand that this increases storage/runtime cost and reduces portability. Evals do not support this opt-in.
+Pioneer selects only the known root configuration files and, for reviews, the sanitized `skills/` tree. Default traversal skips package/runtime fluff; sessions, logs, `.npm`, `.cache`, transient directories, and log files are hard exclusions, matched case-insensitively on macOS and Windows. The 500,000-entry and 1 GiB limits count selected content only. If a review genuinely needs a package or machine-specific directory, add its exact path with repeated `--pi-home-include RELATIVE_PATH`; understand that this increases storage/runtime cost and reduces portability. Evals do not support this opt-in.
 
 An error such as `[PI_HOME_SYMLINK_TARGET_MISSING]` means a selected skill points at a path omitted by the default policy. Add the reported relative target with `--pi-home-include` when it is not hard-excluded. Broken, escaping, special-file, hard-excluded, or ambiguous symlink selections must be removed or replaced with a self-contained skill.
 

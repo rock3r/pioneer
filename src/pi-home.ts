@@ -65,21 +65,33 @@ function relativePath(parts: readonly string[]): string {
   return parts.join("/");
 }
 
+function policyName(name: string): string {
+  return process.platform === "darwin" || process.platform === "win32" ? name.toLowerCase() : name;
+}
+
+function selectionKey(relative: string): string {
+  return policyName(relative);
+}
+
 function isLogFile(name: string): boolean {
-  return name.endsWith(".log") || name.endsWith("-debug.log");
+  const normalized = policyName(name);
+  return normalized.endsWith(".log") || normalized.endsWith("-debug.log");
 }
 
 function isHardExcluded(parts: readonly string[], kind: EntryKind): boolean {
   return parts.some(
     (part, index) =>
-      HARD_EXCLUDED_NAMES.has(part) ||
+      HARD_EXCLUDED_NAMES.has(policyName(part)) ||
       (index === parts.length - 1 && kind === "file" && isLogFile(part)),
   );
 }
 
 function isDefaultSkipped(parts: readonly string[], kind: EntryKind): boolean {
   const name = parts.at(-1);
-  return name !== undefined && (DEFAULT_SKIPPED_NAMES.has(name) || isHardExcluded(parts, kind));
+  return (
+    name !== undefined &&
+    (DEFAULT_SKIPPED_NAMES.has(policyName(name)) || isHardExcluded(parts, kind))
+  );
 }
 
 function formatInclude(include: string): string {
@@ -155,7 +167,7 @@ async function selectedEntry(
   relative: string,
   state: SelectionState,
 ): Promise<SelectedEntry> {
-  const existing = state.entries.get(relative);
+  const existing = state.entries.get(selectionKey(relative));
   if (existing !== undefined) return existing;
   const source = path.join(sourceRoot, ...relative.split("/"));
   let stats: Awaited<ReturnType<typeof lstat>>;
@@ -172,7 +184,7 @@ async function selectedEntry(
     throw new Error(`[PI_HOME_SPECIAL_FILE] Pi home contains a special file at ${relative}`);
   }
   const entry: SelectedEntry = { relativePath: relative, sourcePath: source, kind, stats };
-  state.entries.set(relative, entry);
+  state.entries.set(selectionKey(relative), entry);
   state.budget.entries += 1;
   if (state.budget.entries > MAX_ENTRIES) throw new Error("Pi home exceeds the entry limit");
   if (kind === "file") {
@@ -301,7 +313,7 @@ async function validateSelectedSymlinks(sourceRoot: string, state: SelectionStat
       );
     }
     const targetRelative = symlinkTargetRelative(sourceRoot, entry.relativePath, target);
-    if (!state.entries.has(targetRelative)) {
+    if (!state.entries.has(selectionKey(targetRelative))) {
       const targetStats = await lstat(target);
       const targetKind = entryKind(targetStats);
       if (targetKind !== undefined && isHardExcluded(targetRelative.split("/"), targetKind)) {
@@ -317,7 +329,7 @@ async function validateSelectedSymlinks(sourceRoot: string, state: SelectionStat
   for (const entry of state.entries.values()) {
     const parts = entry.relativePath.split("/");
     for (let index = 1; index < parts.length; index += 1) {
-      const parent = state.entries.get(relativePath(parts.slice(0, index)));
+      const parent = state.entries.get(selectionKey(relativePath(parts.slice(0, index))));
       if (parent?.kind === "symlink") {
         throw new Error(
           `[PI_HOME_DESTINATION_COLLISION] Selected Pi home paths ${parent.relativePath} and ${entry.relativePath} would collide through an internal symlink`,
@@ -405,7 +417,16 @@ async function copySelection(
     } else {
       const target = await realpath(entry.sourcePath);
       const targetRelative = symlinkTargetRelative(sourceRoot, entry.relativePath, target);
-      const targetDestination = path.join(destinationRoot, ...targetRelative.split("/"));
+      const selectedTarget = state.entries.get(selectionKey(targetRelative));
+      if (selectedTarget === undefined) {
+        throw new Error(
+          `[PI_HOME_SYMLINK_TARGET_MISSING] Selected Pi home symlink ${entry.relativePath} targets ${targetRelative}, which is not selected`,
+        );
+      }
+      const targetDestination = path.join(
+        destinationRoot,
+        ...selectedTarget.relativePath.split("/"),
+      );
       await symlink(path.relative(path.dirname(destination), targetDestination), destination);
     }
   }

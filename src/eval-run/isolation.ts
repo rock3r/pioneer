@@ -32,6 +32,7 @@ export interface EvalSandboxConfigOptions {
   readonly platform: EvalPlatform;
   readonly runDir: string;
   readonly runtimeReadPaths: readonly string[];
+  readonly writableScratchPaths?: readonly string[];
   readonly parentProxyUrl: string;
 }
 
@@ -609,6 +610,13 @@ export async function validateEvalRunSpec(spec: EvalRunSpec): Promise<ValidatedE
   if (piHomeSource !== undefined && !(await lstat(piHomeSource)).isDirectory()) {
     throw new Error(`Pi home source is not a directory: ${piHomeSource}`);
   }
+  if (
+    piHomeSource !== undefined &&
+    (pathsOverlap(runDir, piHomeSource) ||
+      runtimeReadPaths.some((runtimePath) => pathsOverlap(runtimePath, piHomeSource)))
+  ) {
+    throw new Error(`Pi home source must not overlap eval actor grants: ${piHomeSource}`);
+  }
   return {
     runDir,
     command: spec.command,
@@ -762,9 +770,18 @@ export function buildEvalSandboxConfig(options: EvalSandboxConfigOptions): Sandb
     }
     readOnlyPaths.push(runtimePath);
   }
+  const writableScratchPaths = options.writableScratchPaths ?? [];
+  for (const scratchPath of writableScratchPaths) {
+    if (isBroadWritablePath(scratchPath, options.platform)) {
+      throw new Error(`Refusing broad eval scratch directory: ${scratchPath}`);
+    }
+    if (pathsOverlap(options.runDir, scratchPath)) {
+      throw new Error(`Eval scratch directory must not overlap the writable run: ${scratchPath}`);
+    }
+  }
   return {
     readOnlyPaths,
-    writablePaths: [options.runDir],
+    writablePaths: [options.runDir, ...writableScratchPaths],
     network: "proxy",
     proxyUrl: options.parentProxyUrl,
   };
