@@ -136,7 +136,7 @@ export function buildLinuxSandboxArgv(
     ...policy.writablePaths,
     ...(proxySocketPath === undefined ? [] : [proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
-    ...(runtimeExecutable === undefined ? [] : [path.dirname(runtimeExecutable)]),
+    ...(runtimeExecutable === undefined ? [] : [runtimeExecutable]),
   ];
   const runtimeCommand =
     runtimeExecutable === undefined || command[0] !== runtimeExecutable
@@ -165,7 +165,7 @@ export function buildLinuxSandboxArgv(
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", supervisorPath, supervisorPath]),
     ...(runtimeExecutable === undefined
       ? []
-      : ["--ro-bind", path.dirname(runtimeExecutable), LINUX_RUNTIME_BIN_PATH]),
+      : ["--ro-bind", runtimeExecutable, LINUX_RUNTIME_EXECUTABLE_PATH]),
     "--proc",
     "/proc",
     "--dev",

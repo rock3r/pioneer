@@ -14,9 +14,7 @@ describe("executableRuntimeRoot", () => {
     await writeFile(executable, "");
     await symlink(executable, linkedExecutable);
 
-    expect(await executableRuntimeRoot(linkedExecutable, "linux")).toBe(
-      path.dirname(await realpath(executable)),
-    );
+    expect(await executableRuntimeRoot(linkedExecutable, "linux")).toBe(await realpath(executable));
   });
 
   it("grants the package prefix for a macOS executable", async () => {

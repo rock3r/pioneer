@@ -70,11 +70,13 @@ describe("direct sandbox launchers", () => {
       ),
     ).toBe(true);
     expect(launch.argv).toEqual(
-      expect.arrayContaining(["--ro-bind", "/opt/node/bin", "/pioneer-runtime/bin"]),
+      expect.arrayContaining(["--ro-bind", runtime, "/pioneer-runtime/bin/node"]),
     );
     expect(
       launch.argv.some(
-        (entry, index) => entry === "--ro-bind" && launch.argv[index + 1] === "/opt/node",
+        (entry, index) =>
+          entry === "--ro-bind" &&
+          ["/opt/node", "/opt/node/bin"].includes(launch.argv[index + 1] ?? ""),
       ),
     ).toBe(false);
   });

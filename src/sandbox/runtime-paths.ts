@@ -7,6 +7,7 @@ export async function executableRuntimeRoot(
 ): Promise<string> {
   const canonical = await realpath(executable);
   const directory = path.dirname(canonical);
-  if (platform === "win32" || platform === "linux") return directory;
+  if (platform === "linux") return canonical;
+  if (platform === "win32") return directory;
   return path.resolve(directory, "..");
 }
