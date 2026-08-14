@@ -51,7 +51,7 @@ interface SelectedEntry {
 
 interface SelectionState {
   readonly entries: Map<string, SelectedEntry>;
-  readonly fullDirectories: Set<string>;
+  readonly budget: SnapshotBudget;
 }
 
 interface SnapshotBudget {
@@ -157,6 +157,12 @@ async function selectedEntry(
   }
   const entry: SelectedEntry = { relativePath: relative, sourcePath: source, kind, stats };
   state.entries.set(relative, entry);
+  state.budget.entries += 1;
+  if (state.budget.entries > MAX_ENTRIES) throw new Error("Pi home exceeds the entry limit");
+  if (kind === "file") {
+    state.budget.bytes += Number(stats.size);
+    if (state.budget.bytes > MAX_BYTES) throw new Error("Pi home exceeds the size limit");
+  }
   return entry;
 }
 
@@ -168,8 +174,7 @@ async function collectEntry(
 ): Promise<void> {
   const entry = await selectedEntry(sourceRoot, relative, state);
   if (entry.kind === "directory") {
-    if (traversal !== "scaffold") state.fullDirectories.add(relative);
-    if (traversal === "scaffold" && state.fullDirectories.has(relative)) return;
+    if (traversal === "scaffold") return;
     const children = (await readdir(entry.sourcePath, { withFileTypes: true }))
       .map((child) => child.name)
       .sort();
@@ -318,7 +323,10 @@ async function buildSelection(
       "[PI_HOME_INCLUDE_UNSUPPORTED] Pi home includes are supported only for review snapshots",
     );
   }
-  const state: SelectionState = { entries: new Map(), fullDirectories: new Set() };
+  const state: SelectionState = {
+    entries: new Map(),
+    budget: { entries: 0, bytes: 0 },
+  };
   for (const name of DEFAULT_ROOT_FILES) {
     try {
       await collectDefaultFile(sourceRoot, name, state);
@@ -341,21 +349,11 @@ async function buildSelection(
   return state;
 }
 
-function countEntry(entry: SelectedEntry, budget: SnapshotBudget): void {
-  budget.entries += 1;
-  if (budget.entries > MAX_ENTRIES) throw new Error("Pi home exceeds the entry limit");
-  if (entry.kind === "file") {
-    budget.bytes += Number(entry.stats.size);
-    if (budget.bytes > MAX_BYTES) throw new Error("Pi home exceeds the size limit");
-  }
-}
-
 async function copySelection(
   sourceRoot: string,
   state: SelectionState,
   destinationRoot: string,
 ): Promise<void> {
-  const budget: SnapshotBudget = { entries: 0, bytes: 0 };
   const entries = [...state.entries.values()].sort((left, right) => {
     const depthDifference =
       left.relativePath.split("/").length - right.relativePath.split("/").length;
@@ -363,7 +361,6 @@ async function copySelection(
   });
   for (const entry of entries) {
     const destination = path.join(destinationRoot, ...entry.relativePath.split("/"));
-    countEntry(entry, budget);
     if (entry.kind === "directory") {
       await mkdir(destination, { mode: 0o700, recursive: true });
     } else if (entry.kind === "file") {

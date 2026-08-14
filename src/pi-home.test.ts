@@ -27,6 +27,7 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
   await mkdir(path.join(source, "sessions"));
   await mkdir(path.join(source, "tmp", "package", "node_modules"), { recursive: true });
   await mkdir(path.join(source, "node_modules", "root-package"), { recursive: true });
+  await mkdir(path.join(source, "node_modules", "sibling-package"), { recursive: true });
   await mkdir(path.join(source, "npm", "managed-package"), { recursive: true });
   await mkdir(path.join(source, "git", "managed-package"), { recursive: true });
   await mkdir(path.join(source, "unknown-directory"));
@@ -44,6 +45,10 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
   await writeFile(path.join(source, "sessions", "old.jsonl"), "history");
   await writeFile(path.join(source, "tmp", "package", "node_modules", "transient.js"), "cache");
   await writeFile(path.join(source, "node_modules", "root-package", "index.js"), "root dependency");
+  await writeFile(
+    path.join(source, "node_modules", "sibling-package", "index.js"),
+    "sibling dependency",
+  );
   await writeFile(path.join(source, "npm", "managed-package", "index.js"), "managed npm");
   await writeFile(path.join(source, "git", "managed-package", "index.js"), "managed git");
   await writeFile(path.join(source, "unknown-directory", "secret.txt"), "unknown");
@@ -243,6 +248,40 @@ describe("prepareIsolatedPiHome", () => {
     await expect(
       readFile(path.join(prepared.agentDir, "unknown-directory", "secret.txt"), "utf8"),
     ).resolves.toBe("unknown");
+  });
+
+  it("copies only the exact nested include, not sibling content", async () => {
+    const { source, destination } = await fixture();
+    const prepared = await prepareIsolatedPiHome({
+      sourceDir: source,
+      destination,
+      mode: "review",
+      piHomeIncludes: ["node_modules/root-package"],
+    });
+
+    await expect(
+      readFile(path.join(prepared.agentDir, "node_modules", "root-package", "index.js"), "utf8"),
+    ).resolves.toBe("root dependency");
+    await expect(
+      readFile(path.join(prepared.agentDir, "node_modules", "sibling-package", "index.js")),
+    ).rejects.toThrow();
+  });
+
+  it("enforces snapshot limits while collecting an explicit include", async () => {
+    const { source, destination } = await fixture();
+    const sparsePath = path.join(source, "node_modules", "root-package", "sparse.bin");
+    await writeFile(sparsePath, "");
+    await truncate(sparsePath, 1024 * 1024 * 1024 + 1);
+
+    await expect(
+      prepareIsolatedPiHome({
+        sourceDir: source,
+        destination,
+        mode: "review",
+        piHomeIncludes: ["node_modules/root-package"],
+      }),
+    ).rejects.toThrow(/size limit/i);
+    await expect(lstat(destination)).rejects.toThrow();
   });
 
   it.each([
