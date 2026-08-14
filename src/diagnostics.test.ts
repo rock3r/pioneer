@@ -132,6 +132,17 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("[REDACTED]");
   });
 
+  it("redacts complete serialized credentials containing escaped quotes", () => {
+    const sanitized = sanitizeDiagnostic(
+      '{"password":"prefix\\"private leaked-suffix","status":"failed"}',
+    );
+
+    expect(sanitized).not.toContain("private");
+    expect(sanitized).not.toContain("leaked-suffix");
+    expect(sanitized).toContain("[REDACTED]");
+    expect(sanitized).toContain("status");
+  });
+
   it("redacts authenticated URLs with JSON-escaped slashes", () => {
     const sanitized = sanitizeDiagnostic("https:\\/\\/user:password@example.test/path");
 

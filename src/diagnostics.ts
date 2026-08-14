@@ -7,6 +7,18 @@ export interface Diagnostic {
 }
 
 const DIAGNOSTIC_PREFIX = /^\[([A-Z][A-Z0-9_]*)\]\s+(.*)$/s;
+const SECRET_LABEL =
+  "(?:[a-z0-9]+_)*(?:api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|cookie|passphrase|token|password|secret)";
+
+function redactQuotedCredentialAssignments(value: string): string {
+  return value.replaceAll(
+    new RegExp(
+      `(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`,
+      "gi",
+    ),
+    (_match, quote: string, label: string) => `${quote}${label}${quote}=[REDACTED]`,
+  );
+}
 
 export class CliUsageError extends Error {}
 
@@ -16,7 +28,7 @@ export function diagnosticMessage(id: string, message: string): string {
 }
 
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
-  let sanitized = value
+  let sanitized = redactQuotedCredentialAssignments(value)
     .replaceAll(/\\+(?=[/"'])/g, "")
     .replaceAll(
       /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
@@ -36,9 +48,7 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
       if (normalized) sanitized = sanitized.replaceAll(normalized, "[REDACTED]");
     }
   }
-  const secretLabel =
-    "(?:[a-z0-9]+_)*(?:api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|cookie|passphrase|token|password|secret)";
-  return sanitized
+  return redactQuotedCredentialAssignments(sanitized)
     .replaceAll(
       /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi,
       (_match, scheme: string) => `${scheme}[REDACTED]@`,
@@ -47,16 +57,9 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
       /((?:[?&]|\\u0026|&(?:amp|#0*38|#x0*26);)(?:(?:x-amz|x-goog)-)?(?:credential|signature|security-token|sig)=)(?:(?![&#\s]|\\u0026).)+/gi,
       "$1[REDACTED]",
     )
-    .replaceAll(
-      new RegExp(
-        `(["']?)\\b(${secretLabel})\\1\\s*[:=]\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`,
-        "gi",
-      ),
-      (_match, quote: string, label: string) => `${quote}${label}${quote}=[REDACTED]`,
-    )
     .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     .replaceAll(
-      new RegExp(`(["']?)\\b(${secretLabel})\\1\\s*[:=]\\s*[^\\s,;]+`, "gi"),
+      new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*[^\\s,;]+`, "gi"),
       (_match, quote: string, label: string) => `${quote}${label}${quote}=[REDACTED]`,
     )
     .replaceAll(
