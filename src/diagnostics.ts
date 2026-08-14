@@ -20,6 +20,13 @@ function redactQuotedCredentialAssignments(value: string): string {
   );
 }
 
+function redactUnquotedPassphrase(value: string): string {
+  return value.replaceAll(
+    /(["']?)\b(?:[a-z0-9]+_)*passphrase\1\s*[:=]\s*(?!["'])[^\r\n]*/gi,
+    "PASSPHRASE=[REDACTED]",
+  );
+}
+
 export class CliUsageError extends Error {}
 
 export function diagnosticMessage(id: string, message: string): string {
@@ -28,7 +35,7 @@ export function diagnosticMessage(id: string, message: string): string {
 }
 
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
-  let sanitized = redactQuotedCredentialAssignments(value)
+  let sanitized = redactQuotedCredentialAssignments(redactUnquotedPassphrase(value))
     .replaceAll(/\\+(?=[/"'])/g, "")
     .replaceAll(
       /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
