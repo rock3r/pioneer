@@ -44,7 +44,7 @@ const COMPOUND_CREDENTIAL_SUFFIXES = [
   "signingkey",
   "signingsecret",
 ] as const;
-const STANDALONE_CREDENTIAL_SOURCE = String.raw`(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{8,}|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|xox[baprs]-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{16,})(?![A-Za-z0-9])`;
+const STANDALONE_CREDENTIAL_SOURCE = String.raw`(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{8,}|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|gsk_[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|xox[baprs]-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{16,})(?![A-Za-z0-9])`;
 
 function stripTerminalControls(value: string): string {
   return [...value]
@@ -168,7 +168,7 @@ function redactSignedUrlCredentials(value: string): string {
 
 function redactPercentEncodedQueryCredentials(value: string): string {
   return value.replaceAll(
-    /((?:%3f|%23|%26)((?:(?!%3d)[a-z0-9._@+%-])+)%3d)(?:(?![&#\s,"'{}]|%26|\\["']|\\u0026).)+/gi,
+    /(%(?:25){0,4}(?:3f|23|26)((?:(?!%(?:25){0,4}3d)[a-z0-9._@+%-])+?)%(?:25){0,4}3d)(?:(?![&#\s,"'{}]|%(?:25){0,4}26|\\["']|\\u0026).)+/gi,
     (match, prefix: string, encodedLabel: string) => {
       try {
         return isCredentialLabel(decodeURIComponent(encodedLabel)) ? `${prefix}[REDACTED]` : match;

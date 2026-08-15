@@ -491,6 +491,7 @@ describe("Pi readiness", () => {
       "glpat-0123456789abcdefghij",
       "sk_live_51M3abcdefghijklmnopqrstuvwxyz",
       "rk_test_51M3abcdefghijklmnopqrstuvwxyz",
+      "gsk_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456",
       "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
     ]) {
       const runner = runnerWith([

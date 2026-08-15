@@ -95,6 +95,11 @@ describe("diagnostics", () => {
     ).not.toContain("AKIAIOSFODNN7EXAMPLE");
   });
 
+  it("redacts standalone Groq API keys", () => {
+    const key = "gsk_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456";
+    expect(sanitizeDiagnostic(`provider returned ${key}`)).not.toContain(key);
+  });
+
   it("redacts standalone Google API keys", () => {
     for (const token of [
       "AIzaSyA1234567890bcdefghijklmnopqrstuvx",
@@ -329,6 +334,15 @@ describe("diagnostics", () => {
 
     expect(sanitized).not.toContain("private-token");
     expect(sanitized).toContain("%26state%3Dpublic-state");
+  });
+
+  it("redacts OAuth credentials in multiply percent-encoded nested URLs", () => {
+    const sanitized = sanitizeDiagnostic(
+      "next=https%253A%252F%252Fidp.test%252Fcallback%253Faccess_token%253Dprivate-token%2526state%253Dpublic-state",
+    );
+
+    expect(sanitized).not.toContain("private-token");
+    expect(sanitized).toContain("%2526state%253Dpublic-state");
   });
 
   it("redacts OAuth credentials in percent-encoded URL fragments", () => {
