@@ -167,6 +167,20 @@ describe("diagnostics", () => {
     expect(sanitized.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(5);
   });
 
+  it("preserves serialized fields after signed-URL credentials", () => {
+    const sanitized = sanitizeDiagnostic(
+      JSON.stringify({
+        url: "https://blob.test/o?sig=private-signature",
+        status: "failed",
+        code: 403,
+      }),
+    );
+
+    expect(sanitized).not.toContain("private-signature");
+    expect(sanitized).toContain('"status":"failed"');
+    expect(sanitized).toContain('"code":403');
+  });
+
   it("redacts credentials behind quoted JSON keys", () => {
     const sanitized = sanitizeDiagnostic(
       '{"api_key":"google-private","access_token":"access-private"}',
