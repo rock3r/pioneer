@@ -10,9 +10,9 @@ const DIAGNOSTIC_PREFIX = /^\[([A-Z][A-Z0-9_]*)\]\s+(.*)$/s;
 const MAX_SERIALIZATION_DEPTH = 16;
 const CREDENTIAL_CORE =
   "(?:authorization|api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|connection[-_ ]?string|cookie|passphrase|credential|signature|sig|key|token|password|secret)";
-const SECRET_LABEL = `(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*${CREDENTIAL_CORE}[a-z0-9]*(?:[-_.:/ ][a-z0-9]+)*`;
+const SECRET_LABEL = `_*(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*${CREDENTIAL_CORE}[a-z0-9]*(?:[-_.:/ ][a-z0-9]+)*`;
 const QUOTED_LABEL_CANDIDATE =
-  "(?:[a-z0-9]|\\\\u[0-9a-f]{4})(?:[a-z0-9._:/@+ -]|\\\\u[0-9a-f]{4})*";
+  "(?:[a-z0-9_]|\\\\u[0-9a-f]{4})(?:[a-z0-9._:/@+ -]|\\\\u[0-9a-f]{4})*";
 const CREDENTIAL_TOKENS = new Set([
   "authorization",
   "cookie",
@@ -80,7 +80,7 @@ function isCredentialLabel(label: string): boolean {
 }
 
 export function containsCredentialAssignment(value: string): boolean {
-  return [...value.matchAll(/\b([A-Za-z0-9][A-Za-z0-9._/@+-]*)\s*[:=]/g)].some((match) =>
+  return [...value.matchAll(/\b(_*[A-Za-z0-9][A-Za-z0-9._/@+-]*)\s*[:=]/g)].some((match) =>
     isCredentialLabel(match[1] ?? ""),
   );
 }

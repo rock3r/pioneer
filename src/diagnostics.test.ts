@@ -190,6 +190,14 @@ describe("diagnostics", () => {
     );
   });
 
+  it("redacts underscore-prefixed credential labels", () => {
+    const sanitized = sanitizeDiagnostic('_api_key=private-one\n{"_access_token":"private-two"}');
+
+    expect(sanitized).not.toContain("private-one");
+    expect(sanitized).not.toContain("private-two");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
+  });
+
   it("redacts cookie and session credential assignments", () => {
     const sanitized = sanitizeDiagnostic(
       "Set-Cookie: session=private-cookie\nSESSION_ID=private-session\nsession_token=private-token",
