@@ -92,7 +92,7 @@ const PI_READINESS_ENVIRONMENT_NAME =
 const PI_MODEL_FIELD = /^[A-Za-z0-9][A-Za-z0-9._:@+/-]*$/;
 const AUTHENTICATED_URL = /[a-z][a-z0-9+.-]*:\/\/[^/\s@]+@/i;
 const CREDENTIAL_ASSIGNMENT =
-  /(?:^|[-._/@+:])(?:[a-z0-9]+[-._/@+:])*(?:credential|key|token|secret|password|passphrase|connection[-._/@+:]?string)(?:[-._/@+:][a-z0-9]+)*[:=]/i;
+  /(?:^|[-._/@+:])(?:[a-z0-9]+[-._/@+:])*(?:authorization|credential|key|token|secret|password|passphrase|cookie|session(?:[-._/@+:]?(?:id|token))?|connection[-._/@+:]?string|signature|sig)(?:[-._/@+:][a-z0-9]+)*[:=]/i;
 
 export function piReadinessEnvironment(
   environment: Readonly<NodeJS.ProcessEnv>,

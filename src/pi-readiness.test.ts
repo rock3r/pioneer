@@ -409,6 +409,10 @@ describe("Pi readiness", () => {
       "token:provider-secret",
       "provider:token:provider-secret",
       "auth.token:provider-secret",
+      "authorization:Basic-private-value",
+      "cookie:private-value",
+      "session-id:private-value",
+      "x-amz-signature:private-value",
     ]) {
       const runner = runnerWith([
         { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
@@ -422,6 +426,7 @@ describe("Pi readiness", () => {
       const result = await checkPiReadiness({ runner });
       expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
       expect(JSON.stringify(result)).not.toContain("provider-secret");
+      expect(JSON.stringify(result)).not.toContain("private-value");
     }
   });
 
