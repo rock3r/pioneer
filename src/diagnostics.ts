@@ -11,7 +11,8 @@ const MAX_SERIALIZATION_DEPTH = 16;
 const CREDENTIAL_CORE =
   "(?:authorization|api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|connection[-_ ]?string|cookie|passphrase|credential|signature|sig|key|token|password|secret)";
 const SECRET_LABEL = `(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*${CREDENTIAL_CORE}[a-z0-9]*(?:[-_.:/ ][a-z0-9]+)*`;
-const QUOTED_LABEL_CANDIDATE = "[a-z0-9](?:[a-z0-9._:/@+ -]|\\\\u[0-9a-f]{4})*";
+const QUOTED_LABEL_CANDIDATE =
+  "(?:[a-z0-9]|\\\\u[0-9a-f]{4})(?:[a-z0-9._:/@+ -]|\\\\u[0-9a-f]{4})*";
 const CREDENTIAL_TOKENS = new Set([
   "authorization",
   "cookie",

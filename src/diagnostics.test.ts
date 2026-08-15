@@ -231,10 +231,13 @@ describe("diagnostics", () => {
   });
 
   it("redacts credentials behind Unicode-escaped JSON keys", () => {
-    const sanitized = sanitizeDiagnostic(String.raw`{"api\u005fkey":"private-value"}`);
+    const sanitized = sanitizeDiagnostic(
+      String.raw`{"api\u005fkey":"private-value","\u0061ccess_token":"private-leading"}`,
+    );
 
     expect(sanitized).not.toContain("private-value");
-    expect(sanitized).toContain("[REDACTED]");
+    expect(sanitized).not.toContain("private-leading");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
   });
 
   it("redacts hyphen-prefixed quoted credential keys", () => {
