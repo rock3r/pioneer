@@ -193,12 +193,14 @@ describe("diagnostics", () => {
 
   it("redacts hyphen-prefixed quoted credential keys", () => {
     const sanitized = sanitizeDiagnostic(
-      '{"X-API-Key":"private-x-key","openai-api-key":"private-openai-key"}',
+      '{"X-API-Key":"private-x-key","openai-api-key":"private-openai-key","vault@api_key":"private-at-key","vault+api_key":"private-plus-key"}',
     );
 
     expect(sanitized).not.toContain("private-x-key");
     expect(sanitized).not.toContain("private-openai-key");
-    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
+    expect(sanitized).not.toContain("private-at-key");
+    expect(sanitized).not.toContain("private-plus-key");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(4);
   });
 
   it("redacts camelCase provider-prefixed credential keys", () => {
