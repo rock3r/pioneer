@@ -219,6 +219,23 @@ describe("Pi readiness", () => {
     });
   });
 
+  it("accepts Pi tagged-alias model identifiers", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model                    context  max-out  thinking  images\nopenrouter ~openai/gpt-latest       1.1M     128K     yes       yes\n",
+        stderr: "",
+      },
+    ]);
+
+    await expect(checkPiReadiness({ runner })).resolves.toMatchObject({
+      ready: true,
+      models: [{ provider: "openrouter", id: "~openai/gpt-latest" }],
+    });
+  });
+
   it("preserves model tags whose names merely end in key-like letters", async () => {
     const runner = runnerWith([
       { exitCode: 0, stdout: "0.84.2\n", stderr: "" },

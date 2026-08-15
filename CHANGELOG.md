@@ -4,12 +4,14 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.1.8 - 2026-08-15
+
 - Suppress provider-controlled response, assistant-error, and stderr text from review failures, and redact credential-shaped readiness metadata and authenticated URLs before diagnostics reach callers.
 - Keep eval control files and copied Pi configuration out of the persistent actor run, mount selected Pi configuration read-only with separate ephemeral writable home/tmp scratch, remove it on every exit path, and apply Pi-home exclusions case-insensitively on macOS and Windows.
 - Reject broad, protected-system, or overlapping eval grants, actor-writable Pi package overlaps, unsafe portable `skill_name` path components, and output paths whose canonical parent enters the source skill or changes during creation.
 - Fix macOS eval actor launch resolution and process-tree timeout containment while preserving narrow native sandbox grants and bounded diagnostics; reject cyclic, excessively deep, or unterminated env shebang resolution safely.
 - Replace recursive Pi-home copying with a selective snapshot MVP: copy the required root configuration and review skills, skip dependency/runtime fluff by default, and support repeated exact-path `--pi-home-include` opt-ins for reviews while preserving hard exclusions, symlink checks, and the 500,000-entry/1 GiB backstops.
-- Certify Pi `0.84.2` as the newest tested compatibility endpoint, including the endpoint matrix, readiness policy, and compatibility documentation.
+- Certify Pi `0.84.2` as the newest tested compatibility endpoint, including tagged-alias model rows, the endpoint matrix, readiness policy, and compatibility documentation.
 
 ## 0.1.7 - 2026-08-11
 
