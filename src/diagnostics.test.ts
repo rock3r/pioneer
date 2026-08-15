@@ -34,6 +34,14 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("[REDACTED]");
   });
 
+  it("preserves ported URL structure and ordinary at-sign diagnostics", () => {
+    expect(
+      sanitizeDiagnostic(
+        "Request failed for https://user:password@example.test:443/path; password@host: message",
+      ),
+    ).toBe("Request failed for https://[REDACTED]@example.test:443/path; password@host: message");
+  });
+
   it("redacts complete multi-token Authorization field values", () => {
     expect(sanitizeDiagnostic("Authorization: Basic dXNlcjpwYXNz\nrequest failed")).toBe(
       "Authorization=[REDACTED] request failed",

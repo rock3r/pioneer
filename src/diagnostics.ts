@@ -10,7 +10,8 @@ const DIAGNOSTIC_PREFIX = /^\[([A-Z][A-Z0-9_]*)\]\s+(.*)$/s;
 const MAX_SERIALIZATION_DEPTH = 16;
 const CREDENTIAL_CORE =
   "(?:authorization|api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|connection[-_ ]?string|cookie|passphrase|credential|signature|sig|key|token|password|secret)";
-const SECRET_LABEL = `(?:[a-z0-9]+[-_.:/@+ ])*[a-z0-9]*${CREDENTIAL_CORE}[a-z0-9]*(?:[-_.:/@+ ][a-z0-9]+)*`;
+const SECRET_LABEL = `(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*${CREDENTIAL_CORE}[a-z0-9]*(?:[-_.:/ ][a-z0-9]+)*`;
+const QUOTED_LABEL_CANDIDATE = "[a-z0-9][a-z0-9._:/@+ -]*";
 const CREDENTIAL_TOKENS = new Set([
   "authorization",
   "cookie",
@@ -66,7 +67,15 @@ export function containsCredentialAssignment(value: string): boolean {
 }
 
 function redactQuotedCredentialAssignments(value: string): string {
-  return value.replaceAll(
+  const broadQuotedLabels = value.replaceAll(
+    new RegExp(
+      `(["'])(${QUOTED_LABEL_CANDIDATE})\\1\\s*[:=]\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`,
+      "gi",
+    ),
+    (match, quote: string, label: string) =>
+      isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
+  );
+  return broadQuotedLabels.replaceAll(
     new RegExp(
       `(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`,
       "gi",
