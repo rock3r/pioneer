@@ -194,7 +194,7 @@ function redactPercentEncodedQueryCredentials(value: string): string {
 
 function redactQueryCredentials(value: string): string {
   return value.replaceAll(
-    /((?:%26|\\u0026|&(?:amp|#0*38|#x0*26);|[?#&])((?:(?!%3d|\\u(?:0026|003d))(?:[a-z0-9._/@+%:-]|\\u[0-9a-f]{4}))+)(?:=|%3d|\\u003d))(?:(?![&#\s,"'{}]|%26|\\["']|\\u0026).)+/gi,
+    /((?:%(?:25){0,4}26|\\u0026|&(?:amp|#0*38|#x0*26);|[?#&])((?:(?!%(?:25){0,4}3d|\\u(?:0026|003d))(?:[a-z0-9._/@+%:-]|\\u[0-9a-f]{4}))+)(?:=|%(?:25){0,4}3d|\\u003d))(?:(?![&#\s,"'{}]|%(?:25){0,4}26|\\["']|\\u0026).)+/gi,
     (match, prefix: string, encodedLabel: string) => {
       return isCredentialLabel(decodePercentEncodingLayers(encodedLabel))
         ? `${prefix}[REDACTED]`
@@ -205,8 +205,8 @@ function redactQueryCredentials(value: string): string {
 
 function redactPercentEncodedUrlUserinfo(value: string): string {
   return value.replaceAll(
-    /((?:(?:[a-z][a-z0-9+.-]*)%3a)?%2f%2f)(?:(?![&#\s,"'{}]|%2f|%3f|%23).)+%40/gi,
-    "$1[REDACTED]%40",
+    /((?:(?:[a-z][a-z0-9+.-]*)%(?:25){0,4}3a)?%(?:25){0,4}2f%(?:25){0,4}2f)(?:(?![&#\s,"'{}]|%(?:25){0,4}(?:2f|3f|23)).)+(%(?:25){0,4}40)/gi,
+    "$1[REDACTED]$2",
   );
 }
 

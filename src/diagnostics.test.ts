@@ -371,6 +371,15 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("https%3A%2F%2F[REDACTED]%40example.test%2Fcallback");
   });
 
+  it("redacts userinfo in multiply percent-encoded URLs", () => {
+    const sanitized = sanitizeDiagnostic(
+      "next=https%253A%252F%252Fuser%253Aprivate-password%2540example.test%252F",
+    );
+
+    expect(sanitized).not.toContain("private-password");
+    expect(sanitized).toContain("https%253A%252F%252F[REDACTED]%2540example.test%252F");
+  });
+
   it("redacts userinfo in percent-encoded protocol-relative URLs", () => {
     const sanitized = sanitizeDiagnostic(
       "next=%2F%2Fuser%3Aprivate-password%40example.test%2Fcallback",
@@ -416,6 +425,15 @@ describe("diagnostics", () => {
 
     expect(sanitized).not.toContain("private-token");
     expect(sanitized).toContain('access_token%3D[REDACTED]%26state%3Dok","status":403');
+  });
+
+  it("redacts multiply encoded labels and equals signs after literal query boundaries", () => {
+    const sanitized = sanitizeDiagnostic(
+      "https://idp.test/cb?access%255Ftoken%253Dprivate-token&state=ok",
+    );
+
+    expect(sanitized).not.toContain("private-token");
+    expect(sanitized).toContain("&state=ok");
   });
 
   it("redacts credentials after percent-encoded parameter separators", () => {
