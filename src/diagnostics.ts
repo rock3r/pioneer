@@ -146,6 +146,19 @@ function redactSignedUrlCredentials(value: string): string {
   );
 }
 
+function redactPercentEncodedQueryCredentials(value: string): string {
+  return value.replaceAll(
+    /((?:%3f|%26)((?:(?!%3d)[a-z0-9._@+%-])+)%3d)(?:(?![&#\s,"'{}]|%26|\\["']|\\u0026).)+/gi,
+    (match, prefix: string, encodedLabel: string) => {
+      try {
+        return isCredentialLabel(decodeURIComponent(encodedLabel)) ? `${prefix}[REDACTED]` : match;
+      } catch {
+        return match;
+      }
+    },
+  );
+}
+
 export class CliUsageError extends Error {}
 
 export function diagnosticMessage(id: string, message: string): string {
@@ -155,10 +168,12 @@ export function diagnosticMessage(id: string, message: string): string {
 
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
   let sanitized = redactSerializedCredentialAssignments(
-    redactSignedUrlCredentials(
-      value.replaceAll(
-        /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
-        "[REDACTED]",
+    redactPercentEncodedQueryCredentials(
+      redactSignedUrlCredentials(
+        value.replaceAll(
+          /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
+          "[REDACTED]",
+        ),
       ),
     ),
   );

@@ -211,6 +211,15 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("%26X-Amz-Algorithm%3DAWS4-HMAC-SHA256");
   });
 
+  it("redacts OAuth credentials in percent-encoded URL parameters", () => {
+    const sanitized = sanitizeDiagnostic(
+      "next=https%3A%2F%2Fidp.test%2Fcallback%3Faccess_token%3Dprivate-token%26state%3Dpublic-state",
+    );
+
+    expect(sanitized).not.toContain("private-token");
+    expect(sanitized).toContain("%26state%3Dpublic-state");
+  });
+
   it("redacts credentials behind quoted JSON keys", () => {
     const sanitized = sanitizeDiagnostic(
       '{"api_key":"google-private","access_token":"access-private"}',
