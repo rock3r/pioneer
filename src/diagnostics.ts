@@ -222,7 +222,7 @@ function redactQueryCredentials(value: string): string {
 
 function redactPercentEncodedUrlUserinfo(value: string): string {
   const encodedAuthorities = value.replaceAll(
-    /((?:(?:[a-z][a-z0-9+.-]*)%(?:25){0,4}3a)?%(?<percentDepth>(?:25){0,4})2f%\k<percentDepth>2f)(?:(?![&#\s,"'{}]|%\k<percentDepth>(?:2f|3f|23)).)+(%\k<percentDepth>40|@)/gi,
+    /((?:(?:[a-z][a-z0-9+.-]*)%(?:25){0,4}3a)?%(?<percentDepth>(?:25){0,4})2f%\k<percentDepth>2f)(?:(?![&?#/\s,"'{}]|%\k<percentDepth>(?:2f|3f|23)).)+(%\k<percentDepth>40|@)/gi,
     "$1[REDACTED]$3",
   );
   return encodedAuthorities.replaceAll(
