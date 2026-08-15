@@ -77,6 +77,13 @@ describe("diagnostics", () => {
     }
   });
 
+  it("preserves ordinary assignments whose labels merely end in credential words", () => {
+    const diagnostic =
+      "Request failed for https://example.test/?monkey=banana with signal=SIGTERM and status 404";
+
+    expect(sanitizeDiagnostic(diagnostic)).toBe(diagnostic);
+  });
+
   it("redacts provider-prefixed credential assignments", () => {
     const sanitized = sanitizeDiagnostic(
       "GOOGLE_API_KEY=google-private\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nAWS_SECRET_ACCESS_KEY=aws-private\nGITHUB_TOKEN=github-private",

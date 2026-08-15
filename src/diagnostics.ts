@@ -70,14 +70,16 @@ function redactQuotedCredentialAssignments(value: string): string {
       `(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`,
       "gi",
     ),
-    (_match, quote: string, label: string) => `${quote}${label}${quote}=[REDACTED]`,
+    (match, quote: string, label: string) =>
+      isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
   );
 }
 
 function redactUnquotedCredentialLines(value: string): string {
   return value.replaceAll(
     new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?!["']|\\[REDACTED\\])[^\\r\\n]*`, "gi"),
-    (_match, quote: string, label: string) => `${quote}${label}${quote}=[REDACTED]`,
+    (match, quote: string, label: string) =>
+      isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
   );
 }
 
@@ -163,7 +165,8 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
     .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     .replaceAll(
       new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*[^\\s,;]+`, "gi"),
-      (_match, quote: string, label: string) => `${quote}${label}${quote}=[REDACTED]`,
+      (match, quote: string, label: string) =>
+        isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
     )
     .replaceAll(
       /\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,})\b/g,
