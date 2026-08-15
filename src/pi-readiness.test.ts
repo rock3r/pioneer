@@ -425,6 +425,22 @@ describe("Pi readiness", () => {
     expect(JSON.stringify(result)).not.toContain("user:pass");
   });
 
+  it("rejects prefixed protocol-relative userinfo anywhere in model catalog fields", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nx//user:private-password@host model-id 400K 128K yes yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
+    expect(JSON.stringify(result)).not.toContain("private-password");
+  });
+
   it("rejects colon-delimited credential assignments in model catalog fields", async () => {
     for (const provider of [
       "token:provider-secret",
