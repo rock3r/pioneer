@@ -77,7 +77,11 @@ function redactUnquotedCredentialLines(value: string): string {
 }
 
 function unescapeSerializedDelimiterLayer(value: string): string {
-  return value.replaceAll(/\\([\\/"'])/g, "$1");
+  return value.replaceAll(
+    /\\([/"'])|\\(\\)(?=\\?[/"'])/g,
+    (_match: string, delimiter: string | undefined, serializedBackslash: string | undefined) =>
+      delimiter ?? serializedBackslash ?? "",
+  );
 }
 
 function redactSerializedCredentialAssignments(value: string): string {
@@ -118,10 +122,15 @@ export function diagnosticMessage(id: string, message: string): string {
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
   let sanitized = redactSerializedCredentialAssignments(
     redactSignedUrlCredentials(
-      value.replaceAll(
-        /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
-        "[REDACTED]",
-      ),
+      value
+        .replaceAll(
+          /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
+          "[REDACTED]",
+        )
+        .replaceAll(
+          /(["']?)\b(?:proxy[-_ ]?)?authorization\1\s*[:=][^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*/gi,
+          "Authorization=[REDACTED]",
+        ),
     ),
   )
     .replaceAll(

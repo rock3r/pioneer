@@ -63,6 +63,20 @@ describe("diagnostics", () => {
     expect(sanitized).toBe("Authorization=[REDACTED] request failed");
   });
 
+  it("redacts folded Authorization field continuations", () => {
+    const sanitized = sanitizeDiagnostic(
+      "Authorization: Signature\r\n private-signature\r\nrequest failed",
+    );
+
+    expect(sanitized).toBe("Authorization=[REDACTED] request failed");
+  });
+
+  it("preserves ordinary Windows UNC and device paths", () => {
+    for (const path of [String.raw`\\server\share`, String.raw`\\?\C:\target`]) {
+      expect(sanitizeDiagnostic(`Cannot read ${path}`)).toBe(`Cannot read ${path}`);
+    }
+  });
+
   it("redacts provider-prefixed credential assignments", () => {
     const sanitized = sanitizeDiagnostic(
       "GOOGLE_API_KEY=google-private\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nAWS_SECRET_ACCESS_KEY=aws-private\nGITHUB_TOKEN=github-private",
