@@ -46,7 +46,7 @@ function credentialLabelTokens(label: string): readonly string[] {
   return label
     .replaceAll(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
     .replaceAll(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[-_./@+\s]+/)
+    .split(/[-_.:/@+\s]+/)
     .filter(Boolean)
     .map((token) => token.toLowerCase().replace(/\d+$/, ""));
 }

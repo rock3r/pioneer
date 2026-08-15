@@ -219,6 +219,14 @@ describe("diagnostics", () => {
     expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(4);
   });
 
+  it("redacts credential assignments behind colon namespaces", () => {
+    const sanitized = sanitizeDiagnostic("vault:token=private-token\nrequest failed");
+
+    expect(sanitized).not.toContain("private-token");
+    expect(sanitized).toContain("[REDACTED]");
+    expect(sanitized).toContain("request failed");
+  });
+
   it("redacts credential fields behind nested JSON escaping", () => {
     const sanitized = sanitizeDiagnostic('{\\"api_key\\":\\"google-private\\"}');
 
