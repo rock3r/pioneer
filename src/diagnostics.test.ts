@@ -65,7 +65,7 @@ describe("diagnostics", () => {
 
   it("redacts provider-prefixed credential assignments", () => {
     const sanitized = sanitizeDiagnostic(
-      "GOOGLE_API_KEY=google-private AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE AWS_SECRET_ACCESS_KEY=aws-private GITHUB_TOKEN=github-private",
+      "GOOGLE_API_KEY=google-private\nAWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\nAWS_SECRET_ACCESS_KEY=aws-private\nGITHUB_TOKEN=github-private",
     );
 
     expect(sanitized).toBe(
@@ -75,7 +75,7 @@ describe("diagnostics", () => {
 
   it("redacts cookie and session credential assignments", () => {
     const sanitized = sanitizeDiagnostic(
-      "Set-Cookie: session=private-cookie\nSESSION_ID=private-session session_token=private-token",
+      "Set-Cookie: session=private-cookie\nSESSION_ID=private-session\nsession_token=private-token",
     );
 
     expect(sanitized).not.toContain("private-cookie");
@@ -91,6 +91,17 @@ describe("diagnostics", () => {
 
     expect(sanitized).not.toContain("horse battery staple");
     expect(sanitized).not.toContain("AccountKey=private-key");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
+    expect(sanitized).toContain("request failed");
+  });
+
+  it("redacts complete unquoted multiword credential values", () => {
+    const sanitized = sanitizeDiagnostic(
+      "PASSWORD=correct horse battery staple\nCLIENT_SECRET=multi word client secret\nrequest failed",
+    );
+
+    expect(sanitized).not.toContain("horse battery staple");
+    expect(sanitized).not.toContain("multi word client secret");
     expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
     expect(sanitized).toContain("request failed");
   });

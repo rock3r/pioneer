@@ -21,10 +21,10 @@ function redactQuotedCredentialAssignments(value: string): string {
   );
 }
 
-function redactUnquotedPassphrase(value: string): string {
+function redactUnquotedCredentialLines(value: string): string {
   return value.replaceAll(
-    /(["']?)\b(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*passphrase\1\s*[:=]\s*(?!["']|\[REDACTED\])[^\r\n]*/gi,
-    "PASSPHRASE=[REDACTED]",
+    new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?!["']|\\[REDACTED\\])[^\\r\\n]*`, "gi"),
+    (_match, quote: string, label: string) => `${quote}${label}${quote}=[REDACTED]`,
   );
 }
 
@@ -35,12 +35,12 @@ function unescapeSerializedDelimiterLayer(value: string): string {
 function redactSerializedCredentialAssignments(value: string): string {
   let sanitized = value;
   for (let depth = 0; depth < MAX_SERIALIZATION_DEPTH; depth += 1) {
-    sanitized = redactUnquotedPassphrase(redactQuotedCredentialAssignments(sanitized));
+    sanitized = redactUnquotedCredentialLines(redactQuotedCredentialAssignments(sanitized));
     const unescaped = unescapeSerializedDelimiterLayer(sanitized);
     if (unescaped === sanitized) return sanitized;
     sanitized = unescaped;
   }
-  return redactUnquotedPassphrase(redactQuotedCredentialAssignments(sanitized));
+  return redactUnquotedCredentialLines(redactQuotedCredentialAssignments(sanitized));
 }
 
 function unescapeSerializedDelimiters(value: string): string {
@@ -61,11 +61,12 @@ export function diagnosticMessage(id: string, message: string): string {
 }
 
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
-  let sanitized = redactSerializedCredentialAssignments(value)
-    .replaceAll(
+  let sanitized = redactSerializedCredentialAssignments(
+    value.replaceAll(
       /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
       "[REDACTED]",
-    )
+    ),
+  )
     .replaceAll(
       /(["']?)\b(?:proxy[-_ ]?)?authorization\1\s*[:=][^\r\n]*/gi,
       "Authorization=[REDACTED]",
