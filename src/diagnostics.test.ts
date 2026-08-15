@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { diagnosticMessage, parseDiagnostic, sanitizeDiagnostic } from "./diagnostics.js";
 
 describe("diagnostics", () => {
+  it("bounds provider-controlled input before credential-label scans", () => {
+    const input = `${"a-".repeat(8_000)}: x`;
+    const startedAt = performance.now();
+    const sanitized = sanitizeDiagnostic(input);
+
+    expect(performance.now() - startedAt).toBeLessThan(1_000);
+    expect(sanitized.length).toBeLessThanOrEqual(500);
+  });
+
   it("embeds a stable ID in human-readable prose and parses it for machines", () => {
     const message = diagnosticMessage("PI_NOT_FOUND", "Install Pi and retry.");
 
@@ -387,6 +396,13 @@ describe("diagnostics", () => {
 
     expect(sanitized).not.toContain("private%252Fpassword");
     expect(sanitized).toContain("https%3A%2F%2F[REDACTED]%40example.test%2F");
+  });
+
+  it("redacts encoded userinfo behind literal authority slashes", () => {
+    const sanitized = sanitizeDiagnostic("next=//user%3Aprivate-password%40example.test/path");
+
+    expect(sanitized).not.toContain("private-password");
+    expect(sanitized).toContain("//[REDACTED]%40example.test/path");
   });
 
   it("redacts userinfo in percent-encoded protocol-relative URLs", () => {

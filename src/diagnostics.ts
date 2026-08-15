@@ -7,6 +7,7 @@ export interface Diagnostic {
 }
 
 const DIAGNOSTIC_PREFIX = /^\[([A-Z][A-Z0-9_]*)\]\s+(.*)$/s;
+const MAX_DIAGNOSTIC_INPUT_LENGTH = 4 * 1024;
 const MAX_SERIALIZATION_DEPTH = 16;
 const MAX_PERCENT_ENCODING_DEPTH = 5;
 const CREDENTIAL_CORE =
@@ -204,9 +205,13 @@ function redactQueryCredentials(value: string): string {
 }
 
 function redactPercentEncodedUrlUserinfo(value: string): string {
-  return value.replaceAll(
+  const encodedAuthorities = value.replaceAll(
     /((?:(?:[a-z][a-z0-9+.-]*)%(?:25){0,4}3a)?%(?<percentDepth>(?:25){0,4})2f%\k<percentDepth>2f)(?:(?![&#\s,"'{}]|%\k<percentDepth>(?:2f|3f|23)).)+(%\k<percentDepth>40)/gi,
     "$1[REDACTED]$3",
+  );
+  return encodedAuthorities.replaceAll(
+    /((?:\b[a-z][a-z0-9+.-]*:)?\/\/)(?:(?![/\s?#"{}[\]<>]).)+(%(?:25){0,4}40)/gi,
+    "$1[REDACTED]$2",
   );
 }
 
@@ -218,7 +223,10 @@ export function diagnosticMessage(id: string, message: string): string {
 }
 
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
-  const valueWithoutTerminalControls = stripTerminalControls(value);
+  const valueWithoutTerminalControls = stripTerminalControls(value).slice(
+    0,
+    MAX_DIAGNOSTIC_INPUT_LENGTH,
+  );
   let sanitized = redactSerializedCredentialAssignments(
     redactPercentEncodedQueryCredentials(
       redactQueryCredentials(
