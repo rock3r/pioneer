@@ -499,6 +499,15 @@ describe("diagnostics", () => {
     }
   });
 
+  it("redacts credentials after nested HTML-escaped assignment delimiters", () => {
+    const sanitized = sanitizeDiagnostic(
+      "https://idp.test/?access_token&amp;#x3D;private-token&state=ok",
+    );
+
+    expect(sanitized).not.toContain("private-token");
+    expect(sanitized).toContain("&state=ok");
+  });
+
   it("bounds generic query redaction after Unicode-escaped separators", () => {
     const sanitized = sanitizeDiagnostic(
       String.raw`{"url":"https://idp.test/?state=ok\u0026access_token=private","status":"failed","code":403}`,

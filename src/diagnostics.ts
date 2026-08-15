@@ -170,6 +170,19 @@ function unescapeSerializedDelimiters(value: string): string {
   return unescaped;
 }
 
+function unescapeNestedHtmlCredentialDelimiters(value: string): string {
+  let unescaped = value;
+  for (let depth = 0; depth < MAX_SERIALIZATION_DEPTH; depth += 1) {
+    const next = unescaped.replaceAll(
+      /&(?:amp|#0*38|#x0*26);(?=(?:amp|equals|#0*(?:38|61)|#x0*(?:26|3d));)/gi,
+      "&",
+    );
+    if (next === unescaped) return unescaped;
+    unescaped = next;
+  }
+  return unescaped;
+}
+
 function redactSignedUrlCredentials(value: string): string {
   return value.replaceAll(
     /((?:[?&]|%3f|%26|\\u0026|&(?:amp|#0*38|#x0*26);)(?:(?:x-amz|x-goog)-)?(?:credential|signature|security-token|sig)(?:=|%3d))(?:(?![&#\s,"'{}]|%26|\\["']|\\u0026).)+/gi,
@@ -244,12 +257,15 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
     0,
     MAX_DIAGNOSTIC_INPUT_LENGTH,
   );
+  const valueWithoutNestedHtmlDelimiters = unescapeNestedHtmlCredentialDelimiters(
+    valueWithoutTerminalControls,
+  );
   let sanitized = redactSerializedCredentialAssignments(
     redactPercentEncodedQueryCredentials(
       redactQueryCredentials(
         redactSignedUrlCredentials(
           redactPercentEncodedUrlUserinfo(
-            valueWithoutTerminalControls.replaceAll(
+            valueWithoutNestedHtmlDelimiters.replaceAll(
               /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
               "[REDACTED]",
             ),
