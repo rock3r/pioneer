@@ -87,6 +87,11 @@ describe("diagnostics", () => {
     expect(sanitizeDiagnostic(`provider returned ${token}`)).toBe("provider returned [REDACTED]");
   });
 
+  it("redacts standalone Slack access tokens", () => {
+    const token = "xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx";
+    expect(sanitizeDiagnostic(`provider returned ${token}`)).toBe("provider returned [REDACTED]");
+  });
+
   it("redacts complete multi-token Authorization field values", () => {
     expect(sanitizeDiagnostic("Authorization: Basic dXNlcjpwYXNz\nrequest failed")).toBe(
       "Authorization=[REDACTED] request failed",
@@ -306,6 +311,17 @@ describe("diagnostics", () => {
 
     expect(sanitized).not.toContain("private");
     expect(sanitized).toContain('&amp;access_token=[REDACTED]","status":"failed","code":403');
+  });
+
+  it("bounds generic query redaction after Unicode-escaped separators", () => {
+    const sanitized = sanitizeDiagnostic(
+      String.raw`{"url":"https://idp.test/?state=ok\u0026access_token=private","status":"failed","code":403}`,
+    );
+
+    expect(sanitized).not.toContain("private");
+    expect(sanitized).toContain(
+      String.raw`\u0026access_token=[REDACTED]","status":"failed","code":403`,
+    );
   });
 
   it("redacts credentials behind quoted JSON keys", () => {

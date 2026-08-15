@@ -44,7 +44,7 @@ const COMPOUND_CREDENTIAL_SUFFIXES = [
   "signingkey",
   "signingsecret",
 ] as const;
-const STANDALONE_CREDENTIAL_SOURCE = String.raw`\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{16,})\b`;
+const STANDALONE_CREDENTIAL_SOURCE = String.raw`\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|xox[baprs]-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{16,})\b`;
 
 function credentialLabelTokens(label: string): readonly string[] {
   return label
@@ -167,7 +167,7 @@ function redactPercentEncodedQueryCredentials(value: string): string {
 
 function redactQueryCredentials(value: string): string {
   return value.replaceAll(
-    /((?:&(?:amp|#0*38|#x0*26);|[?&])([a-z0-9._/@+%:-]+)=)(?:(?![&#\s,"'{}]|\\["']|\\u0026).)+/gi,
+    /((?:\\u0026|&(?:amp|#0*38|#x0*26);|[?&])([a-z0-9._/@+%:-]+)=)(?:(?![&#\s,"'{}]|\\["']|\\u0026).)+/gi,
     (match, prefix: string, encodedLabel: string) => {
       try {
         return isCredentialLabel(decodeURIComponent(encodedLabel)) ? `${prefix}[REDACTED]` : match;

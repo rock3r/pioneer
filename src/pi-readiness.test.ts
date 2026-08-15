@@ -469,6 +469,7 @@ describe("Pi readiness", () => {
       "sk-proj-ABCDEFGHIJKLMNOPQRSTUV",
       "AKIAIOSFODNN7EXAMPLE",
       "AIzaSyA1234567890bcdefghijklmnopqrstuvx",
+      "xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx",
       "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
     ]) {
       const runner = runnerWith([
