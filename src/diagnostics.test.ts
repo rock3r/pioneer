@@ -54,6 +54,12 @@ describe("diagnostics", () => {
     );
   });
 
+  it("stops authority redaction at compact JSON boundaries", () => {
+    expect(
+      sanitizeDiagnostic('{"url":"https://user:p@ss@example.test","email":"ops@example.test"}'),
+    ).toBe('{"url":"https://[REDACTED]@example.test","email":"ops@example.test"}');
+  });
+
   it("redacts standalone AWS access key IDs", () => {
     expect(sanitizeDiagnostic("provider returned AKIAIOSFODNN7EXAMPLE")).toBe(
       "provider returned [REDACTED]",
