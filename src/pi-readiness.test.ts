@@ -413,6 +413,10 @@ describe("Pi readiness", () => {
       "cookie:private-value",
       "session-id:private-value",
       "x-amz-signature:private-value",
+      "openaiApiKey:private-value",
+      "awsSecretAccessKey:private-value",
+      "clientCredential:private-value",
+      "azureConnectionString:private-value",
     ]) {
       const runner = runnerWith([
         { exitCode: 0, stdout: "0.84.2\n", stderr: "" },

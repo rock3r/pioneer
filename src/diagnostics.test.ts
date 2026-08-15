@@ -95,6 +95,16 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("request failed");
   });
 
+  it("redacts camelCase connection-string assignments", () => {
+    const sanitized = sanitizeDiagnostic(
+      'azureConnectionString=private-azure\n{"redisConnectionString":"private-redis"}',
+    );
+
+    expect(sanitized).not.toContain("private-azure");
+    expect(sanitized).not.toContain("private-redis");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
+  });
+
   it("redacts complete unquoted multiword credential values", () => {
     const sanitized = sanitizeDiagnostic(
       "PASSWORD=correct horse battery staple\nCLIENT_SECRET=multi word client secret\nrequest failed",
