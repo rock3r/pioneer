@@ -387,6 +387,15 @@ describe("diagnostics", () => {
     expect(sanitized).toContain('%26state%3Dok","status":403');
   });
 
+  it("redacts Unicode-escaped credential query labels", () => {
+    const sanitized = sanitizeDiagnostic(
+      String.raw`{"url":"https://idp.test/cb?access\u005ftoken=private-token&state=ok","status":403}`,
+    );
+
+    expect(sanitized).not.toContain("private-token");
+    expect(sanitized).toContain(String.raw`access\u005ftoken=[REDACTED]&state=ok","status":403`);
+  });
+
   it("bounds generic query redaction in literal URL fragments", () => {
     const sanitized = sanitizeDiagnostic(
       '{"url":"https://idp.test/cb#access_token=private&state=ok","status":403}',

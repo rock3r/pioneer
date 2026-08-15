@@ -181,7 +181,7 @@ function redactPercentEncodedQueryCredentials(value: string): string {
 
 function redactQueryCredentials(value: string): string {
   return value.replaceAll(
-    /((?:%26|\\u0026|&(?:amp|#0*38|#x0*26);|[?#&])((?:(?!%3d)[a-z0-9._/@+%:-])+)(?:=|%3d|\\u003d))(?:(?![&#\s,"'{}]|%26|\\["']|\\u0026).)+/gi,
+    /((?:%26|\\u0026|&(?:amp|#0*38|#x0*26);|[?#&])((?:(?!%3d|\\u003d)(?:[a-z0-9._/@+%:-]|\\u[0-9a-f]{4}))+)(?:=|%3d|\\u003d))(?:(?![&#\s,"'{}]|%26|\\["']|\\u0026).)+/gi,
     (match, prefix: string, encodedLabel: string) => {
       try {
         return isCredentialLabel(decodeURIComponent(encodedLabel)) ? `${prefix}[REDACTED]` : match;
