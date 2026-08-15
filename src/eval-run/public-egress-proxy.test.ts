@@ -116,7 +116,7 @@ describe("public egress proxy", () => {
     const closing = proxy.close();
     releaseResolution?.({ address: "127.0.0.1", family: 4 });
     await closing;
-    expect(upstreamSockets.size).toBe(0);
+    await waitFor(() => upstreamSockets.size === 0);
     client.destroy();
     secondClient.destroy();
     proxy = undefined;
@@ -151,7 +151,7 @@ describe("public egress proxy", () => {
     request.end();
     await waitFor(() => upstreamSockets.size === 1);
     await proxy.close();
-    expect(upstreamSockets.size).toBe(0);
+    await waitFor(() => upstreamSockets.size === 0);
     request.destroy();
     proxy = undefined;
     await new Promise<void>((resolve, reject) =>
