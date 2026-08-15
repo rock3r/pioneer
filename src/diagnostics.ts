@@ -8,6 +8,7 @@ export interface Diagnostic {
 
 const DIAGNOSTIC_PREFIX = /^\[([A-Z][A-Z0-9_]*)\]\s+(.*)$/s;
 const MAX_SERIALIZATION_DEPTH = 16;
+const MAX_PERCENT_ENCODING_DEPTH = 5;
 const CREDENTIAL_CORE =
   "(?:authorization|api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|connection[-_ ]?string|cookie|passphrase|credential|signature|sig|key|token|password|secret)";
 const SECRET_LABEL = `_*(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*${CREDENTIAL_CORE}[a-z0-9]*(?:[-_.:/ ][a-z0-9]+)*`;
@@ -166,15 +167,27 @@ function redactSignedUrlCredentials(value: string): string {
   );
 }
 
+function decodePercentEncodingLayers(value: string): string {
+  let decoded = value;
+  for (let depth = 0; depth < MAX_PERCENT_ENCODING_DEPTH; depth += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) return decoded;
+      decoded = next;
+    } catch {
+      return decoded;
+    }
+  }
+  return decoded;
+}
+
 function redactPercentEncodedQueryCredentials(value: string): string {
   return value.replaceAll(
     /(%(?:25){0,4}(?:3f|23|26)((?:(?!%(?:25){0,4}3d)[a-z0-9._@+%-])+?)%(?:25){0,4}3d)(?:(?![&#\s,"'{}]|%(?:25){0,4}26|\\["']|\\u0026).)+/gi,
     (match, prefix: string, encodedLabel: string) => {
-      try {
-        return isCredentialLabel(decodeURIComponent(encodedLabel)) ? `${prefix}[REDACTED]` : match;
-      } catch {
-        return match;
-      }
+      return isCredentialLabel(decodePercentEncodingLayers(encodedLabel))
+        ? `${prefix}[REDACTED]`
+        : match;
     },
   );
 }
@@ -183,11 +196,9 @@ function redactQueryCredentials(value: string): string {
   return value.replaceAll(
     /((?:%26|\\u0026|&(?:amp|#0*38|#x0*26);|[?#&])((?:(?!%3d|\\u(?:0026|003d))(?:[a-z0-9._/@+%:-]|\\u[0-9a-f]{4}))+)(?:=|%3d|\\u003d))(?:(?![&#\s,"'{}]|%26|\\["']|\\u0026).)+/gi,
     (match, prefix: string, encodedLabel: string) => {
-      try {
-        return isCredentialLabel(decodeURIComponent(encodedLabel)) ? `${prefix}[REDACTED]` : match;
-      } catch {
-        return match;
-      }
+      return isCredentialLabel(decodePercentEncodingLayers(encodedLabel))
+        ? `${prefix}[REDACTED]`
+        : match;
     },
   );
 }

@@ -345,6 +345,14 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("%2526state%253Dpublic-state");
   });
 
+  it("redacts multiply percent-encoded credential labels in nested URLs", () => {
+    const sanitized = sanitizeDiagnostic(
+      "next=https%253A%252F%252Fidp.test%252Fcb%253Faccess%255Ftoken%253Dprivate-token",
+    );
+
+    expect(sanitized).not.toContain("private-token");
+  });
+
   it("redacts OAuth credentials in percent-encoded URL fragments", () => {
     const sanitized = sanitizeDiagnostic(
       "next=https%3A%2F%2Fidp.test%2Fcallback%23access_token%3Dprivate-token%26state%3Dpublic-state",
