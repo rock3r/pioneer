@@ -423,6 +423,15 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("//[REDACTED]%40example.test/path");
   });
 
+  it("redacts literal userinfo delimiters behind encoded authority slashes", () => {
+    const sanitized = sanitizeDiagnostic(
+      "next=https%3A%2F%2Fuser:private-password@example.test/path",
+    );
+
+    expect(sanitized).not.toContain("private-password");
+    expect(sanitized).toContain("https%3A%2F%2F[REDACTED]@example.test/path");
+  });
+
   it("redacts userinfo in percent-encoded protocol-relative URLs", () => {
     const sanitized = sanitizeDiagnostic(
       "next=%2F%2Fuser%3Aprivate-password%40example.test%2Fcallback",
@@ -488,6 +497,25 @@ describe("diagnostics", () => {
 
     expect(sanitized).not.toContain("private-token");
     expect(sanitized).toContain("&state=ok");
+  });
+
+  it("redacts encoded ampersands that are data in literal query values", () => {
+    const sanitized = sanitizeDiagnostic(
+      "https://idp.test/cb?access_token=private%26suffix&state=ok",
+    );
+
+    expect(sanitized).not.toContain("private%26suffix");
+    expect(sanitized).not.toContain("%26suffix");
+    expect(sanitized).toContain("&state=ok");
+  });
+
+  it("bounds encoded query credentials with literal assignment delimiters", () => {
+    const sanitized = sanitizeDiagnostic(
+      '{"url":"https%3A%2F%2Fidp.test%2Fcb%3Faccess_token=private","status":"failed","code":403}',
+    );
+
+    expect(sanitized).not.toContain("private");
+    expect(sanitized).toContain('"status":"failed","code":403');
   });
 
   it("redacts credentials after percent-encoded parameter separators", () => {

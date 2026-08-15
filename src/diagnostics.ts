@@ -192,7 +192,7 @@ function decodePercentEncodingLayers(value: string): string {
 
 function redactPercentEncodedQueryCredentials(value: string): string {
   return value.replaceAll(
-    /(%(?:25){0,4}(?:3f|23|26)((?:(?!%(?:25){0,4}3d)[a-z0-9._@+%-])+?)%(?:25){0,4}3d)(?:(?![&#\s,"'{}]|%(?:25){0,4}26|\\["']|\\u0026).)+/gi,
+    /(%(?:25){0,4}(?:3f|23|26)((?:(?!%(?:25){0,4}3d)[a-z0-9._@+%-])+?)(?:%(?:25){0,4}3d|=))(?:(?![&#\s,"'{}]|%(?:25){0,4}26|\\["']|\\u0026).)+/gi,
     (match, prefix: string, encodedLabel: string) => {
       return isCredentialLabel(decodePercentEncodingLayers(encodedLabel))
         ? `${prefix}[REDACTED]`
@@ -202,8 +202,16 @@ function redactPercentEncodedQueryCredentials(value: string): string {
 }
 
 function redactQueryCredentials(value: string): string {
-  return value.replaceAll(
-    /((?:%(?:25){0,4}26|\\u0026|&(?:amp|#0*38|#x0*26);|[?#&])((?:(?!%(?:25){0,4}3d|\\u(?:0026|003d))(?:[a-z0-9._/@+%:-]|\\u[0-9a-f]{4}))+)(?:=|%(?:25){0,4}3d|\\u003d|&(?:equals|#0*61|#x0*3d);))(?:(?![&#\s,"'{}]|%(?:25){0,4}26|\\["']|\\u0026).)+/gi,
+  const literalAssignments = value.replaceAll(
+    /([?#&]((?:[a-z0-9._/@+%:-]|\\u[0-9a-f]{4})+)=)(?:(?![&#\s,"'{}]|\\["']|\\u0026).)+/gi,
+    (match, prefix: string, encodedLabel: string) => {
+      return isCredentialLabel(decodePercentEncodingLayers(encodedLabel))
+        ? `${prefix}[REDACTED]`
+        : match;
+    },
+  );
+  return literalAssignments.replaceAll(
+    /((?:%(?:25){0,4}26|\\u0026|&(?:amp|#0*38|#x0*26);|[?#&])((?:(?!%(?:25){0,4}3d|\\u(?:0026|003d))(?:[a-z0-9._/@+%:-]|\\u[0-9a-f]{4}))+)(?:=|%(?:25){0,4}3d|\\u003d|&(?:equals|#0*61|#x0*3d);))(?!\[REDACTED\])(?:(?![&#\s,"'{}]|%(?:25){0,4}26|\\["']|\\u0026).)+/gi,
     (match, prefix: string, encodedLabel: string) => {
       return isCredentialLabel(decodePercentEncodingLayers(encodedLabel))
         ? `${prefix}[REDACTED]`
@@ -214,7 +222,7 @@ function redactQueryCredentials(value: string): string {
 
 function redactPercentEncodedUrlUserinfo(value: string): string {
   const encodedAuthorities = value.replaceAll(
-    /((?:(?:[a-z][a-z0-9+.-]*)%(?:25){0,4}3a)?%(?<percentDepth>(?:25){0,4})2f%\k<percentDepth>2f)(?:(?![&#\s,"'{}]|%\k<percentDepth>(?:2f|3f|23)).)+(%\k<percentDepth>40)/gi,
+    /((?:(?:[a-z][a-z0-9+.-]*)%(?:25){0,4}3a)?%(?<percentDepth>(?:25){0,4})2f%\k<percentDepth>2f)(?:(?![&#\s,"'{}]|%\k<percentDepth>(?:2f|3f|23)).)+(%\k<percentDepth>40|@)/gi,
     "$1[REDACTED]$3",
   );
   return encodedAuthorities.replaceAll(
