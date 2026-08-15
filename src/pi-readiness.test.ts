@@ -440,6 +440,12 @@ describe("Pi readiness", () => {
       "azureConnectionString:private-value",
       "password.confirm:private-value",
       "session.id:private-value",
+      "apiKey1:private-value",
+      "accessToken2:private-value",
+      "key1:private-value",
+      "authtoken:private-value",
+      "ACCOUNTKEY:private-value",
+      "webhooksecret:private-value",
     ]) {
       const runner = runnerWith([
         { exitCode: 0, stdout: "0.84.2\n", stderr: "" },

@@ -35,6 +35,11 @@ const COMPOUND_CREDENTIAL_SUFFIXES = [
   "sessionid",
   "sessiontoken",
   "connectionstring",
+  "authtoken",
+  "accountkey",
+  "webhooksecret",
+  "signingkey",
+  "signingsecret",
 ] as const;
 
 function credentialLabelTokens(label: string): readonly string[] {
@@ -43,7 +48,7 @@ function credentialLabelTokens(label: string): readonly string[] {
     .replaceAll(/([a-z0-9])([A-Z])/g, "$1 $2")
     .split(/[-_./@+\s]+/)
     .filter(Boolean)
-    .map((token) => token.toLowerCase());
+    .map((token) => token.toLowerCase().replace(/\d+$/, ""));
 }
 
 function isCredentialLabel(label: string): boolean {
