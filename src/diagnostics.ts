@@ -168,6 +168,13 @@ function redactQueryCredentials(value: string): string {
   );
 }
 
+function redactPercentEncodedUrlUserinfo(value: string): string {
+  return value.replaceAll(
+    /((?:[a-z][a-z0-9+.-]*)%3a%2f%2f)(?:(?![&#\s,"'{}]|%2f|%3f|%23).)+%40/gi,
+    "$1[REDACTED]%40",
+  );
+}
+
 export class CliUsageError extends Error {}
 
 export function diagnosticMessage(id: string, message: string): string {
@@ -180,9 +187,11 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
     redactPercentEncodedQueryCredentials(
       redactQueryCredentials(
         redactSignedUrlCredentials(
-          value.replaceAll(
-            /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
-            "[REDACTED]",
+          redactPercentEncodedUrlUserinfo(
+            value.replaceAll(
+              /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
+              "[REDACTED]",
+            ),
           ),
         ),
       ),

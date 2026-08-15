@@ -228,6 +228,15 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("%26state%3Dpublic-state");
   });
 
+  it("redacts userinfo in percent-encoded URLs", () => {
+    const sanitized = sanitizeDiagnostic(
+      "next=https%3A%2F%2Fuser%3Aprivate-password%40example.test%2Fcallback",
+    );
+
+    expect(sanitized).not.toContain("user%3Aprivate-password");
+    expect(sanitized).toContain("https%3A%2F%2F[REDACTED]%40example.test%2Fcallback");
+  });
+
   it("redacts credentials behind quoted JSON keys", () => {
     const sanitized = sanitizeDiagnostic(
       '{"api_key":"google-private","access_token":"access-private"}',
