@@ -396,6 +396,15 @@ describe("diagnostics", () => {
     expect(sanitized).toContain(String.raw`access\u005ftoken=[REDACTED]&state=ok","status":403`);
   });
 
+  it("does not swallow Unicode-escaped separators into query labels", () => {
+    const sanitized = sanitizeDiagnostic(
+      String.raw`{"url":"https://idp.test/cb?public\u0026token=private-token","status":403}`,
+    );
+
+    expect(sanitized).not.toContain("private-token");
+    expect(sanitized).toContain(String.raw`?public\u0026token=[REDACTED]","status":403`);
+  });
+
   it("bounds generic query redaction in literal URL fragments", () => {
     const sanitized = sanitizeDiagnostic(
       '{"url":"https://idp.test/cb#access_token=private&state=ok","status":403}',
