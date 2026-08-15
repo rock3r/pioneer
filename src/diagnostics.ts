@@ -46,7 +46,7 @@ const COMPOUND_CREDENTIAL_SUFFIXES = [
   "signingkey",
   "signingsecret",
 ] as const;
-const STANDALONE_CREDENTIAL_SOURCE = String.raw`(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{8,}|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|gsk_[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|xox[baprs]-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{16,})(?![A-Za-z0-9])`;
+const STANDALONE_CREDENTIAL_SOURCE = String.raw`(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{8,}|(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}|gsk_[A-Za-z0-9]{20,}|hf_[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{35}|xox[baprs]-[A-Za-z0-9-]{20,}|eyJ[A-Za-z0-9_-]{5,}\.eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{16,})(?![A-Za-z0-9])`;
 
 function stripTerminalControls(value: string): string {
   return [...value]
@@ -111,7 +111,15 @@ function redactQuotedCredentialAssignments(value: string): string {
 }
 
 function redactUnquotedCredentialLines(value: string): string {
-  return value.replaceAll(
+  const structuredScalars = value.replaceAll(
+    new RegExp(
+      `(["']?)\\b(${SECRET_LABEL})\\1\\s*:\\s*(?!["']|\\[REDACTED\\])(?:null|true|false|-?\\d+(?:\\.\\d+)?(?:e[+-]?\\d+)?)(?=\\s*[,}])`,
+      "gi",
+    ),
+    (match, quote: string, label: string) =>
+      isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
+  );
+  return structuredScalars.replaceAll(
     new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?!["']|\\[REDACTED\\])[^\\r\\n]*`, "gi"),
     (match, quote: string, label: string) =>
       isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,

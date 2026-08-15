@@ -109,6 +109,19 @@ describe("diagnostics", () => {
     expect(sanitizeDiagnostic(`provider returned ${key}`)).not.toContain(key);
   });
 
+  it("redacts standalone Hugging Face access tokens", () => {
+    const token = "hf_abcdefghijklmnopqrstuvwxyzABCDEFGH";
+    expect(sanitizeDiagnostic(`provider returned ${token}`)).not.toContain(token);
+  });
+
+  it("preserves public JSON fields after unquoted credential scalars", () => {
+    for (const scalar of ["null", "true", "false", "403", "-1.5e2"]) {
+      const sanitized = sanitizeDiagnostic(`{"api_key":${scalar},"status":403}`);
+      expect(sanitized).toContain('"api_key"=[REDACTED],"status":403');
+      expect(sanitized).not.toContain(`:${scalar},`);
+    }
+  });
+
   it("redacts standalone Google API keys", () => {
     for (const token of [
       "AIzaSyA1234567890bcdefghijklmnopqrstuvx",
