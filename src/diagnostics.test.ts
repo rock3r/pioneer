@@ -347,6 +347,24 @@ describe("diagnostics", () => {
     );
   });
 
+  it("bounds generic query redaction with Unicode-escaped assignment delimiters", () => {
+    const sanitized = sanitizeDiagnostic(
+      String.raw`{"url":"https://idp.test/cb?access_token\u003dprivate-token","status":403}`,
+    );
+
+    expect(sanitized).not.toContain("private-token");
+    expect(sanitized).toContain(String.raw`access_token\u003d[REDACTED]","status":403`);
+  });
+
+  it("bounds generic query redaction in literal URL fragments", () => {
+    const sanitized = sanitizeDiagnostic(
+      '{"url":"https://idp.test/cb#access_token=private&state=ok","status":403}',
+    );
+
+    expect(sanitized).not.toContain("private");
+    expect(sanitized).toContain('#access_token=[REDACTED]&state=ok","status":403');
+  });
+
   it("redacts credentials behind quoted JSON keys", () => {
     const sanitized = sanitizeDiagnostic(
       '{"api_key":"google-private","access_token":"access-private"}',
