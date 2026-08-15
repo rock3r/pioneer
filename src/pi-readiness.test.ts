@@ -468,6 +468,7 @@ describe("Pi readiness", () => {
     for (const token of [
       "sk-proj-ABCDEFGHIJKLMNOPQRSTUV",
       "AKIAIOSFODNN7EXAMPLE",
+      "AIzaSyA1234567890bcdefghijklmnopqrstuvx",
       "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
     ]) {
       const runner = runnerWith([

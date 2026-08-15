@@ -54,6 +54,12 @@ describe("diagnostics", () => {
     );
   });
 
+  it("redacts standalone Google API keys", () => {
+    expect(sanitizeDiagnostic("provider returned AIzaSyA1234567890bcdefghijklmnopqrstuvx")).toBe(
+      "provider returned [REDACTED]",
+    );
+  });
+
   it("redacts standalone JWT access tokens", () => {
     const token =
       "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
