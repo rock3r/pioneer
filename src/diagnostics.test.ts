@@ -92,6 +92,11 @@ describe("diagnostics", () => {
     expect(sanitizeDiagnostic(`provider returned ${token}`)).toBe("provider returned [REDACTED]");
   });
 
+  it("redacts standalone GitLab access tokens", () => {
+    const token = "glpat-0123456789abcdefghij";
+    expect(sanitizeDiagnostic(`provider returned ${token}`)).toBe("provider returned [REDACTED]");
+  });
+
   it("redacts complete multi-token Authorization field values", () => {
     expect(sanitizeDiagnostic("Authorization: Basic dXNlcjpwYXNz\nrequest failed")).toBe(
       "Authorization=[REDACTED] request failed",
