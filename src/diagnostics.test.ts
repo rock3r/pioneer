@@ -189,6 +189,16 @@ describe("diagnostics", () => {
     expect(sanitized).toContain('"code":403');
   });
 
+  it("redacts credentials in percent-encoded signed URLs", () => {
+    const sanitized = sanitizeDiagnostic(
+      "next=https%3A%2F%2Fs3.test%2Fo%3FX-Amz-Credential%3Dprivate-access%26X-Amz-Signature%3Dprivate-signature%26X-Amz-Algorithm%3DAWS4-HMAC-SHA256",
+    );
+
+    expect(sanitized).not.toContain("private-access");
+    expect(sanitized).not.toContain("private-signature");
+    expect(sanitized).toContain("%26X-Amz-Algorithm%3DAWS4-HMAC-SHA256");
+  });
+
   it("redacts credentials behind quoted JSON keys", () => {
     const sanitized = sanitizeDiagnostic(
       '{"api_key":"google-private","access_token":"access-private"}',

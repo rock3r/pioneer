@@ -124,7 +124,7 @@ function unescapeSerializedDelimiters(value: string): string {
 
 function redactSignedUrlCredentials(value: string): string {
   return value.replaceAll(
-    /((?:[?&]|\\u0026|&(?:amp|#0*38|#x0*26);)(?:(?:x-amz|x-goog)-)?(?:credential|signature|security-token|sig)=)(?:(?![&#\s,"'{}]|\\["']|\\u0026).)+/gi,
+    /((?:[?&]|%3f|%26|\\u0026|&(?:amp|#0*38|#x0*26);)(?:(?:x-amz|x-goog)-)?(?:credential|signature|security-token|sig)(?:=|%3d))(?:(?![&#\s,"'{}]|%26|\\["']|\\u0026).)+/gi,
     "$1[REDACTED]",
   );
 }
