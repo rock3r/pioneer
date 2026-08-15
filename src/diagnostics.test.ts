@@ -48,6 +48,12 @@ describe("diagnostics", () => {
     );
   });
 
+  it("redacts userinfo through the final at-sign in an authority", () => {
+    expect(sanitizeDiagnostic("Request failed for https://user:p@ss@example.test/path")).toBe(
+      "Request failed for https://[REDACTED]@example.test/path",
+    );
+  });
+
   it("redacts standalone AWS access key IDs", () => {
     expect(sanitizeDiagnostic("provider returned AKIAIOSFODNN7EXAMPLE")).toBe(
       "provider returned [REDACTED]",
