@@ -180,7 +180,7 @@ function redactQueryCredentials(value: string): string {
 
 function redactPercentEncodedUrlUserinfo(value: string): string {
   return value.replaceAll(
-    /((?:[a-z][a-z0-9+.-]*)%3a%2f%2f)(?:(?![&#\s,"'{}]|%2f|%3f|%23).)+%40/gi,
+    /((?:(?:[a-z][a-z0-9+.-]*)%3a)?%2f%2f)(?:(?![&#\s,"'{}]|%2f|%3f|%23).)+%40/gi,
     "$1[REDACTED]%40",
   );
 }

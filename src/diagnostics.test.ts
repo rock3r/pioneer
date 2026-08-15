@@ -290,6 +290,15 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("https%3A%2F%2F[REDACTED]%40example.test%2Fcallback");
   });
 
+  it("redacts userinfo in percent-encoded protocol-relative URLs", () => {
+    const sanitized = sanitizeDiagnostic(
+      "next=%2F%2Fuser%3Aprivate-password%40example.test%2Fcallback",
+    );
+
+    expect(sanitized).not.toContain("user%3Aprivate-password");
+    expect(sanitized).toContain("%2F%2F[REDACTED]%40example.test%2Fcallback");
+  });
+
   it("bounds generic query redaction after HTML-escaped separators", () => {
     const sanitized = sanitizeDiagnostic(
       '{"url":"https://idp.test/?state=ok&amp;access_token=private","status":"failed","code":403}',
