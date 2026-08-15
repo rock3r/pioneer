@@ -34,6 +34,18 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("[REDACTED]");
   });
 
+  it("removes terminal controls before credential classification", () => {
+    const sanitized = sanitizeDiagnostic(
+      "api_\u001bkey=private-value\u0007 \u001b]52;c;clipboard\u0007 \u009b31mfailed",
+    );
+
+    expect(sanitized).not.toContain("private-value");
+    expect(sanitized).not.toContain("\u001b");
+    expect(sanitized).not.toContain("\u0007");
+    expect(sanitized).not.toContain("\u009b");
+    expect(sanitized).toContain("[REDACTED]");
+  });
+
   it("preserves ported URL structure and ordinary at-sign diagnostics", () => {
     expect(
       sanitizeDiagnostic(
@@ -354,6 +366,15 @@ describe("diagnostics", () => {
 
     expect(sanitized).not.toContain("private-token");
     expect(sanitized).toContain(String.raw`access_token\u003d[REDACTED]","status":403`);
+  });
+
+  it("bounds generic query redaction with percent-encoded assignment delimiters", () => {
+    const sanitized = sanitizeDiagnostic(
+      '{"url":"https://idp.test/cb?access_token%3Dprivate-token","status":403}',
+    );
+
+    expect(sanitized).not.toContain("private-token");
+    expect(sanitized).toContain('access_token%3D[REDACTED]","status":403');
   });
 
   it("bounds generic query redaction in literal URL fragments", () => {
