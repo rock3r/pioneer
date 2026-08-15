@@ -465,7 +465,11 @@ describe("Pi readiness", () => {
   });
 
   it("rejects standalone credential tokens in model catalog fields", async () => {
-    for (const token of ["sk-proj-ABCDEFGHIJKLMNOPQRSTUV", "AKIAIOSFODNN7EXAMPLE"]) {
+    for (const token of [
+      "sk-proj-ABCDEFGHIJKLMNOPQRSTUV",
+      "AKIAIOSFODNN7EXAMPLE",
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+    ]) {
       const runner = runnerWith([
         { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
         {
