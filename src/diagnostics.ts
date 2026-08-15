@@ -44,6 +44,7 @@ const COMPOUND_CREDENTIAL_SUFFIXES = [
   "signingkey",
   "signingsecret",
 ] as const;
+const STANDALONE_CREDENTIAL_SOURCE = String.raw`\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,})\b`;
 
 function credentialLabelTokens(label: string): readonly string[] {
   return label
@@ -68,6 +69,10 @@ export function containsCredentialAssignment(value: string): boolean {
   return [...value.matchAll(/\b([A-Za-z0-9][A-Za-z0-9._/@+-]*)\s*[:=]/g)].some((match) =>
     isCredentialLabel(match[1] ?? ""),
   );
+}
+
+export function containsStandaloneCredential(value: string): boolean {
+  return new RegExp(STANDALONE_CREDENTIAL_SOURCE).test(value);
 }
 
 function redactQuotedCredentialAssignments(value: string): string {
@@ -109,7 +114,7 @@ function redactFoldedCredentialHeaders(value: string): string {
 
 function unescapeSerializedDelimiterLayer(value: string): string {
   return value.replaceAll(
-    /\\([/"'])|\\(\\)(?=\\?[/"'])/g,
+    /\\([/"'])|\\(\\)(?=\\?(?:[/"']|u[0-9a-f]{4}))/gi,
     (_match: string, delimiter: string | undefined, serializedBackslash: string | undefined) =>
       delimiter ?? serializedBackslash ?? "",
   );
@@ -221,10 +226,7 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
       (match, quote: string, label: string) =>
         isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
     )
-    .replaceAll(
-      /\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,})\b/g,
-      "[REDACTED]",
-    )
+    .replaceAll(new RegExp(STANDALONE_CREDENTIAL_SOURCE, "g"), "[REDACTED]")
     .trim()
     .slice(0, 500);
 }

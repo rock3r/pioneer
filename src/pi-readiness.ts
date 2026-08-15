@@ -4,6 +4,7 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import {
   containsCredentialAssignment,
+  containsStandaloneCredential,
   diagnosticMessage,
   sanitizeDiagnostic,
 } from "./diagnostics.js";
@@ -166,7 +167,9 @@ function configuredModels(output: string): readonly PiConfiguredModel[] | undefi
       AUTHENTICATED_URL.test(provider) ||
       AUTHENTICATED_URL.test(id) ||
       containsCredentialAssignment(provider) ||
-      containsCredentialAssignment(id)
+      containsCredentialAssignment(id) ||
+      containsStandaloneCredential(provider) ||
+      containsStandaloneCredential(id)
     ) {
       return undefined;
     }

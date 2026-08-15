@@ -356,19 +356,19 @@ describe("Pi readiness", () => {
     expect(JSON.stringify(result)).not.toContain("provider-secret");
   });
 
-  it("preserves a validated credential-shaped model identifier for execution", async () => {
+  it("preserves a validated short secret-like model identifier for execution", async () => {
     const runner = runnerWith([
       { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
       {
         exitCode: 0,
         stdout:
-          "provider  model       context  max-out  thinking  images\nprovider  sk-abcdefgh 400K     128K     yes       yes\n",
+          "provider  model       context  max-out  thinking  images\nprovider  sk-abcdefg 400K     128K     yes       yes\n",
         stderr: "",
       },
     ]);
 
-    const result = await checkPiReadiness({ runner, requestedModel: "provider/sk-abcdefgh" });
-    expect(result).toMatchObject({ ready: true, resolvedModel: "provider/sk-abcdefgh" });
+    const result = await checkPiReadiness({ runner, requestedModel: "provider/sk-abcdefg" });
+    expect(result).toMatchObject({ ready: true, resolvedModel: "provider/sk-abcdefg" });
   });
 
   it("preserves the complete validated model catalog in resolution errors", async () => {
@@ -462,6 +462,22 @@ describe("Pi readiness", () => {
       expect(JSON.stringify(result)).not.toContain("provider-secret");
       expect(JSON.stringify(result)).not.toContain("private-value");
     }
+  });
+
+  it("rejects standalone credential tokens in model catalog fields", async () => {
+    const token = "sk-proj-ABCDEFGHIJKLMNOPQRSTUV";
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout: `provider  model       context  max-out  thinking  images\nprovider ${token} 400K 128K yes yes\n`,
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
+    expect(JSON.stringify(result)).not.toContain(token);
   });
 
   it("redacts credential-shaped metadata from accepted versions and warnings", async () => {

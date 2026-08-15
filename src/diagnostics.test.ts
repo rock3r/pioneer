@@ -265,6 +265,14 @@ describe("diagnostics", () => {
     expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
   });
 
+  it("redacts nested serialized Unicode-escaped credential keys", () => {
+    const serialized = JSON.stringify(String.raw`{"api\u005fkey":"private-nested"}`);
+    const sanitized = sanitizeDiagnostic(serialized);
+
+    expect(sanitized).not.toContain("private-nested");
+    expect(sanitized).toContain("[REDACTED]");
+  });
+
   it("redacts hyphen-prefixed quoted credential keys", () => {
     const sanitized = sanitizeDiagnostic(
       '{"X-API-Key":"private-x-key","openai-api-key":"private-openai-key","vault@api_key":"private-at-key","vault+api_key":"private-plus-key"}',
