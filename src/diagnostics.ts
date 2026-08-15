@@ -37,6 +37,7 @@ const COMPOUND_CREDENTIAL_SUFFIXES = [
   "connectionstring",
   "authtoken",
   "accountkey",
+  "secretkey",
   "webhooksecret",
   "signingkey",
   "signingsecret",

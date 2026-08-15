@@ -445,6 +445,7 @@ describe("Pi readiness", () => {
       "key1:private-value",
       "authtoken:private-value",
       "ACCOUNTKEY:private-value",
+      "SECRETKEY:private-value",
       "webhooksecret:private-value",
     ]) {
       const runner = runnerWith([

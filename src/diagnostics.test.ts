@@ -213,12 +213,13 @@ describe("diagnostics", () => {
 
   it("redacts generic namespaced key assignments", () => {
     const sanitized = sanitizeDiagnostic(
-      'AccountKey=private-account-key\n{"signingKey":"private-signing-key"}',
+      'AccountKey=private-account-key\nSECRETKEY=private-secret-key\n{"signingKey":"private-signing-key"}',
     );
 
     expect(sanitized).not.toContain("private-account-key");
+    expect(sanitized).not.toContain("private-secret-key");
     expect(sanitized).not.toContain("private-signing-key");
-    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(3);
   });
 
   it("redacts generic credential and signature assignments", () => {
