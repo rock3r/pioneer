@@ -85,6 +85,12 @@ describe("diagnostics", () => {
     ).toBe("X-API-Key=[REDACTED] request failed");
   });
 
+  it("preserves indented diagnostic details after credential assignments", () => {
+    expect(sanitizeDiagnostic("token=private-token\n  at provider.ts:10\nrequest failed")).toBe(
+      "token=[REDACTED] at provider.ts:10 request failed",
+    );
+  });
+
   it("preserves ordinary Windows UNC and device paths", () => {
     for (const path of [String.raw`\\server\share`, String.raw`\\?\C:\target`]) {
       expect(sanitizeDiagnostic(`Cannot read ${path}`)).toBe(`Cannot read ${path}`);

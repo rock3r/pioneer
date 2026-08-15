@@ -87,12 +87,19 @@ function redactQuotedCredentialAssignments(value: string): string {
 
 function redactUnquotedCredentialLines(value: string): string {
   return value.replaceAll(
-    new RegExp(
-      `(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?!["']|\\[REDACTED\\])[^\\r\\n]*(?:\\r?\\n[ \\t]+[^\\r\\n]*)*`,
-      "gi",
-    ),
+    new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?!["']|\\[REDACTED\\])[^\\r\\n]*`, "gi"),
     (match, quote: string, label: string) =>
       isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
+  );
+}
+
+function redactFoldedCredentialHeaders(value: string): string {
+  return value.replaceAll(
+    new RegExp(
+      `\\b(${SECRET_LABEL})\\s*:\\s*(?!["']|\\[REDACTED\\])[^\\r\\n]*(?:\\r?\\n[ \\t]+[^\\r\\n]*)+`,
+      "gi",
+    ),
+    (match, label: string) => (isCredentialLabel(label) ? `${label}=[REDACTED]` : match),
   );
 }
 
@@ -107,12 +114,16 @@ function unescapeSerializedDelimiterLayer(value: string): string {
 function redactSerializedCredentialAssignments(value: string): string {
   let sanitized = value;
   for (let depth = 0; depth < MAX_SERIALIZATION_DEPTH; depth += 1) {
-    sanitized = redactUnquotedCredentialLines(redactQuotedCredentialAssignments(sanitized));
+    sanitized = redactUnquotedCredentialLines(
+      redactQuotedCredentialAssignments(redactFoldedCredentialHeaders(sanitized)),
+    );
     const unescaped = unescapeSerializedDelimiterLayer(sanitized);
     if (unescaped === sanitized) return sanitized;
     sanitized = unescaped;
   }
-  return redactUnquotedCredentialLines(redactQuotedCredentialAssignments(sanitized));
+  return redactUnquotedCredentialLines(
+    redactQuotedCredentialAssignments(redactFoldedCredentialHeaders(sanitized)),
+  );
 }
 
 function unescapeSerializedDelimiters(value: string): string {
