@@ -60,6 +60,15 @@ describe("diagnostics", () => {
     ).toBe('{"url":"https://[REDACTED]@example.test","email":"ops@example.test"}');
   });
 
+  it("redacts valid punctuation inside URL userinfo", () => {
+    expect(sanitizeDiagnostic("https://user:a,b@example.test/path")).toBe(
+      "https://[REDACTED]@example.test/path",
+    );
+    expect(sanitizeDiagnostic("https://user:o'brien@example.test/path")).toBe(
+      "https://[REDACTED]@example.test/path",
+    );
+  });
+
   it("redacts standalone AWS access key IDs", () => {
     expect(sanitizeDiagnostic("provider returned AKIAIOSFODNN7EXAMPLE")).toBe(
       "provider returned [REDACTED]",

@@ -217,7 +217,7 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
   }
   return redactQuotedCredentialAssignments(sanitized)
     .replaceAll(
-      /((?:\b[a-z][a-z0-9+.-]*:)?\/\/)[^/\s?#,"'{}[\]<>]+@/gi,
+      /((?:\b[a-z][a-z0-9+.-]*:)?\/\/)[^/\s?#"{}[\]<>]+@/gi,
       (_match, authorityPrefix: string) => `${authorityPrefix}[REDACTED]@`,
     )
     .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
