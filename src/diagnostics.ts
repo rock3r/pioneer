@@ -44,7 +44,7 @@ const COMPOUND_CREDENTIAL_SUFFIXES = [
   "signingkey",
   "signingsecret",
 ] as const;
-const STANDALONE_CREDENTIAL_SOURCE = String.raw`\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,})\b`;
+const STANDALONE_CREDENTIAL_SOURCE = String.raw`\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|(?:AKIA|ASIA)[A-Z0-9]{16})\b`;
 
 function credentialLabelTokens(label: string): readonly string[] {
   return label
@@ -217,8 +217,8 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
   }
   return redactQuotedCredentialAssignments(sanitized)
     .replaceAll(
-      /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi,
-      (_match, scheme: string) => `${scheme}[REDACTED]@`,
+      /((?:\b[a-z][a-z0-9+.-]*:)?\/\/)[^/\s@]+@/gi,
+      (_match, authorityPrefix: string) => `${authorityPrefix}[REDACTED]@`,
     )
     .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     .replaceAll(

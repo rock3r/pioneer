@@ -465,19 +465,20 @@ describe("Pi readiness", () => {
   });
 
   it("rejects standalone credential tokens in model catalog fields", async () => {
-    const token = "sk-proj-ABCDEFGHIJKLMNOPQRSTUV";
-    const runner = runnerWith([
-      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
-      {
-        exitCode: 0,
-        stdout: `provider  model       context  max-out  thinking  images\nprovider ${token} 400K 128K yes yes\n`,
-        stderr: "",
-      },
-    ]);
+    for (const token of ["sk-proj-ABCDEFGHIJKLMNOPQRSTUV", "AKIAIOSFODNN7EXAMPLE"]) {
+      const runner = runnerWith([
+        { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+        {
+          exitCode: 0,
+          stdout: `provider  model       context  max-out  thinking  images\nprovider ${token} 400K 128K yes yes\n`,
+          stderr: "",
+        },
+      ]);
 
-    const result = await checkPiReadiness({ runner });
-    expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
-    expect(JSON.stringify(result)).not.toContain(token);
+      const result = await checkPiReadiness({ runner });
+      expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
+      expect(JSON.stringify(result)).not.toContain(token);
+    }
   });
 
   it("redacts credential-shaped metadata from accepted versions and warnings", async () => {

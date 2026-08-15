@@ -42,6 +42,18 @@ describe("diagnostics", () => {
     ).toBe("Request failed for https://[REDACTED]@example.test:443/path; password@host: message");
   });
 
+  it("redacts userinfo in protocol-relative URLs", () => {
+    expect(sanitizeDiagnostic("Request failed for //user:private-password@example.test/path")).toBe(
+      "Request failed for //[REDACTED]@example.test/path",
+    );
+  });
+
+  it("redacts standalone AWS access key IDs", () => {
+    expect(sanitizeDiagnostic("provider returned AKIAIOSFODNN7EXAMPLE")).toBe(
+      "provider returned [REDACTED]",
+    );
+  });
+
   it("redacts complete multi-token Authorization field values", () => {
     expect(sanitizeDiagnostic("Authorization: Basic dXNlcjpwYXNz\nrequest failed")).toBe(
       "Authorization=[REDACTED] request failed",
