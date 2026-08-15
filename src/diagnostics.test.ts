@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { diagnosticMessage, parseDiagnostic, sanitizeDiagnostic } from "./diagnostics.js";
+import {
+  containsStandaloneCredential,
+  diagnosticMessage,
+  parseDiagnostic,
+  sanitizeDiagnostic,
+} from "./diagnostics.js";
 
 describe("diagnostics", () => {
   it("bounds provider-controlled input before credential-label scans", () => {
@@ -125,6 +130,12 @@ describe("diagnostics", () => {
   it("redacts standalone Hugging Face access tokens", () => {
     const token = "hf_abcdefghijklmnopqrstuvwxyzABCDEFGH";
     expect(sanitizeDiagnostic(`provider returned ${token}`)).not.toContain(token);
+  });
+
+  it("redacts standalone SendGrid API keys", () => {
+    const key = `SG.${"A".repeat(22)}.${"B".repeat(43)}`;
+    expect(sanitizeDiagnostic(`provider returned ${key}`)).not.toContain(key);
+    expect(containsStandaloneCredential(key)).toBe(true);
   });
 
   it("redacts standalone Slack app-level tokens", () => {
