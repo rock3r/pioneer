@@ -468,6 +468,7 @@ describe("Pi readiness", () => {
     for (const token of [
       "sk-proj-ABCDEFGHIJKLMNOPQRSTUV",
       "AKIAIOSFODNN7EXAMPLE",
+      "prefix-AKIAIOSFODNN7EXAMPLE",
       "AIzaSyA1234567890bcdefghijklmnopqrstuvx",
       "AIzaSyA1234567890bcdefghijklmnopqrstuv-",
       "xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx",

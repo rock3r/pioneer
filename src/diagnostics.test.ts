@@ -87,6 +87,14 @@ describe("diagnostics", () => {
     );
   });
 
+  it("redacts standalone credentials adjacent to hyphens", () => {
+    expect(
+      sanitizeDiagnostic(
+        "provider returned prefix-AKIAIOSFODNN7EXAMPLE and AKIAIOSFODNN7EXAMPLE-suffix",
+      ),
+    ).not.toContain("AKIAIOSFODNN7EXAMPLE");
+  });
+
   it("redacts standalone Google API keys", () => {
     for (const token of [
       "AIzaSyA1234567890bcdefghijklmnopqrstuvx",
