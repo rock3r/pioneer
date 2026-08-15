@@ -38,6 +38,7 @@ function catalogText(models: readonly PiConfiguredModel[]): string {
 export function resolvePiModel(
   requestedModel: string,
   models: readonly PiConfiguredModel[],
+  displayedRequestedModel = requestedModel,
 ): PiModelResolution {
   const requested = withoutThinkingShorthand(requestedModel.trim());
   const normalized = requested.toLowerCase();
@@ -56,15 +57,16 @@ export function resolvePiModel(
     return {
       ok: false,
       error: [
-        `Requested Pi model "${requestedModel}" is ambiguous. Use a qualified provider/model name.`,
+        `Requested Pi model "${displayedRequestedModel}" is ambiguous. Use a qualified provider/model name.`,
         catalogText(models),
       ].join("\n"),
     };
   }
   return {
     ok: false,
-    error: [`Requested Pi model "${requestedModel}" is not configured.`, catalogText(models)].join(
-      "\n",
-    ),
+    error: [
+      `Requested Pi model "${displayedRequestedModel}" is not configured.`,
+      catalogText(models),
+    ].join("\n"),
   };
 }

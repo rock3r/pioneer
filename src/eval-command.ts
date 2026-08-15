@@ -1,4 +1,5 @@
 import path from "node:path";
+import { CliUsageError } from "./diagnostics.js";
 import { installLinuxSandboxSupport } from "./eval-run/linux-install.js";
 import { runEvalCommand } from "./eval-run/runner.js";
 import { prepareEvalBattery } from "./eval-run/setup.js";
@@ -12,7 +13,7 @@ export function evalUsage(commandName: string): string {
 }
 
 function usage(commandName: string): never {
-  throw new Error(evalUsage(commandName));
+  throw new CliUsageError(evalUsage(commandName));
 }
 
 function takeOption(args: string[], name: string, commandName: string): string | undefined {

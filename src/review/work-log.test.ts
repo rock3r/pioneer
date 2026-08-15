@@ -1035,7 +1035,7 @@ describe("review work log", () => {
       sanitizeWorkLogDiagnostic(
         "Authorization: Bearer secret-token api_key=abc123 password=hunter2 failed",
       ),
-    ).toBe("Authorization=[REDACTED] api_key=[REDACTED] password=[REDACTED] failed");
+    ).toBe("Authorization=[REDACTED]");
     expect(
       sanitizeWorkLogDiagnostic(
         "password=\"correct horse battery staple\" token='quoted secret value' failed",

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
+import { cliErrorMessage } from "./cli-error.js";
+import { CliUsageError } from "./diagnostics.js";
 import { runDoctor } from "./doctor.js";
 import { runEvalCli } from "./eval-command.js";
 import { formatModelCatalog, modelCatalogJson } from "./model-catalog-output.js";
@@ -25,7 +27,7 @@ const REVIEW_USAGE = `Usage:
   pioneer eval run --run-dir DIR [options] -- COMMAND [ARG ...]`;
 
 function usage(): never {
-  throw new Error(REVIEW_USAGE);
+  throw new CliUsageError(REVIEW_USAGE);
 }
 
 function takeOption(args: string[], name: string): string | undefined {
@@ -187,6 +189,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.stderr.write(`${cliErrorMessage(error)}\n`);
   process.exitCode = 1;
 });

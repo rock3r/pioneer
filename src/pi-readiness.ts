@@ -2,7 +2,12 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { diagnosticMessage } from "./diagnostics.js";
+import {
+  containsCredentialAssignment,
+  containsStandaloneCredential,
+  diagnosticMessage,
+  sanitizeDiagnostic,
+} from "./diagnostics.js";
 import { defaultPiAgentDir } from "./pi-home.js";
 import { type PiConfiguredModel, resolvePiModel } from "./pi-model-selection.js";
 import { validatePiVersion } from "./pi-version-policy.js";
@@ -68,6 +73,16 @@ export interface PiReadinessOptions {
   readonly timeoutMs?: number;
 }
 
+export class PiReadinessError extends Error {
+  readonly preserveCliMessage: boolean;
+
+  constructor(message: string, preserveCliMessage = false) {
+    super(message);
+    this.name = "PiReadinessError";
+    this.preserveCliMessage = preserveCliMessage;
+  }
+}
+
 const MAX_CAPTURE_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const PI_CONFIG_MARKERS = ["auth.json", "models-store.json", "settings.json"] as const;
@@ -79,6 +94,8 @@ const OUTER_SANDBOX_INDICATORS = [
 
 const PI_READINESS_ENVIRONMENT_NAME =
   /^(?:PATH|PATHEXT|HOME|USERPROFILE|HOMEDRIVE|HOMEPATH|APPDATA|LOCALAPPDATA|SYSTEMROOT|WINDIR|COMSPEC|LANG|LC_ALL|TMPDIR|TMP|TEMP|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|OPENSSL_CONF|PI_CODING_AGENT_DIR)$/i;
+const PI_MODEL_FIELD = /^[A-Za-z0-9][A-Za-z0-9._:@+/-]*$/;
+const AUTHENTICATED_URL = /(?:[a-z][a-z0-9+.-]*:)?\/\/[^/\s?#"{}[\]<>]+@/i;
 
 export function piReadinessEnvironment(
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -121,11 +138,10 @@ function outerSandboxIndicator(environment: Readonly<NodeJS.ProcessEnv>): string
 }
 
 function summarizeFailure(result: PiProbeResult): string {
-  const detail = (result.stderr || result.stdout).replaceAll(/\s+/g, " ").trim().slice(0, 500);
-  const suffix = detail.length > 0 ? `: ${detail}` : "";
+  const output = result.stderr || result.stdout;
   return diagnosticMessage(
     "PI_PROBE_FAILED",
-    `Pi could not start successfully (exit ${result.exitCode ?? "unknown"})${suffix}`,
+    `Pi could not start successfully (exit ${result.exitCode ?? "unknown"}; output: ${output.trim() ? "present" : "none"})`,
   );
 }
 
@@ -143,7 +159,20 @@ function configuredModels(output: string): readonly PiConfiguredModel[] | undefi
     const columns = line.split(/\s+/);
     const provider = columns[0];
     const id = columns[1];
-    if (!provider || !id) return undefined;
+    if (
+      !provider ||
+      !id ||
+      !PI_MODEL_FIELD.test(provider) ||
+      !PI_MODEL_FIELD.test(id) ||
+      AUTHENTICATED_URL.test(provider) ||
+      AUTHENTICATED_URL.test(id) ||
+      containsCredentialAssignment(provider) ||
+      containsCredentialAssignment(id) ||
+      containsStandaloneCredential(provider) ||
+      containsStandaloneCredential(id)
+    ) {
+      return undefined;
+    }
     models.push({ provider, id });
   }
   return models;
@@ -266,13 +295,21 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     };
   }
 
-  const version = versionResult.stdout.trim().split(/\r?\n/, 1)[0] || "unknown";
-  const versionValidation = validatePiVersion(version);
+  const probedVersion = versionResult.stdout.trim().split(/\r?\n/, 1)[0] || "unknown";
+  const versionValidation = validatePiVersion(probedVersion);
   if (versionValidation.error !== undefined) {
-    return { ready: false, version, modelCount: 0, errors: [versionValidation.error] };
+    return {
+      ready: false,
+      version: sanitizeDiagnostic(probedVersion),
+      modelCount: 0,
+      errors: [sanitizeDiagnostic(versionValidation.error)],
+    };
   }
+  const version = sanitizeDiagnostic(probedVersion);
   const versionWarning =
-    versionValidation.warning === undefined ? {} : { warning: versionValidation.warning };
+    versionValidation.warning === undefined
+      ? {}
+      : { warning: sanitizeDiagnostic(versionValidation.warning) };
   const modelsResult = await runProbe([
     "--offline",
     "--no-approve",
@@ -313,7 +350,8 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     };
   }
 
-  const models = configuredModels(modelsResult.stdout);
+  const probedModels = configuredModels(modelsResult.stdout);
+  const models = probedModels;
   if (models?.length === 0) {
     const agentDir = defaultPiAgentDir(options.environment ?? process.env);
     const configAccess = await (options.configAccessProbe ?? probePiConfigAccess)(agentDir);
@@ -352,7 +390,11 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
 
   const modelCount = models.length;
   if (options.requestedModel !== undefined) {
-    const resolution = resolvePiModel(options.requestedModel, models);
+    const resolution = resolvePiModel(
+      options.requestedModel,
+      probedModels ?? [],
+      sanitizeDiagnostic(options.requestedModel),
+    );
     if (!resolution.ok) {
       return {
         ready: false,
@@ -379,6 +421,13 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
 
 export async function assertPiReady(options: PiReadinessOptions = {}): Promise<PiReadiness> {
   const readiness = await checkPiReadiness(options);
-  if (!readiness.ready) throw new Error(readiness.errors.join("; "));
+  if (!readiness.ready) {
+    const preservesValidatedCatalog =
+      options.requestedModel !== undefined &&
+      readiness.models !== undefined &&
+      readiness.errors.length === 1 &&
+      readiness.errors[0]?.includes("Configured Pi models:\n");
+    throw new PiReadinessError(readiness.errors.join("; "), preservesValidatedCatalog);
+  }
   return readiness;
 }

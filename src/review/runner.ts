@@ -396,11 +396,7 @@ function recordAssistantFailure(
     return;
   }
   clearAssistantFailures(diagnostics);
-  const detail =
-    typeof message.errorMessage === "string"
-      ? message.errorMessage.replaceAll(/\s+/g, " ").slice(0, 500)
-      : "no detail";
-  diagnostics.push(`assistant stopReason=${String(message.stopReason)}: ${detail}`);
+  diagnostics.push(`assistant stopReason=${String(message.stopReason)}`);
 }
 
 function recordAssistantEventFailure(value: unknown, diagnostics: string[]): void {
@@ -418,7 +414,7 @@ function recordAssistantEventFailure(value: unknown, diagnostics: string[]): voi
   }
 
   clearAssistantFailures(diagnostics);
-  diagnostics.push(`assistant stopReason=${event.reason}: no detail`);
+  diagnostics.push(`assistant stopReason=${event.reason}`);
 }
 
 function processOutcomeContext(
@@ -426,7 +422,7 @@ function processOutcomeContext(
   signal: NodeJS.Signals | null,
   stderr: string,
 ): string {
-  return `exit ${exitCode ?? "unknown"}; signal ${signal ?? "none"}; stderr: ${stderr.trim() || "none"}`;
+  return `exit ${exitCode ?? "unknown"}; signal ${signal ?? "none"}; stderr: ${stderr.trim() ? "present" : "none"}`;
 }
 
 function terminateProcessTree(child: ReturnType<typeof spawn>): void {
@@ -602,11 +598,7 @@ export async function runReviewRpc(
         if (workLogFailure !== undefined) return;
         if (typeof record.type === "string") eventTypes.add(record.type);
         if (record.type === "response" && record.success === false) {
-          terminate(
-            new Error(
-              `Pi RPC rejected the review prompt: ${String(record.error ?? "unknown error")}`,
-            ),
-          );
+          terminate(new Error("Pi RPC rejected the review prompt"));
           return;
         }
         if (record.type === "message_update") {
@@ -736,6 +728,7 @@ export async function runReviewRpc(
           eventTypes: [...eventTypes],
           diagnostics,
           stderr,
+          sensitiveValues: workLogSecrets,
         });
         finish();
       } catch (error) {

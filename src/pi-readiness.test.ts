@@ -219,6 +219,27 @@ describe("Pi readiness", () => {
     });
   });
 
+  it("preserves model tags whose names merely end in key-like letters", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nprovider  monkey:latest 400K 128K yes yes\nprovider hockey:free 400K 128K yes yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(result).toMatchObject({
+      ready: true,
+      models: [
+        { provider: "provider", id: "monkey:latest" },
+        { provider: "provider", id: "hockey:free" },
+      ],
+    });
+  });
+
   it("does not inherit outer-agent control state or provider secrets in Pi probe subprocesses", () => {
     const environment = piReadinessEnvironment({
       PATH: process.env.PATH,
@@ -291,5 +312,218 @@ describe("Pi readiness", () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("Pi could not start");
     expect(result.errors[0]?.length).toBeLessThan(700);
+  });
+
+  it("redacts credentials from Pi startup diagnostics", async () => {
+    const runner = runnerWith([
+      {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "Authorization: Bearer secret-token access_token=refresh-me https://user:pass@example.test/private",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    const message = result.errors.join("\n");
+    expect(message).toContain("output: present");
+    expect(message).not.toContain("secret-token");
+    expect(message).not.toContain("refresh-me");
+    expect(message).not.toContain("user:pass");
+  });
+
+  it("redacts successful malformed version output before returning readiness errors", async () => {
+    const runner = runnerWith([{ exitCode: 0, stdout: "token=provider-secret\n", stderr: "" }]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(JSON.stringify(result)).toContain("[REDACTED]");
+    expect(JSON.stringify(result)).not.toContain("provider-secret");
+  });
+
+  it("redacts successful model fields before returning resolution errors", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\ntoken=provider-secret model-id 400K 128K yes yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner, requestedModel: "missing" });
+    expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
+    expect(JSON.stringify(result)).not.toContain("provider-secret");
+  });
+
+  it("preserves a validated short secret-like model identifier for execution", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nprovider  sk-abcdefg 400K     128K     yes       yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner, requestedModel: "provider/sk-abcdefg" });
+    expect(result).toMatchObject({ ready: true, resolvedModel: "provider/sk-abcdefg" });
+  });
+
+  it("preserves the complete validated model catalog in resolution errors", async () => {
+    const modelRows = Array.from(
+      { length: 40 },
+      (_, index) =>
+        `provider${index.toString().padStart(2, "0")} model${index.toString().padStart(2, "0")} 400K 128K yes yes`,
+    );
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout: ["provider  model       context  max-out  thinking  images", ...modelRows, ""].join(
+          "\n",
+        ),
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner, requestedModel: "missing" });
+    expect(result.errors[0]).toContain("- provider00/model00");
+    expect(result.errors[0]).toContain("- provider39/model39");
+  });
+
+  it("rejects authenticated URLs in model catalog fields without exposing credentials", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nhttps://user:pass@host model-id 400K 128K yes yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
+    expect(JSON.stringify(result)).not.toContain("user:pass");
+  });
+
+  it("rejects namespaced authenticated URLs anywhere in model catalog fields", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nprovider:https://user:pass@host model-id 400K 128K yes yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
+    expect(JSON.stringify(result)).not.toContain("user:pass");
+  });
+
+  it("rejects prefixed protocol-relative userinfo anywhere in model catalog fields", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nx//user:private-password@host model-id 400K 128K yes yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
+    expect(JSON.stringify(result)).not.toContain("private-password");
+  });
+
+  it("rejects colon-delimited credential assignments in model catalog fields", async () => {
+    for (const provider of [
+      "token:provider-secret",
+      "provider:token:provider-secret",
+      "auth.token:provider-secret",
+      "authorization:Basic-private-value",
+      "cookie:private-value",
+      "session-id:private-value",
+      "x-amz-signature:private-value",
+      "openaiApiKey:private-value",
+      "awsSecretAccessKey:private-value",
+      "clientCredential:private-value",
+      "azureConnectionString:private-value",
+      "password.confirm:private-value",
+      "session.id:private-value",
+      "apiKey1:private-value",
+      "accessToken2:private-value",
+      "key1:private-value",
+      "authtoken:private-value",
+      "ACCOUNTKEY:private-value",
+      "SECRETKEY:private-value",
+      "webhooksecret:private-value",
+    ]) {
+      const runner = runnerWith([
+        { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+        {
+          exitCode: 0,
+          stdout: `provider  model       context  max-out  thinking  images\n${provider} model:free 400K 128K yes yes\n`,
+          stderr: "",
+        },
+      ]);
+
+      const result = await checkPiReadiness({ runner });
+      expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
+      expect(JSON.stringify(result)).not.toContain("provider-secret");
+      expect(JSON.stringify(result)).not.toContain("private-value");
+    }
+  });
+
+  it("rejects standalone credential tokens in model catalog fields", async () => {
+    for (const token of [
+      "sk-proj-ABCDEFGHIJKLMNOPQRSTUV",
+      "AKIAIOSFODNN7EXAMPLE",
+      "prefix-AKIAIOSFODNN7EXAMPLE",
+      "AIzaSyA1234567890bcdefghijklmnopqrstuvx",
+      "AIzaSyA1234567890bcdefghijklmnopqrstuv-",
+      "xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx",
+      "glpat-0123456789abcdefghij",
+      "sk_live_51M3abcdefghijklmnopqrstuvwxyz",
+      "rk_test_51M3abcdefghijklmnopqrstuvwxyz",
+      "gsk_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456",
+      "hf_abcdefghijklmnopqrstuvwxyzABCDEFGH",
+      "xapp-1-A0123456789-0123456789012-0123456789012-abcdef0123456789abcdef0123456789",
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+    ]) {
+      const runner = runnerWith([
+        { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+        {
+          exitCode: 0,
+          stdout: `provider  model       context  max-out  thinking  images\nprovider ${token} 400K 128K yes yes\n`,
+          stderr: "",
+        },
+      ]);
+
+      const result = await checkPiReadiness({ runner });
+      expect(result.errors.join("\n")).toContain("[PI_MODEL_LIST_UNRECOGNIZED]");
+      expect(JSON.stringify(result)).not.toContain(token);
+    }
+  });
+
+  it("redacts credential-shaped metadata from accepted versions and warnings", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.3+sk-abcdefgh\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nopenai    gpt-5.5     400K     128K     yes       yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(JSON.stringify(result)).toContain("[REDACTED]");
+    expect(JSON.stringify(result)).not.toContain("sk-abcdefgh");
   });
 });

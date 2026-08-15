@@ -24,11 +24,11 @@ describe("review RPC completion", () => {
         exitCode: 0,
         signal: null,
         eventTypes: ["agent_settled"],
-        diagnostics: ["assistant stopReason=error: OAuth refresh failed"],
+        diagnostics: ["assistant stopReason=error"],
         stderr: "",
       }),
     ).toThrow(
-      "[REVIEW_ASSISTANT_FAILED] Pi reported an assistant failure without a review report (events: agent_settled; diagnostics: assistant stopReason=error: OAuth refresh failed; stderr: none)",
+      "[REVIEW_ASSISTANT_FAILED] Pi reported an assistant failure without a review report (events: 1; diagnostics: 1; stderr: none)",
     );
   });
 
@@ -40,11 +40,11 @@ describe("review RPC completion", () => {
         exitCode: 0,
         signal: null,
         eventTypes: ["message_end", "agent_settled"],
-        diagnostics: ["assistant stopReason=error: provider failed"],
+        diagnostics: ["assistant stopReason=error"],
         stderr: "",
       }),
     ).toThrow(
-      "[REVIEW_ASSISTANT_FAILED] Pi reported an assistant failure after producing partial review output (events: message_end, agent_settled; diagnostics: assistant stopReason=error: provider failed; stderr: none)",
+      "[REVIEW_ASSISTANT_FAILED] Pi reported an assistant failure after producing partial review output (events: 2; diagnostics: 1; stderr: none)",
     );
   });
 
@@ -60,7 +60,7 @@ describe("review RPC completion", () => {
         stderr: "provider failed",
       }),
     ).toThrow(
-      "[REVIEW_RPC_INCOMPLETE] Pi exited before completing the review (exit 2; events: response; diagnostics: none; stderr: provider failed)",
+      "[REVIEW_RPC_INCOMPLETE] Pi exited before completing the review (exit 2; events: 1; diagnostics: 0; stderr: present)",
     );
   });
 
@@ -76,7 +76,41 @@ describe("review RPC completion", () => {
         stderr: "provider cleanup failed",
       }),
     ).toThrow(
-      "[REVIEW_PROCESS_FAILED] Pi exited unsuccessfully after settling (exit 2; signal: none; events: message_end, agent_settled; diagnostics: none; stderr: provider cleanup failed)",
+      "[REVIEW_PROCESS_FAILED] Pi exited unsuccessfully after settling (exit 2; signal: none; events: 2; diagnostics: 0; stderr: present)",
     );
+  });
+
+  it("redacts provider credentials and caller secrets from failure context", () => {
+    expect(() =>
+      completeReviewRpc({
+        completed: false,
+        report: "",
+        exitCode: 2,
+        signal: null,
+        eventTypes: ["response"],
+        diagnostics: ["assistant stopReason=error: token=provider-secret private prompt"],
+        stderr: "Authorization: Bearer stderr-secret https://user:pass@example.test/private",
+        sensitiveValues: ["private prompt"],
+      }),
+    ).toThrow(/events: 1; diagnostics: 1; stderr: present/);
+
+    try {
+      completeReviewRpc({
+        completed: false,
+        report: "",
+        exitCode: 2,
+        signal: null,
+        eventTypes: ["response"],
+        diagnostics: ["assistant stopReason=error: token=provider-secret private prompt"],
+        stderr: "Authorization: Bearer stderr-secret https://user:pass@example.test/private",
+        sensitiveValues: ["private prompt"],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      expect(message).not.toContain("provider-secret");
+      expect(message).not.toContain("private prompt");
+      expect(message).not.toContain("stderr-secret");
+      expect(message).not.toContain("user:pass");
+    }
   });
 });
