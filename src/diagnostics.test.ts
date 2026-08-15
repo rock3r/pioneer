@@ -370,11 +370,11 @@ describe("diagnostics", () => {
 
   it("bounds generic query redaction with percent-encoded assignment delimiters", () => {
     const sanitized = sanitizeDiagnostic(
-      '{"url":"https://idp.test/cb?access_token%3Dprivate-token","status":403}',
+      '{"url":"https://idp.test/cb?access_token%3Dprivate-token%26state%3Dok","status":403}',
     );
 
     expect(sanitized).not.toContain("private-token");
-    expect(sanitized).toContain('access_token%3D[REDACTED]","status":403');
+    expect(sanitized).toContain('access_token%3D[REDACTED]%26state%3Dok","status":403');
   });
 
   it("bounds generic query redaction in literal URL fragments", () => {
