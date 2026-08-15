@@ -262,7 +262,9 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
   for (const secret of secrets) {
     const variants = [secret, JSON.stringify(secret).slice(1, -1)];
     for (const variant of variants) {
-      const normalized = unescapeSerializedDelimiters(variant).replaceAll(/\s+/g, " ").trim();
+      const normalized = stripTerminalControls(unescapeSerializedDelimiters(variant))
+        .replaceAll(/\s+/g, " ")
+        .trim();
       if (normalized) sanitized = sanitized.replaceAll(normalized, "[REDACTED]");
     }
   }

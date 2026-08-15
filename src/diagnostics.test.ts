@@ -17,6 +17,13 @@ describe("diagnostics", () => {
     expect(sanitized).toContain("token=[REDACTED]");
   });
 
+  it("normalizes zero-width controls in explicit secret variants", () => {
+    const secret = "private\u200Bvalue";
+    const sanitized = sanitizeDiagnostic(`provider echoed ${secret}`, [secret]);
+    expect(sanitized).not.toContain("privatevalue");
+    expect(sanitized).toContain("[REDACTED]");
+  });
+
   it("embeds a stable ID in human-readable prose and parses it for machines", () => {
     const message = diagnosticMessage("PI_NOT_FOUND", "Install Pi and retry.");
 
