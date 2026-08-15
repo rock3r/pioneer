@@ -377,6 +377,16 @@ describe("diagnostics", () => {
     expect(sanitized).toContain('access_token%3D[REDACTED]%26state%3Dok","status":403');
   });
 
+  it("redacts credentials after percent-encoded parameter separators", () => {
+    const sanitized = sanitizeDiagnostic(
+      String.raw`{"url":"https://idp.test/cb?access_token%3Dprivate-one%26vault:api/key\u003dprivate-two%26state%3Dok","status":403}`,
+    );
+
+    expect(sanitized).not.toContain("private-one");
+    expect(sanitized).not.toContain("private-two");
+    expect(sanitized).toContain('%26state%3Dok","status":403');
+  });
+
   it("bounds generic query redaction in literal URL fragments", () => {
     const sanitized = sanitizeDiagnostic(
       '{"url":"https://idp.test/cb#access_token=private&state=ok","status":403}',
