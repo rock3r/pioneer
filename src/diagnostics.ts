@@ -56,7 +56,8 @@ function stripTerminalControls(value: string): string {
         code <= 0x08 ||
         (code >= 0x0b && code <= 0x0c) ||
         (code >= 0x0e && code <= 0x1f) ||
-        (code >= 0x7f && code <= 0x9f)
+        (code >= 0x7f && code <= 0x9f) ||
+        /\p{Cf}/u.test(character)
       );
     })
     .join("");
@@ -222,7 +223,7 @@ function redactQueryCredentials(value: string): string {
 
 function redactPercentEncodedUrlUserinfo(value: string): string {
   const encodedAuthorities = value.replaceAll(
-    /((?:(?:[a-z][a-z0-9+.-]*)%(?:25){0,4}3a)?%(?<percentDepth>(?:25){0,4})2f%\k<percentDepth>2f)(?:(?![&?#/\s,"'{}]|%\k<percentDepth>(?:2f|3f|23)).)+(%\k<percentDepth>40|@)/gi,
+    /((?:(?:[a-z][a-z0-9+.-]*)%(?:25){0,4}3a)?%(?<percentDepth>(?:25){0,4})2f%\k<percentDepth>2f)(?:(?![&?#/\s,"'{}]|%\k<percentDepth>(?:2f|3f|23)).)+(%(?:25){0,4}40|@)/gi,
     "$1[REDACTED]$3",
   );
   return encodedAuthorities.replaceAll(

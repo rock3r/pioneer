@@ -11,6 +11,12 @@ describe("diagnostics", () => {
     expect(sanitized.length).toBeLessThanOrEqual(500);
   });
 
+  it("removes zero-width format controls before credential matching", () => {
+    const sanitized = sanitizeDiagnostic("to\u200Bken=private-value");
+    expect(sanitized).not.toContain("private-value");
+    expect(sanitized).toContain("token=[REDACTED]");
+  });
+
   it("embeds a stable ID in human-readable prose and parses it for machines", () => {
     const message = diagnosticMessage("PI_NOT_FOUND", "Install Pi and retry.");
 
@@ -405,6 +411,15 @@ describe("diagnostics", () => {
 
     expect(sanitized).not.toContain("private-password");
     expect(sanitized).toContain("https%253A%252F%252F[REDACTED]%2540example.test%252F");
+  });
+
+  it("redacts URL userinfo when the terminator is encoded more deeply than the authority", () => {
+    const sanitized = sanitizeDiagnostic(
+      "next=https%3A%2F%2Fuser%3Aprivate-password%2540example.test%2F",
+    );
+
+    expect(sanitized).not.toContain("private-password");
+    expect(sanitized).toContain("https%3A%2F%2F[REDACTED]%2540example.test%2F");
   });
 
   it("redacts encoded userinfo containing deeper-encoded URL punctuation", () => {
