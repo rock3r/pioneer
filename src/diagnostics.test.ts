@@ -195,6 +195,14 @@ describe("diagnostics", () => {
     ).toBe("Request failed for https://example.test/o?api_key=[REDACTED]&status=403 with timeout");
   });
 
+  it("redacts credentials with percent-encoded literal query labels", () => {
+    expect(
+      sanitizeDiagnostic(
+        "Request failed for https://idp.test/callback?access%5Ftoken=private-token&status=403",
+      ),
+    ).toBe("Request failed for https://idp.test/callback?access%5Ftoken=[REDACTED]&status=403");
+  });
+
   it("preserves serialized fields after signed-URL credentials", () => {
     const sanitized = sanitizeDiagnostic(
       JSON.stringify({
