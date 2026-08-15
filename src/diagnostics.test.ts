@@ -88,9 +88,12 @@ describe("diagnostics", () => {
   });
 
   it("redacts standalone Google API keys", () => {
-    expect(sanitizeDiagnostic("provider returned AIzaSyA1234567890bcdefghijklmnopqrstuvx")).toBe(
-      "provider returned [REDACTED]",
-    );
+    for (const token of [
+      "AIzaSyA1234567890bcdefghijklmnopqrstuvx",
+      "AIzaSyA1234567890bcdefghijklmnopqrstuv-",
+    ]) {
+      expect(sanitizeDiagnostic(`provider returned ${token}`)).toBe("provider returned [REDACTED]");
+    }
   });
 
   it("redacts standalone JWT access tokens", () => {

@@ -469,6 +469,7 @@ describe("Pi readiness", () => {
       "sk-proj-ABCDEFGHIJKLMNOPQRSTUV",
       "AKIAIOSFODNN7EXAMPLE",
       "AIzaSyA1234567890bcdefghijklmnopqrstuvx",
+      "AIzaSyA1234567890bcdefghijklmnopqrstuv-",
       "xoxb-123456789012-123456789012-abcdefghijklmnopqrstuvwx",
       "glpat-0123456789abcdefghij",
       "sk_live_51M3abcdefghijklmnopqrstuvwxyz",
