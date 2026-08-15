@@ -187,6 +187,14 @@ describe("diagnostics", () => {
     expect(sanitized.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(5);
   });
 
+  it("preserves query metadata after generic credential parameters", () => {
+    expect(
+      sanitizeDiagnostic(
+        "Request failed for https://example.test/o?api_key=private-key&status=403 with timeout",
+      ),
+    ).toBe("Request failed for https://example.test/o?api_key=[REDACTED]&status=403 with timeout");
+  });
+
   it("preserves serialized fields after signed-URL credentials", () => {
     const sanitized = sanitizeDiagnostic(
       JSON.stringify({

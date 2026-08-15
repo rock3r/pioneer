@@ -160,6 +160,14 @@ function redactPercentEncodedQueryCredentials(value: string): string {
   );
 }
 
+function redactQueryCredentials(value: string): string {
+  return value.replaceAll(
+    /([?&]([a-z0-9._/@+-]+)=)(?:(?![&#\s,"'{}]|\\["']|\\u0026).)+/gi,
+    (match, prefix: string, label: string) =>
+      isCredentialLabel(label) ? `${prefix}[REDACTED]` : match,
+  );
+}
+
 export class CliUsageError extends Error {}
 
 export function diagnosticMessage(id: string, message: string): string {
@@ -170,10 +178,12 @@ export function diagnosticMessage(id: string, message: string): string {
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
   let sanitized = redactSerializedCredentialAssignments(
     redactPercentEncodedQueryCredentials(
-      redactSignedUrlCredentials(
-        value.replaceAll(
-          /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
-          "[REDACTED]",
+      redactQueryCredentials(
+        redactSignedUrlCredentials(
+          value.replaceAll(
+            /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
+            "[REDACTED]",
+          ),
         ),
       ),
     ),
@@ -193,7 +203,7 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
     )
     .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     .replaceAll(
-      new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*[^\\s,;]+`, "gi"),
+      new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?!\\[REDACTED\\])[^\\s,;]+`, "gi"),
       (match, quote: string, label: string) =>
         isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
     )
