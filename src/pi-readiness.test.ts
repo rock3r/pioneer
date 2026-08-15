@@ -493,6 +493,7 @@ describe("Pi readiness", () => {
       "rk_test_51M3abcdefghijklmnopqrstuvwxyz",
       "gsk_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456",
       "hf_abcdefghijklmnopqrstuvwxyzABCDEFGH",
+      "xapp-1-A0123456789-0123456789012-0123456789012-abcdef0123456789abcdef0123456789",
       "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
     ]) {
       const runner = runnerWith([

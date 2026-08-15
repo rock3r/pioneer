@@ -114,6 +114,11 @@ describe("diagnostics", () => {
     expect(sanitizeDiagnostic(`provider returned ${token}`)).not.toContain(token);
   });
 
+  it("redacts standalone Slack app-level tokens", () => {
+    const token = "xapp-1-A0123456789-0123456789012-0123456789012-abcdef0123456789abcdef0123456789";
+    expect(sanitizeDiagnostic(`provider returned ${token}`)).not.toContain(token);
+  });
+
   it("preserves public JSON fields after unquoted credential scalars", () => {
     for (const scalar of ["null", "true", "false", "403", "-1.5e2"]) {
       const sanitized = sanitizeDiagnostic(`{"api_key":${scalar},"status":403}`);
