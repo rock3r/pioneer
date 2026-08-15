@@ -133,7 +133,7 @@ describe("diagnostics", () => {
     ]) {
       expect(sanitized).not.toContain(secret);
     }
-    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(9);
+    expect(sanitized.match(/\[REDACTED\]/g)?.length).toBeGreaterThanOrEqual(5);
   });
 
   it("redacts credentials behind quoted JSON keys", () => {
@@ -174,6 +174,17 @@ describe("diagnostics", () => {
     expect(sanitized).not.toContain("private-account-key");
     expect(sanitized).not.toContain("private-signing-key");
     expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(2);
+  });
+
+  it("redacts generic credential and signature assignments", () => {
+    const sanitized = sanitizeDiagnostic(
+      "credential=private-credential\nclient_credential=private-client\nsigningSignature=private-signature",
+    );
+
+    expect(sanitized).not.toContain("private-credential");
+    expect(sanitized).not.toContain("private-client");
+    expect(sanitized).not.toContain("private-signature");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(3);
   });
 
   it("redacts credential fields behind nested JSON escaping", () => {

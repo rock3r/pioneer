@@ -9,7 +9,7 @@ export interface Diagnostic {
 const DIAGNOSTIC_PREFIX = /^\[([A-Z][A-Z0-9_]*)\]\s+(.*)$/s;
 const MAX_SERIALIZATION_DEPTH = 16;
 const SECRET_LABEL =
-  "(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*(?:api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|cookie|passphrase|key|token|password|secret)";
+  "(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*(?:api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|cookie|passphrase|credential|signature|sig|key|token|password|secret)";
 
 function redactQuotedCredentialAssignments(value: string): string {
   return value.replaceAll(
@@ -53,6 +53,13 @@ function unescapeSerializedDelimiters(value: string): string {
   return unescaped;
 }
 
+function redactSignedUrlCredentials(value: string): string {
+  return value.replaceAll(
+    /((?:[?&]|\\u0026|&(?:amp|#0*38|#x0*26);)(?:(?:x-amz|x-goog)-)?(?:credential|signature|security-token|sig)=)(?:(?![&#\s]|\\u0026).)+/gi,
+    "$1[REDACTED]",
+  );
+}
+
 export class CliUsageError extends Error {}
 
 export function diagnosticMessage(id: string, message: string): string {
@@ -62,9 +69,11 @@ export function diagnosticMessage(id: string, message: string): string {
 
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
   let sanitized = redactSerializedCredentialAssignments(
-    value.replaceAll(
-      /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
-      "[REDACTED]",
+    redactSignedUrlCredentials(
+      value.replaceAll(
+        /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
+        "[REDACTED]",
+      ),
     ),
   )
     .replaceAll(
@@ -88,10 +97,6 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
     .replaceAll(
       /\b([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi,
       (_match, scheme: string) => `${scheme}[REDACTED]@`,
-    )
-    .replaceAll(
-      /((?:[?&]|\\u0026|&(?:amp|#0*38|#x0*26);)(?:(?:x-amz|x-goog)-)?(?:credential|signature|security-token|sig)=)(?:(?![&#\s]|\\u0026).)+/gi,
-      "$1[REDACTED]",
     )
     .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     .replaceAll(
