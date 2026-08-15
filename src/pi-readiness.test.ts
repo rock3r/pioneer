@@ -219,6 +219,27 @@ describe("Pi readiness", () => {
     });
   });
 
+  it("preserves model tags whose names merely end in key-like letters", async () => {
+    const runner = runnerWith([
+      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      {
+        exitCode: 0,
+        stdout:
+          "provider  model       context  max-out  thinking  images\nprovider  monkey:latest 400K 128K yes yes\nprovider hockey:free 400K 128K yes yes\n",
+        stderr: "",
+      },
+    ]);
+
+    const result = await checkPiReadiness({ runner });
+    expect(result).toMatchObject({
+      ready: true,
+      models: [
+        { provider: "provider", id: "monkey:latest" },
+        { provider: "provider", id: "hockey:free" },
+      ],
+    });
+  });
+
   it("does not inherit outer-agent control state or provider secrets in Pi probe subprocesses", () => {
     const environment = piReadinessEnvironment({
       PATH: process.env.PATH,

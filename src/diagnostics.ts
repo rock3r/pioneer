@@ -11,10 +11,52 @@ const MAX_SERIALIZATION_DEPTH = 16;
 const CREDENTIAL_CORE =
   "(?:authorization|api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|connection[-_ ]?string|cookie|passphrase|credential|signature|sig|key|token|password|secret)";
 const SECRET_LABEL = `(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*${CREDENTIAL_CORE}[a-z0-9]*(?:[-_.:/ ][a-z0-9]+)*`;
-const CREDENTIAL_ASSIGNMENT = new RegExp(`\\b${SECRET_LABEL}\\s*[:=]`, "i");
+const CREDENTIAL_TOKENS = new Set([
+  "authorization",
+  "cookie",
+  "credential",
+  "key",
+  "passphrase",
+  "password",
+  "session",
+  "sig",
+  "signature",
+  "secret",
+  "token",
+]);
+const COMPOUND_CREDENTIAL_SUFFIXES = [
+  "apikey",
+  "privatekey",
+  "accesskeyid",
+  "accesstoken",
+  "refreshtoken",
+  "clientsecret",
+  "secretaccesskey",
+  "sessionid",
+  "sessiontoken",
+  "connectionstring",
+] as const;
+
+function credentialLabelTokens(label: string): readonly string[] {
+  return label
+    .replaceAll(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replaceAll(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[-_./@+\s]+/)
+    .filter(Boolean)
+    .map((token) => token.toLowerCase());
+}
+
+function isCredentialLabel(label: string): boolean {
+  const tokens = credentialLabelTokens(label);
+  if (tokens.some((token) => CREDENTIAL_TOKENS.has(token))) return true;
+  const joined = tokens.join("");
+  return COMPOUND_CREDENTIAL_SUFFIXES.some((suffix) => joined.endsWith(suffix));
+}
 
 export function containsCredentialAssignment(value: string): boolean {
-  return CREDENTIAL_ASSIGNMENT.test(value);
+  return [...value.matchAll(/\b([A-Za-z0-9][A-Za-z0-9._/@+-]*)\s*[:=]/g)].some((match) =>
+    isCredentialLabel(match[1] ?? ""),
+  );
 }
 
 function redactQuotedCredentialAssignments(value: string): string {
