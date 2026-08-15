@@ -79,6 +79,12 @@ describe("diagnostics", () => {
     expect(sanitized).toBe("Authorization=[REDACTED] request failed");
   });
 
+  it("redacts folded generic credential header continuations", () => {
+    expect(
+      sanitizeDiagnostic("X-API-Key: private-prefix\r\n private-suffix\r\nrequest failed"),
+    ).toBe("X-API-Key=[REDACTED] request failed");
+  });
+
   it("preserves ordinary Windows UNC and device paths", () => {
     for (const path of [String.raw`\\server\share`, String.raw`\\?\C:\target`]) {
       expect(sanitizeDiagnostic(`Cannot read ${path}`)).toBe(`Cannot read ${path}`);
@@ -326,6 +332,16 @@ describe("diagnostics", () => {
 
     expect(sanitized).not.toContain("dXNlcjpwYXNz");
     expect(sanitized).toContain("[REDACTED]");
+  });
+
+  it("preserves serialized fields after Authorization values", () => {
+    const sanitized = sanitizeDiagnostic(
+      JSON.stringify({ Authorization: "Basic private", status: "failed", code: 403 }),
+    );
+
+    expect(sanitized).not.toContain("Basic private");
+    expect(sanitized).toContain('"status":"failed"');
+    expect(sanitized).toContain('"code":403');
   });
 
   it("redacts quoted JSON Proxy-Authorization headers", () => {

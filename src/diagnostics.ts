@@ -87,7 +87,10 @@ function redactQuotedCredentialAssignments(value: string): string {
 
 function redactUnquotedCredentialLines(value: string): string {
   return value.replaceAll(
-    new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?!["']|\\[REDACTED\\])[^\\r\\n]*`, "gi"),
+    new RegExp(
+      `(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?!["']|\\[REDACTED\\])[^\\r\\n]*(?:\\r?\\n[ \\t]+[^\\r\\n]*)*`,
+      "gi",
+    ),
     (match, quote: string, label: string) =>
       isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
   );
@@ -139,26 +142,12 @@ export function diagnosticMessage(id: string, message: string): string {
 export function sanitizeDiagnostic(value: string, secrets: readonly string[] = []): string {
   let sanitized = redactSerializedCredentialAssignments(
     redactSignedUrlCredentials(
-      value
-        .replaceAll(
-          /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
-          "[REDACTED]",
-        )
-        .replaceAll(
-          /(["']?)\b(?:proxy[-_ ]?)?authorization\1\s*[:=][^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*/gi,
-          "Authorization=[REDACTED]",
-        ),
+      value.replaceAll(
+        /-----BEGIN (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----[\s\S]*?(?:-----END (?:[A-Z0-9 ]*PRIVATE KEY[A-Z0-9 ]*)-----|$)/gi,
+        "[REDACTED]",
+      ),
     ),
-  )
-    .replaceAll(
-      /(["']?)\b(?:proxy[-_ ]?)?authorization\1\s*[:=][^\r\n]*/gi,
-      "Authorization=[REDACTED]",
-    )
-    .replaceAll(/(["']?)\b(?:set-cookie|cookie)\1\s*[:=][^\r\n]*/gi, "Cookie=[REDACTED]")
-    .replaceAll(
-      /(["']?)\b(?:[a-z0-9]+_)*connection[-_ ]?string\1\s*[:=][^\r\n]*/gi,
-      "CONNECTION_STRING=[REDACTED]",
-    );
+  );
   sanitized = sanitized.replaceAll(/\s+/g, " ");
   for (const secret of secrets) {
     const variants = [secret, JSON.stringify(secret).slice(1, -1)];
