@@ -188,13 +188,14 @@ describe("diagnostics", () => {
 
   it("redacts generic credential and signature assignments", () => {
     const sanitized = sanitizeDiagnostic(
-      "credential=private-credential\nclient_credential=private-client\nsigningSignature=private-signature",
+      "credential=private-credential\nclient_credential=private-client\nsigningSignature=private-signature\npassword.confirm=private-confirmation",
     );
 
     expect(sanitized).not.toContain("private-credential");
     expect(sanitized).not.toContain("private-client");
     expect(sanitized).not.toContain("private-signature");
-    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(3);
+    expect(sanitized).not.toContain("private-confirmation");
+    expect(sanitized.match(/\[REDACTED\]/g)).toHaveLength(4);
   });
 
   it("redacts credential fields behind nested JSON escaping", () => {

@@ -417,6 +417,8 @@ describe("Pi readiness", () => {
       "awsSecretAccessKey:private-value",
       "clientCredential:private-value",
       "azureConnectionString:private-value",
+      "password.confirm:private-value",
+      "session.id:private-value",
     ]) {
       const runner = runnerWith([
         { exitCode: 0, stdout: "0.84.2\n", stderr: "" },

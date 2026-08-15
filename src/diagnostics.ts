@@ -8,8 +8,9 @@ export interface Diagnostic {
 
 const DIAGNOSTIC_PREFIX = /^\[([A-Z][A-Z0-9_]*)\]\s+(.*)$/s;
 const MAX_SERIALIZATION_DEPTH = 16;
-const SECRET_LABEL =
-  "(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*(?:authorization|api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|connection[-_ ]?string|cookie|passphrase|credential|signature|sig|key|token|password|secret)";
+const CREDENTIAL_CORE =
+  "(?:authorization|api[-_ ]?key|private[-_ ]?key|access[-_ ]?key[-_ ]?id|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|secret[-_ ]?access[-_ ]?key|session(?:[-_ ]?(?:id|token))?|connection[-_ ]?string|cookie|passphrase|credential|signature|sig|key|token|password|secret)";
+const SECRET_LABEL = `(?:[a-z0-9]+[-_.:/ ])*[a-z0-9]*${CREDENTIAL_CORE}[a-z0-9]*(?:[-_.:/ ][a-z0-9]+)*`;
 const CREDENTIAL_ASSIGNMENT = new RegExp(`\\b${SECRET_LABEL}\\s*[:=]`, "i");
 
 export function containsCredentialAssignment(value: string): boolean {
