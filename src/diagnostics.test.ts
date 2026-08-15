@@ -97,6 +97,15 @@ describe("diagnostics", () => {
     expect(sanitizeDiagnostic(`provider returned ${token}`)).toBe("provider returned [REDACTED]");
   });
 
+  it("redacts standalone Stripe secret and restricted keys", () => {
+    for (const token of [
+      "sk_live_51M3abcdefghijklmnopqrstuvwxyz",
+      "rk_test_51M3abcdefghijklmnopqrstuvwxyz",
+    ]) {
+      expect(sanitizeDiagnostic(`provider returned ${token}`)).toBe("provider returned [REDACTED]");
+    }
+  });
+
   it("redacts complete multi-token Authorization field values", () => {
     expect(sanitizeDiagnostic("Authorization: Basic dXNlcjpwYXNz\nrequest failed")).toBe(
       "Authorization=[REDACTED] request failed",
