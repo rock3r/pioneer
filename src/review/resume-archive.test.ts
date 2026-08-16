@@ -355,6 +355,24 @@ describe("recoverable review archive", () => {
   );
 
   it.runIf(process.platform !== "win32")(
+    "allows a trusted sticky application-data parent with a caller-owned private child",
+    async () => {
+      const stickyData = await mkdtemp(path.join(tmpdir(), "pioneer-sticky-data-"));
+      await chmod(stickyData, 0o1777);
+
+      const resumeRoot = await prepareDefaultReviewResumeDirectory(
+        {},
+        { XDG_DATA_HOME: stickyData },
+        "linux",
+        path.dirname(stickyData),
+      );
+
+      expect(resumeRoot).toBe(path.join(stickyData, "pioneer", "review-resumes"));
+      expect((await stat(path.join(stickyData, "pioneer"))).mode & 0o777).toBe(0o700);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "rejects a replaceable application-data parent before preparing default reports",
     async () => {
       const sharedData = await mkdtemp(path.join(tmpdir(), "pioneer-shared-reports-"));

@@ -109,7 +109,11 @@ export function isTrustedStickyApplicationDataParent(
   childUid: number,
   currentUid: number,
 ): boolean {
-  return childUid === currentUid && (parentUid === currentUid || parentUid === 0);
+  return childUid === currentUid && isTrustedApplicationDataOwner(parentUid, currentUid);
+}
+
+function isTrustedApplicationDataOwner(ownerUid: number, currentUid: number): boolean {
+  return ownerUid === currentUid || ownerUid === 0;
 }
 
 async function assertStableApplicationDataParent(
@@ -121,10 +125,17 @@ async function assertStableApplicationDataParent(
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
     throw new Error(`Review application-data parent is not a stable directory: ${directory}`);
   }
-  if ((stats.mode & 0o022) !== 0) {
-    throw new Error(`Review application-data parent is writable by another user: ${directory}`);
-  }
   const currentUid = process.getuid?.();
+  if ((stats.mode & 0o022) !== 0) {
+    const sticky = (stats.mode & 0o1000) !== 0;
+    if (
+      !sticky ||
+      currentUid === undefined ||
+      !isTrustedApplicationDataOwner(stats.uid, currentUid)
+    ) {
+      throw new Error(`Review application-data parent is writable by another user: ${directory}`);
+    }
+  }
   const roots = new Set([path.resolve(directory), await realpath(directory)]);
   for (const root of roots) {
     let child = root;
@@ -222,7 +233,13 @@ async function privateDirectory(directory: string): Promise<void> {
   if (stats.isSymbolicLink())
     throw new Error(`Review resume directory is a symbolic link: ${directory}`);
   if (!stats.isDirectory()) throw new Error(`Review resume path is not a directory: ${directory}`);
-  if (process.platform !== "win32") await chmod(directory, 0o700);
+  if (process.platform !== "win32") {
+    const currentUid = process.getuid?.();
+    if (currentUid !== undefined && stats.uid !== currentUid) {
+      throw new Error(`Review resume directory is not owned by the current user: ${directory}`);
+    }
+    await chmod(directory, 0o700);
+  }
 }
 
 async function canonicalPathForContainment(candidate: string): Promise<string> {
