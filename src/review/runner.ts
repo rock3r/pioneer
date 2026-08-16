@@ -1199,6 +1199,7 @@ async function runReviewInternal(
   let resumeStorageValidated = resumeContext !== undefined;
   let reportReservation: ReviewReportReservation | undefined;
   try {
+    request.onWorkLogReady?.(workLog.path);
     if (paths.reportPath !== undefined) {
       await assertDistinctExistingReviewOutputs(paths.reportPath, workLog.path);
       try {
@@ -1213,7 +1214,6 @@ async function runReviewInternal(
       }
       request.onReportReady?.(paths.reportPath);
     }
-    request.onWorkLogReady?.(workLog.path);
     recordReviewWorkLog(workLog, "review_started", {
       pioneerVersion: PIONEER_VERSION,
       platform: process.platform,
