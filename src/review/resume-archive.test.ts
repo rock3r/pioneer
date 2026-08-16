@@ -522,6 +522,23 @@ describe("recoverable review archive", () => {
     );
   });
 
+  it("rejects a retained session that cannot fit beside its next resume attempt", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    const sessionPath = path.join(archive.activeAttemptDir, "session.jsonl");
+    await writeFile(sessionPath, "session");
+    await truncate(sessionPath, MAX_RESUME_ARCHIVE_BYTES / 2 + 1);
+
+    await expect(retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE")).rejects.toThrow(
+      /bounded retention limit/i,
+    );
+  });
+
   it("rejects symlinked source attempts before a resume copy", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
     const archive = await createReviewResumeArchive(root, {

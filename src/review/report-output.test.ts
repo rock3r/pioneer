@@ -57,6 +57,18 @@ describe("review report output", () => {
     await expect(isActiveReviewReportReservation(target)).resolves.toBe(false);
   });
 
+  it("reclaims a report reservation whose controller is no longer live", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    await writeFile(target, reservation.marker.replace(`"pid":${process.pid}`, '"pid":2147483647'));
+
+    await expect(isActiveReviewReportReservation(target)).resolves.toBe(false);
+
+    await expect(stat(reservation.reservationPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(target, "utf8")).toContain('"pid":2147483647');
+  });
+
   it("does not let an orphaned sidecar block reusing an absent report target", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const target = path.join(root, "report.md");

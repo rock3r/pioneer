@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { Stats } from "node:fs";
 import { link, lstat, open, readFile, rename, rm, unlink } from "node:fs/promises";
 import path from "node:path";
+import { currentProcessInstanceIdentities, processInstanceIdentities } from "./work-log.js";
 
 export interface ReviewReportReservation {
   readonly target: string;
@@ -12,9 +13,69 @@ export interface ReviewReportReservation {
   state: "reserved" | "published" | "released";
 }
 
-const REVIEW_REPORT_RESERVATION_PATTERN =
+interface ReviewReportReservationOwner {
+  readonly id: string;
+  readonly pid: number;
+  readonly processIdentities: readonly string[];
+}
+
+const REVIEW_REPORT_RESERVATION_PATTERN = /^<!-- PIONEER_REPORT_RESERVED (.+) -->\n$/;
+const LEGACY_REVIEW_REPORT_RESERVATION_PATTERN =
   /^<!-- PIONEER_REPORT_RESERVED ([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}) -->\n$/i;
-const MAX_REVIEW_REPORT_RESERVATION_BYTES = 96;
+const REVIEW_REPORT_RESERVATION_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PROCESS_INSTANCE_IDENTITY = /^[0-9a-f]{64}$/i;
+const MAX_REVIEW_REPORT_RESERVATION_BYTES = 1024;
+
+function parseReviewReportReservationOwner(
+  marker: string,
+): ReviewReportReservationOwner | undefined {
+  const encoded = REVIEW_REPORT_RESERVATION_PATTERN.exec(marker)?.[1];
+  if (encoded === undefined) return undefined;
+  try {
+    const value: unknown = JSON.parse(encoded);
+    if (typeof value !== "object" || value === null) return undefined;
+    const owner = value as Record<string, unknown>;
+    if (
+      typeof owner.id !== "string" ||
+      !REVIEW_REPORT_RESERVATION_ID.test(owner.id) ||
+      typeof owner.pid !== "number" ||
+      !Number.isSafeInteger(owner.pid) ||
+      owner.pid <= 0 ||
+      !Array.isArray(owner.processIdentities) ||
+      owner.processIdentities.length === 0 ||
+      !owner.processIdentities.every(
+        (identity): identity is string =>
+          typeof identity === "string" && PROCESS_INSTANCE_IDENTITY.test(identity),
+      )
+    ) {
+      return undefined;
+    }
+    return {
+      id: owner.id,
+      pid: owner.pid,
+      processIdentities: owner.processIdentities,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function reviewReportReservationOwnerIsLive(
+  pid: number,
+  ownerIdentities: readonly string[],
+): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
+  }
+  const currentIdentities = processInstanceIdentities(pid, process.platform);
+  return (
+    currentIdentities === undefined ||
+    currentIdentities.some((identity) => ownerIdentities.includes(identity))
+  );
+}
 
 export async function isActiveReviewReportReservation(target: string): Promise<boolean> {
   try {
@@ -27,8 +88,9 @@ export async function isActiveReviewReportReservation(target: string): Promise<b
       return false;
     }
     const targetMarker = await readFile(target, "utf8");
-    const match = REVIEW_REPORT_RESERVATION_PATTERN.exec(targetMarker);
-    const reservationId = match?.[1];
+    const owner = parseReviewReportReservationOwner(targetMarker);
+    const reservationId =
+      owner?.id ?? LEGACY_REVIEW_REPORT_RESERVATION_PATTERN.exec(targetMarker)?.[1];
     if (reservationId === undefined) return false;
     const reservationPath = reviewReportReservationPath(target, reservationId);
     const reservationStats = await lstat(reservationPath);
@@ -41,7 +103,17 @@ export async function isActiveReviewReportReservation(target: string): Promise<b
       return false;
     }
     const marker = await readFile(reservationPath, "utf8");
-    return marker === targetMarker;
+    if (marker !== targetMarker) return false;
+    if (
+      owner !== undefined &&
+      reviewReportReservationOwnerIsLive(owner.pid, owner.processIdentities)
+    ) {
+      return true;
+    }
+    await unlink(reservationPath).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    });
+    return false;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
@@ -107,7 +179,17 @@ export async function reserveReviewReport(
   const reservationId = crypto.randomUUID();
   const reservationPath = reviewReportReservationPath(target, reservationId);
   let handle: Awaited<ReturnType<typeof open>> | undefined;
-  const marker = `<!-- PIONEER_REPORT_RESERVED ${reservationId} -->\n`;
+  const processIdentities = currentProcessInstanceIdentities(process.platform);
+  if (processIdentities === undefined) {
+    throw new Error(
+      `[REVIEW_REPORT_RESERVATION_IDENTITY_UNAVAILABLE] Could not determine review report owner identity: ${process.pid}`,
+    );
+  }
+  const marker = `<!-- PIONEER_REPORT_RESERVED ${JSON.stringify({
+    id: reservationId,
+    pid: process.pid,
+    processIdentities,
+  })} -->\n`;
   let reservation: ReviewReportReservation = {
     target,
     reservationPath,

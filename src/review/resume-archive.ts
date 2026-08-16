@@ -54,6 +54,9 @@ export const MAX_RETAINED_RESUME_ARCHIVES = 10;
 export const RESUME_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_RESUME_ATTEMPT = 9_999;
 
+const MAX_RETAINED_RESUME_SESSION_BYTES = Math.floor(MAX_RESUME_ARCHIVE_BYTES / 2);
+const MAX_RETAINED_RESUME_SESSION_ENTRIES = Math.floor(MAX_RESUME_ARCHIVE_FILES / 2);
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function platformPath(platform: NodeJS.Platform): typeof path.posix | typeof path.win32 {
@@ -581,6 +584,7 @@ export async function prepareDefaultReviewReportPath(
 export async function inspectReviewResumeSessionTree(
   root: string,
   maxEntries = MAX_RESUME_ARCHIVE_FILES,
+  maxBytes = MAX_RESUME_ARCHIVE_BYTES,
 ): Promise<{ sizeBytes: number; fileCount: number; entryCount: number }> {
   const rootStats = await lstat(root);
   if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
@@ -605,7 +609,7 @@ export async function inspectReviewResumeSessionTree(
       } else {
         fileCount += 1;
         sizeBytes += stats.size;
-        if (sizeBytes > MAX_RESUME_ARCHIVE_BYTES) {
+        if (sizeBytes > maxBytes) {
           throw new Error("Review resume session archive exceeds its bounded retention limit");
         }
       }
@@ -613,6 +617,17 @@ export async function inspectReviewResumeSessionTree(
   };
   await visit(root);
   return { sizeBytes, fileCount, entryCount };
+}
+
+async function inspectRetainableReviewResumeAttempt(
+  attemptDir: string,
+): Promise<{ sizeBytes: number; fileCount: number; entryCount: number }> {
+  await findReviewResumeSessionFile(attemptDir);
+  return await inspectReviewResumeSessionTree(
+    attemptDir,
+    MAX_RETAINED_RESUME_SESSION_ENTRIES,
+    MAX_RETAINED_RESUME_SESSION_BYTES,
+  );
 }
 
 export async function inspectReviewResumeArchive(
@@ -700,7 +715,7 @@ async function retainPriorReviewResumeAttempt(
     archive.attemptsDir,
     String(previousAttemptNumber).padStart(4, "0"),
   );
-  await findReviewResumeSessionFile(previousAttemptDir);
+  await inspectRetainableReviewResumeAttempt(previousAttemptDir);
   await writeAtomicJsonFile(manifestPath, {
     ...manifest,
     state: retainedReviewResumeState(failureCode),
@@ -726,7 +741,7 @@ export async function retainReviewResumeArchive(
     }
     let retainedUsage: { sizeBytes: number; fileCount: number; entryCount: number };
     try {
-      await findReviewResumeSessionFile(archive.activeAttemptDir);
+      await inspectRetainableReviewResumeAttempt(archive.activeAttemptDir);
       const archiveUsage = await inspectReviewResumeArchive(archive);
       const manifestPath = path.join(archive.archiveDir, "manifest.json");
       const manifest = await readManifest(archive.archiveDir);

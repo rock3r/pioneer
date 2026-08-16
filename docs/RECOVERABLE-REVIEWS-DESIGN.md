@@ -50,6 +50,9 @@ the target as a private file containing a random ownership marker. The CLI immed
 `[PIONEER_REPORT] ABSOLUTE_PATH` to stderr after opening that reservation, and
 `ReviewResult.reportPath` always identifies the report file. Default reports
 are private to the current user and pruned to the newest 100 inactive files.
+Reservation markers bind the owning PID to its OS process-start identity; a
+later retention pass reclaims the sibling link after that controller exits, so
+interrupted reviews cannot accumulate permanently active reservations.
 Pioneer canonicalizes and validates the prospective default target against all
 actor-visible grants and the Pi-home snapshot source before it creates, changes
 permissions on, or prunes that directory.
@@ -152,7 +155,7 @@ The manifest contains a schema version, token, scope/policy metadata, exact Pi v
 3. Launch Pi without `--no-session`, passing a private `--session-dir` for attempt 0001. The Pi configuration snapshot remains separate and ephemeral. The persisted review prompt must not embed a run-local scratch path; scratch remains execution-local state.
 4. Run the current sandboxed RPC protocol.
 5. On strict success, persist the report to the default or explicit target, then delete the complete archive during cleanup. If report persistence fails, retain the archive with state `report_delivery_failed` and issue a resume token rather than deleting the only recovery input.
-6. On a terminal non-success only after Pioneer proves the complete process tree stopped, inspect the active attempt for one regular candidate Pi session tree. If it is within the 64 MiB retention cap, retain the archive and append this stderr marker after the primary failure:
+6. On a terminal non-success only after Pioneer proves the complete process tree stopped, inspect the active attempt for one regular candidate Pi session tree. If it is within the 32 MiB/5,000-entry committed-attempt cap, retain the archive and append this stderr marker after the primary failure:
 
    ```text
    [PIONEER_REVIEW_RESUME] TOKEN
@@ -182,7 +185,7 @@ An interrupted assistant turn cannot be recovered. Completed turns already writt
 
 ## Retention and security
 
-- Retain unsuccessful archives for seven days; retain at most ten, with 64 MiB and 10,000-entry caps per archive measured only after proven process-tree termination.
+- Retain unsuccessful archives for seven days; retain at most ten, with 64 MiB and 10,000-entry caps per archive measured only after proven process-tree termination. A committed attempt may consume at most half of each archive cap, reserving enough capacity for the crash-safe copy required by the next resume.
 - Validate a prospective resume root against all actor-visible grants and the Pi-home snapshot source before creating or changing permissions on it. Prune only inactive expired archives before creation and after terminal cleanup; never prune an active lease. Leases bind the PID to its OS process-start identity so PID reuse does not preserve or take over an archive, and concurrent pruning tolerates candidates removed after directory enumeration.
 - A controller crash after Pi succeeds but before deletion leaves a conservatively resumable archive that expires normally.
 - Deletion is ordinary filesystem deletion, not cryptographic erasure.
