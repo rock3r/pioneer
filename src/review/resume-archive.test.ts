@@ -26,6 +26,7 @@ import {
   immutableReviewScope,
   inspectReviewResumeSessionTree,
   isResumeToken,
+  isTrustedApplicationDataOwner,
   isTrustedStickyApplicationDataParent,
   leaseReviewResumeArchive,
   loadReviewResumeArchive,
@@ -48,6 +49,9 @@ import {
 
 describe("recoverable review archive", () => {
   it("trusts sticky ancestry only when its owner can protect the caller-owned entry", () => {
+    expect(isTrustedApplicationDataOwner(0, 501)).toBe(true);
+    expect(isTrustedApplicationDataOwner(501, 501)).toBe(true);
+    expect(isTrustedApplicationDataOwner(502, 501)).toBe(false);
     expect(isTrustedStickyApplicationDataParent(0, 501, 501)).toBe(true);
     expect(isTrustedStickyApplicationDataParent(501, 501, 501)).toBe(true);
     expect(isTrustedStickyApplicationDataParent(502, 501, 501)).toBe(false);

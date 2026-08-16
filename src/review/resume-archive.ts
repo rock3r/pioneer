@@ -112,7 +112,7 @@ export function isTrustedStickyApplicationDataParent(
   return childUid === currentUid && isTrustedApplicationDataOwner(parentUid, currentUid);
 }
 
-function isTrustedApplicationDataOwner(ownerUid: number, currentUid: number): boolean {
+export function isTrustedApplicationDataOwner(ownerUid: number, currentUid: number): boolean {
   return ownerUid === currentUid || ownerUid === 0;
 }
 
@@ -126,13 +126,15 @@ async function assertStableApplicationDataParent(
     throw new Error(`Review application-data parent is not a stable directory: ${directory}`);
   }
   const currentUid = process.getuid?.();
+  if (currentUid === undefined) {
+    throw new Error("Review application-data owner identity is unavailable");
+  }
+  if (!isTrustedApplicationDataOwner(stats.uid, currentUid)) {
+    throw new Error(`Review application-data parent has an untrusted owner: ${directory}`);
+  }
   if ((stats.mode & 0o022) !== 0) {
     const sticky = (stats.mode & 0o1000) !== 0;
-    if (
-      !sticky ||
-      currentUid === undefined ||
-      !isTrustedApplicationDataOwner(stats.uid, currentUid)
-    ) {
+    if (!sticky) {
       throw new Error(`Review application-data parent is writable by another user: ${directory}`);
     }
   }
@@ -152,11 +154,13 @@ async function assertStableApplicationDataParent(
       if (!parentStats.isDirectory()) {
         throw new Error(`Review application-data parent is not a stable directory: ${parent}`);
       }
+      if (!isTrustedApplicationDataOwner(parentStats.uid, currentUid)) {
+        throw new Error(`Review application-data parent has an untrusted owner: ${parent}`);
+      }
       if ((parentStats.mode & 0o022) !== 0) {
         const sticky = (parentStats.mode & 0o1000) !== 0;
         if (
           !sticky ||
-          currentUid === undefined ||
           !isTrustedStickyApplicationDataParent(parentStats.uid, childStats.uid, currentUid)
         ) {
           throw new Error(`Review application-data parent is writable by another user: ${parent}`);
