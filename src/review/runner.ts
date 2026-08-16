@@ -44,12 +44,14 @@ import {
   deleteReviewResumeArchive,
   findReviewResumeSessionFile,
   type LoadedReviewResumeArchive,
+  leaseReviewResumeArchive,
   loadReviewResumeArchive,
   prepareValidatedDefaultReviewReportPath,
   pruneReviewResumeArchives,
   type ReviewResumeArchive,
+  releaseLeasedReviewResumeArchive,
   retainReviewResumeArchive,
-  reviewResumeArchiveHasLiveLease,
+  rollbackReviewResumeArchiveToPriorAttempt,
 } from "./resume-archive.js";
 import { rpcOutputLimitDiagnostic, validateRpcOutputBytes } from "./rpc-limits.js";
 import { completeReviewRpc } from "./rpc-outcome.js";
@@ -209,10 +211,12 @@ async function handleResumeArchiveFailure(
       : new Error(`${failure.message}\n[REVIEW_RESUME_UNAVAILABLE]`);
   }
   try {
-    await retainReviewResumeArchive(
-      archive,
-      workLogDiagnosticSummary(failure.message).diagnosticCode as string,
-    );
+    const failureCode = workLogDiagnosticSummary(failure.message).diagnosticCode as string;
+    if (failure.message.includes("[REVIEW_RESUME_SESSION_INVALID] Pi rejected")) {
+      await rollbackReviewResumeArchiveToPriorAttempt(archive, failureCode);
+    } else {
+      await retainReviewResumeArchive(archive, failureCode);
+    }
     return new Error(`${failure.message}\n[PIONEER_REVIEW_RESUME] ${archive.token}`);
   } catch (error) {
     if (error instanceof Error && error.message.includes("[REVIEW_RESUME_IN_USE]")) {
@@ -1449,63 +1453,76 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
   let loaded: LoadedReviewResumeArchive;
   try {
     loaded = await loadReviewResumeArchive(defaultReviewResumeDirectory(), request.resumeToken);
+    loaded = { ...loaded, archive: await leaseReviewResumeArchive(loaded.archive) };
   } catch (error) {
     if (error instanceof Error && /^\[REVIEW_/.test(error.message)) throw error;
     throw new Error(
       `[REVIEW_RESUME_UNAVAILABLE] Pioneer could not load the private review resume archive: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (
-    loaded.state !== "retained" &&
-    loaded.state !== "report_delivery_failed" &&
-    loaded.state !== "active"
-  ) {
-    throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume archive is not recoverable");
-  }
-  if (process.platform === "win32" && request.allowUnsandboxedWindows !== true) {
-    throw new Error(
-      `${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed with this resume.`,
+  try {
+    if (
+      loaded.state !== "retained" &&
+      loaded.state !== "report_delivery_failed" &&
+      loaded.state !== "active"
+    ) {
+      throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume archive is not recoverable");
+    }
+    if (process.platform === "win32" && request.allowUnsandboxedWindows !== true) {
+      throw new Error(
+        `${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed with this resume.`,
+      );
+    }
+    const thinking = loaded.scope.thinking;
+    if (thinking !== undefined && !isThinkingLevel(thinking)) {
+      throw new Error("[REVIEW_RESUME_UNAVAILABLE] Stored thinking level is invalid");
+    }
+    const result = await runReviewInternal(
+      {
+        sourceDir: loaded.scope.sourceDir,
+        prompt:
+          "Continue the interrupted independent review. Any earlier run-local scratch path is retired; use only this run's execution environment. Reinspect the current source where necessary, complete unfinished analysis, and emit only the final Markdown review report.",
+        ...(loaded.scope.model === undefined ? {} : { model: loaded.scope.model }),
+        ...(thinking === undefined ? {} : { thinking }),
+        ...(loaded.scope.piHomeSource === undefined
+          ? {}
+          : { piHomeSource: loaded.scope.piHomeSource }),
+        ...(loaded.scope.piHomeIncludes === undefined
+          ? {}
+          : { piHomeIncludes: loaded.scope.piHomeIncludes }),
+        ...(loaded.scope.allowReadPaths === undefined
+          ? {}
+          : { allowReadPaths: loaded.scope.allowReadPaths }),
+        ...(loaded.scope.allowWritePaths === undefined
+          ? {}
+          : { allowWritePaths: loaded.scope.allowWritePaths }),
+        network: loaded.scope.network,
+        ...(request.reportPath === undefined ? {} : { reportPath: request.reportPath }),
+        ...(request.workLogPath === undefined ? {} : { workLogPath: request.workLogPath }),
+        ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+        ...(request.maxRpcOutputBytes === undefined
+          ? {}
+          : { maxRpcOutputBytes: request.maxRpcOutputBytes }),
+        ...(request.allowUnsandboxedWindows === undefined
+          ? {}
+          : { allowUnsandboxedWindows: request.allowUnsandboxedWindows }),
+        ...(request.onWorkLogReady === undefined ? {} : { onWorkLogReady: request.onWorkLogReady }),
+        ...(request.onReportReady === undefined ? {} : { onReportReady: request.onReportReady }),
+      },
+      { loaded },
     );
+    await releaseLeasedReviewResumeArchive(loaded.archive);
+    return result;
+  } catch (error) {
+    let failure = error instanceof Error ? error : new Error(String(error));
+    try {
+      await releaseLeasedReviewResumeArchive(loaded.archive);
+    } catch (releaseError) {
+      failure = combineReviewFailures(
+        failure,
+        releaseError instanceof Error ? releaseError : new Error(String(releaseError)),
+      );
+    }
+    throw failure;
   }
-  if (loaded.state === "active" && (await reviewResumeArchiveHasLiveLease(loaded.archive))) {
-    throw new Error("[REVIEW_RESUME_IN_USE] Review resume archive is still active");
-  }
-  const thinking = loaded.scope.thinking;
-  if (thinking !== undefined && !isThinkingLevel(thinking)) {
-    throw new Error("[REVIEW_RESUME_UNAVAILABLE] Stored thinking level is invalid");
-  }
-  return await runReviewInternal(
-    {
-      sourceDir: loaded.scope.sourceDir,
-      prompt:
-        "Continue the interrupted independent review. Any earlier run-local scratch path is retired; use only this run's execution environment. Reinspect the current source where necessary, complete unfinished analysis, and emit only the final Markdown review report.",
-      ...(loaded.scope.model === undefined ? {} : { model: loaded.scope.model }),
-      ...(thinking === undefined ? {} : { thinking }),
-      ...(loaded.scope.piHomeSource === undefined
-        ? {}
-        : { piHomeSource: loaded.scope.piHomeSource }),
-      ...(loaded.scope.piHomeIncludes === undefined
-        ? {}
-        : { piHomeIncludes: loaded.scope.piHomeIncludes }),
-      ...(loaded.scope.allowReadPaths === undefined
-        ? {}
-        : { allowReadPaths: loaded.scope.allowReadPaths }),
-      ...(loaded.scope.allowWritePaths === undefined
-        ? {}
-        : { allowWritePaths: loaded.scope.allowWritePaths }),
-      network: loaded.scope.network,
-      ...(request.reportPath === undefined ? {} : { reportPath: request.reportPath }),
-      ...(request.workLogPath === undefined ? {} : { workLogPath: request.workLogPath }),
-      ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
-      ...(request.maxRpcOutputBytes === undefined
-        ? {}
-        : { maxRpcOutputBytes: request.maxRpcOutputBytes }),
-      ...(request.allowUnsandboxedWindows === undefined
-        ? {}
-        : { allowUnsandboxedWindows: request.allowUnsandboxedWindows }),
-      ...(request.onWorkLogReady === undefined ? {} : { onWorkLogReady: request.onWorkLogReady }),
-      ...(request.onReportReady === undefined ? {} : { onReportReady: request.onReportReady }),
-    },
-    { loaded },
-  );
 }

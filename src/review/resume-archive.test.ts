@@ -22,6 +22,7 @@ import {
   immutableReviewScope,
   inspectReviewResumeSessionTree,
   isResumeToken,
+  leaseReviewResumeArchive,
   loadReviewResumeArchive,
   MAX_RESUME_ARCHIVE_BYTES,
   MAX_RESUME_MANIFEST_BYTES,
@@ -29,9 +30,11 @@ import {
   prepareValidatedDefaultReviewReportPath,
   pruneReviewResumeArchives,
   RESUME_RETENTION_MS,
+  releaseLeasedReviewResumeArchive,
   resumeArchivePath,
   retainReviewResumeArchive,
   reviewResumeArchiveHasLiveLease,
+  rollbackReviewResumeArchiveToPriorAttempt,
   statReviewResumeArchiveCandidate,
 } from "./resume-archive.js";
 
@@ -290,6 +293,72 @@ describe("recoverable review archive", () => {
     expect(await readFile(path.join(next.activeAttemptDir, "session.jsonl"), "utf8")).toBe(
       "current-session",
     );
+  });
+
+  it("holds a caller-acquired lease while copying the next attempt", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "prior-session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    const leased = await leaseReviewResumeArchive(archive);
+
+    const next = await copyReviewResumeSession(leased, leased.activeAttemptDir, 2);
+
+    expect(next.leaseContents).toBe(leased.leaseContents);
+    await retainReviewResumeArchive(next, "REVIEW_RPC_INCOMPLETE");
+  });
+
+  it("protects a loaded archive from pruning until its lease is released", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    const leased = await leaseReviewResumeArchive(archive);
+    const manifestPath = path.join(archive.archiveDir, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({ ...manifest, retainedAt: new Date(Date.now() - RESUME_RETENTION_MS - 1).toISOString() })}\n`,
+    );
+
+    await pruneReviewResumeArchives(root);
+    expect(await stat(archive.archiveDir)).toBeDefined();
+
+    await releaseLeasedReviewResumeArchive(leased);
+    await pruneReviewResumeArchives(root);
+    await expect(stat(archive.archiveDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rolls a Pi-rejected copied attempt back to the prior session", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "prior-session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    const next = await copyReviewResumeSession(archive, archive.activeAttemptDir, 2);
+
+    await rollbackReviewResumeArchiveToPriorAttempt(next, "REVIEW_RESUME_SESSION_INVALID");
+
+    const loaded = await loadReviewResumeArchive(root, archive.token);
+    expect(loaded.archive.activeAttemptDir).toBe(archive.activeAttemptDir);
+    expect(
+      await readFile(path.join(loaded.archive.activeAttemptDir, "session.jsonl"), "utf8"),
+    ).toBe("prior-session");
+    await expect(stat(next.activeAttemptDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("does not copy a session while its active controller lease is live", async () => {

@@ -164,10 +164,10 @@ An interrupted assistant turn cannot be recovered. Completed turns already writt
 
 ### Resume
 
-1. Resolve the UUID only below the private archive root. Reject malformed tokens, symlinks, special files, expired archives, missing state, a non-recoverable state, and an exact Pi-version mismatch with `[REVIEW_RESUME_PI_VERSION_MISMATCH]`.
+1. Resolve the UUID only below the private archive root. Reject malformed tokens, symlinks, special files, expired archives, and missing state. Immediately acquire the archive lease and hold it across all remaining setup, attempt copying, and execution so concurrent pruning cannot remove the recovery point. Then reject a non-recoverable state or exact Pi-version mismatch with `[REVIEW_RESUME_PI_VERSION_MISMATCH]`.
 2. Revalidate the stored source and grants. The source must remain the same canonical directory. Contents can have changed; the actor must re-inspect them.
 3. Read the manifest's committed attempt, ignore any newer uncommitted directory left by a controller crash, and stage, validate, and atomically promote a symlink-preserving copy into a new attempt directory before launch. The manifest is atomically replaced only after promotion, which makes each retry non-destructive and crash-consistent.
-4. Launch Pi with the copied session selected by exact path, never through Pi's interactive selector. If Pi rejects a torn or incompatible native session, return `[REVIEW_RESUME_SESSION_INVALID]`, retain the prior archive through normal expiry, and do not fabricate a summary.
+4. Launch Pi with the copied session selected by exact path, never through Pi's interactive selector. If Pi rejects a torn or incompatible native session, return `[REVIEW_RESUME_SESSION_INVALID]`, atomically restore the prior committed attempt, retain that prior archive through normal expiry, and do not fabricate a summary.
    If the new attempt's session tree becomes unsafe or exceeds retention bounds, atomically restore the manifest to the prior committed attempt before removing the failed attempt, so the earlier recovery point remains usable.
 5. Send this controller-owned continuation prompt after the session loads. It explicitly supersedes all retired per-run locations:
 

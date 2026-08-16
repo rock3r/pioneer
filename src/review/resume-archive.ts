@@ -37,6 +37,7 @@ export interface ReviewResumeArchive {
   readonly attemptsDir: string;
   readonly activeAttemptDir: string;
   readonly leaseContents?: string;
+  readonly preacquiredLease?: boolean;
 }
 
 export interface LoadedReviewResumeArchive {
@@ -354,6 +355,39 @@ async function releaseReviewResumeArchiveLease(
   });
 }
 
+async function assertReviewResumeArchiveLeaseOwnership(
+  archive: ReviewResumeArchive,
+  leaseContents: string,
+): Promise<void> {
+  const currentContents = await readFile(path.join(archive.archiveDir, "lease"), "utf8").catch(
+    () => undefined,
+  );
+  if (currentContents !== leaseContents) {
+    throw new Error("[REVIEW_RESUME_IN_USE] Review resume archive lease ownership changed");
+  }
+}
+
+export async function leaseReviewResumeArchive(
+  archive: ReviewResumeArchive,
+): Promise<ReviewResumeArchive> {
+  if (archive.preacquiredLease === true && archive.leaseContents !== undefined) {
+    await assertReviewResumeArchiveLeaseOwnership(archive, archive.leaseContents);
+    return archive;
+  }
+  return {
+    ...archive,
+    leaseContents: await acquireReviewResumeArchiveLease(archive),
+    preacquiredLease: true,
+  };
+}
+
+export async function releaseLeasedReviewResumeArchive(
+  archive: ReviewResumeArchive,
+): Promise<void> {
+  if (archive.preacquiredLease !== true) return;
+  await releaseReviewResumeArchiveLease(archive, archive.leaseContents);
+}
+
 async function archiveTimestamp(manifest: Record<string, unknown>): Promise<number> {
   const value = manifest.retainedAt ?? manifest.createdAt;
   if (typeof value !== "string") return 0;
@@ -658,12 +692,7 @@ export async function retainReviewResumeArchive(
   const leaseContents = archive.leaseContents ?? (await acquireReviewResumeArchiveLease(archive));
   try {
     if (archive.leaseContents !== undefined) {
-      const currentContents = await readFile(path.join(archive.archiveDir, "lease"), "utf8").catch(
-        () => undefined,
-      );
-      if (currentContents !== archive.leaseContents) {
-        throw new Error("[REVIEW_RESUME_IN_USE] Review resume archive lease ownership changed");
-      }
+      await assertReviewResumeArchiveLeaseOwnership(archive, archive.leaseContents);
     }
     let retainedUsage: { sizeBytes: number; fileCount: number; entryCount: number };
     try {
@@ -696,6 +725,27 @@ export async function retainReviewResumeArchive(
   }
 }
 
+export async function rollbackReviewResumeArchiveToPriorAttempt(
+  archive: ReviewResumeArchive,
+  failureCode: string,
+  prune: (root: string) => Promise<void> = pruneReviewResumeArchives,
+): Promise<{ sizeBytes: number; fileCount: number; entryCount: number }> {
+  const leaseContents = archive.leaseContents ?? (await acquireReviewResumeArchiveLease(archive));
+  try {
+    if (archive.leaseContents !== undefined) {
+      await assertReviewResumeArchiveLeaseOwnership(archive, archive.leaseContents);
+    }
+    const prior = await retainPriorReviewResumeAttempt(archive, failureCode);
+    if (prior === undefined) {
+      throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume has no prior session attempt");
+    }
+    await prune(path.dirname(archive.archiveDir)).catch(() => {});
+    return prior;
+  } finally {
+    await releaseReviewResumeArchiveLease(archive, leaseContents);
+  }
+}
+
 export async function deleteReviewResumeArchive(archive: ReviewResumeArchive): Promise<void> {
   await rm(archive.archiveDir, { recursive: true, force: true });
 }
@@ -717,10 +767,14 @@ export async function copyReviewResumeSession(
   await inspectReviewResumeSessionTree(sourceAttemptDir);
   const destination = path.join(archive.attemptsDir, String(attemptNumber).padStart(4, "0"));
   const staging = path.join(archive.attemptsDir, `.attempt-${randomUUID()}`);
-  const leaseContents = await acquireReviewResumeArchiveLease(archive);
+  const inheritedLeaseContents =
+    archive.preacquiredLease === true ? archive.leaseContents : undefined;
+  const inheritedLease = inheritedLeaseContents !== undefined;
+  const leaseContents = inheritedLeaseContents ?? (await acquireReviewResumeArchiveLease(archive));
   let promoted = false;
   let ownershipTransferred = false;
   try {
+    if (inheritedLease) await assertReviewResumeArchiveLeaseOwnership(archive, leaseContents);
     const manifestPath = path.join(archive.archiveDir, "manifest.json");
     const manifest = await readManifest(archive.archiveDir);
     if (manifest === undefined) {
@@ -766,7 +820,7 @@ export async function copyReviewResumeSession(
     if (promoted) await rm(destination, { recursive: true, force: true }).catch(() => {});
     throw error;
   } finally {
-    if (!ownershipTransferred) {
+    if (!ownershipTransferred && !inheritedLease) {
       await releaseReviewResumeArchiveLease(archive, leaseContents);
     }
   }
