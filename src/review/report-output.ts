@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Stats } from "node:fs";
-import { link, lstat, open, readFile, rename, rm, unlink } from "node:fs/promises";
+import { link, lstat, open, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { currentProcessInstanceIdentities, processInstanceIdentities } from "./work-log.js";
 
@@ -243,23 +243,24 @@ export async function reserveReviewReport(
 export async function publishReservedReviewReport(
   reservation: ReviewReportReservation,
   report: string,
+  afterOwnershipValidation: () => Promise<void> = async () => {},
 ): Promise<void> {
   if (reservation.state !== "reserved") {
     throw new Error(`Review report reservation is no longer active: ${reservation.target}`);
   }
-  const temporary = path.join(
-    path.dirname(reservation.target),
-    `.${path.basename(reservation.target)}.${crypto.randomUUID()}.tmp`,
-  );
   let handle: Awaited<ReturnType<typeof open>> | undefined;
-  let published = false;
   let failure: unknown;
   try {
-    handle = await open(temporary, "wx", 0o600);
-    await handle.writeFile(`${report}\n`, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
+    handle = await open(reservation.reservationPath, "r+");
+    const openedStats = await handle.stat();
+    if (
+      !openedStats.isFile() ||
+      sameKnownFileIdentity(openedStats, reservation) === false ||
+      openedStats.size !== Buffer.byteLength(reservation.marker) ||
+      (await handle.readFile("utf8")) !== reservation.marker
+    ) {
+      throw new Error(`Review report reservation no longer owns target: ${reservation.target}`);
+    }
     const [targetStats, sidecarStats] = await Promise.all([
       reservedTargetStats(reservation),
       reservedSidecarStats(reservation),
@@ -267,9 +268,39 @@ export async function publishReservedReviewReport(
     if (targetStats === undefined || sidecarStats === undefined) {
       throw new Error(`Review report reservation no longer owns target: ${reservation.target}`);
     }
-    await rename(temporary, reservation.target);
+    if ((await reservedTargetStats(reservation)) === undefined) {
+      throw new Error(`Review report reservation no longer owns target: ${reservation.target}`);
+    }
+    await afterOwnershipValidation();
+    const contents = Buffer.from(`${report}\n`, "utf8");
+    let offset = 0;
+    while (offset < contents.length) {
+      const { bytesWritten } = await handle.write(
+        contents,
+        offset,
+        contents.length - offset,
+        offset,
+      );
+      if (bytesWritten <= 0) throw new Error("Review report reservation write made no progress");
+      offset += bytesWritten;
+    }
+    await handle.truncate(contents.length);
+    await handle.sync();
+    const publishedStats = await lstat(reservation.target).catch(() => undefined);
+    const publishedIdentity =
+      publishedStats === undefined ? false : sameKnownFileIdentity(publishedStats, reservation);
+    if (
+      publishedStats === undefined ||
+      !publishedStats.isFile() ||
+      publishedIdentity === false ||
+      (publishedIdentity === undefined &&
+        !(await readFile(reservation.target).then((value) => value.equals(contents))))
+    ) {
+      throw new Error(`Review report reservation no longer owns target: ${reservation.target}`);
+    }
     reservation.state = "published";
-    published = true;
+    await handle.close();
+    handle = undefined;
     await unlink(reservation.reservationPath).catch(() => {});
   } catch (error) {
     failure = error;
@@ -278,11 +309,6 @@ export async function publishReservedReviewReport(
     await handle?.close();
   } catch (error) {
     failure ??= error;
-  }
-  try {
-    await rm(temporary, { force: true });
-  } catch (error) {
-    if (!published) failure ??= error;
   }
   if (failure !== undefined) {
     throw failure;

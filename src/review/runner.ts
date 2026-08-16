@@ -40,6 +40,7 @@ import {
 import {
   copyReviewResumeSession,
   createReviewResumeArchive,
+  defaultReviewReportDirectory,
   defaultReviewResumeDirectory,
   deleteReviewResumeArchive,
   findReviewResumeSessionFile,
@@ -60,6 +61,7 @@ import {
   PiDeltaBatcher,
   prepareValidatedDefaultReviewWorkLogPath,
   type ReviewWorkLog,
+  reviewWorkLogDirectory,
   sanitizeWorkLogDiagnostic,
   summarizePiEvent,
 } from "./work-log.js";
@@ -1561,35 +1563,46 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
 export async function assertReviewResumeOutputsOutsideArchive(
   archiveDir: string,
   outputs: Pick<ResumeReviewRequest, "reportPath" | "workLogPath">,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home = os.homedir(),
 ): Promise<void> {
-  if (outputs.reportPath !== undefined) {
-    try {
-      await validateProspectiveReviewReportPath({
-        sourceDir: archiveDir,
-        reportPath: outputs.reportPath,
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("actor-visible")) {
-        throw new Error(
-          `[REVIEW_RESUME_OUTPUT_INVALID] Review report target overlaps the retained archive: ${outputs.reportPath}`,
-        );
-      }
-      throw error;
+  const reportPath =
+    outputs.reportPath ??
+    path.join(
+      defaultReviewReportDirectory(environment, platform, home),
+      `prospective-${crypto.randomUUID()}.md`,
+    );
+  try {
+    await validateProspectiveReviewReportPath({
+      sourceDir: archiveDir,
+      reportPath,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("actor-visible")) {
+      throw new Error(
+        `[REVIEW_RESUME_OUTPUT_INVALID] Review report target overlaps the retained archive: ${reportPath}`,
+      );
     }
+    throw error;
   }
-  if (outputs.workLogPath !== undefined) {
-    try {
-      await validateProspectiveReviewWorkLogPath({
-        sourceDir: archiveDir,
-        workLogPath: outputs.workLogPath,
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("actor-visible")) {
-        throw new Error(
-          `[REVIEW_RESUME_OUTPUT_INVALID] Review work log target overlaps the retained archive: ${outputs.workLogPath}`,
-        );
-      }
-      throw error;
+  const workLogPath =
+    outputs.workLogPath ??
+    path.join(
+      reviewWorkLogDirectory(environment, platform, home),
+      `prospective-${crypto.randomUUID()}.jsonl`,
+    );
+  try {
+    await validateProspectiveReviewWorkLogPath({
+      sourceDir: archiveDir,
+      workLogPath,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("actor-visible")) {
+      throw new Error(
+        `[REVIEW_RESUME_OUTPUT_INVALID] Review work log target overlaps the retained archive: ${workLogPath}`,
+      );
     }
+    throw error;
   }
 }

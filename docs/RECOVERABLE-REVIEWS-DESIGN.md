@@ -43,8 +43,8 @@ Reviews are resumable by default. `--no-resume` restores today's ephemeral Pi la
 
 `--max-rpc-output-mb` accepts an integral MiB value from 1 through 64 and defaults to 20. The API exposes `maxRpcOutputBytes` as an integral byte value from 1 MiB through 64 MiB. `undefined` selects the default; zero, negative, fractional, over-limit, and unlimited values are rejected.
 
-Every strict-successful review writes its Markdown report atomically and
-create-only to a private default report directory. `--report FILE` overrides
+Every strict-successful review writes its Markdown report through an exclusively
+owned create-only reservation in a private default report directory. `--report FILE` overrides
 that target; it does not enable persistence. Pioneer first exclusively reserves
 the target as a private file containing a random ownership marker. The CLI immediately writes
 `[PIONEER_REPORT] ABSOLUTE_PATH` to stderr after opening that reservation, and
@@ -57,8 +57,8 @@ Pioneer canonicalizes and validates the prospective default target against all
 actor-visible grants and the Pi-home snapshot source before it creates, changes
 permissions on, or prunes that directory.
 
-Successful persistence atomically replaces only the still-owned marked
-reservation. Failure cleanup removes only that reservation, never a path another
+Successful persistence writes through only the still-owned marked reservation
+inode and fails if the target identity changes. Failure cleanup removes only that reservation, never a path another
 process replaced. `--no-resume` does not create, chmod, or prune resume storage.
 
 ### Resume
@@ -169,7 +169,7 @@ An interrupted assistant turn cannot be recovered. Completed turns already writt
 
 1. Resolve the UUID only below the private archive root. Reject malformed tokens, symlinks, special files, expired archives, and missing state. Immediately acquire the archive lease and hold it across all remaining setup, attempt copying, and execution so concurrent pruning cannot remove the recovery point. Then reject a non-recoverable state or exact Pi-version mismatch with `[REVIEW_RESUME_PI_VERSION_MISMATCH]`.
 2. Revalidate the stored source and grants. The source must remain the same canonical directory. Contents can have changed; the actor must re-inspect them.
-3. Read the manifest's committed attempt, ignore any newer uncommitted directory left by a controller crash, and stage, validate, and atomically promote a symlink-preserving copy into a new attempt directory before launch. The manifest is atomically replaced only after promotion, which makes each retry non-destructive and crash-consistent.
+3. Read the manifest's committed attempt, remove crash-left staging attempts while holding the archive lease, ignore any newer uncommitted numbered directory left by a controller crash, and stage, validate, and atomically promote a symlink-preserving copy into a new attempt directory before launch. The manifest is atomically replaced only after promotion, which makes each retry non-destructive and crash-consistent.
 4. Launch Pi with the copied session selected by exact path, never through Pi's interactive selector. If Pi rejects a torn or incompatible native session, return `[REVIEW_RESUME_SESSION_INVALID]`, atomically restore the prior committed attempt, retain that prior archive through normal expiry, and do not fabricate a summary.
    If the new attempt's session tree becomes unsafe or exceeds retention bounds, atomically restore the manifest to the prior committed attempt before removing the failed attempt, so the earlier recovery point remains usable.
 5. Send this controller-owned continuation prompt after the session loads. It explicitly supersedes all retired per-run locations:

@@ -3,12 +3,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-const removeTemporary = vi.hoisted(() =>
-  vi.fn(async (...args: Parameters<typeof import("node:fs/promises").rm>) => {
-    const { rm } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
-    return rm(...args);
-  }),
-);
 const unlinkFile = vi.hoisted(() =>
   vi.fn(async (...args: Parameters<typeof import("node:fs/promises").unlink>) => {
     const { unlink } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
@@ -18,7 +12,6 @@ const unlinkFile = vi.hoisted(() =>
 
 vi.mock("node:fs/promises", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:fs/promises")>()),
-  rm: removeTemporary,
   unlink: unlinkFile,
 }));
 
@@ -97,6 +90,21 @@ describe("review report output", () => {
     expect(await readFile(target, "utf8")).toBe("replacement\n");
   });
 
+  it("does not overwrite a report target replaced after ownership validation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+
+    await expect(
+      publishReservedReviewReport(reservation, "No findings.", async () => {
+        await import("node:fs/promises").then(({ rm }) => rm(target));
+        await writeFile(target, "replacement\n");
+      }),
+    ).rejects.toThrow(/reservation/i);
+
+    expect(await readFile(target, "utf8")).toBe("replacement\n");
+  });
+
   it("removes an unpublished report reservation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const target = path.join(root, "report.md");
@@ -136,7 +144,7 @@ describe("review report output", () => {
     );
   });
 
-  it("atomically creates a private report file", async () => {
+  it("creates a private report file through its owned reservation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const reports = path.join(root, "reports");
     const target = path.join(reports, "report.md");
@@ -158,16 +166,6 @@ describe("review report output", () => {
     await expect(writeReviewReport(target, "replacement")).rejects.toThrow(/already exists/i);
 
     expect(await readFile(target, "utf8")).toBe("existing\n");
-  });
-
-  it("does not turn a published report into a failure when temp cleanup fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
-    const target = path.join(root, "report.md");
-    removeTemporary.mockRejectedValueOnce(new Error("temporary cleanup failed"));
-
-    await expect(writeReviewReport(target, "No findings.")).resolves.toBeUndefined();
-
-    expect(await readFile(target, "utf8")).toBe("No findings.\n");
   });
 
   it("does not turn a published report into a failure when sidecar cleanup fails", async () => {

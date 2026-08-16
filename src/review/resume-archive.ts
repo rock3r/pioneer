@@ -833,6 +833,10 @@ export async function copyReviewResumeSession(
     }
     const committedAttempt = String(committedAttemptNumber).padStart(4, "0");
     for (const entry of await readdir(archive.attemptsDir, { withFileTypes: true })) {
+      if (entry.name.startsWith(".attempt-")) {
+        await rm(path.join(archive.attemptsDir, entry.name), { recursive: true, force: true });
+        continue;
+      }
       if (/^\d{4}$/.test(entry.name) && entry.name !== committedAttempt) {
         await rm(path.join(archive.attemptsDir, entry.name), { recursive: true, force: true });
       }

@@ -259,6 +259,20 @@ describe("review RPC runner", () => {
     ).rejects.toThrow(/archive/i);
   });
 
+  it("rejects a default resume work log inside the retained archive", async () => {
+    const archive = await mkdtemp(path.join(tmpdir(), "pioneer-resume-output-"));
+
+    await expect(
+      assertReviewResumeOutputsOutsideArchive(
+        archive,
+        {},
+        { XDG_STATE_HOME: archive },
+        "linux",
+        "/home/test",
+      ),
+    ).rejects.toThrow(/work log.*archive/i);
+  });
+
   it("preserves a successful report while marking cleanup failure terminal", () => {
     const result = {
       report: "No findings.",

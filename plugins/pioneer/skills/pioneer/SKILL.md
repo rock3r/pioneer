@@ -46,7 +46,7 @@ Use repeated grants when the review needs more context:
 --allow-write /absolute/output/path
 ```
 
-The source and `--allow-read` directories remain read-only. `--allow-write` is exceptional and is not required for a final review report: use `--report /absolute/path/report.md` instead. Pioneer writes that report atomically from the controller only after the review succeeds; Pi never receives write access to it.
+The source and `--allow-read` directories remain read-only. `--allow-write` is exceptional and is not required for a final review report: use `--report /absolute/path/report.md` instead. Pioneer writes that report through its exclusively owned controller reservation only after the review succeeds; Pi never receives write access to it.
 
 Pioneer always creates a real-time JSONL work log and immediately prints its exact path to stderr as `[PIONEER_WORK_LOG] ABSOLUTE_PATH`. Preserve that line. Use `--work-log /absolute/new-file.jsonl` only when the caller requests a particular create-only target; the path must not contain control characters. Otherwise use the platform default. Default logs are private to the current user. Windows custom targets inherit their parent directory ACL, which Pioneer cannot validate, so use the default unless the caller identifies a parent already private to the current user. While a terminal session remains nonterminal, tail or inspect that file when status is needed. Five-second heartbeats and the last sanitized Pi event distinguish active, silent, retrying, tool-running, settled, and terminated states without exposing prompt or model/tool content.
 

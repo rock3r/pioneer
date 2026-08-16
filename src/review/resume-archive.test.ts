@@ -804,6 +804,28 @@ describe("recoverable review archive", () => {
     expect(manifest.attempt).toBe(2);
   });
 
+  it("reclaims crashed staging attempts before copying the next attempt", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "committed");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    const crashedStaging = path.join(archive.attemptsDir, ".attempt-crashed");
+    await mkdir(crashedStaging);
+    await writeFile(path.join(crashedStaging, "partial.jsonl"), "partial");
+
+    const next = await copyReviewResumeSession(archive, archive.activeAttemptDir, 2);
+
+    await expect(stat(crashedStaging)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path.join(next.activeAttemptDir, "session.jsonl"), "utf8")).toBe(
+      "committed",
+    );
+  });
+
   it("never deletes the committed attempt when a duplicate attempt is requested", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
     const archive = await createReviewResumeArchive(root, {
