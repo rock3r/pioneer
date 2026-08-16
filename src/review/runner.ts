@@ -252,6 +252,12 @@ export function reviewResumeFailureKind(failure: Error): ReviewResumeFailureKind
   return REVIEW_RESUME_FAILURE_KINDS.get(failure) ?? "retainable";
 }
 
+function wrapReviewResumeFailure(failure: Error, message: string): Error {
+  const wrapped = new Error(message, { cause: failure });
+  const kind = REVIEW_RESUME_FAILURE_KINDS.get(failure);
+  return kind === undefined ? wrapped : classifyReviewResumeFailure(wrapped, kind);
+}
+
 function trustedResumeArchiveFailureKind(failure: Error): ReviewResumeFailureKind {
   switch (workLogDiagnosticSummary(failure.message).diagnosticCode) {
     case "REVIEW_RESUME_ATTEMPT_LIMIT":
@@ -976,7 +982,10 @@ export async function runReviewRpc(
       }
       if (terminalFailure !== undefined) {
         finish(
-          new Error(`${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`),
+          wrapReviewResumeFailure(
+            terminalFailure,
+            `${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`,
+          ),
         );
         return;
       }

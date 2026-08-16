@@ -1374,9 +1374,25 @@ describe("review RPC runner", () => {
   });
 
   it("includes the final child termination state for a rejected prompt", async () => {
-    await expect(
-      runReviewRpc(rejectedPromptPi(), process.cwd(), process.env, "Review the source", 1_000),
-    ).rejects.toThrow(/Pi RPC rejected the review prompt .*exit .*signal (?:SIGKILL|none)/s);
+    let failure: Error | undefined;
+    try {
+      await runReviewRpc(
+        rejectedPromptPi(),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+      );
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(failure?.message).toMatch(
+      /Pi RPC rejected the review prompt .*exit .*signal (?:SIGKILL|none)/s,
+    );
+    expect(failure === undefined ? undefined : reviewResumeFailureKind(failure)).toBe(
+      "prompt_rejected",
+    );
   });
 
   it("terminates the isolated child tree when Pioneer receives SIGINT", async () => {
