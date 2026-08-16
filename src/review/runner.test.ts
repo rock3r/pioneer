@@ -261,14 +261,20 @@ describe("review RPC runner", () => {
 
   it("rejects a default resume work log inside the retained archive", async () => {
     const archive = await mkdtemp(path.join(tmpdir(), "pioneer-resume-output-"));
+    const environment =
+      process.platform === "win32"
+        ? { LOCALAPPDATA: archive }
+        : process.platform === "linux"
+          ? { XDG_STATE_HOME: archive }
+          : {};
 
     await expect(
       assertReviewResumeOutputsOutsideArchive(
         archive,
-        {},
-        { XDG_STATE_HOME: archive },
-        "linux",
-        "/home/test",
+        { reportPath: path.join(tmpdir(), `${path.basename(archive)}-report.md`) },
+        environment,
+        process.platform,
+        archive,
       ),
     ).rejects.toThrow(/work log.*archive/i);
   });
