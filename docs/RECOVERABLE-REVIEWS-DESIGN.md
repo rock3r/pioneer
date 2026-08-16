@@ -163,6 +163,7 @@ An interrupted assistant turn cannot be recovered. Completed turns already writt
 2. Revalidate the stored source and grants. The source must remain the same canonical directory. Contents can have changed; the actor must re-inspect them.
 3. Read the manifest's committed attempt, ignore any newer uncommitted directory left by a controller crash, and stage, validate, and atomically promote a symlink-preserving copy into a new attempt directory before launch. The manifest is atomically replaced only after promotion, which makes each retry non-destructive and crash-consistent.
 4. Launch Pi with the copied session selected by exact path, never through Pi's interactive selector. If Pi rejects a torn or incompatible native session, return `[REVIEW_RESUME_SESSION_INVALID]`, retain the prior archive through normal expiry, and do not fabricate a summary.
+   If the new attempt's session tree becomes unsafe or exceeds retention bounds, atomically restore the manifest to the prior committed attempt before removing the failed attempt, so the earlier recovery point remains usable.
 5. Send this controller-owned continuation prompt after the session loads. It explicitly supersedes all retired per-run locations:
 
    ```text
@@ -182,6 +183,7 @@ An interrupted assistant turn cannot be recovered. Completed turns already writt
 - Deletion is ordinary filesystem deletion, not cryptographic erasure.
 - Session content, token, prompt, thinking, tool inputs/results, credentials, proxy values, and raw provider diagnostics never enter Pioneer-generated work-log fields or errors. The final report remains Pi's independently generated Markdown and is stored privately.
 - Resume cannot expand source, grant, model, network, or Pi-home authority.
+- Archive loading rechecks disjointness against the stored canonical Pi-home source as well as source and explicit grants.
 - The RPC cap applies equally to resumed reviews.
 - `--no-resume` keeps the present no-session behavior.
 

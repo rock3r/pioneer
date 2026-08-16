@@ -612,6 +612,45 @@ export async function findReviewResumeSessionFile(attemptDir: string): Promise<s
   return await realpath(files[0] as string);
 }
 
+function retainedReviewResumeState(failureCode: string): string {
+  return failureCode === "REVIEW_REPORT_WRITE_FAILED" ? "report_delivery_failed" : "retained";
+}
+
+async function retainPriorReviewResumeAttempt(
+  archive: ReviewResumeArchive,
+  failureCode: string,
+): Promise<{ sizeBytes: number; fileCount: number; entryCount: number } | undefined> {
+  const activeAttemptNumber = Number(path.basename(archive.activeAttemptDir));
+  if (!Number.isSafeInteger(activeAttemptNumber) || activeAttemptNumber <= 1) return undefined;
+  const manifestPath = path.join(archive.archiveDir, "manifest.json");
+  const manifest = await readManifest(archive.archiveDir);
+  if (manifest === undefined || manifest.attempt !== activeAttemptNumber) return undefined;
+  const previousAttempts = (await readdir(archive.attemptsDir, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && /^\d{4}$/.test(entry.name))
+    .map((entry) => Number(entry.name))
+    .filter((attempt) => attempt < activeAttemptNumber)
+    .sort((left, right) => right - left);
+  const previousAttemptNumber = previousAttempts[0];
+  if (previousAttemptNumber === undefined) return undefined;
+  const previousAttemptDir = path.join(
+    archive.attemptsDir,
+    String(previousAttemptNumber).padStart(4, "0"),
+  );
+  await findReviewResumeSessionFile(previousAttemptDir);
+  await writeAtomicJsonFile(manifestPath, {
+    ...manifest,
+    state: retainedReviewResumeState(failureCode),
+    failureCode,
+    retainedAt: new Date().toISOString(),
+    attempt: previousAttemptNumber,
+  });
+  await rm(archive.activeAttemptDir, { recursive: true, force: true });
+  const previousArchive = { ...archive, activeAttemptDir: previousAttemptDir };
+  const usage = await inspectReviewResumeArchive(previousArchive);
+  await pruneReviewResumeArchives(path.dirname(archive.archiveDir));
+  return usage;
+}
+
 export async function retainReviewResumeArchive(
   archive: ReviewResumeArchive,
   failureCode: string,
@@ -626,22 +665,30 @@ export async function retainReviewResumeArchive(
         throw new Error("[REVIEW_RESUME_IN_USE] Review resume archive lease ownership changed");
       }
     }
-    const usage = await inspectReviewResumeSessionTree(archive.activeAttemptDir);
-    if (usage.fileCount === 0) throw new Error("Review resume session candidate is empty");
-    const archiveUsage = await inspectReviewResumeArchive(archive);
-    const manifestPath = path.join(archive.archiveDir, "manifest.json");
-    const manifest = await readManifest(archive.archiveDir);
-    if (manifest === undefined) {
-      throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume manifest is invalid");
+    try {
+      const usage = await inspectReviewResumeSessionTree(archive.activeAttemptDir);
+      if (usage.fileCount === 0) throw new Error("Review resume session candidate is empty");
+      const archiveUsage = await inspectReviewResumeArchive(archive);
+      const manifestPath = path.join(archive.archiveDir, "manifest.json");
+      const manifest = await readManifest(archive.archiveDir);
+      if (manifest === undefined) {
+        throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume manifest is invalid");
+      }
+      await writeAtomicJsonFile(manifestPath, {
+        ...manifest,
+        state: retainedReviewResumeState(failureCode),
+        failureCode,
+        retainedAt: new Date().toISOString(),
+      });
+      await pruneReviewResumeArchives(path.dirname(archive.archiveDir));
+      return archiveUsage;
+    } catch (error) {
+      const prior = await retainPriorReviewResumeAttempt(archive, failureCode).catch(
+        () => undefined,
+      );
+      if (prior !== undefined) return prior;
+      throw error;
     }
-    await writeAtomicJsonFile(manifestPath, {
-      ...manifest,
-      state: failureCode === "REVIEW_REPORT_WRITE_FAILED" ? "report_delivery_failed" : "retained",
-      failureCode,
-      retainedAt: new Date().toISOString(),
-    });
-    await pruneReviewResumeArchives(path.dirname(archive.archiveDir));
-    return archiveUsage;
   } finally {
     await releaseReviewResumeArchiveLease(archive, leaseContents);
   }
@@ -787,6 +834,7 @@ export async function loadReviewResumeArchive(
       ...(Array.isArray(rawScope.allowWritePaths)
         ? rawScope.allowWritePaths.filter((value): value is string => typeof value === "string")
         : []),
+      ...(typeof rawScope.piHomeSource === "string" ? [rawScope.piHomeSource] : []),
     ],
     false,
   );

@@ -244,6 +244,28 @@ describe("recoverable review archive", () => {
     await expect(reviewResumeArchiveHasLiveLease(next)).resolves.toBe(false);
   });
 
+  it("rolls back to the prior committed attempt when a resumed session is not retainable", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "prior-session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    const next = await copyReviewResumeSession(archive, archive.activeAttemptDir, 2);
+    await symlink("missing", path.join(next.activeAttemptDir, "unsafe"));
+
+    await expect(retainReviewResumeArchive(next, "REVIEW_RPC_INCOMPLETE")).resolves.toBeDefined();
+    const loaded = await loadReviewResumeArchive(root, archive.token);
+    expect(loaded.archive.activeAttemptDir).toBe(archive.activeAttemptDir);
+    expect(
+      await readFile(path.join(loaded.archive.activeAttemptDir, "session.jsonl"), "utf8"),
+    ).toBe("prior-session");
+    await expect(stat(next.activeAttemptDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("does not copy a session while its active controller lease is live", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
     const archive = await createReviewResumeArchive(root, {
@@ -524,6 +546,23 @@ describe("recoverable review archive", () => {
     await expect(loadReviewResumeArchive(root, archive.token)).resolves.toMatchObject({
       archive: { activeAttemptDir: archive.activeAttemptDir },
     });
+  });
+
+  it("rejects a stored Pi home that overlaps the resume root at load time", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      piHomeSource: root,
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+
+    await expect(loadReviewResumeArchive(root, archive.token)).rejects.toThrow(
+      /overlaps an actor-visible grant/i,
+    );
   });
 
   it("replaces a crashed uncommitted attempt before atomically committing the next one", async () => {
