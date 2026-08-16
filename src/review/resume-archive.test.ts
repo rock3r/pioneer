@@ -32,6 +32,7 @@ import {
   prepareValidatedDefaultReviewReportPath,
   pruneInactiveReviewResumeArchive,
   pruneReviewResumeArchives,
+  publishReviewResumeArchiveLease,
   RESUME_RETENTION_MS,
   releaseLeasedReviewResumeArchive,
   resumeArchivePath,
@@ -42,6 +43,19 @@ import {
 } from "./resume-archive.js";
 
 describe("recoverable review archive", () => {
+  it("publishes only complete resume leases at the canonical lease path", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-lease-"));
+    const leasePath = path.join(root, "lease");
+    const contents = `${JSON.stringify({ pid: process.pid, nonce: "lease" })}\n`;
+
+    await publishReviewResumeArchiveLease(leasePath, contents, async (pendingPath) => {
+      expect(await readFile(pendingPath, "utf8")).toBe(contents);
+      await expect(stat(leasePath)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    expect(await readFile(leasePath, "utf8")).toBe(contents);
+  });
+
   it("counts directories toward the bounded session-entry limit", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-tree-"));
     try {
@@ -782,7 +796,7 @@ describe("recoverable review archive", () => {
     await expect(statReviewResumeArchiveCandidate(vanished)).resolves.toBeUndefined();
   });
 
-  it("prunes stale lease takeover temporary entries", async () => {
+  it("prunes stale lease takeover and publication temporary entries", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
@@ -791,11 +805,15 @@ describe("recoverable review archive", () => {
       piVersion: "0.84.2",
     });
     const staleLease = path.join(archive.archiveDir, "lease.stale-crashed");
+    const pendingLease = path.join(archive.archiveDir, "lease.pending-crashed");
     const staleTime = new Date(Date.now() - RESUME_RETENTION_MS - 1);
     await writeFile(staleLease, "stale");
+    await writeFile(pendingLease, "pending");
     await utimes(staleLease, staleTime, staleTime);
+    await utimes(pendingLease, staleTime, staleTime);
     await pruneReviewResumeArchives(root);
     await expect(stat(staleLease)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(pendingLease)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("does not expire an archive while any live lease holds it", async () => {

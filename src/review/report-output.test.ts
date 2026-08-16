@@ -90,6 +90,19 @@ describe("review report output", () => {
     expect(await readFile(target, "utf8")).toBe("replacement\n");
   });
 
+  it("does not remove a report target replaced after release ownership validation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+
+    await releaseReviewReportReservation(reservation, async () => {
+      await import("node:fs/promises").then(({ rm }) => rm(target));
+      await writeFile(target, "replacement\n");
+    });
+
+    expect(await readFile(target, "utf8")).toBe("replacement\n");
+  });
+
   it("does not overwrite a report target replaced after ownership validation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const target = path.join(root, "report.md");

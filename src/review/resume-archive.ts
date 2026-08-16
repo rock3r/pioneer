@@ -3,6 +3,7 @@ import type { Stats } from "node:fs";
 import {
   chmod,
   cp,
+  link,
   lstat,
   mkdir,
   readdir,
@@ -300,6 +301,23 @@ function reviewResumeLeaseContents(): string {
   })}\n`;
 }
 
+export async function publishReviewResumeArchiveLease(
+  leasePath: string,
+  leaseContents: string,
+  afterPendingWrite: (pendingPath: string) => Promise<void> = async () => {},
+): Promise<void> {
+  const pendingPath = `${leasePath}.pending-${randomUUID()}`;
+  try {
+    await writeFile(pendingPath, leaseContents, { flag: "wx", mode: 0o600 });
+    await afterPendingWrite(pendingPath);
+    await link(pendingPath, leasePath);
+  } finally {
+    await unlink(pendingPath).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    });
+  }
+}
+
 export async function reviewResumeArchiveHasLiveLease(
   archive: ReviewResumeArchive,
 ): Promise<boolean> {
@@ -311,7 +329,7 @@ async function acquireReviewResumeArchiveLease(archive: ReviewResumeArchive): Pr
   const leaseContents = reviewResumeLeaseContents();
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      await writeFile(leasePath, leaseContents, { flag: "wx", mode: 0o600 });
+      await publishReviewResumeArchiveLease(leasePath, leaseContents);
       return leaseContents;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -337,7 +355,7 @@ async function acquireReviewResumeArchiveLease(archive: ReviewResumeArchive): Pr
           });
           continue;
         }
-        await writeFile(leasePath, leaseContents, { flag: "wx", mode: 0o600 });
+        await publishReviewResumeArchiveLease(leasePath, leaseContents);
         return leaseContents;
       } catch (writeError) {
         if ((writeError as NodeJS.ErrnoException).code !== "EEXIST") throw writeError;
@@ -407,7 +425,11 @@ async function pruneReviewResumeArchiveTemporaryEntries(
 ): Promise<void> {
   const candidates: string[] = [];
   for (const entry of await readdir(archiveDir, { withFileTypes: true })) {
-    if (entry.name.startsWith("manifest.json.tmp-") || entry.name.startsWith("lease.stale-")) {
+    if (
+      entry.name.startsWith("manifest.json.tmp-") ||
+      entry.name.startsWith("lease.stale-") ||
+      entry.name.startsWith("lease.pending-")
+    ) {
       candidates.push(path.join(archiveDir, entry.name));
     }
   }
@@ -530,7 +552,7 @@ export async function createReviewResumeArchive(
     };
     await writeAtomicJsonFile(path.join(archiveDir, "manifest.json"), manifest);
     const leaseContents = reviewResumeLeaseContents();
-    await writeFile(path.join(archiveDir, "lease"), leaseContents, { flag: "wx", mode: 0o600 });
+    await publishReviewResumeArchiveLease(path.join(archiveDir, "lease"), leaseContents);
     return {
       token,
       archiveDir: await realpath(archiveDir),
