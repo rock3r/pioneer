@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultReviewReportDirectory } from "./resume-archive.js";
 import {
+  annotateHandledReviewResumeFailure,
   assertReviewResumeOutputsOutsideArchive,
   assertReviewResumeOutputsOutsideStorage,
   assertReviewResumeStateIsRecoverable,
@@ -360,6 +361,13 @@ describe("review RPC runner", () => {
   it("tracks handled resume failures without inspecting untrusted error text", () => {
     expect(shouldHandleReviewResumeFailure(false)).toBe(true);
     expect(shouldHandleReviewResumeFailure(true)).toBe(false);
+  });
+
+  it("preserves the recovery token after a later failure follows successful retention", () => {
+    const token = "550e8400-e29b-41d4-a716-446655440000";
+    expect(annotateHandledReviewResumeFailure(new Error("work log failed"), token).message).toBe(
+      `work log failed\n[PIONEER_REVIEW_RESUME] ${token}`,
+    );
   });
 
   it("rejects active archives whose prior actor may still be running", () => {

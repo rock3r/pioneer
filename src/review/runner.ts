@@ -233,6 +233,10 @@ export function shouldHandleReviewResumeFailure(alreadyHandled: boolean): boolea
   return !alreadyHandled;
 }
 
+export function annotateHandledReviewResumeFailure(failure: Error, token: string): Error {
+  return new Error(`${failure.message}\n[PIONEER_REVIEW_RESUME] ${token}`, { cause: failure });
+}
+
 export async function canonicalReviewPiHomeSource(source: string): Promise<string> {
   return await realpath(path.resolve(source));
 }
@@ -1426,6 +1430,7 @@ async function runReviewInternal(
       if (reportWriteError !== undefined && resumeArchive !== undefined) {
         try {
           await retainReviewResumeArchive(resumeArchive, "REVIEW_REPORT_WRITE_FAILED");
+          resumeFailureHandled = true;
         } catch (error) {
           if (error instanceof Error && error.message.includes("[REVIEW_RESUME_IN_USE]")) {
             reportWriteError = `${reportWriteError}\n${error.message}`;
@@ -1479,6 +1484,8 @@ async function runReviewInternal(
       if (resumeArchive !== undefined && shouldHandleReviewResumeFailure(resumeFailureHandled)) {
         resumeFailureHandled = true;
         runFailure = await handleResumeArchiveFailure(resumeArchive, runFailure);
+      } else if (resumeArchive !== undefined && resumeToken !== undefined) {
+        runFailure = annotateHandledReviewResumeFailure(runFailure, resumeToken);
       }
     }
     let cleanupFailure = deferredCleanupFailure;
