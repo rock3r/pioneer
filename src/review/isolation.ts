@@ -178,6 +178,7 @@ async function canonicalProspectiveControllerOutputPath(
 
 async function validateReviewPathsInternal(
   spec: ReviewPathSpec,
+  prospectiveReport: boolean,
   prospectiveWorkLog: boolean,
   platform: NodeJS.Platform,
 ): Promise<ValidatedReviewPaths> {
@@ -187,7 +188,9 @@ async function validateReviewPathsInternal(
   const reportPath =
     spec.reportPath === undefined
       ? undefined
-      : await canonicalControllerOutputPath(spec.reportPath, "report");
+      : await (prospectiveReport
+          ? canonicalProspectiveControllerOutputPath(spec.reportPath, "report")
+          : canonicalControllerOutputPath(spec.reportPath, "report"));
   const workLogPath =
     spec.workLogPath === undefined
       ? undefined
@@ -234,16 +237,25 @@ export async function validateProspectiveReviewWorkLogPath(
   spec: ReviewPathSpec & { readonly workLogPath: string },
   platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
-  const paths = await validateReviewPathsInternal(spec, true, platform);
+  const paths = await validateReviewPathsInternal(spec, false, true, platform);
   if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
   return paths.workLogPath;
+}
+
+export async function validateProspectiveReviewReportPath(
+  spec: ReviewPathSpec & { readonly reportPath: string },
+  platform: NodeJS.Platform = process.platform,
+): Promise<string> {
+  const paths = await validateReviewPathsInternal(spec, true, false, platform);
+  if (paths.reportPath === undefined) throw new Error("Review report path was not validated");
+  return paths.reportPath;
 }
 
 export async function validateReviewPaths(
   spec: ReviewPathSpec,
   platform: NodeJS.Platform = process.platform,
 ): Promise<ValidatedReviewPaths> {
-  return await validateReviewPathsInternal(spec, false, platform);
+  return await validateReviewPathsInternal(spec, false, false, platform);
 }
 
 export function buildReviewSandboxConfig(options: ReviewSandboxConfigOptions): SandboxPolicy {

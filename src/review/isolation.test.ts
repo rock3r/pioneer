@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertDistinctExistingReviewOutputs,
   buildReviewSandboxConfig,
+  validateProspectiveReviewReportPath,
   validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
 } from "./isolation.js";
@@ -93,6 +94,18 @@ describe("review path grants", () => {
       validateProspectiveReviewWorkLogPath({ sourceDir: source, workLogPath: target }),
     ).rejects.toThrow(/actor-visible/i);
     await expect(lstat(path.join(source, "state"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a prospective default report before an actor-visible parent exists", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const target = path.join(source, "data", "pioneer", "reports", "review.md");
+    await mkdir(source);
+
+    await expect(
+      validateProspectiveReviewReportPath({ sourceDir: source, reportPath: target }),
+    ).rejects.toThrow(/actor-visible/i);
+    await expect(lstat(path.join(source, "data"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("validates the full request before accepting a prospective work log", async () => {

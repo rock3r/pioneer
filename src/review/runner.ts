@@ -26,6 +26,7 @@ import {
   assertDistinctExistingReviewOutputs,
   buildReviewSandboxConfig,
   type ReviewNetworkMode,
+  validateProspectiveReviewReportPath,
   validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
 } from "./isolation.js";
@@ -38,7 +39,7 @@ import {
   findReviewResumeSessionFile,
   type LoadedReviewResumeArchive,
   loadReviewResumeArchive,
-  prepareDefaultReviewReportPath,
+  prepareValidatedDefaultReviewReportPath,
   pruneReviewResumeArchives,
   type ReviewResumeArchive,
   retainReviewResumeArchive,
@@ -364,13 +365,15 @@ export function requiresGitInspection(prompt: string): boolean {
 
 export function buildReviewPrompt(
   sourceDir: string,
-  scratchDir: string,
+  scratchDir: string | undefined,
   requestPrompt: string,
 ): string {
   return [
-    "Perform a code review. The source and reference paths are read-only. Use the writable scratch directory for temporary notes or reports. Do not attempt to modify read-only paths.",
+    scratchDir === undefined
+      ? "Perform a code review. The source and reference paths are read-only. Do not attempt to modify read-only paths."
+      : "Perform a code review. The source and reference paths are read-only. Use the writable scratch directory for temporary notes or reports. Do not attempt to modify read-only paths.",
     `Source: ${sourceDir}`,
-    `Scratch: ${scratchDir}`,
+    ...(scratchDir === undefined ? [] : [`Scratch: ${scratchDir}`]),
     requestPrompt,
   ].join("\n\n");
 }
@@ -940,8 +943,15 @@ async function runReviewInternal(
   let requestedReportPath = request.reportPath;
   if (requestedReportPath === undefined) {
     try {
-      requestedReportPath = await prepareDefaultReviewReportPath();
+      requestedReportPath = await prepareValidatedDefaultReviewReportPath(async (candidate) => {
+        try {
+          await validateProspectiveReviewReportPath({ ...request, reportPath: candidate });
+        } catch (error) {
+          throw new ProspectiveReviewPathValidationError(error);
+        }
+      });
     } catch (error) {
+      if (error instanceof ProspectiveReviewPathValidationError) throw error.original;
       throw new Error(
         diagnosticMessage(
           "REVIEW_REPORT_CREATE_FAILED",
@@ -1180,7 +1190,11 @@ async function runReviewInternal(
             }
           : {}),
       };
-      const prompt = buildReviewPrompt(paths.sourceDir, scratchDirectory, request.prompt);
+      const prompt = buildReviewPrompt(
+        paths.sourceDir,
+        resumeArchive === undefined ? scratchDirectory : undefined,
+        request.prompt,
+      );
       let report: string;
       let sandboxed: boolean;
       if (windows) {

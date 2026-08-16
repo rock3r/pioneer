@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { Stats } from "node:fs";
 import {
   chmod,
   cp,
@@ -15,6 +16,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import type { ReviewNetworkMode } from "./isolation.js";
+import { currentProcessInstanceIdentities, processInstanceIdentities } from "./work-log.js";
 
 export interface ImmutableReviewScope {
   readonly sourceDir: string;
@@ -212,23 +214,55 @@ async function readManifest(directory: string): Promise<Record<string, unknown> 
 }
 
 async function activeLeaseIsHeld(directory: string): Promise<boolean> {
+  let value: unknown;
   try {
     const leasePath = path.join(directory, "lease");
     const stats = await lstat(leasePath);
     if (stats.isSymbolicLink() || !stats.isFile()) return false;
-    const value: unknown = JSON.parse(await readFile(leasePath, "utf8"));
-    if (typeof value !== "object" || value === null) return false;
-    const pid = (value as Record<string, unknown>).pid;
-    if (!Number.isSafeInteger(pid) || (pid as number) <= 0) return false;
-    try {
-      process.kill(pid as number, 0);
-      return true;
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "EPERM";
-    }
+    value = JSON.parse(await readFile(leasePath, "utf8"));
   } catch {
     return false;
   }
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  const pid = record.pid;
+  const ownerIdentities = record.processIdentities;
+  if (!Number.isSafeInteger(pid) || (pid as number) <= 0) return false;
+  if (
+    !Array.isArray(ownerIdentities) ||
+    ownerIdentities.length === 0 ||
+    !ownerIdentities.every(
+      (identity): identity is string =>
+        typeof identity === "string" && /^[0-9a-f]{64}$/i.test(identity),
+    )
+  ) {
+    return false;
+  }
+  try {
+    process.kill(pid as number, 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EPERM") return false;
+  }
+  const currentIdentities = processInstanceIdentities(pid as number, process.platform);
+  return (
+    currentIdentities === undefined ||
+    currentIdentities.some((identity) => ownerIdentities.includes(identity))
+  );
+}
+
+function reviewResumeLeaseContents(): string {
+  const processIdentities = currentProcessInstanceIdentities(process.platform);
+  if (processIdentities === undefined) {
+    throw new Error(
+      `[REVIEW_RESUME_LEASE_IDENTITY_UNAVAILABLE] Could not determine review resume owner identity: ${process.pid}`,
+    );
+  }
+  return `${JSON.stringify({
+    pid: process.pid,
+    processIdentities,
+    nonce: randomUUID(),
+    createdAt: new Date().toISOString(),
+  })}\n`;
 }
 
 export async function reviewResumeArchiveHasLiveLease(
@@ -239,11 +273,7 @@ export async function reviewResumeArchiveHasLiveLease(
 
 async function acquireReviewResumeArchiveLease(archive: ReviewResumeArchive): Promise<string> {
   const leasePath = path.join(archive.archiveDir, "lease");
-  const leaseContents = `${JSON.stringify({
-    pid: process.pid,
-    nonce: randomUUID(),
-    createdAt: new Date().toISOString(),
-  })}\n`;
+  const leaseContents = reviewResumeLeaseContents();
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       await writeFile(leasePath, leaseContents, { flag: "wx", mode: 0o600 });
@@ -334,29 +364,44 @@ export async function pruneReviewResumeArchives(root: string, now = Date.now()):
   const inactive: Array<{ directory: string; timestamp: number }> = [];
   for (const candidate of candidates) {
     const directory = path.join(root, candidate.name);
-    const stats = await lstat(directory);
-    if (stats.isSymbolicLink()) continue;
-    await pruneReviewResumeArchiveTemporaryEntries(directory, now);
-    const manifest = await readManifest(directory);
-    if (manifest === undefined) {
-      if (await activeLeaseIsHeld(directory)) continue;
-      if (now - stats.mtimeMs >= RESUME_RETENTION_MS) {
-        await rm(directory, { recursive: true, force: true });
+    try {
+      const stats = await statReviewResumeArchiveCandidate(directory);
+      if (stats === undefined || stats.isSymbolicLink()) continue;
+      await pruneReviewResumeArchiveTemporaryEntries(directory, now);
+      const manifest = await readManifest(directory);
+      if (manifest === undefined) {
+        if (await activeLeaseIsHeld(directory)) continue;
+        if (now - stats.mtimeMs >= RESUME_RETENTION_MS) {
+          await rm(directory, { recursive: true, force: true });
+        }
+        continue;
       }
-      continue;
+      const timestamp = await archiveTimestamp(manifest);
+      const expired = timestamp === 0 || now - timestamp >= RESUME_RETENTION_MS;
+      if (await activeLeaseIsHeld(directory)) continue;
+      if (expired) {
+        await rm(directory, { recursive: true, force: true });
+        continue;
+      }
+      inactive.push({ directory, timestamp });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const timestamp = await archiveTimestamp(manifest);
-    const expired = timestamp === 0 || now - timestamp >= RESUME_RETENTION_MS;
-    if (await activeLeaseIsHeld(directory)) continue;
-    if (expired) {
-      await rm(directory, { recursive: true, force: true });
-      continue;
-    }
-    inactive.push({ directory, timestamp });
   }
   inactive.sort((left, right) => right.timestamp - left.timestamp);
   for (const candidate of inactive.slice(MAX_RETAINED_RESUME_ARCHIVES)) {
     await rm(candidate.directory, { recursive: true, force: true });
+  }
+}
+
+export async function statReviewResumeArchiveCandidate(
+  directory: string,
+): Promise<Stats | undefined> {
+  try {
+    return await lstat(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
   }
 }
 
@@ -390,11 +435,7 @@ export async function createReviewResumeArchive(
       state: "active",
     };
     await writeAtomicJsonFile(path.join(archiveDir, "manifest.json"), manifest);
-    const leaseContents = `${JSON.stringify({
-      pid: process.pid,
-      nonce: randomUUID(),
-      createdAt: new Date().toISOString(),
-    })}\n`;
+    const leaseContents = reviewResumeLeaseContents();
     await writeFile(path.join(archiveDir, "lease"), leaseContents, { flag: "wx", mode: 0o600 });
     return {
       token,
@@ -409,11 +450,19 @@ export async function createReviewResumeArchive(
   }
 }
 
-export async function prepareDefaultReviewReportPath(
+type ValidateReviewReportTarget = (target: string) => Promise<void>;
+
+export async function prepareValidatedDefaultReviewReportPath(
+  validateTarget: ValidateReviewReportTarget,
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
   home = os.homedir(),
 ): Promise<string> {
+  const target = platformPath(platform).join(
+    defaultReviewReportDirectory(environment, platform, home),
+    `review-${new Date().toISOString().replaceAll(/[-:.]/g, "")}-${randomUUID()}.md`,
+  );
+  await validateTarget(target);
   await privateDirectory(appDataRoot(environment, platform, home));
   const directory = defaultReviewReportDirectory(environment, platform, home);
   await privateDirectory(directory);
@@ -427,10 +476,15 @@ export async function prepareDefaultReviewReportPath(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     });
   }
-  return path.join(
-    directory,
-    `review-${new Date().toISOString().replaceAll(/[-:.]/g, "")}-${randomUUID()}.md`,
-  );
+  return target;
+}
+
+export async function prepareDefaultReviewReportPath(
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home = os.homedir(),
+): Promise<string> {
+  return await prepareValidatedDefaultReviewReportPath(async () => {}, environment, platform, home);
 }
 
 export async function inspectReviewResumeSessionTree(

@@ -26,11 +26,13 @@ import {
   MAX_RESUME_ARCHIVE_BYTES,
   MAX_RESUME_MANIFEST_BYTES,
   prepareDefaultReviewReportPath,
+  prepareValidatedDefaultReviewReportPath,
   pruneReviewResumeArchives,
   RESUME_RETENTION_MS,
   resumeArchivePath,
   retainReviewResumeArchive,
   reviewResumeArchiveHasLiveLease,
+  statReviewResumeArchiveCandidate,
 } from "./resume-archive.js";
 
 describe("recoverable review archive", () => {
@@ -59,6 +61,23 @@ describe("recoverable review archive", () => {
     expect((await stat(path.dirname(reportPath))).mode & 0o777).toBe(
       process.platform === "win32" ? (await stat(path.dirname(reportPath))).mode & 0o777 : 0o700,
     );
+  });
+
+  it("validates the default report target before creating or pruning its directory", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const reportDirectory = defaultReviewReportDirectory({}, "linux", home);
+
+    await expect(
+      prepareValidatedDefaultReviewReportPath(
+        async () => {
+          throw new Error("actor-visible report target");
+        },
+        {},
+        "linux",
+        home,
+      ),
+    ).rejects.toThrow("actor-visible report target");
+    await expect(stat(reportDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("prunes generated default reports using their timestamped names", async () => {
@@ -236,6 +255,26 @@ describe("recoverable review archive", () => {
     );
   });
 
+  it("does not treat a reused live PID as the archived lease owner", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(
+      path.join(archive.archiveDir, "lease"),
+      `${JSON.stringify({
+        pid: process.pid,
+        processIdentities: ["0".repeat(64)],
+        nonce: "reused",
+      })}\n`,
+    );
+
+    await expect(reviewResumeArchiveHasLiveLease(archive)).resolves.toBe(false);
+  });
+
   it("rejects attempts beyond the bounded four-digit archive layout", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
     const archive = await createReviewResumeArchive(root, {
@@ -390,6 +429,13 @@ describe("recoverable review archive", () => {
     await expect(stat(manifestTemp)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("ignores an archive candidate removed after the pruning snapshot", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const vanished = path.join(root, "550e8400-e29b-41d4-a716-446655440000");
+
+    await expect(statReviewResumeArchiveCandidate(vanished)).resolves.toBeUndefined();
+  });
+
   it("prunes stale lease takeover temporary entries", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
     const archive = await createReviewResumeArchive(root, {
@@ -422,10 +468,7 @@ describe("recoverable review archive", () => {
       manifestPath,
       `${JSON.stringify({ ...manifest, retainedAt: new Date(Date.now() - RESUME_RETENTION_MS - 1).toISOString() })}\n`,
     );
-    await writeFile(
-      path.join(archive.archiveDir, "lease"),
-      `${JSON.stringify({ pid: process.pid, nonce: "live" })}\n`,
-    );
+    await writeFile(path.join(archive.archiveDir, "lease"), archive.leaseContents ?? "");
     await pruneReviewResumeArchives(root);
     expect(await stat(archive.archiveDir)).toBeDefined();
   });

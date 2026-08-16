@@ -233,7 +233,7 @@ export function windowsProcessInstanceIdentities(
   );
 }
 
-function processInstanceIdentities(
+export function processInstanceIdentities(
   processId: number,
   platform: NodeJS.Platform,
 ): readonly string[] | undefined {
@@ -270,7 +270,7 @@ function processInstanceIdentities(
   return [hashProcessInstanceIdentity(platform, rawIdentity)];
 }
 
-function currentProcessInstanceIdentities(
+export function currentProcessInstanceIdentities(
   platform: NodeJS.Platform,
 ): readonly string[] | undefined {
   if (currentProcessIdentityCache?.platform === platform) {

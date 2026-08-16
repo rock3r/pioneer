@@ -431,6 +431,10 @@ describe("review RPC runner", () => {
     expect(buildReviewPrompt("/repo", "/scratch", "Review changes")).not.toContain("Git context");
   });
 
+  it("does not persist a run-local scratch path in resumable review prompts", () => {
+    expect(buildReviewPrompt("/repo", undefined, "Review changes")).not.toContain("Scratch:");
+  });
+
   it("recognizes Git-target requests that macOS and Windows cannot inspect", () => {
     expect(requiresGitInspection("Review only the staged changes.")).toBe(true);
     expect(requiresGitInspection("Review the untracked changes.")).toBe(true);
