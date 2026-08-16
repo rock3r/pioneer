@@ -29,6 +29,7 @@ import {
   MAX_RESUME_MANIFEST_BYTES,
   prepareDefaultReviewReportPath,
   prepareValidatedDefaultReviewReportPath,
+  pruneInactiveReviewResumeArchive,
   pruneReviewResumeArchives,
   RESUME_RETENTION_MS,
   releaseLeasedReviewResumeArchive,
@@ -675,6 +676,26 @@ describe("recoverable review archive", () => {
     await writeFile(path.join(archive.archiveDir, "lease"), archive.leaseContents ?? "");
     await pruneReviewResumeArchives(root);
     expect(await stat(archive.archiveDir)).toBeDefined();
+  });
+
+  it("acquires a candidate lease before pruning it", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    const leased = await leaseReviewResumeArchive(archive);
+
+    await expect(pruneInactiveReviewResumeArchive(archive.archiveDir)).resolves.toBe(false);
+    expect(await stat(archive.archiveDir)).toBeDefined();
+
+    await releaseLeasedReviewResumeArchive(leased);
+    await expect(pruneInactiveReviewResumeArchive(archive.archiveDir)).resolves.toBe(true);
+    await expect(stat(archive.archiveDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("does not prune a manifest-less archive while its lease is live", async () => {

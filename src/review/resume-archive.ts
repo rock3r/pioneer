@@ -417,6 +417,33 @@ async function pruneReviewResumeArchiveTemporaryEntries(
   }
 }
 
+export async function pruneInactiveReviewResumeArchive(directory: string): Promise<boolean> {
+  const archive: ReviewResumeArchive = {
+    token: path.basename(directory),
+    archiveDir: directory,
+    attemptsDir: path.join(directory, "attempts"),
+    activeAttemptDir: path.join(directory, "attempts", "0001"),
+  };
+  let leaseContents: string;
+  try {
+    leaseContents = await acquireReviewResumeArchiveLease(archive);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("[REVIEW_RESUME_IN_USE]")) {
+      return false;
+    }
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    throw error;
+  }
+  let removed = false;
+  try {
+    await rm(directory, { recursive: true, force: true });
+    removed = true;
+    return true;
+  } finally {
+    if (!removed) await releaseReviewResumeArchiveLease(archive, leaseContents);
+  }
+}
+
 export async function pruneReviewResumeArchives(root: string, now = Date.now()): Promise<void> {
   await privateDirectory(root);
   const candidates = (await readdir(root, { withFileTypes: true })).filter(
@@ -433,7 +460,7 @@ export async function pruneReviewResumeArchives(root: string, now = Date.now()):
       if (manifest === undefined) {
         if (await activeLeaseIsHeld(directory)) continue;
         if (now - stats.mtimeMs >= RESUME_RETENTION_MS) {
-          await rm(directory, { recursive: true, force: true });
+          await pruneInactiveReviewResumeArchive(directory);
         }
         continue;
       }
@@ -441,7 +468,7 @@ export async function pruneReviewResumeArchives(root: string, now = Date.now()):
       const expired = timestamp === 0 || now - timestamp >= RESUME_RETENTION_MS;
       if (await activeLeaseIsHeld(directory)) continue;
       if (expired) {
-        await rm(directory, { recursive: true, force: true });
+        await pruneInactiveReviewResumeArchive(directory);
         continue;
       }
       inactive.push({ directory, timestamp });
@@ -451,7 +478,7 @@ export async function pruneReviewResumeArchives(root: string, now = Date.now()):
   }
   inactive.sort((left, right) => right.timestamp - left.timestamp);
   for (const candidate of inactive.slice(MAX_RETAINED_RESUME_ARCHIVES)) {
-    await rm(candidate.directory, { recursive: true, force: true });
+    await pruneInactiveReviewResumeArchive(candidate.directory);
   }
 }
 
