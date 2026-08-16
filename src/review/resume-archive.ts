@@ -897,7 +897,7 @@ export async function copyReviewResumeSession(
   }
 }
 
-export async function loadReviewResumeArchive(
+async function readReviewResumeArchiveContents(
   root: string,
   token: string,
 ): Promise<LoadedReviewResumeArchive> {
@@ -1040,4 +1040,58 @@ export async function loadReviewResumeArchive(
     scope,
     state: typeof manifest.state === "string" ? manifest.state : "unknown",
   };
+}
+
+export async function loadReviewResumeArchive(
+  root: string,
+  token: string,
+  afterLeaseAcquired: (archive: ReviewResumeArchive) => Promise<void> = async () => {},
+): Promise<LoadedReviewResumeArchive> {
+  if (!isResumeToken(token)) {
+    throw new Error("[REVIEW_RESUME_INVALID_TOKEN] Review resume token is invalid");
+  }
+  const canonicalRoot = await canonicalResumeRoot(root, [], false);
+  const archiveDir = resumeArchivePath(canonicalRoot, token);
+  const archiveStats = await lstat(archiveDir).catch(() => undefined);
+  if (archiveStats === undefined || archiveStats.isSymbolicLink() || !archiveStats.isDirectory()) {
+    throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume archive is unavailable");
+  }
+  let canonicalArchiveDir: string;
+  try {
+    canonicalArchiveDir = await realpath(archiveDir);
+  } catch {
+    throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume archive is unavailable");
+  }
+  let leasedArchive: ReviewResumeArchive | undefined;
+  try {
+    leasedArchive = await leaseReviewResumeArchive({
+      token,
+      archiveDir: canonicalArchiveDir,
+      attemptsDir: path.join(canonicalArchiveDir, "attempts"),
+      activeAttemptDir: "",
+    });
+    await afterLeaseAcquired(leasedArchive);
+    if (leasedArchive.leaseContents === undefined) {
+      throw new Error("[REVIEW_RESUME_IN_USE] Review resume archive lease was not acquired");
+    }
+    const loaded = await readReviewResumeArchiveContents(root, token);
+    return {
+      ...loaded,
+      archive: {
+        ...loaded.archive,
+        leaseContents: leasedArchive.leaseContents,
+        preacquiredLease: true,
+      },
+    };
+  } catch (error) {
+    if (leasedArchive !== undefined) {
+      try {
+        await releaseLeasedReviewResumeArchive(leasedArchive);
+      } catch (releaseError) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new AggregateError([error, releaseError], message);
+      }
+    }
+    throw error;
+  }
 }

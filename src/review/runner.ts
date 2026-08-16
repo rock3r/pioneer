@@ -45,7 +45,6 @@ import {
   deleteReviewResumeArchive,
   findReviewResumeSessionFile,
   type LoadedReviewResumeArchive,
-  leaseReviewResumeArchive,
   loadReviewResumeArchive,
   prepareValidatedDefaultReviewReportPath,
   pruneReviewResumeArchives,
@@ -1485,7 +1484,6 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
   let loaded: LoadedReviewResumeArchive;
   try {
     loaded = await loadReviewResumeArchive(defaultReviewResumeDirectory(), request.resumeToken);
-    loaded = { ...loaded, archive: await leaseReviewResumeArchive(loaded.archive) };
   } catch (error) {
     if (error instanceof Error && /^\[REVIEW_/.test(error.message)) throw error;
     throw new Error(

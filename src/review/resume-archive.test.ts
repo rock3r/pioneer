@@ -473,6 +473,28 @@ describe("recoverable review archive", () => {
     await expect(stat(archive.archiveDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("acquires the archive lease before validating loaded contents", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    let observedPrevalidationLease = false;
+
+    const loaded = await loadReviewResumeArchive(root, archive.token, async (leasedArchive) => {
+      observedPrevalidationLease = true;
+      await expect(reviewResumeArchiveHasLiveLease(leasedArchive)).resolves.toBe(true);
+    });
+
+    expect(observedPrevalidationLease).toBe(true);
+    expect(loaded.archive.preacquiredLease).toBe(true);
+    await releaseLeasedReviewResumeArchive(loaded.archive);
+  });
+
   it("rolls a Pi-rejected copied attempt back to the prior session", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
     const archive = await createReviewResumeArchive(root, {
@@ -650,6 +672,7 @@ describe("recoverable review archive", () => {
       manifestPath,
       `${JSON.stringify({ ...manifest, padding: "x".repeat(MAX_RESUME_MANIFEST_BYTES) })}\n`,
     );
+    await releaseLeasedReviewResumeArchive(archive);
     await expect(loadReviewResumeArchive(root, archive.token)).rejects.toThrow(
       "[REVIEW_RESUME_UNAVAILABLE] Review resume manifest exceeds its bounded limit",
     );
@@ -664,6 +687,7 @@ describe("recoverable review archive", () => {
       piVersion: "0.84.2",
     });
     await writeFile(path.join(archive.archiveDir, "manifest.json"), "not-json\n");
+    await releaseLeasedReviewResumeArchive(archive);
     await expect(loadReviewResumeArchive(root, archive.token)).rejects.toThrow(
       "[REVIEW_RESUME_UNAVAILABLE] Review resume manifest is invalid",
     );
@@ -675,6 +699,7 @@ describe("recoverable review archive", () => {
       piVersion: "0.84.2",
     });
     await rm(second.attemptsDir, { recursive: true, force: true });
+    await releaseLeasedReviewResumeArchive(second);
     await expect(loadReviewResumeArchive(root, second.token)).rejects.toThrow(
       "[REVIEW_RESUME_UNAVAILABLE] Review resume attempts directory is invalid",
     );
@@ -809,6 +834,7 @@ describe("recoverable review archive", () => {
     await writeFile(path.join(archive.activeAttemptDir, "committed.jsonl"), "committed");
     await mkdir(path.join(archive.attemptsDir, "0002"));
     await writeFile(path.join(archive.attemptsDir, "0002", "partial.jsonl"), "partial");
+    await releaseLeasedReviewResumeArchive(archive);
     await expect(loadReviewResumeArchive(root, archive.token)).resolves.toMatchObject({
       archive: { activeAttemptDir: archive.activeAttemptDir },
     });
@@ -927,6 +953,7 @@ describe("recoverable review archive", () => {
       manifestPath,
       `${JSON.stringify({ ...manifest, createdAt: new Date(Date.now() - RESUME_RETENTION_MS - 1).toISOString() })}\n`,
     );
+    await releaseLeasedReviewResumeArchive(archive);
     await expect(loadReviewResumeArchive(root, archive.token)).rejects.toThrow(
       "[REVIEW_RESUME_UNAVAILABLE] Review resume archive has expired",
     );
