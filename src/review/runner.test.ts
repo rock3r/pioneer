@@ -446,7 +446,12 @@ describe("review RPC runner", () => {
     );
 
     await expect(
-      runReview({ sourceDir, prompt: "Review source", reportPath: "relative-review.md" }),
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        reportPath: "relative-review.md",
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
     ).rejects.toThrow(/^Review report path is not absolute:/);
   });
 
