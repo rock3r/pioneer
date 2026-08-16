@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -9,10 +9,17 @@ const removeTemporary = vi.hoisted(() =>
     return rm(...args);
   }),
 );
+const unlinkFile = vi.hoisted(() =>
+  vi.fn(async (...args: Parameters<typeof import("node:fs/promises").unlink>) => {
+    const { unlink } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    return unlink(...args);
+  }),
+);
 
 vi.mock("node:fs/promises", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:fs/promises")>()),
   rm: removeTemporary,
+  unlink: unlinkFile,
 }));
 
 import {
@@ -48,6 +55,19 @@ describe("review report output", () => {
 
     expect(await readFile(target, "utf8")).toBe(reservation.marker);
     await expect(isActiveReviewReportReservation(target)).resolves.toBe(false);
+  });
+
+  it("does not let an orphaned sidecar block reusing an absent report target", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const orphaned = await reserveReviewReport(target);
+    await import("node:fs/promises").then(({ rm }) => rm(target));
+
+    const replacement = await reserveReviewReport(target);
+
+    expect(replacement.reservationPath).not.toBe(orphaned.reservationPath);
+    await releaseReviewReportReservation(replacement);
+    await import("node:fs/promises").then(({ rm }) => rm(orphaned.reservationPath));
   });
 
   it("does not publish over or remove a replaced report reservation", async () => {
@@ -99,9 +119,9 @@ describe("review report output", () => {
     ).rejects.toThrow("marker write failed");
 
     await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
-    await expect(stat(path.join(root, ".report.md.pioneer-reservation"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    expect((await readdir(root)).filter((name) => name.endsWith(".pioneer-reservation"))).toEqual(
+      [],
+    );
   });
 
   it("atomically creates a private report file", async () => {
@@ -136,6 +156,18 @@ describe("review report output", () => {
     await expect(writeReviewReport(target, "No findings.")).resolves.toBeUndefined();
 
     expect(await readFile(target, "utf8")).toBe("No findings.\n");
+  });
+
+  it("does not turn a published report into a failure when sidecar cleanup fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    unlinkFile.mockRejectedValueOnce(new Error("sidecar cleanup failed"));
+
+    await expect(publishReservedReviewReport(reservation, "No findings.")).resolves.toBeUndefined();
+
+    expect(await readFile(target, "utf8")).toBe("No findings.\n");
+    expect(reservation.state).toBe("published");
   });
 
   it("preserves a valid report when optional persistence fails", async () => {

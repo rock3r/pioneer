@@ -13,25 +13,26 @@ export interface ReviewReportReservation {
 }
 
 const REVIEW_REPORT_RESERVATION_PATTERN =
-  /^<!-- PIONEER_REPORT_RESERVED [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12} -->\n$/i;
+  /^<!-- PIONEER_REPORT_RESERVED ([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}) -->\n$/i;
 const MAX_REVIEW_REPORT_RESERVATION_BYTES = 96;
 
 export async function isActiveReviewReportReservation(target: string): Promise<boolean> {
   try {
-    const reservationPath = reviewReportReservationPath(target);
-    const [targetStats, reservationStats] = await Promise.all([
-      lstat(target),
-      lstat(reservationPath),
-    ]);
+    const targetStats = await lstat(target);
     if (
       !targetStats.isFile() ||
-      !reservationStats.isFile() ||
       targetStats.size === 0 ||
-      targetStats.size > MAX_REVIEW_REPORT_RESERVATION_BYTES ||
-      reservationStats.size !== targetStats.size
+      targetStats.size > MAX_REVIEW_REPORT_RESERVATION_BYTES
     ) {
       return false;
     }
+    const targetMarker = await readFile(target, "utf8");
+    const match = REVIEW_REPORT_RESERVATION_PATTERN.exec(targetMarker);
+    const reservationId = match?.[1];
+    if (reservationId === undefined) return false;
+    const reservationPath = reviewReportReservationPath(target, reservationId);
+    const reservationStats = await lstat(reservationPath);
+    if (!reservationStats.isFile() || reservationStats.size !== targetStats.size) return false;
     if (
       targetStats.ino !== 0 &&
       reservationStats.ino !== 0 &&
@@ -40,17 +41,18 @@ export async function isActiveReviewReportReservation(target: string): Promise<b
       return false;
     }
     const marker = await readFile(reservationPath, "utf8");
-    return (
-      REVIEW_REPORT_RESERVATION_PATTERN.test(marker) && (await readFile(target, "utf8")) === marker
-    );
+    return marker === targetMarker;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
 }
 
-function reviewReportReservationPath(target: string): string {
-  return path.join(path.dirname(target), `.${path.basename(target)}.pioneer-reservation`);
+function reviewReportReservationPath(target: string, reservationId: string): string {
+  return path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${reservationId}.pioneer-reservation`,
+  );
 }
 
 function sameKnownFileIdentity(
@@ -102,9 +104,10 @@ export async function reserveReviewReport(
     await handle.writeFile(marker, "utf8");
   },
 ): Promise<ReviewReportReservation> {
-  const reservationPath = reviewReportReservationPath(target);
+  const reservationId = crypto.randomUUID();
+  const reservationPath = reviewReportReservationPath(target, reservationId);
   let handle: Awaited<ReturnType<typeof open>> | undefined;
-  const marker = `<!-- PIONEER_REPORT_RESERVED ${crypto.randomUUID()} -->\n`;
+  const marker = `<!-- PIONEER_REPORT_RESERVED ${reservationId} -->\n`;
   let reservation: ReviewReportReservation = {
     target,
     reservationPath,
@@ -185,7 +188,7 @@ export async function publishReservedReviewReport(
     await rename(temporary, reservation.target);
     reservation.state = "published";
     published = true;
-    await unlink(reservation.reservationPath);
+    await unlink(reservation.reservationPath).catch(() => {});
   } catch (error) {
     failure = error;
   }
