@@ -221,7 +221,7 @@ export async function cleanupUnavailableReviewResumeArchive(
     return new Error(
       diagnosticMessage(
         "REVIEW_RESUME_DELETE_FAILED",
-        `Pioneer could not delete an unavailable private review resume archive: ${error instanceof Error ? error.message : String(error)}`,
+        "Pioneer could not delete unavailable private review resume data; inspect the controller work log.",
       ),
       { cause: error },
     );

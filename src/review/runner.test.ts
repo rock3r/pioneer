@@ -334,21 +334,24 @@ describe("review RPC runner", () => {
   });
 
   it("reports deletion failure for an unavailable resume archive", async () => {
+    const token = "550e8400-e29b-41d4-a716-446655440000";
     const failure = await cleanupUnavailableReviewResumeArchive(
       {
-        token: "550e8400-e29b-41d4-a716-446655440000",
-        archiveDir: "/private/archive",
-        attemptsDir: "/private/archive/attempts",
-        activeAttemptDir: "/private/archive/attempts/0001",
+        token,
+        archiveDir: `/private/${token}`,
+        attemptsDir: `/private/${token}/attempts`,
+        activeAttemptDir: `/private/${token}/attempts/0001`,
       },
       async () => {
-        throw new Error("archive delete failed");
+        throw new Error(`EACCES: archive delete failed, rm '/private/${token}'`);
       },
     );
 
     expect(failure?.message).toBe(
-      "[REVIEW_RESUME_DELETE_FAILED] Pioneer could not delete an unavailable private review resume archive: archive delete failed",
+      "[REVIEW_RESUME_DELETE_FAILED] Pioneer could not delete unavailable private review resume data; inspect the controller work log.",
     );
+    expect(failure?.message).not.toContain(token);
+    expect(failure?.message).not.toContain("/private/");
   });
 
   it("does not handle an already resumable failure twice", () => {
