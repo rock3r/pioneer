@@ -34,7 +34,9 @@ try {
   }
 
   const localAppDataSource = path.join(root, "local-app-data");
+  const piHome = path.join(root, "pi-home");
   await mkdir(localAppDataSource);
+  await mkdir(piHome);
   const localAppData = await realpath(localAppDataSource);
   const optedIn = spawnSync(
     process.execPath,
@@ -53,7 +55,7 @@ try {
       env: {
         ...process.env,
         LOCALAPPDATA: localAppData,
-        PI_CODING_AGENT_DIR: path.join(root, "missing-pi-home"),
+        PI_CODING_AGENT_DIR: piHome,
       },
     },
   );
