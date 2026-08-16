@@ -308,8 +308,7 @@ async function preserveQuarantinedReviewReportPath(
       `${path.basename(originalPath)}.pioneer-preserved-${crypto.randomUUID()}`,
     );
     try {
-      await link(quarantinePath, preservedPath);
-      await unlink(quarantinePath);
+      await rename(quarantinePath, preservedPath);
       return preservedPath;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;

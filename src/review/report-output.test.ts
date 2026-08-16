@@ -114,6 +114,7 @@ describe("review report output", () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
+    linkFile.mockClear();
     linkFile.mockImplementationOnce(async (_existingPath, newPath) => {
       await writeFile(newPath, "second replacement\n", { flag: "wx" });
       throw Object.assign(new Error("path exists"), { code: "EEXIST" });
@@ -132,6 +133,7 @@ describe("review report output", () => {
     expect(preserved).toHaveLength(1);
     expect(await readFile(path.join(root, preserved[0] ?? ""), "utf8")).toBe("first replacement\n");
     expect(entries.some((entry) => entry.endsWith(".pioneer-releasing"))).toBe(false);
+    expect(linkFile).toHaveBeenCalledTimes(1);
   });
 
   it("does not overwrite a report target replaced after ownership validation", async () => {
