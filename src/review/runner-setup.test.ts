@@ -42,6 +42,7 @@ describe("review setup", () => {
         reportPath,
         workLogPath,
         resumable: false,
+        allowUnsandboxedWindows: true,
         onWorkLogReady: (readyPath) => announced.push(readyPath),
       }),
     ).rejects.toThrow("[REVIEW_REPORT_CREATE_FAILED]");
