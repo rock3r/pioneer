@@ -111,9 +111,15 @@ describe("recoverable review archive", () => {
     await writeFile(leasePath, contenderContents);
 
     await expect(
-      validatePublishedReviewResumeArchiveLease(displaced.archiveDir, contenderContents),
+      validatePublishedReviewResumeArchiveLease(
+        displaced.archiveDir,
+        contenderContents,
+        async () => {
+          await writeFile(leasePath, "third-contender\n", { flag: "wx" });
+        },
+      ),
     ).rejects.toThrow("[REVIEW_RESUME_IN_USE]");
-    expect(await readFile(leasePath, "utf8")).toBe(displacedContents);
+    expect(await readFile(leasePath, "utf8")).toBe("third-contender\n");
     expect(await readFile(displacedPath, "utf8")).toBe(displacedContents);
   });
 

@@ -445,6 +445,7 @@ export async function restoreDisplacedReviewResumeArchiveLease(
 export async function validatePublishedReviewResumeArchiveLease(
   archiveDir: string,
   leaseContents: string,
+  beforeDisplacedRestore: (displacedLeasePath: string) => Promise<void> = async () => {},
 ): Promise<void> {
   const leasePath = path.join(archiveDir, "lease");
   const displacedLeasePaths = (await readdir(archiveDir, { withFileTypes: true }))
@@ -461,6 +462,7 @@ export async function validatePublishedReviewResumeArchiveLease(
       },
       leaseContents,
     );
+    await beforeDisplacedRestore(displacedLeasePath);
     await restoreDisplacedReviewResumeArchiveLease(displacedLeasePath, leasePath);
     throw new Error(
       "[REVIEW_RESUME_IN_USE] A displaced live owner still holds the review resume archive",
@@ -509,7 +511,9 @@ async function acquireReviewResumeArchiveLease(archive: ReviewResumeArchive): Pr
           continue;
         }
         await publishReviewResumeArchiveLease(leasePath, leaseContents);
+        removeStaleLease = false;
         await validatePublishedReviewResumeArchiveLease(archive.archiveDir, leaseContents);
+        removeStaleLease = true;
         return leaseContents;
       } catch (writeError) {
         if ((writeError as NodeJS.ErrnoException).code !== "EEXIST") throw writeError;
