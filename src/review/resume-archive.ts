@@ -104,6 +104,53 @@ export function defaultReviewReportDirectory(
   return platformPath(platform).join(appDataRoot(environment, platform, home), "reports");
 }
 
+async function assertStableApplicationDataParent(
+  directory: string,
+  platform: NodeJS.Platform,
+): Promise<void> {
+  if (platform === "win32") return;
+  const stats = await lstat(directory);
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new Error(`Review application-data parent is not a stable directory: ${directory}`);
+  }
+  if ((stats.mode & 0o022) !== 0) {
+    throw new Error(`Review application-data parent is writable by another user: ${directory}`);
+  }
+}
+
+export async function prepareDefaultReviewResumeDirectory(
+  options: {
+    readonly actorVisiblePaths?: readonly string[];
+    readonly create?: boolean;
+  } = {},
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home = os.homedir(),
+): Promise<string> {
+  const pathApi = platformPath(platform);
+  const applicationDirectory = appDataRoot(environment, platform, home);
+  const resumeRoot = pathApi.join(applicationDirectory, "review-resumes");
+  const prospectiveRoot = await canonicalProspectivePathForContainment(resumeRoot);
+  await assertResumeRootDisjoint(prospectiveRoot, options.actorVisiblePaths ?? []);
+  const parent = pathApi.dirname(applicationDirectory);
+  if (options.create !== false) await mkdir(parent, { recursive: true, mode: 0o700 });
+  await assertStableApplicationDataParent(parent, platform);
+  if (options.create === false) {
+    const stats = await lstat(applicationDirectory);
+    if (
+      stats.isSymbolicLink() ||
+      !stats.isDirectory() ||
+      (platform !== "win32" && (stats.mode & 0o077) !== 0)
+    ) {
+      throw new Error(`Review application-data directory is not private: ${applicationDirectory}`);
+    }
+  } else {
+    await privateDirectory(applicationDirectory);
+  }
+  await assertStableApplicationDataParent(parent, platform);
+  return resumeRoot;
+}
+
 export function isResumeToken(token: string): boolean {
   return UUID.test(token);
 }

@@ -1,4 +1,5 @@
 import {
+  chmod,
   link,
   mkdir,
   mkdtemp,
@@ -30,6 +31,7 @@ import {
   MAX_RESUME_ARCHIVE_BYTES,
   MAX_RESUME_MANIFEST_BYTES,
   prepareDefaultReviewReportPath,
+  prepareDefaultReviewResumeDirectory,
   prepareValidatedDefaultReviewReportPath,
   pruneInactiveReviewResumeArchive,
   pruneReviewResumeArchives,
@@ -322,6 +324,40 @@ describe("recoverable review archive", () => {
     expect(resumeArchivePath("/private/root", "550e8400-e29b-41d4-a716-446655440000")).toBe(
       path.join("/private/root", "550e8400-e29b-41d4-a716-446655440000"),
     );
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a replaceable application-data parent before creating resume storage",
+    async () => {
+      const sharedData = await mkdtemp(path.join(tmpdir(), "pioneer-shared-data-"));
+      await chmod(sharedData, 0o777);
+
+      await expect(
+        prepareDefaultReviewResumeDirectory(
+          {},
+          { XDG_DATA_HOME: sharedData },
+          "linux",
+          path.dirname(sharedData),
+        ),
+      ).rejects.toThrow(/application-data parent.*writable/i);
+      await expect(stat(path.join(sharedData, "pioneer"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
+  it("rejects an overlapping default resume root before mutating its application directory", async () => {
+    const sourceDir = await mkdtemp(path.join(tmpdir(), "pioneer-resume-parent-overlap-"));
+
+    await expect(
+      prepareDefaultReviewResumeDirectory(
+        { actorVisiblePaths: [sourceDir] },
+        { XDG_DATA_HOME: sourceDir },
+        "linux",
+        path.dirname(sourceDir),
+      ),
+    ).rejects.toThrow(/resume root overlaps an actor-visible grant/i);
+    await expect(stat(path.join(sourceDir, "pioneer"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects relative data roots and archive roots inside actor-visible grants", async () => {

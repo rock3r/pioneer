@@ -46,6 +46,7 @@ import {
   findReviewResumeSessionFile,
   type LoadedReviewResumeArchive,
   loadReviewResumeArchive,
+  prepareDefaultReviewResumeDirectory,
   prepareValidatedDefaultReviewReportPath,
   pruneReviewResumeArchives,
   type ReviewResumeArchive,
@@ -1254,7 +1255,14 @@ async function runReviewInternal(
       recordReviewWorkLog(workLog, "stage_started", { stage: "resume_archive" });
       try {
         resumeArchive = await createReviewResumeArchive(
-          defaultReviewResumeDirectory(),
+          await prepareDefaultReviewResumeDirectory({
+            actorVisiblePaths: [
+              paths.sourceDir,
+              ...paths.allowReadPaths,
+              ...paths.allowWritePaths,
+              piHomeSource,
+            ],
+          }),
           {
             sourceDir: paths.sourceDir,
             prompt: request.prompt,
@@ -1562,7 +1570,10 @@ async function runReviewInternal(
 export async function resumeReview(request: ResumeReviewRequest): Promise<ReviewResult> {
   let loaded: LoadedReviewResumeArchive;
   try {
-    loaded = await loadReviewResumeArchive(defaultReviewResumeDirectory(), request.resumeToken);
+    loaded = await loadReviewResumeArchive(
+      await prepareDefaultReviewResumeDirectory({ create: false }),
+      request.resumeToken,
+    );
   } catch (error) {
     if (error instanceof Error && /^\[REVIEW_/.test(error.message)) throw error;
     throw new Error(

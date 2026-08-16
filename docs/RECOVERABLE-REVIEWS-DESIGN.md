@@ -141,7 +141,7 @@ Native Pi sessions can hold prompt text, assistant thinking, tool arguments, and
 ### Layout
 
 The platform application-data root has sibling `review-resumes` and
-`reports` children. On macOS it is under `~/Library/Application Support/Pioneer/`; Linux and Windows use their matching per-user application-data locations. The root and its default children are mode 0700 on POSIX; Windows relies on the per-user application-data ACL, which is a caller precondition just as it is for default work logs.
+`reports` children. On macOS it is under `~/Library/Application Support/Pioneer/`; Linux and Windows use their matching per-user application-data locations. The root and its default children are mode 0700 on POSIX; Windows relies on the per-user application-data ACL, which is a caller precondition just as it is for default work logs. Before archive creation or loading, POSIX rejects a group- or world-writable application-data parent and Pioneer makes its own application directory private, including when an explicit report path bypasses default report preparation.
 XDG and Windows application-data overrides must be absolute. Before creating or loading an archive, Pioneer canonicalizes the root and requires the complete archive tree to be disjoint from the source and every actor-visible read/write grant.
 
 ```text
