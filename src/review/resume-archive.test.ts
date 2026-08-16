@@ -348,16 +348,24 @@ describe("recoverable review archive", () => {
 
   it("rejects an overlapping default resume root before mutating its application directory", async () => {
     const sourceDir = await mkdtemp(path.join(tmpdir(), "pioneer-resume-parent-overlap-"));
+    const environment =
+      process.platform === "win32" ? { LOCALAPPDATA: sourceDir } : { XDG_DATA_HOME: sourceDir };
+    const applicationDirectory =
+      process.platform === "darwin"
+        ? path.join(sourceDir, "Library", "Application Support", "Pioneer")
+        : path.join(sourceDir, process.platform === "win32" ? "Pioneer" : "pioneer");
 
     await expect(
       prepareDefaultReviewResumeDirectory(
         { actorVisiblePaths: [sourceDir] },
-        { XDG_DATA_HOME: sourceDir },
-        "linux",
-        path.dirname(sourceDir),
+        environment,
+        process.platform,
+        sourceDir,
       ),
     ).rejects.toThrow(/resume root overlaps an actor-visible grant/i);
-    await expect(stat(path.join(sourceDir, "pioneer"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(applicationDirectory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("rejects relative data roots and archive roots inside actor-visible grants", async () => {
