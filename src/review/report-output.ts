@@ -317,6 +317,11 @@ export async function publishReservedReviewReport(
   report: string,
   afterOwnershipValidation: () => Promise<void> = async () => {},
   afterReportWrite: () => Promise<void> = async () => {},
+  closePublishedHandle: (handle: Awaited<ReturnType<typeof open>>) => Promise<void> = async (
+    handle,
+  ) => {
+    await handle.close();
+  },
 ): Promise<void> {
   if (reservation.state !== "reserved") {
     throw new Error(`Review report reservation is no longer active: ${reservation.target}`);
@@ -380,8 +385,11 @@ export async function publishReservedReviewReport(
       throw new Error(`Review report reservation no longer owns target: ${reservation.target}`);
     }
     reservation.state = "published";
-    await handle.close();
+    const publishedHandle = handle;
     handle = undefined;
+    await closePublishedHandle(publishedHandle).catch(async () => {
+      await publishedHandle.close().catch(() => {});
+    });
     await unlink(reservation.reservationPath).catch(() => {});
     await unlink(reservation.publicationPath).catch(() => {});
   } catch (error) {

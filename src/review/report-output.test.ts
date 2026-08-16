@@ -149,6 +149,31 @@ describe("review report output", () => {
     await expect(stat(reservation.reservationPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("preserves a durable report when closing its published handle fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    let closeAttempted = false;
+
+    await expect(
+      publishReservedReviewReport(
+        reservation,
+        "No findings.",
+        async () => {},
+        async () => {},
+        async (handle) => {
+          closeAttempted = true;
+          await handle.close();
+          throw new Error("close failed");
+        },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(closeAttempted).toBe(true);
+    expect(await readFile(target, "utf8")).toBe("No findings.\n");
+    expect(reservation.state).toBe("published");
+  });
+
   it("removes an unpublished report reservation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const target = path.join(root, "report.md");
