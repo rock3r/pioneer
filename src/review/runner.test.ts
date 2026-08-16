@@ -357,13 +357,9 @@ describe("review RPC runner", () => {
     expect(failure?.message).not.toContain("/private/");
   });
 
-  it("does not handle an already resumable failure twice", () => {
-    expect(
-      shouldHandleReviewResumeFailure(
-        new Error("copy failed\n[PIONEER_REVIEW_RESUME] 550e8400-e29b-41d4-a716-446655440000"),
-      ),
-    ).toBe(false);
-    expect(shouldHandleReviewResumeFailure(new Error("copy failed"))).toBe(true);
+  it("tracks handled resume failures without inspecting untrusted error text", () => {
+    expect(shouldHandleReviewResumeFailure(false)).toBe(true);
+    expect(shouldHandleReviewResumeFailure(true)).toBe(false);
   });
 
   it("rejects active archives whose prior actor may still be running", () => {

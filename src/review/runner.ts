@@ -228,8 +228,8 @@ export async function cleanupUnavailableReviewResumeArchive(
   }
 }
 
-export function shouldHandleReviewResumeFailure(failure: Error): boolean {
-  return !failure.message.includes("[PIONEER_REVIEW_RESUME]");
+export function shouldHandleReviewResumeFailure(alreadyHandled: boolean): boolean {
+  return !alreadyHandled;
 }
 
 export async function canonicalReviewPiHomeSource(source: string): Promise<string> {
@@ -1144,6 +1144,7 @@ async function runReviewInternal(
   let outcome: ReviewExecutionOutcome;
   let resumeArchive: ReviewResumeArchive | undefined = resumeContext?.loaded.archive;
   let resumeToken: string | undefined = resumeContext?.loaded.archive.token;
+  let resumeFailureHandled = false;
   let resumeStorageValidated = resumeContext !== undefined;
   let reportReservation: ReviewReportReservation | undefined;
   try {
@@ -1244,6 +1245,7 @@ async function runReviewInternal(
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
         if (resumeArchive !== undefined) {
+          resumeFailureHandled = true;
           throw await handleResumeArchiveFailure(resumeArchive, failure);
         }
         throw failure;
@@ -1287,6 +1289,7 @@ async function runReviewInternal(
       } catch (error) {
         const failure = error instanceof Error ? error : new Error(String(error));
         if (resumeArchive !== undefined) {
+          resumeFailureHandled = true;
           throw await handleResumeArchiveFailure(resumeArchive, failure);
         }
         throw failure;
@@ -1465,7 +1468,8 @@ async function runReviewInternal(
           "[REVIEW_RESUME_SESSION_INVALID] Pi rejected the stored native session",
         );
       }
-      if (resumeArchive !== undefined && shouldHandleReviewResumeFailure(runFailure)) {
+      if (resumeArchive !== undefined && shouldHandleReviewResumeFailure(resumeFailureHandled)) {
+        resumeFailureHandled = true;
         runFailure = await handleResumeArchiveFailure(resumeArchive, runFailure);
       }
     }

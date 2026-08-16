@@ -445,6 +445,28 @@ async function pruneReviewResumeArchiveTemporaryEntries(
   }
 }
 
+async function pruneInactiveReviewResumeArchiveTemporaryEntries(
+  archive: ReviewResumeArchive,
+  now: number,
+): Promise<boolean> {
+  let leaseContents: string;
+  try {
+    leaseContents = await acquireReviewResumeArchiveLease(archive);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("[REVIEW_RESUME_IN_USE]")) {
+      return false;
+    }
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  try {
+    await pruneReviewResumeArchiveTemporaryEntries(archive.archiveDir, now);
+    return true;
+  } finally {
+    await releaseReviewResumeArchiveLease(archive, leaseContents);
+  }
+}
+
 export async function pruneInactiveReviewResumeArchive(directory: string): Promise<boolean> {
   const archive: ReviewResumeArchive = {
     token: path.basename(directory),
@@ -483,10 +505,15 @@ export async function pruneReviewResumeArchives(root: string, now = Date.now()):
     try {
       const stats = await statReviewResumeArchiveCandidate(directory);
       if (stats === undefined || stats.isSymbolicLink()) continue;
-      await pruneReviewResumeArchiveTemporaryEntries(directory, now);
+      const archive: ReviewResumeArchive = {
+        token: candidate.name,
+        archiveDir: directory,
+        attemptsDir: path.join(directory, "attempts"),
+        activeAttemptDir: path.join(directory, "attempts", "0001"),
+      };
+      if (!(await pruneInactiveReviewResumeArchiveTemporaryEntries(archive, now))) continue;
       const manifest = await readManifest(directory);
       if (manifest === undefined) {
-        if (await activeLeaseIsHeld(directory)) continue;
         if (now - stats.mtimeMs >= RESUME_RETENTION_MS) {
           await pruneInactiveReviewResumeArchive(directory);
         }
@@ -494,7 +521,6 @@ export async function pruneReviewResumeArchives(root: string, now = Date.now()):
       }
       const timestamp = await archiveTimestamp(manifest);
       const expired = timestamp === 0 || now - timestamp >= RESUME_RETENTION_MS;
-      if (await activeLeaseIsHeld(directory)) continue;
       if (expired) {
         await pruneInactiveReviewResumeArchive(directory);
         continue;

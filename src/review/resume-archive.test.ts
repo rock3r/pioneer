@@ -807,9 +807,33 @@ describe("recoverable review archive", () => {
     await writeFile(manifestTemp, "stale");
     await utimes(staging, staleTime, staleTime);
     await utimes(manifestTemp, staleTime, staleTime);
+    await releaseLeasedReviewResumeArchive(archive);
     await pruneReviewResumeArchives(root);
     await expect(stat(staging)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(manifestTemp)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("preserves stale temporary entries while a live lease owns the archive", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    const staleTime = new Date(Date.now() - RESUME_RETENTION_MS - 1);
+    const staging = path.join(archive.attemptsDir, ".attempt-live");
+    const manifestTemp = path.join(archive.archiveDir, "manifest.json.tmp-live");
+    await mkdir(staging);
+    await writeFile(manifestTemp, "live");
+    await utimes(staging, staleTime, staleTime);
+    await utimes(manifestTemp, staleTime, staleTime);
+
+    await pruneReviewResumeArchives(root);
+
+    await expect(stat(staging)).resolves.toBeDefined();
+    await expect(stat(manifestTemp)).resolves.toBeDefined();
+    await releaseLeasedReviewResumeArchive(archive);
   });
 
   it("ignores an archive candidate removed after the pruning snapshot", async () => {
@@ -834,6 +858,7 @@ describe("recoverable review archive", () => {
     await writeFile(pendingLease, "pending");
     await utimes(staleLease, staleTime, staleTime);
     await utimes(pendingLease, staleTime, staleTime);
+    await releaseLeasedReviewResumeArchive(archive);
     await pruneReviewResumeArchives(root);
     await expect(stat(staleLease)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(pendingLease)).rejects.toMatchObject({ code: "ENOENT" });
