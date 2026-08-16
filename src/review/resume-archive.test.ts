@@ -20,6 +20,7 @@ import {
   defaultReviewResumeDirectory,
   findReviewResumeSessionFile,
   immutableReviewScope,
+  inspectReviewResumeSessionTree,
   isResumeToken,
   loadReviewResumeArchive,
   MAX_RESUME_ARCHIVE_BYTES,
@@ -33,6 +34,21 @@ import {
 } from "./resume-archive.js";
 
 describe("recoverable review archive", () => {
+  it("counts directories toward the bounded session-entry limit", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-tree-"));
+    try {
+      await mkdir(path.join(root, "one"));
+      await mkdir(path.join(root, "two"));
+      await mkdir(path.join(root, "three"));
+
+      await expect(inspectReviewResumeSessionTree(root, 2)).rejects.toThrow(
+        /bounded retention limit/i,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("prepares a private default report target without creating it", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportPath = await prepareDefaultReviewReportPath({}, "linux", home);

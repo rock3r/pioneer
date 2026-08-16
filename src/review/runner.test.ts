@@ -1,11 +1,13 @@
-import { lstat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildReviewPrompt,
+  canonicalReviewPiHomeSource,
   createReviewScratchDirectory,
   finalizeReviewWorkLog,
+  markReviewCleanupFailure,
   type ReviewRequest,
   readinessMetadataForWorkLog,
   requestedModelForWorkLog,
@@ -238,6 +240,36 @@ process.stdin.once("data", () => {
 }
 
 describe("review RPC runner", () => {
+  it("preserves a successful report while marking cleanup failure terminal", () => {
+    const result = {
+      report: "No findings.",
+      sandboxed: true,
+      warning: "Platform warning.",
+      workLogPath: "/tmp/review.jsonl",
+      reportPath: "/tmp/report.md",
+    };
+
+    expect(markReviewCleanupFailure(result)).toEqual({
+      ...result,
+      cleanupError:
+        "[REVIEW_CLEANUP_FAILED] Pioneer completed the review, but cleanup did not fully succeed; inspect the controller work log.",
+    });
+  });
+
+  it("canonicalizes the Pi home before freezing the resumable scope", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-pi-home-source-"));
+    try {
+      const target = path.join(root, "target");
+      const alias = path.join(root, "alias");
+      await mkdir(target);
+      await symlink(target, alias, process.platform === "win32" ? "junction" : "dir");
+
+      await expect(canonicalReviewPiHomeSource(alias)).resolves.toBe(await realpath(target));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("preserves a successful report when closing its work log fails", () => {
     const workLog: ReviewWorkLog = {
       path: "/tmp/review.jsonl",

@@ -433,13 +433,17 @@ export async function prepareDefaultReviewReportPath(
   );
 }
 
-async function inspectSessionTree(root: string): Promise<{ sizeBytes: number; fileCount: number }> {
+export async function inspectReviewResumeSessionTree(
+  root: string,
+  maxEntries = MAX_RESUME_ARCHIVE_FILES,
+): Promise<{ sizeBytes: number; fileCount: number; entryCount: number }> {
   const rootStats = await lstat(root);
   if (rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
     throw new Error(`Review resume session candidate is not a regular directory: ${root}`);
   }
   let sizeBytes = 0;
   let fileCount = 0;
+  let entryCount = 0;
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const candidate = path.join(directory, entry.name);
@@ -447,19 +451,23 @@ async function inspectSessionTree(root: string): Promise<{ sizeBytes: number; fi
       if (stats.isSymbolicLink() || (!stats.isFile() && !stats.isDirectory())) {
         throw new Error(`Review resume session candidate contains an unsafe entry: ${candidate}`);
       }
+      entryCount += 1;
+      if (entryCount > maxEntries) {
+        throw new Error("Review resume session archive exceeds its bounded retention limit");
+      }
       if (stats.isDirectory()) {
         await visit(candidate);
       } else {
         fileCount += 1;
         sizeBytes += stats.size;
-        if (fileCount > MAX_RESUME_ARCHIVE_FILES || sizeBytes > MAX_RESUME_ARCHIVE_BYTES) {
+        if (sizeBytes > MAX_RESUME_ARCHIVE_BYTES) {
           throw new Error("Review resume session archive exceeds its bounded retention limit");
         }
       }
     }
   };
   await visit(root);
-  return { sizeBytes, fileCount };
+  return { sizeBytes, fileCount, entryCount };
 }
 
 export async function inspectReviewResumeArchive(
@@ -468,6 +476,7 @@ export async function inspectReviewResumeArchive(
 ): Promise<{
   readonly sizeBytes: number;
   readonly fileCount: number;
+  readonly entryCount: number;
 }> {
   return await inspectReviewResumeArchiveInternal(archive, committedOnly);
 }
@@ -475,7 +484,11 @@ export async function inspectReviewResumeArchive(
 async function inspectReviewResumeArchiveInternal(
   archive: ReviewResumeArchive,
   committedOnly: boolean,
-): Promise<{ readonly sizeBytes: number; readonly fileCount: number }> {
+): Promise<{
+  readonly sizeBytes: number;
+  readonly fileCount: number;
+  readonly entryCount: number;
+}> {
   const attempts = (await readdir(archive.attemptsDir, { withFileTypes: true })).filter(
     (entry) =>
       entry.isDirectory() &&
@@ -484,19 +497,23 @@ async function inspectReviewResumeArchiveInternal(
   );
   let sizeBytes = 0;
   let fileCount = 0;
+  let entryCount = 0;
   for (const attempt of attempts) {
-    const usage = await inspectSessionTree(path.join(archive.attemptsDir, attempt.name));
+    const usage = await inspectReviewResumeSessionTree(
+      path.join(archive.attemptsDir, attempt.name),
+    );
     sizeBytes += usage.sizeBytes;
     fileCount += usage.fileCount;
-    if (sizeBytes > MAX_RESUME_ARCHIVE_BYTES || fileCount > MAX_RESUME_ARCHIVE_FILES) {
+    entryCount += usage.entryCount;
+    if (sizeBytes > MAX_RESUME_ARCHIVE_BYTES || entryCount > MAX_RESUME_ARCHIVE_FILES) {
       throw new Error("Review resume session archive exceeds its bounded retention limit");
     }
   }
-  return { sizeBytes, fileCount };
+  return { sizeBytes, fileCount, entryCount };
 }
 
 export async function findReviewResumeSessionFile(attemptDir: string): Promise<string> {
-  await inspectSessionTree(attemptDir);
+  await inspectReviewResumeSessionTree(attemptDir);
   const files: string[] = [];
   const visit = async (directory: string): Promise<void> => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -517,7 +534,7 @@ export async function findReviewResumeSessionFile(attemptDir: string): Promise<s
 export async function retainReviewResumeArchive(
   archive: ReviewResumeArchive,
   failureCode: string,
-): Promise<{ sizeBytes: number; fileCount: number }> {
+): Promise<{ sizeBytes: number; fileCount: number; entryCount: number }> {
   const leaseContents = archive.leaseContents ?? (await acquireReviewResumeArchiveLease(archive));
   try {
     if (archive.leaseContents !== undefined) {
@@ -528,7 +545,7 @@ export async function retainReviewResumeArchive(
         throw new Error("[REVIEW_RESUME_IN_USE] Review resume archive lease ownership changed");
       }
     }
-    const usage = await inspectSessionTree(archive.activeAttemptDir);
+    const usage = await inspectReviewResumeSessionTree(archive.activeAttemptDir);
     if (usage.fileCount === 0) throw new Error("Review resume session candidate is empty");
     const archiveUsage = await inspectReviewResumeArchive(archive);
     const manifestPath = path.join(archive.archiveDir, "manifest.json");
@@ -567,7 +584,7 @@ export async function copyReviewResumeSession(
       `[REVIEW_RESUME_ATTEMPT_LIMIT] Review resume attempt must be between 1 and ${MAX_RESUME_ATTEMPT}`,
     );
   }
-  await inspectSessionTree(sourceAttemptDir);
+  await inspectReviewResumeSessionTree(sourceAttemptDir);
   const destination = path.join(archive.attemptsDir, String(attemptNumber).padStart(4, "0"));
   const staging = path.join(archive.attemptsDir, `.attempt-${randomUUID()}`);
   const leaseContents = await acquireReviewResumeArchiveLease(archive);
@@ -598,7 +615,7 @@ export async function copyReviewResumeSession(
       force: false,
       verbatimSymlinks: true,
     });
-    await inspectSessionTree(staging);
+    await inspectReviewResumeSessionTree(staging);
     await rename(staging, destination);
     promoted = true;
     const next = {

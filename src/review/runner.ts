@@ -81,6 +81,7 @@ export interface ReviewResult {
   readonly thinking?: ThinkingLevel;
   readonly sandboxed: boolean;
   readonly warning?: string;
+  readonly cleanupError?: string;
   readonly reportWriteError?: string;
   readonly workLogWriteError?: string;
   readonly workLogPath: string;
@@ -101,7 +102,7 @@ export interface ResumeReviewRequest {
 
 const WINDOWS_WARNING =
   "Windows review execution is unsandboxed. Read-only behavior and path restrictions are instructions, not operating-system security boundaries.";
-const REVIEW_CLEANUP_WARNING =
+const REVIEW_CLEANUP_ERROR =
   "[REVIEW_CLEANUP_FAILED] Pioneer completed the review, but cleanup did not fully succeed; inspect the controller work log.";
 const PIPE_CLOSE_GRACE_MS = 1_000;
 const WORK_LOG_HEARTBEAT_MS = 5_000;
@@ -171,6 +172,14 @@ export function finalizeReviewWorkLog(
   throw outcome.failure;
 }
 
+export function markReviewCleanupFailure(result: ReviewResult): ReviewResult {
+  return { ...result, cleanupError: REVIEW_CLEANUP_ERROR };
+}
+
+export async function canonicalReviewPiHomeSource(source: string): Promise<string> {
+  return await realpath(path.resolve(source));
+}
+
 function workLogDiagnosticSummary(message: string): Readonly<Record<string, unknown>> {
   const code = /^\[([A-Z][A-Z0-9_]*)\]/.exec(message)?.[1];
   return {
@@ -225,7 +234,7 @@ function assertImmutableResumeScope(
     paths.sourceDir !== scope.sourceDir ||
     !sameStringList(scope.allowReadPaths, paths.allowReadPaths) ||
     !sameStringList(scope.allowWritePaths, paths.allowWritePaths) ||
-    piHomeSource !== path.resolve(scope.piHomeSource ?? defaultPiAgentDir()) ||
+    piHomeSource !== (scope.piHomeSource ?? path.resolve(defaultPiAgentDir())) ||
     !sameStringList(scope.piHomeIncludes, request.piHomeIncludes ?? []) ||
     model !== scope.model ||
     thinking !== scope.thinking ||
@@ -968,7 +977,9 @@ async function runReviewInternal(
     workLogPath: requestedWorkLogPath,
   });
   if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
-  const piHomeSource = path.resolve(request.piHomeSource ?? defaultPiAgentDir());
+  const piHomeSource = await canonicalReviewPiHomeSource(
+    request.piHomeSource ?? defaultPiAgentDir(),
+  );
   let workLog: ReviewWorkLog;
   try {
     workLog = await openReviewWorkLog(paths.workLogPath, { retainDefaultLogs: defaultWorkLog });
@@ -1334,11 +1345,7 @@ async function runReviewInternal(
       cleanupFailure = error instanceof Error ? error : new Error(String(error));
     }
     if (cleanupFailure !== undefined && reviewResult !== undefined) {
-      const warning = combineWarnings(reviewResult.warning, REVIEW_CLEANUP_WARNING);
-      reviewResult = {
-        ...reviewResult,
-        ...(warning === undefined ? {} : { warning }),
-      };
+      reviewResult = markReviewCleanupFailure(reviewResult);
       cleanupFailure = undefined;
     }
     if (cleanupFailure !== undefined && runFailure !== undefined) {

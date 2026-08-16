@@ -175,6 +175,10 @@ async function main(): Promise<void> {
       if (result.resumeToken !== undefined) {
         process.stderr.write(`[PIONEER_REVIEW_RESUME] ${result.resumeToken}\n`);
       }
+      if (result.cleanupError !== undefined) {
+        process.stderr.write(`${result.cleanupError}\n`);
+        process.exitCode = 1;
+      }
       if (result.reportWriteError !== undefined) {
         process.stderr.write(`${result.reportWriteError}\n`);
         process.exitCode = 1;
@@ -218,6 +222,10 @@ async function main(): Promise<void> {
     process.stdout.write(`${result.report}\n`);
     if (result.resumeToken !== undefined) {
       process.stderr.write(`[PIONEER_REVIEW_RESUME] ${result.resumeToken}\n`);
+    }
+    if (result.cleanupError !== undefined) {
+      process.stderr.write(`${result.cleanupError}\n`);
+      process.exitCode = 1;
     }
     if (result.reportWriteError !== undefined) {
       process.stderr.write(`${result.reportWriteError}\n`);
