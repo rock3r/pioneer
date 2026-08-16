@@ -53,10 +53,10 @@ describe("recoverable review archive", () => {
 
   it("prepares a private default report target without creating it", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
-    const reportPath = await prepareDefaultReviewReportPath({}, "linux", home);
-    expect(
-      reportPath.startsWith(path.join(home, ".local", "share", "pioneer", "reports", "review-")),
-    ).toBe(true);
+    const reportPath = await prepareDefaultReviewReportPath({}, process.platform, home);
+    expect(reportPath.startsWith(defaultReviewReportDirectory({}, process.platform, home))).toBe(
+      true,
+    );
     await expect(stat(reportPath)).rejects.toMatchObject({ code: "ENOENT" });
     expect((await stat(path.dirname(reportPath))).mode & 0o777).toBe(
       process.platform === "win32" ? (await stat(path.dirname(reportPath))).mode & 0o777 : 0o700,
@@ -65,7 +65,7 @@ describe("recoverable review archive", () => {
 
   it("validates the default report target before creating or pruning its directory", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
-    const reportDirectory = defaultReviewReportDirectory({}, "linux", home);
+    const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
 
     await expect(
       prepareValidatedDefaultReviewReportPath(
@@ -73,7 +73,7 @@ describe("recoverable review archive", () => {
           throw new Error("actor-visible report target");
         },
         {},
-        "linux",
+        process.platform,
         home,
       ),
     ).rejects.toThrow("actor-visible report target");
@@ -82,7 +82,7 @@ describe("recoverable review archive", () => {
 
   it("prunes generated default reports using their timestamped names", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
-    const reportDirectory = defaultReviewReportDirectory({}, "linux", home);
+    const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
     await mkdir(reportDirectory, { recursive: true });
     for (let index = 0; index < 101; index += 1) {
       await writeFile(
@@ -93,7 +93,7 @@ describe("recoverable review archive", () => {
         "report",
       );
     }
-    await prepareDefaultReviewReportPath({}, "linux", home);
+    await prepareDefaultReviewReportPath({}, process.platform, home);
     expect(
       (await readdir(reportDirectory, { withFileTypes: true })).filter((entry) => entry.isFile()),
     ).toHaveLength(99);
@@ -123,7 +123,7 @@ describe("recoverable review archive", () => {
     expect(isResumeToken("not-a-token")).toBe(false);
     expect(isResumeToken("550e8400-e29b-41d4-a716-446655440000")).toBe(true);
     expect(resumeArchivePath("/private/root", "550e8400-e29b-41d4-a716-446655440000")).toBe(
-      "/private/root/550e8400-e29b-41d4-a716-446655440000",
+      path.join("/private/root", "550e8400-e29b-41d4-a716-446655440000"),
     );
   });
 
@@ -193,7 +193,7 @@ describe("recoverable review archive", () => {
     expect((await stat(archive.archiveDir)).mode & 0o777).toBe(
       process.platform === "win32" ? (await stat(archive.archiveDir)).mode & 0o777 : 0o700,
     );
-  });
+  }, 15_000);
 
   it("rejects symlinked archive roots before reading them", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));

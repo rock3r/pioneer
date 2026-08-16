@@ -940,6 +940,13 @@ async function runReviewInternal(
   const network = request.network ?? "full";
   const timeoutMs = request.timeoutMs ?? 900_000;
   const maxRpcOutputBytes = validateRpcOutputBytes(request.maxRpcOutputBytes);
+  await validateReviewPaths({
+    sourceDir: request.sourceDir,
+    ...(request.allowReadPaths === undefined ? {} : { allowReadPaths: request.allowReadPaths }),
+    ...(request.allowWritePaths === undefined ? {} : { allowWritePaths: request.allowWritePaths }),
+    ...(request.reportPath === undefined ? {} : { reportPath: request.reportPath }),
+    ...(request.workLogPath === undefined ? {} : { workLogPath: request.workLogPath }),
+  });
   const piHomeSource = await canonicalReviewPiHomeSource(
     request.piHomeSource ?? defaultPiAgentDir(),
   );
