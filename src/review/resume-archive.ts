@@ -718,7 +718,11 @@ export async function prepareValidatedDefaultReviewReportPath(
     `review-${new Date().toISOString().replaceAll(/[-:.]/g, "")}-${randomUUID()}.md`,
   );
   await validateTarget(target, [applicationDirectory, directory]);
+  const applicationParent = platformPath(platform).dirname(applicationDirectory);
+  await mkdir(applicationParent, { recursive: true, mode: 0o700 });
+  await assertStableApplicationDataParent(applicationParent, platform);
   await privateDirectory(applicationDirectory);
+  await assertStableApplicationDataParent(applicationParent, platform);
   await privateDirectory(directory);
   const entries = await readdir(directory, { withFileTypes: true });
   const reports: string[] = [];
