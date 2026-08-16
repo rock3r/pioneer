@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   symlink,
@@ -244,6 +245,28 @@ describe("recoverable review archive", () => {
 
     expect(await readFile(report, "utf8")).toBe("No findings.\n");
     await expect(stat(reservation.reservationPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reclaims a crashed report-release quarantine after its setup grace", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
+    await mkdir(reportDirectory, { recursive: true });
+    const report = path.join(
+      reportDirectory,
+      "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
+    );
+    const quarantine = path.join(
+      reportDirectory,
+      ".review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md.550e8400-e29b-41d4-a716-446655440001.pioneer-releasing",
+    );
+    await writeFile(report, "No findings.\n");
+    await rename(report, quarantine);
+    const staleTime = new Date(Date.now() - 60_001);
+    await utimes(quarantine, staleTime, staleTime);
+
+    await prepareDefaultReviewReportPath({}, process.platform, home);
+
+    await expect(stat(quarantine)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("prunes completed reports that contain reservation-shaped model text", async () => {

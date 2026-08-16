@@ -573,7 +573,8 @@ type ValidateReviewReportTarget = (
 type BeforeReviewReportUnlink = (target: string) => Promise<void>;
 
 const REVIEW_REPORT_SIDECAR =
-  /^\.(review-[0-9a-fzt-]+\.md)\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.pioneer-(?:reservation|publishing)$/i;
+  /^\.(review-[0-9a-fzt-]+\.md)\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.pioneer-(reservation|publishing|releasing)$/i;
+const REVIEW_REPORT_RELEASING_GRACE_MS = 60_000;
 
 export async function prepareValidatedDefaultReviewReportPath(
   validateTarget: ValidateReviewReportTarget,
@@ -593,7 +594,11 @@ export async function prepareValidatedDefaultReviewReportPath(
   await privateDirectory(directory);
   const entries = await readdir(directory, { withFileTypes: true });
   const reports: string[] = [];
-  const sidecars: Array<{ readonly name: string; readonly targetName: string }> = [];
+  const sidecars: Array<{
+    readonly name: string;
+    readonly targetName: string;
+    readonly kind: string;
+  }> = [];
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     if (/^review-[0-9a-fzt-]+\.md$/i.test(entry.name)) {
@@ -602,13 +607,28 @@ export async function prepareValidatedDefaultReviewReportPath(
       continue;
     }
     const sidecar = REVIEW_REPORT_SIDECAR.exec(entry.name);
-    if (sidecar?.[1] !== undefined) {
-      sidecars.push({ name: entry.name, targetName: sidecar[1] });
+    if (sidecar?.[1] !== undefined && sidecar[2] !== undefined) {
+      sidecars.push({ name: entry.name, targetName: sidecar[1], kind: sidecar[2].toLowerCase() });
     }
   }
   for (const sidecar of sidecars) {
     const sidecarPath = path.join(directory, sidecar.name);
-    if (await shouldProtectReviewReportSidecar(sidecarPath)) continue;
+    if (sidecar.kind === "releasing") {
+      const stats = await lstat(sidecarPath).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      });
+      const ageMs = stats === undefined ? undefined : Date.now() - stats.mtimeMs;
+      if (
+        ageMs !== undefined &&
+        ageMs >= -REVIEW_REPORT_RELEASING_GRACE_MS &&
+        ageMs <= REVIEW_REPORT_RELEASING_GRACE_MS
+      ) {
+        continue;
+      }
+    } else if (await shouldProtectReviewReportSidecar(sidecarPath)) {
+      continue;
+    }
     const target = path.join(directory, sidecar.targetName);
     if (await isActiveReviewReportReservation(target)) continue;
     await unlink(sidecarPath).catch((error: unknown) => {
