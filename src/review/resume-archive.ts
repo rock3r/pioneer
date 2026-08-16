@@ -116,6 +116,33 @@ async function assertStableApplicationDataParent(
   if ((stats.mode & 0o022) !== 0) {
     throw new Error(`Review application-data parent is writable by another user: ${directory}`);
   }
+  const currentUid = process.getuid?.();
+  const roots = new Set([path.resolve(directory), await realpath(directory)]);
+  for (const root of roots) {
+    let child = root;
+    let childStats = await lstat(child);
+    for (;;) {
+      const parent = path.dirname(child);
+      if (parent === child) break;
+      const parentStats = await lstat(parent);
+      if (parentStats.isSymbolicLink()) {
+        child = parent;
+        childStats = parentStats;
+        continue;
+      }
+      if (!parentStats.isDirectory()) {
+        throw new Error(`Review application-data parent is not a stable directory: ${parent}`);
+      }
+      if ((parentStats.mode & 0o022) !== 0) {
+        const sticky = (parentStats.mode & 0o1000) !== 0;
+        if (!sticky || currentUid === undefined || childStats.uid !== currentUid) {
+          throw new Error(`Review application-data parent is writable by another user: ${parent}`);
+        }
+      }
+      child = parent;
+      childStats = parentStats;
+    }
+  }
 }
 
 export async function prepareDefaultReviewResumeDirectory(

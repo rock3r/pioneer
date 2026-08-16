@@ -366,6 +366,28 @@ describe("recoverable review archive", () => {
     },
   );
 
+  it.runIf(process.platform !== "win32")(
+    "rejects a private data root owned by a replaceable directory entry",
+    async () => {
+      const sharedParent = await mkdtemp(path.join(tmpdir(), "pioneer-shared-parent-"));
+      const privateData = path.join(sharedParent, "private-data");
+      await chmod(sharedParent, 0o777);
+      await mkdir(privateData, { mode: 0o700 });
+
+      await expect(
+        prepareValidatedDefaultReviewReportPath(
+          async () => {},
+          { XDG_DATA_HOME: privateData },
+          "linux",
+          path.dirname(sharedParent),
+        ),
+      ).rejects.toThrow(/application-data parent.*writable/i);
+      await expect(stat(path.join(privateData, "pioneer"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
   it("rejects an overlapping default resume root before mutating its application directory", async () => {
     const sourceDir = await mkdtemp(path.join(tmpdir(), "pioneer-resume-parent-overlap-"));
     const environment =
