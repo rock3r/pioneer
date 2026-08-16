@@ -56,6 +56,7 @@ export const MAX_RESUME_ARCHIVE_FILES = 10_000;
 export const MAX_RESUME_MANIFEST_BYTES = 1 * 1024 * 1024;
 export const MAX_RETAINED_RESUME_ARCHIVES = 10;
 export const RESUME_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+export const RESUME_CLOCK_SKEW_MS = 5 * 60 * 1000;
 export const MAX_RESUME_ATTEMPT = 9_999;
 
 const MAX_RETAINED_RESUME_SESSION_BYTES = Math.floor(MAX_RESUME_ARCHIVE_BYTES / 2);
@@ -530,11 +531,11 @@ export async function releaseLeasedReviewResumeArchive(
   await releaseReviewResumeArchiveLease(archive, archive.leaseContents);
 }
 
-async function archiveTimestamp(manifest: Record<string, unknown>): Promise<number> {
+async function archiveTimestamp(manifest: Record<string, unknown>, now: number): Promise<number> {
   const value = manifest.retainedAt ?? manifest.createdAt;
   if (typeof value !== "string") return 0;
   const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : 0;
+  return Number.isFinite(timestamp) && timestamp <= now + RESUME_CLOCK_SKEW_MS ? timestamp : 0;
 }
 
 async function pruneReviewResumeArchiveTemporaryEntries(
@@ -632,7 +633,7 @@ async function retainedReviewResumeArchiveOrder(
     if (stats === undefined || stats.isSymbolicLink()) continue;
     const manifest = await readManifest(directory);
     if (manifest === undefined) continue;
-    const timestamp = await archiveTimestamp(manifest);
+    const timestamp = await archiveTimestamp(manifest, now);
     if (timestamp === 0 || now - timestamp >= RESUME_RETENTION_MS) continue;
     retained.push({ directory, timestamp });
   }
@@ -691,7 +692,7 @@ export async function pruneReviewResumeArchives(
         }
         continue;
       }
-      const timestamp = await archiveTimestamp(manifest);
+      const timestamp = await archiveTimestamp(manifest, now);
       const expired = timestamp === 0 || now - timestamp >= RESUME_RETENTION_MS;
       if (expired) {
         await pruneInactiveReviewResumeArchive(directory);
@@ -1193,15 +1194,30 @@ async function readReviewResumeArchiveContents(
     throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume lifecycle timestamp is invalid");
   }
   const lifecycleTime = Date.parse(lifecycleTimestamp);
-  if (!Number.isFinite(lifecycleTime) || Date.now() - lifecycleTime >= RESUME_RETENTION_MS) {
+  const now = Date.now();
+  if (!Number.isFinite(lifecycleTime) || lifecycleTime > now + RESUME_CLOCK_SKEW_MS) {
+    throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume lifecycle timestamp is invalid");
+  }
+  if (now - lifecycleTime >= RESUME_RETENTION_MS) {
     throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume archive has expired");
   }
   const rawScope = manifest.scope as Record<string, unknown>;
+  const optionalString = (value: unknown): boolean =>
+    value === undefined || typeof value === "string";
+  const optionalStringList = (value: unknown): boolean =>
+    value === undefined ||
+    (Array.isArray(value) && value.every((entry) => typeof entry === "string"));
   if (
     typeof rawScope.sourceDir !== "string" ||
     typeof rawScope.promptSha256 !== "string" ||
     typeof rawScope.network !== "string" ||
-    typeof rawScope.piVersion !== "string"
+    typeof rawScope.piVersion !== "string" ||
+    !optionalString(rawScope.model) ||
+    !optionalString(rawScope.thinking) ||
+    !optionalString(rawScope.piHomeSource) ||
+    !optionalStringList(rawScope.piHomeIncludes) ||
+    !optionalStringList(rawScope.allowReadPaths) ||
+    !optionalStringList(rawScope.allowWritePaths)
   ) {
     throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume scope is invalid");
   }
@@ -1209,12 +1225,8 @@ async function readReviewResumeArchiveContents(
     root,
     [
       rawScope.sourceDir,
-      ...(Array.isArray(rawScope.allowReadPaths)
-        ? rawScope.allowReadPaths.filter((value): value is string => typeof value === "string")
-        : []),
-      ...(Array.isArray(rawScope.allowWritePaths)
-        ? rawScope.allowWritePaths.filter((value): value is string => typeof value === "string")
-        : []),
+      ...(Array.isArray(rawScope.allowReadPaths) ? (rawScope.allowReadPaths as string[]) : []),
+      ...(Array.isArray(rawScope.allowWritePaths) ? (rawScope.allowWritePaths as string[]) : []),
       ...(typeof rawScope.piHomeSource === "string" ? [rawScope.piHomeSource] : []),
     ],
     false,
@@ -1266,25 +1278,13 @@ async function readReviewResumeArchiveContents(
     ...(typeof rawScope.thinking === "string" ? { thinking: rawScope.thinking } : {}),
     ...(typeof rawScope.piHomeSource === "string" ? { piHomeSource: rawScope.piHomeSource } : {}),
     ...(Array.isArray(rawScope.piHomeIncludes)
-      ? {
-          piHomeIncludes: rawScope.piHomeIncludes.filter(
-            (value): value is string => typeof value === "string",
-          ),
-        }
+      ? { piHomeIncludes: rawScope.piHomeIncludes as string[] }
       : {}),
     ...(Array.isArray(rawScope.allowReadPaths)
-      ? {
-          allowReadPaths: rawScope.allowReadPaths.filter(
-            (value): value is string => typeof value === "string",
-          ),
-        }
+      ? { allowReadPaths: rawScope.allowReadPaths as string[] }
       : {}),
     ...(Array.isArray(rawScope.allowWritePaths)
-      ? {
-          allowWritePaths: rawScope.allowWritePaths.filter(
-            (value): value is string => typeof value === "string",
-          ),
-        }
+      ? { allowWritePaths: rawScope.allowWritePaths as string[] }
       : {}),
     network: rawScope.network as ReviewNetworkMode,
     piVersion: rawScope.piVersion,

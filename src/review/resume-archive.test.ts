@@ -38,6 +38,7 @@ import {
   pruneInactiveReviewResumeArchive,
   pruneReviewResumeArchives,
   publishReviewResumeArchiveLease,
+  RESUME_CLOCK_SKEW_MS,
   RESUME_RETENTION_MS,
   releaseLeasedReviewResumeArchive,
   restoreDisplacedReviewResumeArchiveLease,
@@ -1246,5 +1247,76 @@ describe("recoverable review archive", () => {
     await expect(loadReviewResumeArchive(root, archive.token)).rejects.toThrow(
       "[REVIEW_RESUME_UNAVAILABLE] Review resume archive has expired",
     );
+  });
+
+  it("rejects every malformed present immutable-scope field", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      model: "provider/model",
+      thinking: "high",
+      piHomeSource: "/pi",
+      piHomeIncludes: ["skills/example"],
+      allowReadPaths: ["/reference"],
+      allowWritePaths: ["/output"],
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    const manifestPath = path.join(archive.archiveDir, "manifest.json");
+    const validManifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    const validScope = validManifest.scope as Record<string, unknown>;
+
+    for (const [field, invalidValue] of [
+      ["model", 42],
+      ["thinking", []],
+      ["piHomeSource", false],
+      ["piHomeIncludes", ["skills/example", 42]],
+      ["allowReadPaths", ["/reference", false]],
+      ["allowWritePaths", "/output"],
+    ] as const) {
+      await writeFile(
+        manifestPath,
+        `${JSON.stringify({
+          ...validManifest,
+          scope: { ...validScope, [field]: invalidValue },
+        })}\n`,
+      );
+      await expect(loadReviewResumeArchive(root, archive.token)).rejects.toThrow(
+        "[REVIEW_RESUME_UNAVAILABLE] Review resume scope is invalid",
+      );
+    }
+  });
+
+  it("rejects and prunes an implausibly future archive timestamp", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    const manifestPath = path.join(archive.archiveDir, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+    await writeFile(
+      manifestPath,
+      `${JSON.stringify({
+        ...manifest,
+        retainedAt: new Date(Date.now() + RESUME_CLOCK_SKEW_MS + 1_000).toISOString(),
+      })}\n`,
+    );
+
+    await expect(loadReviewResumeArchive(root, archive.token)).rejects.toThrow(
+      "[REVIEW_RESUME_UNAVAILABLE] Review resume lifecycle timestamp is invalid",
+    );
+    await pruneReviewResumeArchives(root);
+    await expect(stat(archive.archiveDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
