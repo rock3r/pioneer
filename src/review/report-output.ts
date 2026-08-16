@@ -284,18 +284,19 @@ async function restoreQuarantinedReviewReportPath(
   quarantinePath: string,
   originalPath: string,
 ): Promise<void> {
+  const preservedPath = await preserveQuarantinedReviewReportPath(quarantinePath, originalPath);
   try {
-    await link(quarantinePath, originalPath);
+    await link(preservedPath, originalPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      const preservedPath = await preserveQuarantinedReviewReportPath(quarantinePath, originalPath);
       throw new Error(`Review report replacement was preserved at ${preservedPath}`, {
         cause: error,
       });
     }
-    throw error;
+    throw new Error(`Review report replacement was preserved at ${preservedPath}`, {
+      cause: error,
+    });
   }
-  await unlink(quarantinePath);
 }
 
 async function preserveQuarantinedReviewReportPath(

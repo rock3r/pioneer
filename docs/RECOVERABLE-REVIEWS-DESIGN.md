@@ -69,9 +69,10 @@ lease keeps retention from pruning that path while its contents are changing.
 If publication fails after writing begins, Pioneer restores the ownership marker
 before returning and failure cleanup removes only the inode it still owns, never
 a path another process replaced. Cleanup quarantines a candidate before checking
-ownership; if restoration collides with another replacement, Pioneer atomically
-moves the quarantined inode to a fresh visible `pioneer-preserved` sibling that
-retention does not classify as cleanup state. After the report is synced and its target
+ownership. For an unowned replacement, Pioneer first atomically moves the
+quarantined inode to a fresh visible `pioneer-preserved` sibling that retention
+does not classify as cleanup state, then create-only links it back to the original
+path when possible without ever deleting the preserved name. After the report is synced and its target
 identity is revalidated, handle close and sibling removal are cleanup and cannot
 rewrite or invalidate the durable report. `--no-resume` does not create, chmod,
 or prune resume storage.

@@ -136,6 +136,32 @@ describe("review report output", () => {
     expect(linkFile).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a visible preserved inode when the restored path is removed concurrently", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    linkFile.mockClear();
+    linkFile.mockImplementationOnce(async (existingPath, newPath) => {
+      const { link, rm } =
+        await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+      await link(existingPath, newPath);
+      await rm(newPath);
+    });
+
+    await releaseReviewReportReservation(reservation, async () => {
+      await import("node:fs/promises").then(({ rm }) => rm(target));
+      await writeFile(target, "replacement\n");
+    });
+
+    await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    const entries = await readdir(root);
+    const preserved = entries.filter((entry) => entry.startsWith("report.md.pioneer-preserved-"));
+    expect(preserved).toHaveLength(1);
+    expect(await readFile(path.join(root, preserved[0] ?? ""), "utf8")).toBe("replacement\n");
+    expect(entries.some((entry) => entry.endsWith(".pioneer-releasing"))).toBe(false);
+    expect(linkFile).toHaveBeenCalledTimes(1);
+  });
+
   it("does not overwrite a report target replaced after ownership validation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const target = path.join(root, "report.md");
