@@ -140,6 +140,9 @@ describe("recoverable review archive", () => {
         [sourceDir],
       ),
     ).rejects.toThrow("Review resume root overlaps an actor-visible grant");
+    await expect(stat(path.join(sourceDir, "resume-data"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("rejects relative home-derived application-data roots on every platform", () => {

@@ -9,6 +9,7 @@ export type ReviewPlatform = "darwin" | "linux" | "win32";
 
 export interface ReviewPathSpec {
   readonly sourceDir: string;
+  readonly piHomeSource?: string;
   readonly allowReadPaths?: readonly string[];
   readonly allowWritePaths?: readonly string[];
   readonly reportPath?: string;
@@ -183,6 +184,8 @@ async function validateReviewPathsInternal(
   platform: NodeJS.Platform,
 ): Promise<ValidatedReviewPaths> {
   const sourceDir = await canonicalGrant(spec.sourceDir);
+  const piHomeSource =
+    spec.piHomeSource === undefined ? undefined : await canonicalGrant(spec.piHomeSource);
   const allowReadPaths = await canonicalList(spec.allowReadPaths ?? []);
   const allowWritePaths = await canonicalList(spec.allowWritePaths ?? []);
   const reportPath =
@@ -206,14 +209,25 @@ async function validateReviewPathsInternal(
     }
   }
   if (
-    reportPath !== undefined &&
-    [sourceDir, ...allowReadPaths, ...allowWritePaths].some((grant) => contains(grant, reportPath))
+    piHomeSource !== undefined &&
+    [sourceDir, ...allowReadPaths, ...allowWritePaths].some((grant) =>
+      overlaps(piHomeSource, grant),
+    )
   ) {
+    throw new Error(`Review Pi home source overlaps an actor-visible grant: ${piHomeSource}`);
+  }
+  const actorVisiblePaths = [
+    sourceDir,
+    ...allowReadPaths,
+    ...allowWritePaths,
+    ...(piHomeSource === undefined ? [] : [piHomeSource]),
+  ];
+  if (reportPath !== undefined && actorVisiblePaths.some((grant) => contains(grant, reportPath))) {
     throw new Error(`Review report target is actor-visible: ${reportPath}`);
   }
   if (
     workLogPath !== undefined &&
-    [sourceDir, ...allowReadPaths, ...allowWritePaths].some((grant) => contains(grant, workLogPath))
+    actorVisiblePaths.some((grant) => contains(grant, workLogPath))
   ) {
     throw new Error(`Review work log target is actor-visible: ${workLogPath}`);
   }

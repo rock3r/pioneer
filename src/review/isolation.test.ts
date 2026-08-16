@@ -108,6 +108,28 @@ describe("review path grants", () => {
     await expect(lstat(path.join(source, "data"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("keeps prospective controller outputs outside the Pi-home snapshot source", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const piHomeSource = path.join(root, "pi-home");
+    await Promise.all([mkdir(source), mkdir(piHomeSource)]);
+
+    await expect(
+      validateProspectiveReviewReportPath({
+        sourceDir: source,
+        piHomeSource,
+        reportPath: path.join(piHomeSource, "skills", "reports", "review.md"),
+      }),
+    ).rejects.toThrow(/actor-visible/i);
+    await expect(
+      validateProspectiveReviewWorkLogPath({
+        sourceDir: source,
+        piHomeSource,
+        workLogPath: path.join(piHomeSource, "skills", "logs", "review.jsonl"),
+      }),
+    ).rejects.toThrow(/actor-visible/i);
+  });
+
   it("validates the full request before accepting a prospective work log", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
     const source = path.join(root, "source");

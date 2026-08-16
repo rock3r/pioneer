@@ -940,12 +940,19 @@ async function runReviewInternal(
   const network = request.network ?? "full";
   const timeoutMs = request.timeoutMs ?? 900_000;
   const maxRpcOutputBytes = validateRpcOutputBytes(request.maxRpcOutputBytes);
+  const piHomeSource = await canonicalReviewPiHomeSource(
+    request.piHomeSource ?? defaultPiAgentDir(),
+  );
   let requestedReportPath = request.reportPath;
   if (requestedReportPath === undefined) {
     try {
       requestedReportPath = await prepareValidatedDefaultReviewReportPath(async (candidate) => {
         try {
-          await validateProspectiveReviewReportPath({ ...request, reportPath: candidate });
+          await validateProspectiveReviewReportPath({
+            ...request,
+            piHomeSource,
+            reportPath: candidate,
+          });
         } catch (error) {
           throw new ProspectiveReviewPathValidationError(error);
         }
@@ -966,7 +973,11 @@ async function runReviewInternal(
     try {
       requestedWorkLogPath = await prepareValidatedDefaultReviewWorkLogPath(async (candidate) => {
         try {
-          await validateProspectiveReviewWorkLogPath({ ...request, workLogPath: candidate });
+          await validateProspectiveReviewWorkLogPath({
+            ...request,
+            piHomeSource,
+            workLogPath: candidate,
+          });
         } catch (error) {
           throw new ProspectiveReviewPathValidationError(error);
         }
@@ -983,13 +994,11 @@ async function runReviewInternal(
   }
   const paths = await validateReviewPaths({
     ...request,
+    piHomeSource,
     reportPath: requestedReportPath,
     workLogPath: requestedWorkLogPath,
   });
   if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
-  const piHomeSource = await canonicalReviewPiHomeSource(
-    request.piHomeSource ?? defaultPiAgentDir(),
-  );
   let workLog: ReviewWorkLog;
   try {
     workLog = await openReviewWorkLog(paths.workLogPath, { retainDefaultLogs: defaultWorkLog });
@@ -1122,7 +1131,7 @@ async function runReviewInternal(
             piVersion: readiness.version ?? "unknown",
           },
           undefined,
-          [paths.sourceDir, ...paths.allowReadPaths, ...paths.allowWritePaths],
+          [paths.sourceDir, ...paths.allowReadPaths, ...paths.allowWritePaths, piHomeSource],
         );
         resumeToken = resumeArchive.token;
       } catch (error) {

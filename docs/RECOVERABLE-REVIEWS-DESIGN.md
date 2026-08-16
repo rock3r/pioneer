@@ -50,8 +50,8 @@ that target; it does not enable persistence. The CLI immediately writes
 `ReviewResult.reportPath` always identifies the report file. Default reports
 are private to the current user and pruned to the newest 100 inactive files.
 Pioneer canonicalizes and validates the prospective default target against all
-actor-visible grants before it creates, changes permissions on, or prunes that
-directory.
+actor-visible grants and the Pi-home snapshot source before it creates, changes
+permissions on, or prunes that directory.
 
 ### Resume
 
@@ -177,7 +177,7 @@ An interrupted assistant turn cannot be recovered. Completed turns already writt
 ## Retention and security
 
 - Retain unsuccessful archives for seven days; retain at most ten, with 64 MiB and 10,000-entry caps per archive measured only after proven process-tree termination.
-- Prune only inactive expired archives before creation and after terminal cleanup; never prune an active lease. Leases bind the PID to its OS process-start identity so PID reuse does not preserve or take over an archive, and concurrent pruning tolerates candidates removed after directory enumeration.
+- Validate a prospective resume root against all actor-visible grants and the Pi-home snapshot source before creating or changing permissions on it. Prune only inactive expired archives before creation and after terminal cleanup; never prune an active lease. Leases bind the PID to its OS process-start identity so PID reuse does not preserve or take over an archive, and concurrent pruning tolerates candidates removed after directory enumeration.
 - A controller crash after Pi succeeds but before deletion leaves a conservatively resumable archive that expires normally.
 - Deletion is ordinary filesystem deletion, not cryptographic erasure.
 - Session content, token, prompt, thinking, tool inputs/results, credentials, proxy values, and raw provider diagnostics never enter Pioneer-generated work-log fields or errors. The final report remains Pi's independently generated Markdown and is stored privately.

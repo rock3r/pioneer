@@ -139,12 +139,44 @@ async function canonicalPathForContainment(candidate: string): Promise<string> {
   }
 }
 
+async function canonicalProspectivePathForContainment(candidate: string): Promise<string> {
+  const absolute = path.resolve(candidate);
+  let existingAncestor = absolute;
+  for (;;) {
+    try {
+      await lstat(existingAncestor);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = path.dirname(existingAncestor);
+      if (parent === existingAncestor) throw error;
+      existingAncestor = parent;
+    }
+  }
+  const canonicalAncestor = await realpath(existingAncestor);
+  return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
+}
+
+async function assertResumeRootDisjoint(
+  root: string,
+  actorVisiblePaths: readonly string[],
+): Promise<void> {
+  for (const grant of actorVisiblePaths) {
+    const canonicalGrant = await canonicalPathForContainment(grant);
+    if (overlaps(root, canonicalGrant)) {
+      throw new Error(`Review resume root overlaps an actor-visible grant: ${canonicalGrant}`);
+    }
+  }
+}
+
 async function canonicalResumeRoot(
   root: string,
   actorVisiblePaths: readonly string[],
   create: boolean,
 ): Promise<string> {
   if (!path.isAbsolute(root)) throw new Error("Review resume root must be an absolute path");
+  const prospectiveRoot = await canonicalProspectivePathForContainment(root);
+  await assertResumeRootDisjoint(prospectiveRoot, actorVisiblePaths);
   if (create) {
     await privateDirectory(root);
   } else {
@@ -154,12 +186,7 @@ async function canonicalResumeRoot(
     }
   }
   const canonicalRoot = await realpath(root);
-  for (const grant of actorVisiblePaths) {
-    const canonicalGrant = await canonicalPathForContainment(grant);
-    if (overlaps(canonicalRoot, canonicalGrant)) {
-      throw new Error(`Review resume root overlaps an actor-visible grant: ${canonicalGrant}`);
-    }
-  }
+  await assertResumeRootDisjoint(canonicalRoot, actorVisiblePaths);
   return canonicalRoot;
 }
 
