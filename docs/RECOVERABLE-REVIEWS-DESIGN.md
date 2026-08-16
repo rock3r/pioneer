@@ -204,6 +204,7 @@ An interrupted assistant turn cannot be recovered. Completed turns already writt
 - Session content, token, prompt, thinking, tool inputs/results, credentials, proxy values, and raw provider diagnostics never enter Pioneer-generated work-log fields or errors. The final report remains Pi's independently generated Markdown and is stored privately.
 - Resume cannot expand source, grant, model, network, or Pi-home authority.
 - Archive loading rechecks disjointness against the stored canonical Pi-home source as well as source and explicit grants.
+- Resume output validation covers the entire private resume store, not only the selected token, so report or work-log paths cannot corrupt or expose sibling recovery state.
 - The RPC cap applies equally to resumed reviews.
 - `--no-resume` keeps the present no-session behavior.
 

@@ -1503,7 +1503,7 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
         `${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed with this resume.`,
       );
     }
-    await assertReviewResumeOutputsOutsideArchive(loaded.archive.archiveDir, request);
+    await assertReviewResumeOutputsOutsideStorage(loaded.archive, request);
     const thinking = loaded.scope.thinking;
     if (thinking !== undefined && !isThinkingLevel(thinking)) {
       throw new Error("[REVIEW_RESUME_UNAVAILABLE] Stored thinking level is invalid");
@@ -1603,4 +1603,20 @@ export async function assertReviewResumeOutputsOutsideArchive(
     }
     throw error;
   }
+}
+
+export async function assertReviewResumeOutputsOutsideStorage(
+  archive: Pick<ReviewResumeArchive, "archiveDir">,
+  outputs: Pick<ResumeReviewRequest, "reportPath" | "workLogPath">,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home = os.homedir(),
+): Promise<void> {
+  await assertReviewResumeOutputsOutsideArchive(
+    path.dirname(archive.archiveDir),
+    outputs,
+    environment,
+    platform,
+    home,
+  );
 }

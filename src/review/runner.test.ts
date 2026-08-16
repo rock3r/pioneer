@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assertReviewResumeOutputsOutsideArchive,
+  assertReviewResumeOutputsOutsideStorage,
   buildReviewPrompt,
   canonicalReviewPiHomeSource,
   cleanupCompletedReviewResumeArchive,
@@ -277,6 +278,21 @@ describe("review RPC runner", () => {
         archive,
       ),
     ).rejects.toThrow(/work log.*archive/i);
+  });
+
+  it("rejects resume outputs inside a different retained archive", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-output-"));
+    const currentArchive = path.join(root, "550e8400-e29b-41d4-a716-446655440000");
+    const otherArchive = path.join(root, "550e8400-e29b-41d4-a716-446655440001");
+    await mkdir(currentArchive);
+    await mkdir(otherArchive);
+
+    await expect(
+      assertReviewResumeOutputsOutsideStorage(
+        { archiveDir: currentArchive },
+        { reportPath: path.join(otherArchive, "report.md") },
+      ),
+    ).rejects.toThrow(/archive/i);
   });
 
   it("preserves a successful report while marking cleanup failure terminal", () => {
