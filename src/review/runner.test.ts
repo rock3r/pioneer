@@ -8,6 +8,7 @@ import {
   createReviewScratchDirectory,
   finalizeReviewWorkLog,
   markReviewCleanupFailure,
+  pruneValidatedReviewResumeArchives,
   type ReviewRequest,
   readinessMetadataForWorkLog,
   requestedModelForWorkLog,
@@ -433,6 +434,19 @@ describe("review RPC runner", () => {
 
   it("does not persist a run-local scratch path in resumable review prompts", () => {
     expect(buildReviewPrompt("/repo", undefined, "Review changes")).not.toContain("Scratch:");
+  });
+
+  it("does not create or prune resume storage unless this run validated it", async () => {
+    const root = path.join(
+      await import("node:fs/promises").then(({ mkdtemp }) =>
+        mkdtemp(path.join(tmpdir(), "pioneer-no-resume-")),
+      ),
+      "review-resumes",
+    );
+
+    await pruneValidatedReviewResumeArchives(false, root);
+
+    await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("recognizes Git-target requests that macOS and Windows cannot inspect", () => {

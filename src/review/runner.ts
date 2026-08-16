@@ -30,7 +30,13 @@ import {
   validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
 } from "./isolation.js";
-import { writeReviewReport } from "./report-output.js";
+import {
+  publishReservedReviewReport,
+  type ReviewReportReservation,
+  releaseReviewReportReservation,
+  reserveReviewReport,
+  writeReviewReport,
+} from "./report-output.js";
 import {
   copyReviewResumeSession,
   createReviewResumeArchive,
@@ -436,10 +442,12 @@ export function reviewProcessEnvironment(
 export async function persistReviewReport(
   report: string,
   reportPath: string | undefined,
+  reservation?: ReviewReportReservation,
 ): Promise<string | undefined> {
   if (reportPath === undefined) return undefined;
   try {
-    await writeReviewReport(reportPath, report);
+    if (reservation === undefined) await writeReviewReport(reportPath, report);
+    else await publishReservedReviewReport(reservation, report);
     return undefined;
   } catch (error) {
     return diagnosticMessage(
@@ -447,6 +455,13 @@ export async function persistReviewReport(
       `Pioneer received a review report but could not persist it at ${reportPath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+export async function pruneValidatedReviewResumeArchives(
+  validated: boolean,
+  root = defaultReviewResumeDirectory(),
+): Promise<void> {
+  if (validated) await pruneReviewResumeArchives(root);
 }
 
 function assistantText(value: unknown): string | undefined {
@@ -1021,9 +1036,21 @@ async function runReviewInternal(
   let outcome: ReviewExecutionOutcome;
   let resumeArchive: ReviewResumeArchive | undefined = resumeContext?.loaded.archive;
   let resumeToken: string | undefined = resumeContext?.loaded.archive.token;
+  let resumeStorageValidated = resumeContext !== undefined;
+  let reportReservation: ReviewReportReservation | undefined;
   try {
     if (paths.reportPath !== undefined) {
       await assertDistinctExistingReviewOutputs(paths.reportPath, workLog.path);
+      try {
+        reportReservation = await reserveReviewReport(paths.reportPath);
+      } catch (error) {
+        throw new Error(
+          diagnosticMessage(
+            "REVIEW_REPORT_CREATE_FAILED",
+            `Pioneer could not reserve the private review report at ${paths.reportPath}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      }
       request.onReportReady?.(paths.reportPath);
     }
     request.onWorkLogReady?.(workLog.path);
@@ -1141,6 +1168,7 @@ async function runReviewInternal(
           [paths.sourceDir, ...paths.allowReadPaths, ...paths.allowWritePaths, piHomeSource],
         );
         resumeToken = resumeArchive.token;
+        resumeStorageValidated = true;
       } catch (error) {
         throw new Error(
           diagnosticMessage(
@@ -1277,7 +1305,7 @@ async function runReviewInternal(
       reportBytes = Buffer.byteLength(report);
       recordReviewWorkLog(workLog, "stage_completed", { stage: "pi_rpc", reportBytes });
       recordReviewWorkLog(workLog, "stage_started", { stage: "report_persistence" });
-      let reportWriteError = await persistReviewReport(report, paths.reportPath);
+      let reportWriteError = await persistReviewReport(report, paths.reportPath, reportReservation);
       if (reportWriteError !== undefined && resumeArchive !== undefined) {
         try {
           await retainReviewResumeArchive(resumeArchive, "REVIEW_REPORT_WRITE_FAILED");
@@ -1346,6 +1374,11 @@ async function runReviewInternal(
       async () => {
         if (scratch !== undefined) await rm(scratch, { recursive: true, force: true });
       },
+      async () => {
+        if (reportReservation !== undefined) {
+          await releaseReviewReportReservation(reportReservation);
+        }
+      },
     ]) {
       try {
         await cleanup();
@@ -1354,7 +1387,10 @@ async function runReviewInternal(
       }
     }
     try {
-      await pruneReviewResumeArchives(defaultReviewResumeDirectory());
+      await pruneValidatedReviewResumeArchives(
+        resumeStorageValidated,
+        defaultReviewResumeDirectory(),
+      );
     } catch (error) {
       cleanupFailure ??= error instanceof Error ? error : new Error(String(error));
     }
@@ -1387,6 +1423,16 @@ async function runReviewInternal(
     outcome = { result: reviewResult };
   } catch (error) {
     let failure = error instanceof Error ? error : new Error(String(error));
+    if (reportReservation !== undefined) {
+      try {
+        await releaseReviewReportReservation(reportReservation);
+      } catch (cleanupError) {
+        failure = combineReviewFailures(
+          failure,
+          cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
+        );
+      }
+    }
     try {
       workLog.record("review_failed", {
         ...workLogDiagnosticSummary(failure.message),

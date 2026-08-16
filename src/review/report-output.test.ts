@@ -15,10 +15,62 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
   rm: removeTemporary,
 }));
 
-import { writeReviewReport } from "./report-output.js";
+import {
+  publishReservedReviewReport,
+  releaseReviewReportReservation,
+  reserveReviewReport,
+  writeReviewReport,
+} from "./report-output.js";
 import { persistReviewReport } from "./runner.js";
 
 describe("review report output", () => {
+  it("reserves the private report target before publishing it", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+
+    const reservation = await reserveReviewReport(target);
+
+    expect(await readFile(target, "utf8")).toBe("");
+    await publishReservedReviewReport(reservation, "No findings.");
+    expect(await readFile(target, "utf8")).toBe("No findings.\n");
+  });
+
+  it("does not publish over or remove a replaced report reservation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    await import("node:fs/promises").then(({ rm }) => rm(target));
+    await writeFile(target, "replacement\n");
+
+    await expect(publishReservedReviewReport(reservation, "No findings.")).rejects.toThrow(
+      /reservation/i,
+    );
+    await releaseReviewReportReservation(reservation);
+
+    expect(await readFile(target, "utf8")).toBe("replacement\n");
+  });
+
+  it("removes an unpublished report reservation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+
+    await releaseReviewReportReservation(reservation);
+
+    await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not remove a reservation that was modified in place", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    await writeFile(target, "replacement\n");
+
+    await releaseReviewReportReservation(reservation);
+
+    expect(await readFile(target, "utf8")).toBe("replacement\n");
+  });
+
   it("atomically creates a private report file", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const reports = path.join(root, "reports");

@@ -37,7 +37,7 @@ under src for correctness, security, and regressions.`
 
 Only include `--model` or `--thinking` when requested. A requested thinking level is binding: include the exact `--thinking <level>` argument in the review command and do not silently omit or substitute it. Supported thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 
-Reviews persist a private controller-owned report by default. Preserve stderr and the always-emitted `[PIONEER_REPORT] ABSOLUTE_PATH` marker, as well as `[PIONEER_WORK_LOG] ABSOLUTE_PATH`; `ReviewResult.reportPath` is the API equivalent. `--report` selects a different create-only controller target. Use `--no-resume` only when the caller explicitly wants the privacy opt-out and ephemeral Pi launch.
+Reviews persist a private controller-owned report by default. Preserve stderr and the always-emitted `[PIONEER_REPORT] ABSOLUTE_PATH` marker, as well as `[PIONEER_WORK_LOG] ABSOLUTE_PATH`; `ReviewResult.reportPath` is the API equivalent. The report marker is emitted after Pioneer exclusively reserves the empty private file; do not treat an empty in-progress reservation as a completed report. `--report` selects a different create-only controller target. Use `--no-resume` only when the caller explicitly wants the privacy opt-out and ephemeral Pi launch; that mode does not create or prune resume storage.
 
 Use repeated grants when the review needs more context:
 

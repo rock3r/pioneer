@@ -45,13 +45,18 @@ Reviews are resumable by default. `--no-resume` restores today's ephemeral Pi la
 
 Every strict-successful review writes its Markdown report atomically and
 create-only to a private default report directory. `--report FILE` overrides
-that target; it does not enable persistence. The CLI immediately writes
-`[PIONEER_REPORT] ABSOLUTE_PATH` to stderr after opening the target, and
+that target; it does not enable persistence. Pioneer first exclusively reserves
+the target as an empty private file. The CLI immediately writes
+`[PIONEER_REPORT] ABSOLUTE_PATH` to stderr after opening that reservation, and
 `ReviewResult.reportPath` always identifies the report file. Default reports
 are private to the current user and pruned to the newest 100 inactive files.
 Pioneer canonicalizes and validates the prospective default target against all
 actor-visible grants and the Pi-home snapshot source before it creates, changes
 permissions on, or prunes that directory.
+
+Successful persistence atomically replaces only the still-owned empty
+reservation. Failure cleanup removes only that reservation, never a path another
+process replaced. `--no-resume` does not create, chmod, or prune resume storage.
 
 ### Resume
 
