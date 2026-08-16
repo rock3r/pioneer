@@ -30,8 +30,8 @@ describe("review report output", () => {
 
     const reservation = await reserveReviewReport(target);
 
-    expect(await readFile(target, "utf8")).toBe("");
-    await publishReservedReviewReport(reservation, "No findings.");
+    expect(await readFile(target, "utf8")).toContain("PIONEER_REPORT_RESERVED");
+    await publishReservedReviewReport({ ...reservation, device: 0, inode: 0 }, "No findings.");
     expect(await readFile(target, "utf8")).toBe("No findings.\n");
   });
 

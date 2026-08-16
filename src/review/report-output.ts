@@ -1,17 +1,22 @@
 import crypto from "node:crypto";
 import type { Stats } from "node:fs";
-import { lstat, open, rename, rm, unlink } from "node:fs/promises";
+import { lstat, open, readFile, rename, rm, unlink } from "node:fs/promises";
 import path from "node:path";
 
 export interface ReviewReportReservation {
   readonly target: string;
   readonly device: number;
   readonly inode: number;
+  readonly marker: string;
   state: "reserved" | "published" | "released";
 }
 
-function sameFile(stats: Stats, reservation: ReviewReportReservation): boolean {
-  return stats.isFile() && stats.dev === reservation.device && stats.ino === reservation.inode;
+function sameKnownFileIdentity(
+  stats: Stats,
+  reservation: ReviewReportReservation,
+): boolean | undefined {
+  if (stats.ino === 0 || reservation.inode === 0) return undefined;
+  return stats.dev === reservation.device && stats.ino === reservation.inode;
 }
 
 async function reservedTargetStats(
@@ -19,7 +24,9 @@ async function reservedTargetStats(
 ): Promise<Stats | undefined> {
   try {
     const stats = await lstat(reservation.target);
-    return sameFile(stats, reservation) ? stats : undefined;
+    if (!stats.isFile() || sameKnownFileIdentity(stats, reservation) === false) return undefined;
+    if (stats.size !== Buffer.byteLength(reservation.marker)) return undefined;
+    return (await readFile(reservation.target, "utf8")) === reservation.marker ? stats : undefined;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
@@ -29,6 +36,7 @@ async function reservedTargetStats(
 export async function reserveReviewReport(target: string): Promise<ReviewReportReservation> {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   let reservation: ReviewReportReservation | undefined;
+  const marker = `<!-- PIONEER_REPORT_RESERVED ${crypto.randomUUID()} -->\n`;
   try {
     try {
       handle = await open(target, "wx", 0o600);
@@ -38,15 +46,22 @@ export async function reserveReviewReport(target: string): Promise<ReviewReportR
       }
       throw error;
     }
-    const stats = await handle.stat();
+    reservation = { target, device: 0, inode: 0, marker, state: "reserved" };
+    await handle.writeFile(marker, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    const stats = await lstat(target);
     reservation = {
       target,
       device: stats.dev,
       inode: stats.ino,
+      marker,
       state: "reserved",
     };
-    await handle.sync();
-    await handle.close();
+    if ((await reservedTargetStats(reservation)) === undefined) {
+      throw new Error(`Review report reservation no longer owns target: ${target}`);
+    }
     return reservation;
   } catch (error) {
     await handle?.close().catch(() => {});
@@ -77,7 +92,7 @@ export async function publishReservedReviewReport(
     await handle.close();
     handle = undefined;
     const targetStats = await reservedTargetStats(reservation);
-    if (targetStats === undefined || targetStats.size !== 0) {
+    if (targetStats === undefined) {
       throw new Error(`Review report reservation no longer owns target: ${reservation.target}`);
     }
     await rename(temporary, reservation.target);
@@ -106,7 +121,7 @@ export async function releaseReviewReportReservation(
 ): Promise<void> {
   if (reservation.state !== "reserved") return;
   const targetStats = await reservedTargetStats(reservation);
-  if (targetStats?.size === 0) await unlink(reservation.target);
+  if (targetStats !== undefined) await unlink(reservation.target);
   reservation.state = "released";
 }
 
