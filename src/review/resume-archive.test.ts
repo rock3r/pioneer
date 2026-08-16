@@ -47,6 +47,7 @@ import {
   reviewResumeArchiveHasLiveLease,
   rollbackReviewResumeArchiveToPriorAttempt,
   statReviewResumeArchiveCandidate,
+  validatePublishedReviewResumeArchiveLease,
 } from "./resume-archive.js";
 
 describe("recoverable review archive", () => {
@@ -85,6 +86,35 @@ describe("recoverable review archive", () => {
     );
     expect(await readFile(leasePath, "utf8")).toBe("new-contender\n");
     expect(await readFile(displacedPath, "utf8")).toBe("displaced-owner\n");
+  });
+
+  it("backs a publisher off when a displaced live owner could not be restored", async () => {
+    const displacedRoot = await mkdtemp(path.join(tmpdir(), "pioneer-resume-lease-"));
+    const contenderRoot = await mkdtemp(path.join(tmpdir(), "pioneer-resume-lease-"));
+    const displaced = await createReviewResumeArchive(displacedRoot, {
+      sourceDir: "/repo",
+      prompt: "displaced",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    const contender = await createReviewResumeArchive(contenderRoot, {
+      sourceDir: "/repo",
+      prompt: "contender",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    const leasePath = path.join(displaced.archiveDir, "lease");
+    const displacedPath = `${leasePath}.stale-race`;
+    const displacedContents = displaced.leaseContents ?? "";
+    const contenderContents = contender.leaseContents ?? "";
+    await rename(leasePath, displacedPath);
+    await writeFile(leasePath, contenderContents);
+
+    await expect(
+      validatePublishedReviewResumeArchiveLease(displaced.archiveDir, contenderContents),
+    ).rejects.toThrow("[REVIEW_RESUME_IN_USE]");
+    expect(await readFile(leasePath, "utf8")).toBe(displacedContents);
+    expect(await readFile(displacedPath, "utf8")).toBe(displacedContents);
   });
 
   it("counts directories toward the bounded session-entry limit", async () => {

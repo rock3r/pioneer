@@ -357,10 +357,9 @@ async function readManifest(directory: string): Promise<Record<string, unknown> 
   }
 }
 
-async function activeLeaseIsHeld(directory: string): Promise<boolean> {
+async function leaseFileIsHeld(leasePath: string): Promise<boolean> {
   let value: unknown;
   try {
-    const leasePath = path.join(directory, "lease");
     const stats = await lstat(leasePath);
     if (stats.isSymbolicLink() || !stats.isFile()) return false;
     value = JSON.parse(await readFile(leasePath, "utf8"));
@@ -392,6 +391,10 @@ async function activeLeaseIsHeld(directory: string): Promise<boolean> {
     currentIdentities === undefined ||
     currentIdentities.some((identity) => ownerIdentities.includes(identity))
   );
+}
+
+async function activeLeaseIsHeld(directory: string): Promise<boolean> {
+  return await leaseFileIsHeld(path.join(directory, "lease"));
 }
 
 function reviewResumeLeaseContents(): string {
@@ -439,6 +442,32 @@ export async function restoreDisplacedReviewResumeArchiveLease(
   }
 }
 
+export async function validatePublishedReviewResumeArchiveLease(
+  archiveDir: string,
+  leaseContents: string,
+): Promise<void> {
+  const leasePath = path.join(archiveDir, "lease");
+  const displacedLeasePaths = (await readdir(archiveDir, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.startsWith("lease.stale-"))
+    .map((entry) => path.join(archiveDir, entry.name));
+  for (const displacedLeasePath of displacedLeasePaths) {
+    if (!(await leaseFileIsHeld(displacedLeasePath))) continue;
+    await releaseReviewResumeArchiveLease(
+      {
+        token: path.basename(archiveDir),
+        archiveDir,
+        attemptsDir: path.join(archiveDir, "attempts"),
+        activeAttemptDir: "",
+      },
+      leaseContents,
+    );
+    await restoreDisplacedReviewResumeArchiveLease(displacedLeasePath, leasePath);
+    throw new Error(
+      "[REVIEW_RESUME_IN_USE] A displaced live owner still holds the review resume archive",
+    );
+  }
+}
+
 export async function reviewResumeArchiveHasLiveLease(
   archive: ReviewResumeArchive,
 ): Promise<boolean> {
@@ -451,6 +480,7 @@ async function acquireReviewResumeArchiveLease(archive: ReviewResumeArchive): Pr
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       await publishReviewResumeArchiveLease(leasePath, leaseContents);
+      await validatePublishedReviewResumeArchiveLease(archive.archiveDir, leaseContents);
       return leaseContents;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
@@ -460,6 +490,7 @@ async function acquireReviewResumeArchiveLease(archive: ReviewResumeArchive): Pr
       const observedLease = await readFile(leasePath, "utf8").catch(() => undefined);
       if (observedLease === undefined) continue;
       const staleLeasePath = `${leasePath}.stale-${randomUUID()}`;
+      let removeStaleLease = true;
       try {
         const currentLease = await readFile(leasePath, "utf8").catch(() => undefined);
         if (currentLease !== observedLease) continue;
@@ -471,15 +502,19 @@ async function acquireReviewResumeArchiveLease(archive: ReviewResumeArchive): Pr
       try {
         const movedLease = await readFile(staleLeasePath, "utf8").catch(() => undefined);
         if (movedLease !== observedLease) {
-          await restoreDisplacedReviewResumeArchiveLease(staleLeasePath, leasePath);
+          removeStaleLease = await restoreDisplacedReviewResumeArchiveLease(
+            staleLeasePath,
+            leasePath,
+          );
           continue;
         }
         await publishReviewResumeArchiveLease(leasePath, leaseContents);
+        await validatePublishedReviewResumeArchiveLease(archive.archiveDir, leaseContents);
         return leaseContents;
       } catch (writeError) {
         if ((writeError as NodeJS.ErrnoException).code !== "EEXIST") throw writeError;
       } finally {
-        await rm(staleLeasePath, { force: true });
+        if (removeStaleLease) await rm(staleLeasePath, { force: true });
       }
     }
   }
