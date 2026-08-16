@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertReviewResumeOutputsOutsideArchive,
   assertReviewResumeOutputsOutsideStorage,
+  assertReviewResumeStateIsRecoverable,
   buildReviewPrompt,
   canonicalReviewPiHomeSource,
   cleanupCompletedReviewResumeArchive,
@@ -361,6 +362,14 @@ describe("review RPC runner", () => {
       ),
     ).toBe(false);
     expect(shouldHandleReviewResumeFailure(new Error("copy failed"))).toBe(true);
+  });
+
+  it("rejects active archives whose prior actor may still be running", () => {
+    expect(() => assertReviewResumeStateIsRecoverable("active")).toThrow(
+      "[REVIEW_RESUME_NOT_READY]",
+    );
+    expect(() => assertReviewResumeStateIsRecoverable("retained")).not.toThrow();
+    expect(() => assertReviewResumeStateIsRecoverable("report_delivery_failed")).not.toThrow();
   });
 
   it("canonicalizes the Pi home before freezing the resumable scope", async () => {

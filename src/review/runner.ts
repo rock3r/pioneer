@@ -1531,13 +1531,7 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
     );
   }
   try {
-    if (
-      loaded.state !== "retained" &&
-      loaded.state !== "report_delivery_failed" &&
-      loaded.state !== "active"
-    ) {
-      throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume archive is not recoverable");
-    }
+    assertReviewResumeStateIsRecoverable(loaded.state);
     if (process.platform === "win32" && request.allowUnsandboxedWindows !== true) {
       throw new Error(
         `${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed with this resume.`,
@@ -1659,4 +1653,15 @@ export async function assertReviewResumeOutputsOutsideStorage(
     platform,
     home,
   );
+}
+
+export function assertReviewResumeStateIsRecoverable(state: string): void {
+  if (state === "active") {
+    throw new Error(
+      "[REVIEW_RESUME_NOT_READY] The prior review process tree was not proven stopped before its controller exited",
+    );
+  }
+  if (state !== "retained" && state !== "report_delivery_failed") {
+    throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume archive is not recoverable");
+  }
 }

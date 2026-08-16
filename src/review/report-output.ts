@@ -252,6 +252,23 @@ async function ownedPublishingFileStats(
   }
 }
 
+async function ownsPublishedReviewReportFile(
+  file: string,
+  reservation: ReviewReportReservation,
+  contents: Buffer,
+): Promise<boolean> {
+  try {
+    const stats = await lstat(file);
+    if (!stats.isFile()) return false;
+    const identity = sameKnownFileIdentity(stats, reservation);
+    if (identity !== undefined) return identity;
+    return (await readFile(file)).equals(contents);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 async function readPublicationMarker(
   reservation: ReviewReportReservation,
 ): Promise<string | undefined> {
@@ -464,8 +481,14 @@ export async function publishReservedReviewReport(
     await closePublishedHandle(publishedHandle).catch(async () => {
       await publishedHandle.close().catch(() => {});
     });
-    await unlink(reservation.reservationPath).catch(() => {});
-    await unlink(reservation.publicationPath).catch(() => {});
+    await removeOwnedReviewReportPath(
+      reservation.reservationPath,
+      async (candidate) => await ownsPublishedReviewReportFile(candidate, reservation, contents),
+    ).catch(() => {});
+    await removeOwnedReviewReportPath(
+      reservation.publicationPath,
+      async (candidate) => (await readFile(candidate, "utf8")) === reservation.marker,
+    ).catch(() => {});
   } catch (error) {
     failure = error;
     if (handle !== undefined) {

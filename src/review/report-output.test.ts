@@ -187,6 +187,32 @@ describe("review report output", () => {
     expect(reservation.state).toBe("published");
   });
 
+  it("does not remove publication sidecars replaced after final report validation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+
+    await publishReservedReviewReport(
+      reservation,
+      "No findings.",
+      async () => {},
+      async () => {},
+      async (handle) => {
+        await handle.close();
+        await import("node:fs/promises").then(({ rm }) =>
+          Promise.all([rm(reservation.reservationPath), rm(reservation.publicationPath)]),
+        );
+        await Promise.all([
+          writeFile(reservation.reservationPath, "replacement reservation\n"),
+          writeFile(reservation.publicationPath, "replacement publication\n"),
+        ]);
+      },
+    );
+
+    expect(await readFile(reservation.reservationPath, "utf8")).toBe("replacement reservation\n");
+    expect(await readFile(reservation.publicationPath, "utf8")).toBe("replacement publication\n");
+  });
+
   it("removes an unpublished report reservation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const target = path.join(root, "report.md");
