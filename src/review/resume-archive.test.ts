@@ -266,6 +266,32 @@ describe("recoverable review archive", () => {
     await expect(stat(next.activeAttemptDir)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("keeps a valid newer attempt when post-retention pruning fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "prior-session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    const next = await copyReviewResumeSession(archive, archive.activeAttemptDir, 2);
+    await writeFile(path.join(next.activeAttemptDir, "session.jsonl"), "current-session");
+
+    await expect(
+      retainReviewResumeArchive(next, "REVIEW_RPC_INCOMPLETE", async () => {
+        throw new Error("pruning failed");
+      }),
+    ).resolves.toBeDefined();
+
+    const loaded = await loadReviewResumeArchive(root, archive.token);
+    expect(loaded.archive.activeAttemptDir).toBe(next.activeAttemptDir);
+    expect(await readFile(path.join(next.activeAttemptDir, "session.jsonl"), "utf8")).toBe(
+      "current-session",
+    );
+  });
+
   it("does not copy a session while its active controller lease is live", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
     const archive = await createReviewResumeArchive(root, {

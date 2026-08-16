@@ -647,13 +647,13 @@ async function retainPriorReviewResumeAttempt(
   await rm(archive.activeAttemptDir, { recursive: true, force: true });
   const previousArchive = { ...archive, activeAttemptDir: previousAttemptDir };
   const usage = await inspectReviewResumeArchive(previousArchive);
-  await pruneReviewResumeArchives(path.dirname(archive.archiveDir));
   return usage;
 }
 
 export async function retainReviewResumeArchive(
   archive: ReviewResumeArchive,
   failureCode: string,
+  prune: (root: string) => Promise<void> = pruneReviewResumeArchives,
 ): Promise<{ sizeBytes: number; fileCount: number; entryCount: number }> {
   const leaseContents = archive.leaseContents ?? (await acquireReviewResumeArchiveLease(archive));
   try {
@@ -665,6 +665,7 @@ export async function retainReviewResumeArchive(
         throw new Error("[REVIEW_RESUME_IN_USE] Review resume archive lease ownership changed");
       }
     }
+    let retainedUsage: { sizeBytes: number; fileCount: number; entryCount: number };
     try {
       const usage = await inspectReviewResumeSessionTree(archive.activeAttemptDir);
       if (usage.fileCount === 0) throw new Error("Review resume session candidate is empty");
@@ -680,15 +681,16 @@ export async function retainReviewResumeArchive(
         failureCode,
         retainedAt: new Date().toISOString(),
       });
-      await pruneReviewResumeArchives(path.dirname(archive.archiveDir));
-      return archiveUsage;
+      retainedUsage = archiveUsage;
     } catch (error) {
       const prior = await retainPriorReviewResumeAttempt(archive, failureCode).catch(
         () => undefined,
       );
-      if (prior !== undefined) return prior;
-      throw error;
+      if (prior === undefined) throw error;
+      retainedUsage = prior;
     }
+    await prune(path.dirname(archive.archiveDir)).catch(() => {});
+    return retainedUsage;
   } finally {
     await releaseReviewResumeArchiveLease(archive, leaseContents);
   }
