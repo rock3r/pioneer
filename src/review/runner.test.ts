@@ -227,6 +227,25 @@ process.stdin.once("data", () => {
   ];
 }
 
+function rejectedPromptPipeHoldingDescendantPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+const { spawn } = require("node:child_process");
+process.stdin.once("data", () => {
+  const descendant = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 1_500)"], {
+    detached: true,
+    stdio: "inherit",
+  });
+  descendant.unref();
+  process.stdout.write(JSON.stringify({ type: "response", success: false }) + "\\n");
+  setInterval(() => {}, 1_000);
+});
+`,
+  ];
+}
+
 function postExitForgingDescendantPi(): readonly [string, ...string[]] {
   return [
     process.execPath,
@@ -1456,6 +1475,30 @@ describe("review RPC runner", () => {
       setTimeout(() => process.emit("SIGINT"), 250);
       await expect(review).rejects.toThrow("[REVIEW_PROCESS_CONTAINMENT_FAILED]");
       expect(performance.now() - started).toBeLessThan(1_400);
+    },
+    5_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "classifies containment loss ahead of an earlier terminal RPC failure",
+    async () => {
+      let failure: Error | undefined;
+      try {
+        await runReviewRpc(
+          rejectedPromptPipeHoldingDescendantPi(),
+          process.cwd(),
+          process.env,
+          "Review the source",
+          500,
+        );
+      } catch (error) {
+        failure = error instanceof Error ? error : new Error(String(error));
+      }
+
+      expect(failure?.message).toContain("[REVIEW_PROCESS_CONTAINMENT_FAILED]");
+      expect(failure === undefined ? undefined : reviewResumeFailureKind(failure)).toBe(
+        "containment",
+      );
     },
     5_000,
   );

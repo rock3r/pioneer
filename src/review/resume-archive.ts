@@ -425,6 +425,19 @@ export async function publishReviewResumeArchiveLease(
   }
 }
 
+export async function restoreDisplacedReviewResumeArchiveLease(
+  displacedLeasePath: string,
+  leasePath: string,
+): Promise<boolean> {
+  try {
+    await link(displacedLeasePath, leasePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+}
+
 export async function reviewResumeArchiveHasLiveLease(
   archive: ReviewResumeArchive,
 ): Promise<boolean> {
@@ -457,9 +470,7 @@ async function acquireReviewResumeArchiveLease(archive: ReviewResumeArchive): Pr
       try {
         const movedLease = await readFile(staleLeasePath, "utf8").catch(() => undefined);
         if (movedLease !== observedLease) {
-          await rename(staleLeasePath, leasePath).catch((restoreError: unknown) => {
-            if ((restoreError as NodeJS.ErrnoException).code !== "EEXIST") throw restoreError;
-          });
+          await restoreDisplacedReviewResumeArchiveLease(staleLeasePath, leasePath);
           continue;
         }
         await publishReviewResumeArchiveLease(leasePath, leaseContents);

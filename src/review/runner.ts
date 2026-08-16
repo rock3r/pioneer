@@ -798,7 +798,10 @@ export async function runReviewRpc(
           stderrBytes,
         });
       }
-      const finalError = workLogFailure ?? error;
+      const finalError =
+        error !== undefined && reviewResumeFailureKind(error) === "containment"
+          ? error
+          : (workLogFailure ?? error);
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       if (pipeCloseTimer !== undefined) clearTimeout(pipeCloseTimer);
@@ -965,6 +968,41 @@ export async function runReviewRpc(
         stdout += stdoutDecoder.end();
         consume();
       }
+      if (containmentLost) {
+        const containmentFailure = classifyReviewResumeFailure(
+          new Error(
+            diagnosticMessage(
+              "REVIEW_PROCESS_CONTAINMENT_FAILED",
+              "Pi exited but a descendant retained its RPC output pipe; Pioneer could not prove that the review process tree stopped.",
+            ),
+          ),
+          "containment",
+        );
+        const earlierFailure =
+          workLogFailure ??
+          (timedOut
+            ? new Error(
+                diagnosticMessage(
+                  "REVIEW_TIMEOUT",
+                  `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr)})`,
+                ),
+              )
+            : terminalFailure === undefined
+              ? undefined
+              : wrapReviewResumeFailure(
+                  terminalFailure,
+                  `${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`,
+                ));
+        finish(
+          earlierFailure === undefined
+            ? containmentFailure
+            : classifyReviewResumeFailure(
+                combineReviewFailures(containmentFailure, earlierFailure),
+                "containment",
+              ),
+        );
+        return;
+      }
       if (workLogFailure !== undefined) {
         finish(workLogFailure);
         return;
@@ -985,20 +1023,6 @@ export async function runReviewRpc(
           wrapReviewResumeFailure(
             terminalFailure,
             `${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`,
-          ),
-        );
-        return;
-      }
-      if (containmentLost) {
-        finish(
-          classifyReviewResumeFailure(
-            new Error(
-              diagnosticMessage(
-                "REVIEW_PROCESS_CONTAINMENT_FAILED",
-                "Pi exited but a descendant retained its RPC output pipe; Pioneer could not prove that the review process tree stopped.",
-              ),
-            ),
-            "containment",
           ),
         );
         return;

@@ -40,6 +40,7 @@ import {
   publishReviewResumeArchiveLease,
   RESUME_RETENTION_MS,
   releaseLeasedReviewResumeArchive,
+  restoreDisplacedReviewResumeArchiveLease,
   resumeArchivePath,
   retainReviewResumeArchive,
   reviewResumeArchiveHasLiveLease,
@@ -69,6 +70,20 @@ describe("recoverable review archive", () => {
     });
 
     expect(await readFile(leasePath, "utf8")).toBe(contents);
+  });
+
+  it("does not overwrite a contender while restoring a displaced lease", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-lease-"));
+    const leasePath = path.join(root, "lease");
+    const displacedPath = path.join(root, "lease.stale-race");
+    await writeFile(displacedPath, "displaced-owner\n");
+    await writeFile(leasePath, "new-contender\n");
+
+    await expect(restoreDisplacedReviewResumeArchiveLease(displacedPath, leasePath)).resolves.toBe(
+      false,
+    );
+    expect(await readFile(leasePath, "utf8")).toBe("new-contender\n");
+    expect(await readFile(displacedPath, "utf8")).toBe("displaced-owner\n");
   });
 
   it("counts directories toward the bounded session-entry limit", async () => {

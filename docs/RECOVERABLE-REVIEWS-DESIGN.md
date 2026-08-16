@@ -177,7 +177,7 @@ The manifest contains a schema version, token, scope/policy metadata, exact Pi v
    [PIONEER_REVIEW_RESUME] TOKEN
    ```
 
-   The token is never written to the work log. If containment is unproven, the candidate exceeds the cap, or no regular candidate exists, delete the inactive attempt, append `[REVIEW_RESUME_UNAVAILABLE]`, and do not issue a token. In particular, `[REVIEW_PROCESS_CONTAINMENT_FAILED]` is never resumable.
+   The token is never written to the work log. If containment is unproven, the candidate exceeds the cap, or no regular candidate exists, delete the inactive attempt, append `[REVIEW_RESUME_UNAVAILABLE]`, and do not issue a token. In particular, `[REVIEW_PROCESS_CONTAINMENT_FAILED]` takes precedence over any earlier terminal RPC failure and is never resumable.
 
 An interrupted assistant turn cannot be recovered. Completed turns already written by Pi can be recovered. Neither case changes the rule that only a complete, non-empty final report is successful.
 
@@ -202,7 +202,7 @@ An interrupted assistant turn cannot be recovered. Completed turns already writt
 ## Retention and security
 
 - Retain unsuccessful archives for seven days; retain at most ten, with 64 MiB and 10,000-entry caps per archive measured only after proven process-tree termination. A committed attempt may consume at most half of each archive cap, reserving enough capacity for the crash-safe copy required by the next resume.
-- Validate a prospective resume root against all actor-visible grants and the Pi-home snapshot source before creating or changing permissions on it. Prune only inactive expired archives before creation and after terminal cleanup; never prune an active lease. Token loading acquires the archive lease before validating any retained contents, releases it on validation failure, and transfers it to the resume lifecycle on success. Leases bind the PID to its OS process-start identity so PID reuse does not preserve or take over an archive, and concurrent pruning tolerates candidates removed after directory enumeration.
+- Validate a prospective resume root against all actor-visible grants and the Pi-home snapshot source before creating or changing permissions on it. Prune only inactive expired archives before creation and after terminal cleanup; never prune an active lease. Token loading acquires the archive lease before validating any retained contents, releases it on validation failure, and transfers it to the resume lifecycle on success. Leases bind the PID to its OS process-start identity so PID reuse does not preserve or take over an archive. Lease publication and restoration use create-only hard links, so a stale-takeover race cannot overwrite a newly published contender; concurrent pruning tolerates candidates removed after directory enumeration.
 - A controller crash after Pi succeeds but before deletion leaves a conservatively resumable archive that expires normally.
 - Deletion is ordinary filesystem deletion, not cryptographic erasure.
 - Session content, token, prompt, thinking, tool inputs/results, credentials, proxy values, and raw provider diagnostics never enter Pioneer-generated work-log fields or errors. The final report remains Pi's independently generated Markdown and is stored privately.
