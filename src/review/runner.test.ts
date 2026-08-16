@@ -2,6 +2,7 @@ import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { defaultReviewReportDirectory } from "./resume-archive.js";
 import {
   assertReviewResumeOutputsOutsideArchive,
   assertReviewResumeOutputsOutsideStorage,
@@ -27,7 +28,7 @@ import {
   sourcePathForWorkLog,
   validateProspectiveDefaultReviewOutputs,
 } from "./runner.js";
-import type { ReviewWorkLog } from "./work-log.js";
+import { type ReviewWorkLog, reviewWorkLogDirectory } from "./work-log.js";
 
 function recordingWorkLog(): {
   readonly log: ReviewWorkLog;
@@ -572,17 +573,22 @@ describe("review RPC runner", () => {
 
   it("validates both default outputs before either output directory is mutated", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-default-output-preflight-"));
-    const sourceDir = path.join(root, "state", "pioneer");
+    const environment =
+      process.platform === "win32"
+        ? { LOCALAPPDATA: path.join(root, "data") }
+        : { XDG_DATA_HOME: path.join(root, "data"), XDG_STATE_HOME: path.join(root, "state") };
+    const workLogDirectory = reviewWorkLogDirectory(environment, process.platform, root);
+    const sourceDir = path.join(workLogDirectory, "source");
     const piHomeSource = path.join(root, "pi-home");
-    const reportDirectory = path.join(root, "data", "pioneer", "reports");
+    const reportDirectory = defaultReviewReportDirectory(environment, process.platform, root);
     await Promise.all([mkdir(sourceDir, { recursive: true }), mkdir(piHomeSource)]);
 
     await expect(
       validateProspectiveDefaultReviewOutputs(
         { sourceDir, prompt: "Review source" },
         piHomeSource,
-        { XDG_DATA_HOME: path.join(root, "data"), XDG_STATE_HOME: path.join(root, "state") },
-        "linux",
+        environment,
+        process.platform,
         root,
       ),
     ).rejects.toThrow(/work log.*actor-visible|controller directory.*overlaps/i);
