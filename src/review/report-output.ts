@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Stats } from "node:fs";
-import { lstat, open, readFile, rename, rm, unlink } from "node:fs/promises";
+import { link, lstat, open, readFile, rename, rm, unlink } from "node:fs/promises";
 import path from "node:path";
 
 export interface ReviewReportReservation {
@@ -50,24 +50,46 @@ async function reservedTargetStats(
   }
 }
 
-export async function reserveReviewReport(target: string): Promise<ReviewReportReservation> {
+type WriteReviewReportReservationMarker = (
+  handle: Awaited<ReturnType<typeof open>>,
+  marker: string,
+) => Promise<void>;
+
+export async function reserveReviewReport(
+  target: string,
+  writeMarker: WriteReviewReportReservationMarker = async (handle, marker) => {
+    await handle.writeFile(marker, "utf8");
+  },
+): Promise<ReviewReportReservation> {
+  const temporary = path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${crypto.randomUUID()}.reserve`,
+  );
   let handle: Awaited<ReturnType<typeof open>> | undefined;
-  let reservation: ReviewReportReservation | undefined;
   const marker = `<!-- PIONEER_REPORT_RESERVED ${crypto.randomUUID()} -->\n`;
+  let reservation: ReviewReportReservation = {
+    target,
+    device: 0,
+    inode: 0,
+    marker,
+    state: "reserved",
+  };
+  let targetCreated = false;
   try {
+    handle = await open(temporary, "wx", 0o600);
+    await writeMarker(handle, marker);
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
     try {
-      handle = await open(target, "wx", 0o600);
+      await link(temporary, target);
+      targetCreated = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "EEXIST") {
         throw new Error(`Review report target already exists: ${target}`);
       }
       throw error;
     }
-    reservation = { target, device: 0, inode: 0, marker, state: "reserved" };
-    await handle.writeFile(marker, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
     const stats = await lstat(target);
     reservation = {
       target,
@@ -79,11 +101,12 @@ export async function reserveReviewReport(target: string): Promise<ReviewReportR
     if ((await reservedTargetStats(reservation)) === undefined) {
       throw new Error(`Review report reservation no longer owns target: ${target}`);
     }
+    await unlink(temporary).catch(() => {});
     return reservation;
   } catch (error) {
     await handle?.close().catch(() => {});
-    if (reservation !== undefined)
-      await releaseReviewReportReservation(reservation).catch(() => {});
+    await unlink(temporary).catch(() => {});
+    if (targetCreated) await releaseReviewReportReservation(reservation).catch(() => {});
     throw error;
   }
 }

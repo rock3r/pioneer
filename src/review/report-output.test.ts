@@ -71,6 +71,20 @@ describe("review report output", () => {
     expect(await readFile(target, "utf8")).toBe("replacement\n");
   });
 
+  it("does not orphan the create-only target when marker preparation fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+
+    await expect(
+      reserveReviewReport(target, async (handle, marker) => {
+        await handle.writeFile(marker.slice(0, 8), "utf8");
+        throw new Error("marker write failed");
+      }),
+    ).rejects.toThrow("marker write failed");
+
+    await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("atomically creates a private report file", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const reports = path.join(root, "reports");
