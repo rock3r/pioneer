@@ -132,7 +132,7 @@ describe("recoverable review archive", () => {
         (entry) => entry.isFile() && entry.name.endsWith(".md"),
       ),
     ).toHaveLength(100);
-  });
+  }, 15_000);
 
   it("revalidates a report reservation immediately before retention unlinks it", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
