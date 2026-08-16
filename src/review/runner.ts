@@ -987,6 +987,10 @@ async function runReviewInternal(
   const network = request.network ?? "full";
   const timeoutMs = request.timeoutMs ?? 900_000;
   const maxRpcOutputBytes = validateRpcOutputBytes(request.maxRpcOutputBytes);
+  const windows = process.platform === "win32";
+  if (windows && request.allowUnsandboxedWindows !== true) {
+    throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
+  }
   await validateReviewPaths({
     sourceDir: request.sourceDir,
     ...(request.allowReadPaths === undefined ? {} : { allowReadPaths: request.allowReadPaths }),
@@ -1086,7 +1090,6 @@ async function runReviewInternal(
       request.onReportReady?.(paths.reportPath);
     }
     request.onWorkLogReady?.(workLog.path);
-    const windows = process.platform === "win32";
     recordReviewWorkLog(workLog, "review_started", {
       pioneerVersion: PIONEER_VERSION,
       platform: process.platform,
@@ -1101,8 +1104,6 @@ async function runReviewInternal(
       reportRequested: paths.reportPath !== undefined,
       sandboxed: !windows,
     });
-    if (windows && request.allowUnsandboxedWindows !== true)
-      throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
     if (process.platform !== "linux" && requiresGitInspection(request.prompt))
       throw new Error(
         "Git-target reviews require Linux, where Pioneer can inspect Git inside Bubblewrap. macOS and Windows support source-only reviews.",
