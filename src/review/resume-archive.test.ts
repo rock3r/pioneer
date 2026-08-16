@@ -134,6 +134,56 @@ describe("recoverable review archive", () => {
     ).toHaveLength(100);
   });
 
+  it("revalidates a report reservation immediately before retention unlinks it", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
+    await mkdir(reportDirectory, { recursive: true });
+    const lateReport = path.join(
+      reportDirectory,
+      "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
+    );
+    await writeFile(lateReport, "stale report");
+    for (let index = 0; index < 100; index += 1) {
+      await writeFile(
+        path.join(
+          reportDirectory,
+          `review-20260816T000000000Z-${String(index).padStart(32, "0")}.md`,
+        ),
+        "newer report",
+      );
+    }
+    let continuePublication!: () => void;
+    const publicationMayContinue = new Promise<void>((resolve) => {
+      continuePublication = resolve;
+    });
+    let publication: Promise<void> | undefined;
+
+    await prepareValidatedDefaultReviewReportPath(
+      async () => {},
+      {},
+      process.platform,
+      home,
+      async (candidate) => {
+        if (candidate !== lateReport) return;
+        await rm(candidate);
+        const reservation = await reserveReviewReport(candidate);
+        let publicationStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+          publicationStarted = resolve;
+        });
+        publication = publishReservedReviewReport(reservation, "Late report", async () => {
+          publicationStarted();
+          await publicationMayContinue;
+        });
+        await started;
+      },
+    );
+    continuePublication();
+    await publication;
+
+    expect(await readFile(lateReport, "utf8")).toBe("Late report\n");
+  });
+
   it("does not reclaim a live reservation before its target link is created", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);

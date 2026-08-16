@@ -8,6 +8,7 @@ import {
   buildReviewPrompt,
   canonicalReviewPiHomeSource,
   cleanupCompletedReviewResumeArchive,
+  cleanupUnavailableReviewResumeArchive,
   createReviewScratchDirectory,
   finalizeReviewWorkLog,
   markReviewCleanupFailure,
@@ -330,6 +331,24 @@ describe("review RPC runner", () => {
 
     expect(failure?.message).toBe("archive delete failed");
     expect(released).toBe(true);
+  });
+
+  it("reports deletion failure for an unavailable resume archive", async () => {
+    const failure = await cleanupUnavailableReviewResumeArchive(
+      {
+        token: "550e8400-e29b-41d4-a716-446655440000",
+        archiveDir: "/private/archive",
+        attemptsDir: "/private/archive/attempts",
+        activeAttemptDir: "/private/archive/attempts/0001",
+      },
+      async () => {
+        throw new Error("archive delete failed");
+      },
+    );
+
+    expect(failure?.message).toBe(
+      "[REVIEW_RESUME_DELETE_FAILED] Pioneer could not delete an unavailable private review resume archive: archive delete failed",
+    );
   });
 
   it("does not handle an already resumable failure twice", () => {

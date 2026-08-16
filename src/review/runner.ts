@@ -210,6 +210,24 @@ export async function cleanupCompletedReviewResumeArchive(
   }
 }
 
+export async function cleanupUnavailableReviewResumeArchive(
+  archive: ReviewResumeArchive,
+  removeArchive: (archive: ReviewResumeArchive) => Promise<void> = deleteReviewResumeArchive,
+): Promise<Error | undefined> {
+  try {
+    await removeArchive(archive);
+    return undefined;
+  } catch (error) {
+    return new Error(
+      diagnosticMessage(
+        "REVIEW_RESUME_DELETE_FAILED",
+        `Pioneer could not delete an unavailable private review resume archive: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+      { cause: error },
+    );
+  }
+}
+
 export function shouldHandleReviewResumeFailure(failure: Error): boolean {
   return !failure.message.includes("[PIONEER_REVIEW_RESUME]");
 }
@@ -234,10 +252,13 @@ async function handleResumeArchiveFailure(
   const containmentFailure = failure.message.includes("[REVIEW_PROCESS_CONTAINMENT_FAILED]");
   const resumeUnavailable = failure.message.includes("[REVIEW_RESUME_ATTEMPT_LIMIT]");
   if (containmentFailure || resumeUnavailable) {
-    await deleteReviewResumeArchive(archive).catch(() => {});
-    return failure.message.includes("[REVIEW_RESUME_UNAVAILABLE]")
+    const cleanupFailure = await cleanupUnavailableReviewResumeArchive(archive);
+    const unavailableFailure = failure.message.includes("[REVIEW_RESUME_UNAVAILABLE]")
       ? failure
       : new Error(`${failure.message}\n[REVIEW_RESUME_UNAVAILABLE]`);
+    return cleanupFailure === undefined
+      ? unavailableFailure
+      : combineReviewFailures(unavailableFailure, cleanupFailure);
   }
   try {
     const failureCode = workLogDiagnosticSummary(failure.message).diagnosticCode as string;
@@ -251,8 +272,13 @@ async function handleResumeArchiveFailure(
     if (error instanceof Error && error.message.includes("[REVIEW_RESUME_IN_USE]")) {
       return new Error(`${failure.message}\n${error.message}`);
     }
-    await deleteReviewResumeArchive(archive).catch(() => {});
-    return new Error(`${failure.message}\n[REVIEW_RESUME_UNAVAILABLE]`);
+    const cleanupFailure = await cleanupUnavailableReviewResumeArchive(archive);
+    const unavailableFailure = new Error(`${failure.message}\n[REVIEW_RESUME_UNAVAILABLE]`, {
+      cause: error,
+    });
+    return cleanupFailure === undefined
+      ? unavailableFailure
+      : combineReviewFailures(unavailableFailure, cleanupFailure);
   }
 }
 
@@ -1348,10 +1374,14 @@ async function runReviewInternal(
           if (error instanceof Error && error.message.includes("[REVIEW_RESUME_IN_USE]")) {
             reportWriteError = `${reportWriteError}\n${error.message}`;
           } else {
-            await deleteReviewResumeArchive(resumeArchive).catch(() => {});
+            const resumeCleanupFailure = await cleanupUnavailableReviewResumeArchive(resumeArchive);
             resumeArchive = undefined;
             resumeToken = undefined;
             reportWriteError = `${reportWriteError}\n[REVIEW_RESUME_UNAVAILABLE]`;
+            if (resumeCleanupFailure !== undefined) {
+              deferredCleanupFailure ??= resumeCleanupFailure;
+              reportWriteError = `${reportWriteError}\n${resumeCleanupFailure.message}`;
+            }
           }
         }
       }

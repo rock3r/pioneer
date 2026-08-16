@@ -545,6 +545,7 @@ export async function createReviewResumeArchive(
 }
 
 type ValidateReviewReportTarget = (target: string) => Promise<void>;
+type BeforeReviewReportUnlink = (target: string) => Promise<void>;
 
 const REVIEW_REPORT_SIDECAR =
   /^\.(review-[0-9a-fzt-]+\.md)\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.pioneer-(?:reservation|publishing)$/i;
@@ -554,6 +555,7 @@ export async function prepareValidatedDefaultReviewReportPath(
   environment: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
   home = os.homedir(),
+  beforeReportUnlink: BeforeReviewReportUnlink = async () => {},
 ): Promise<string> {
   const target = platformPath(platform).join(
     defaultReviewReportDirectory(environment, platform, home),
@@ -589,7 +591,10 @@ export async function prepareValidatedDefaultReviewReportPath(
   }
   reports.sort();
   for (const name of reports.slice(0, Math.max(0, reports.length - 99))) {
-    await unlink(path.join(directory, name)).catch((error: unknown) => {
+    const candidate = path.join(directory, name);
+    await beforeReportUnlink(candidate);
+    if (await isActiveReviewReportReservation(candidate)) continue;
+    await unlink(candidate).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     });
   }
