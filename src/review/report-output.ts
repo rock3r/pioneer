@@ -11,6 +11,23 @@ export interface ReviewReportReservation {
   state: "reserved" | "published" | "released";
 }
 
+const REVIEW_REPORT_RESERVATION_PATTERN =
+  /^<!-- PIONEER_REPORT_RESERVED [0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12} -->\n$/i;
+const MAX_REVIEW_REPORT_RESERVATION_BYTES = 96;
+
+export async function isActiveReviewReportReservation(target: string): Promise<boolean> {
+  try {
+    const stats = await lstat(target);
+    if (!stats.isFile() || stats.size === 0 || stats.size > MAX_REVIEW_REPORT_RESERVATION_BYTES) {
+      return false;
+    }
+    return REVIEW_REPORT_RESERVATION_PATTERN.test(await readFile(target, "utf8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 function sameKnownFileIdentity(
   stats: Stats,
   reservation: ReviewReportReservation,

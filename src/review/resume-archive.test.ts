@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { reserveReviewReport } from "./report-output.js";
 import {
   copyReviewResumeSession,
   createReviewResumeArchive,
@@ -100,6 +101,33 @@ describe("recoverable review archive", () => {
     expect(
       (await readdir(reportDirectory, { withFileTypes: true })).filter((entry) => entry.isFile()),
     ).toHaveLength(99);
+  });
+
+  it("does not prune an active default report reservation", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
+    await mkdir(reportDirectory, { recursive: true });
+    const activeReport = path.join(
+      reportDirectory,
+      "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
+    );
+    await reserveReviewReport(activeReport);
+    for (let index = 0; index < 101; index += 1) {
+      await writeFile(
+        path.join(
+          reportDirectory,
+          `review-20260816T000000000Z-${String(index).padStart(32, "0")}.md`,
+        ),
+        "report",
+      );
+    }
+
+    await prepareDefaultReviewReportPath({}, process.platform, home);
+
+    expect(await readFile(activeReport, "utf8")).toContain("PIONEER_REPORT_RESERVED");
+    expect(
+      (await readdir(reportDirectory, { withFileTypes: true })).filter((entry) => entry.isFile()),
+    ).toHaveLength(100);
   });
 
   it("uses private per-user sibling directories and UUID-only archive lookup", () => {

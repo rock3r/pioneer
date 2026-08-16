@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildReviewPrompt,
   canonicalReviewPiHomeSource,
+  cleanupCompletedReviewResumeArchive,
   createReviewScratchDirectory,
   finalizeReviewWorkLog,
   markReviewCleanupFailure,
@@ -17,6 +18,7 @@ import {
   runReview,
   runReviewRpc,
   sendReviewPrompt,
+  shouldHandleReviewResumeFailure,
   shouldSchedulePipeCloseFallback,
   sourcePathForWorkLog,
 } from "./runner.js";
@@ -255,6 +257,36 @@ describe("review RPC runner", () => {
       cleanupError:
         "[REVIEW_CLEANUP_FAILED] Pioneer completed the review, but cleanup did not fully succeed; inspect the controller work log.",
     });
+  });
+
+  it("turns completed archive deletion failure into deferred cleanup failure", async () => {
+    let released = false;
+    const failure = await cleanupCompletedReviewResumeArchive(
+      {
+        token: "550e8400-e29b-41d4-a716-446655440000",
+        archiveDir: "/private/archive",
+        attemptsDir: "/private/archive/attempts",
+        activeAttemptDir: "/private/archive/attempts/0001",
+      },
+      async () => {
+        throw new Error("archive delete failed");
+      },
+      async () => {
+        released = true;
+      },
+    );
+
+    expect(failure?.message).toBe("archive delete failed");
+    expect(released).toBe(true);
+  });
+
+  it("does not handle an already resumable failure twice", () => {
+    expect(
+      shouldHandleReviewResumeFailure(
+        new Error("copy failed\n[PIONEER_REVIEW_RESUME] 550e8400-e29b-41d4-a716-446655440000"),
+      ),
+    ).toBe(false);
+    expect(shouldHandleReviewResumeFailure(new Error("copy failed"))).toBe(true);
   });
 
   it("canonicalizes the Pi home before freezing the resumable scope", async () => {

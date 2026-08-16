@@ -16,6 +16,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import type { ReviewNetworkMode } from "./isolation.js";
+import { isActiveReviewReportReservation } from "./report-output.js";
 import { currentProcessInstanceIdentities, processInstanceIdentities } from "./work-log.js";
 
 export interface ImmutableReviewScope {
@@ -384,7 +385,6 @@ export async function leaseReviewResumeArchive(
 export async function releaseLeasedReviewResumeArchive(
   archive: ReviewResumeArchive,
 ): Promise<void> {
-  if (archive.preacquiredLease !== true) return;
   await releaseReviewResumeArchiveLease(archive, archive.leaseContents);
 }
 
@@ -528,10 +528,13 @@ export async function prepareValidatedDefaultReviewReportPath(
   const directory = defaultReviewReportDirectory(environment, platform, home);
   await privateDirectory(directory);
   const entries = await readdir(directory, { withFileTypes: true });
-  const reports = entries
-    .filter((entry) => entry.isFile() && /^review-[0-9a-fzt-]+\.md$/i.test(entry.name))
-    .map((entry) => entry.name)
-    .sort();
+  const reports: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isFile() || !/^review-[0-9a-fzt-]+\.md$/i.test(entry.name)) continue;
+    const candidate = path.join(directory, entry.name);
+    if (!(await isActiveReviewReportReservation(candidate))) reports.push(entry.name);
+  }
+  reports.sort();
   for (const name of reports.slice(0, Math.max(0, reports.length - 99))) {
     await unlink(path.join(directory, name)).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;

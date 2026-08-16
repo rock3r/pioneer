@@ -185,6 +185,34 @@ export function markReviewCleanupFailure(result: ReviewResult): ReviewResult {
   return { ...result, cleanupError: REVIEW_CLEANUP_ERROR };
 }
 
+export async function cleanupCompletedReviewResumeArchive(
+  archive: ReviewResumeArchive,
+  removeArchive: (archive: ReviewResumeArchive) => Promise<void> = deleteReviewResumeArchive,
+  releaseArchive: (
+    archive: ReviewResumeArchive,
+  ) => Promise<void> = releaseLeasedReviewResumeArchive,
+): Promise<Error | undefined> {
+  try {
+    await removeArchive(archive);
+    return undefined;
+  } catch (error) {
+    let failure = error instanceof Error ? error : new Error(String(error));
+    try {
+      await releaseArchive(archive);
+    } catch (releaseError) {
+      failure = combineReviewFailures(
+        failure,
+        releaseError instanceof Error ? releaseError : new Error(String(releaseError)),
+      );
+    }
+    return failure;
+  }
+}
+
+export function shouldHandleReviewResumeFailure(failure: Error): boolean {
+  return !failure.message.includes("[PIONEER_REVIEW_RESUME]");
+}
+
 export async function canonicalReviewPiHomeSource(source: string): Promise<string> {
   return await realpath(path.resolve(source));
 }
@@ -1199,6 +1227,7 @@ async function runReviewInternal(
     let bridgeRoot: string | undefined;
     let reviewResult: ReviewResult | undefined;
     let runFailure: Error | undefined;
+    let deferredCleanupFailure: Error | undefined;
     let reportBytes = 0;
     try {
       recordReviewWorkLog(workLog, "stage_started", { stage: "scratch_creation" });
@@ -1325,8 +1354,8 @@ async function runReviewInternal(
         }
       }
       if (reportWriteError === undefined && resumeArchive !== undefined) {
-        await deleteReviewResumeArchive(resumeArchive);
-        resumeArchive = undefined;
+        deferredCleanupFailure = await cleanupCompletedReviewResumeArchive(resumeArchive);
+        if (deferredCleanupFailure === undefined) resumeArchive = undefined;
       }
       recordReviewWorkLog(workLog, "stage_completed", {
         stage: "report_persistence",
@@ -1359,11 +1388,11 @@ async function runReviewInternal(
           "[REVIEW_RESUME_SESSION_INVALID] Pi rejected the stored native session",
         );
       }
-      if (resumeArchive !== undefined) {
+      if (resumeArchive !== undefined && shouldHandleReviewResumeFailure(runFailure)) {
         runFailure = await handleResumeArchiveFailure(resumeArchive, runFailure);
       }
     }
-    let cleanupFailure: Error | undefined;
+    let cleanupFailure = deferredCleanupFailure;
     try {
       recordReviewWorkLog(workLog, "stage_started", { stage: "cleanup" });
     } catch (error) {
