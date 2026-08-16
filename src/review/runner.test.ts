@@ -25,6 +25,7 @@ import {
   shouldHandleReviewResumeFailure,
   shouldSchedulePipeCloseFallback,
   sourcePathForWorkLog,
+  validateProspectiveDefaultReviewOutputs,
 } from "./runner.js";
 import type { ReviewWorkLog } from "./work-log.js";
 
@@ -567,6 +568,25 @@ describe("review RPC runner", () => {
     await pruneValidatedReviewResumeArchives(false, root);
 
     await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("validates both default outputs before either output directory is mutated", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-default-output-preflight-"));
+    const sourceDir = path.join(root, "state", "pioneer");
+    const piHomeSource = path.join(root, "pi-home");
+    const reportDirectory = path.join(root, "data", "pioneer", "reports");
+    await Promise.all([mkdir(sourceDir, { recursive: true }), mkdir(piHomeSource)]);
+
+    await expect(
+      validateProspectiveDefaultReviewOutputs(
+        { sourceDir, prompt: "Review source" },
+        piHomeSource,
+        { XDG_DATA_HOME: path.join(root, "data"), XDG_STATE_HOME: path.join(root, "state") },
+        "linux",
+        root,
+      ),
+    ).rejects.toThrow(/work log.*actor-visible|controller directory.*overlaps/i);
+    await expect(lstat(reportDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("recognizes Git-target requests that macOS and Windows cannot inspect", () => {

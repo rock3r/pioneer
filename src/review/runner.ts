@@ -236,6 +236,40 @@ export async function canonicalReviewPiHomeSource(source: string): Promise<strin
   return await realpath(path.resolve(source));
 }
 
+export async function validateProspectiveDefaultReviewOutputs(
+  request: ReviewRequest,
+  piHomeSource: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home = os.homedir(),
+): Promise<void> {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  if (request.reportPath === undefined) {
+    const reportDirectory = defaultReviewReportDirectory(environment, platform, home);
+    await validateProspectiveReviewReportPath(
+      {
+        ...request,
+        piHomeSource,
+        reportPath: pathApi.join(reportDirectory, `prospective-${crypto.randomUUID()}.md`),
+      },
+      [pathApi.dirname(reportDirectory), reportDirectory],
+      platform,
+    );
+  }
+  if (request.workLogPath === undefined) {
+    const workLogDirectory = reviewWorkLogDirectory(environment, platform, home);
+    await validateProspectiveReviewWorkLogPath(
+      {
+        ...request,
+        piHomeSource,
+        workLogPath: pathApi.join(workLogDirectory, `prospective-${crypto.randomUUID()}.jsonl`),
+      },
+      [workLogDirectory],
+      platform,
+    );
+  }
+}
+
 function workLogDiagnosticSummary(message: string): Readonly<Record<string, unknown>> {
   const code = /^\[([A-Z][A-Z0-9_]*)\]/.exec(message)?.[1];
   return {
@@ -1028,6 +1062,7 @@ async function runReviewInternal(
   const piHomeSource = await canonicalReviewPiHomeSource(
     request.piHomeSource ?? defaultPiAgentDir(),
   );
+  await validateProspectiveDefaultReviewOutputs(request, piHomeSource);
   let requestedReportPath = request.reportPath;
   if (requestedReportPath === undefined) {
     try {
