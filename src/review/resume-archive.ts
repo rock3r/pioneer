@@ -544,7 +544,10 @@ export async function createReviewResumeArchive(
   }
 }
 
-type ValidateReviewReportTarget = (target: string) => Promise<void>;
+type ValidateReviewReportTarget = (
+  target: string,
+  controllerMutationPaths: readonly string[],
+) => Promise<void>;
 type BeforeReviewReportUnlink = (target: string) => Promise<void>;
 
 const REVIEW_REPORT_SIDECAR =
@@ -557,13 +560,14 @@ export async function prepareValidatedDefaultReviewReportPath(
   home = os.homedir(),
   beforeReportUnlink: BeforeReviewReportUnlink = async () => {},
 ): Promise<string> {
+  const applicationDirectory = appDataRoot(environment, platform, home);
+  const directory = platformPath(platform).join(applicationDirectory, "reports");
   const target = platformPath(platform).join(
-    defaultReviewReportDirectory(environment, platform, home),
+    directory,
     `review-${new Date().toISOString().replaceAll(/[-:.]/g, "")}-${randomUUID()}.md`,
   );
-  await validateTarget(target);
-  await privateDirectory(appDataRoot(environment, platform, home));
-  const directory = defaultReviewReportDirectory(environment, platform, home);
+  await validateTarget(target, [applicationDirectory, directory]);
+  await privateDirectory(applicationDirectory);
   await privateDirectory(directory);
   const entries = await readdir(directory, { withFileTypes: true });
   const reports: string[] = [];

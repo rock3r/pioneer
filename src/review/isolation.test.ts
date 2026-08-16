@@ -108,6 +108,22 @@ describe("review path grants", () => {
     await expect(lstat(path.join(source, "data"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("rejects a prospective controller directory that contains an actor-visible grant", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const applicationDirectory = path.join(root, "pioneer");
+    const source = path.join(applicationDirectory, "project");
+    const reportDirectory = path.join(applicationDirectory, "reports");
+    await mkdir(source, { recursive: true });
+
+    await expect(
+      validateProspectiveReviewReportPath(
+        { sourceDir: source, reportPath: path.join(reportDirectory, "review.md") },
+        [applicationDirectory, reportDirectory],
+      ),
+    ).rejects.toThrow(/controller directory.*overlaps/i);
+    await expect(lstat(reportDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("keeps prospective controller outputs outside the Pi-home snapshot source", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
     const source = path.join(root, "source");

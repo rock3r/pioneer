@@ -177,11 +177,24 @@ async function canonicalProspectiveControllerOutputPath(
   return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
 }
 
+async function canonicalProspectiveControllerDirectoryPath(
+  candidate: string,
+  kind: string,
+): Promise<string> {
+  return path.dirname(
+    await canonicalProspectiveControllerOutputPath(
+      path.join(candidate, ".pioneer-controller-directory"),
+      kind,
+    ),
+  );
+}
+
 async function validateReviewPathsInternal(
   spec: ReviewPathSpec,
   prospectiveReport: boolean,
   prospectiveWorkLog: boolean,
   platform: NodeJS.Platform,
+  prospectiveControllerDirectories: readonly string[] = [],
 ): Promise<ValidatedReviewPaths> {
   const sourceDir = await canonicalGrant(spec.sourceDir);
   const piHomeSource =
@@ -222,6 +235,15 @@ async function validateReviewPathsInternal(
     ...allowWritePaths,
     ...(piHomeSource === undefined ? [] : [piHomeSource]),
   ];
+  for (const candidate of prospectiveControllerDirectories) {
+    const directory = await canonicalProspectiveControllerDirectoryPath(
+      candidate,
+      "controller directory",
+    );
+    if (actorVisiblePaths.some((grant) => overlaps(directory, grant))) {
+      throw new Error(`Review controller directory overlaps an actor-visible grant: ${directory}`);
+    }
+  }
   if (reportPath !== undefined && actorVisiblePaths.some((grant) => contains(grant, reportPath))) {
     throw new Error(`Review report target is actor-visible: ${reportPath}`);
   }
@@ -249,18 +271,32 @@ async function validateReviewPathsInternal(
 
 export async function validateProspectiveReviewWorkLogPath(
   spec: ReviewPathSpec & { readonly workLogPath: string },
+  prospectiveControllerDirectories: readonly string[] = [],
   platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
-  const paths = await validateReviewPathsInternal(spec, false, true, platform);
+  const paths = await validateReviewPathsInternal(
+    spec,
+    false,
+    true,
+    platform,
+    prospectiveControllerDirectories,
+  );
   if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
   return paths.workLogPath;
 }
 
 export async function validateProspectiveReviewReportPath(
   spec: ReviewPathSpec & { readonly reportPath: string },
+  prospectiveControllerDirectories: readonly string[] = [],
   platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
-  const paths = await validateReviewPathsInternal(spec, true, false, platform);
+  const paths = await validateReviewPathsInternal(
+    spec,
+    true,
+    false,
+    platform,
+    prospectiveControllerDirectories,
+  );
   if (paths.reportPath === undefined) throw new Error("Review report path was not validated");
   return paths.reportPath;
 }

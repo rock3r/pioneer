@@ -1031,17 +1031,22 @@ async function runReviewInternal(
   let requestedReportPath = request.reportPath;
   if (requestedReportPath === undefined) {
     try {
-      requestedReportPath = await prepareValidatedDefaultReviewReportPath(async (candidate) => {
-        try {
-          await validateProspectiveReviewReportPath({
-            ...request,
-            piHomeSource,
-            reportPath: candidate,
-          });
-        } catch (error) {
-          throw new ProspectiveReviewPathValidationError(error);
-        }
-      });
+      requestedReportPath = await prepareValidatedDefaultReviewReportPath(
+        async (candidate, controllerMutationPaths) => {
+          try {
+            await validateProspectiveReviewReportPath(
+              {
+                ...request,
+                piHomeSource,
+                reportPath: candidate,
+              },
+              controllerMutationPaths,
+            );
+          } catch (error) {
+            throw new ProspectiveReviewPathValidationError(error);
+          }
+        },
+      );
     } catch (error) {
       if (error instanceof ProspectiveReviewPathValidationError) throw error.original;
       throw new Error(
@@ -1056,17 +1061,22 @@ async function runReviewInternal(
   let requestedWorkLogPath = request.workLogPath;
   if (requestedWorkLogPath === undefined) {
     try {
-      requestedWorkLogPath = await prepareValidatedDefaultReviewWorkLogPath(async (candidate) => {
-        try {
-          await validateProspectiveReviewWorkLogPath({
-            ...request,
-            piHomeSource,
-            workLogPath: candidate,
-          });
-        } catch (error) {
-          throw new ProspectiveReviewPathValidationError(error);
-        }
-      });
+      requestedWorkLogPath = await prepareValidatedDefaultReviewWorkLogPath(
+        async (candidate, controllerMutationPaths) => {
+          try {
+            await validateProspectiveReviewWorkLogPath(
+              {
+                ...request,
+                piHomeSource,
+                workLogPath: candidate,
+              },
+              controllerMutationPaths,
+            );
+          } catch (error) {
+            throw new ProspectiveReviewPathValidationError(error);
+          }
+        },
+      );
     } catch (error) {
       if (error instanceof ProspectiveReviewPathValidationError) throw error.original;
       throw new Error(

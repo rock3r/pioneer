@@ -159,7 +159,10 @@ export interface OpenReviewWorkLogOptions {
   };
 }
 
-export type ValidateReviewWorkLogTarget = (target: string) => Promise<void>;
+export type ValidateReviewWorkLogTarget = (
+  target: string,
+  controllerMutationPaths: readonly string[],
+) => Promise<void>;
 
 function platformPath(platform: NodeJS.Platform): typeof path.posix | typeof path.win32 {
   return platform === "win32" ? path.win32 : path.posix;
@@ -593,7 +596,7 @@ export async function prepareValidatedDefaultReviewWorkLogPath(
   id: string = crypto.randomUUID(),
 ): Promise<string> {
   const target = generatedDefaultReviewWorkLogPath(environment, platform, home, now, id);
-  await validateTarget(target);
+  await validateTarget(target, [platformPath(platform).dirname(target)]);
   await prepareDefaultReviewWorkLogDirectory(target, platform);
   return target;
 }
