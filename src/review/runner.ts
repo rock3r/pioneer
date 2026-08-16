@@ -233,6 +233,36 @@ export function shouldHandleReviewResumeFailure(alreadyHandled: boolean): boolea
   return !alreadyHandled;
 }
 
+export type ReviewResumeFailureKind =
+  | "containment"
+  | "in_use"
+  | "prompt_rejected"
+  | "retainable"
+  | "rollback"
+  | "unavailable";
+
+const REVIEW_RESUME_FAILURE_KINDS = new WeakMap<Error, ReviewResumeFailureKind>();
+
+function classifyReviewResumeFailure(failure: Error, kind: ReviewResumeFailureKind): Error {
+  REVIEW_RESUME_FAILURE_KINDS.set(failure, kind);
+  return failure;
+}
+
+export function reviewResumeFailureKind(failure: Error): ReviewResumeFailureKind {
+  return REVIEW_RESUME_FAILURE_KINDS.get(failure) ?? "retainable";
+}
+
+function trustedResumeArchiveFailureKind(failure: Error): ReviewResumeFailureKind {
+  switch (workLogDiagnosticSummary(failure.message).diagnosticCode) {
+    case "REVIEW_RESUME_ATTEMPT_LIMIT":
+      return "unavailable";
+    case "REVIEW_RESUME_IN_USE":
+      return "in_use";
+    default:
+      return "retainable";
+  }
+}
+
 export function annotateHandledReviewResumeFailure(failure: Error, token: string): Error {
   return new Error(`${failure.message}\n[PIONEER_REVIEW_RESUME] ${token}`, { cause: failure });
 }
@@ -286,29 +316,28 @@ function workLogDiagnosticSummary(message: string): Readonly<Record<string, unkn
 async function handleResumeArchiveFailure(
   archive: ReviewResumeArchive,
   failure: Error,
+  kind: ReviewResumeFailureKind,
 ): Promise<Error> {
-  if (failure.message.includes("[REVIEW_RESUME_IN_USE]")) return failure;
-  const containmentFailure = failure.message.includes("[REVIEW_PROCESS_CONTAINMENT_FAILED]");
-  const resumeUnavailable = failure.message.includes("[REVIEW_RESUME_ATTEMPT_LIMIT]");
-  if (containmentFailure || resumeUnavailable) {
+  if (kind === "in_use") return failure;
+  if (kind === "containment" || kind === "unavailable") {
     const cleanupFailure = await cleanupUnavailableReviewResumeArchive(archive);
-    const unavailableFailure = failure.message.includes("[REVIEW_RESUME_UNAVAILABLE]")
-      ? failure
-      : new Error(`${failure.message}\n[REVIEW_RESUME_UNAVAILABLE]`);
+    const unavailableFailure = new Error(`${failure.message}\n[REVIEW_RESUME_UNAVAILABLE]`, {
+      cause: failure,
+    });
     return cleanupFailure === undefined
       ? unavailableFailure
       : combineReviewFailures(unavailableFailure, cleanupFailure);
   }
   try {
     const failureCode = workLogDiagnosticSummary(failure.message).diagnosticCode as string;
-    if (failure.message.includes("[REVIEW_RESUME_SESSION_INVALID] Pi rejected")) {
+    if (kind === "rollback") {
       await rollbackReviewResumeArchiveToPriorAttempt(archive, failureCode);
     } else {
       await retainReviewResumeArchive(archive, failureCode);
     }
     return new Error(`${failure.message}\n[PIONEER_REVIEW_RESUME] ${archive.token}`);
   } catch (error) {
-    if (error instanceof Error && error.message.includes("[REVIEW_RESUME_IN_USE]")) {
+    if (error instanceof Error && error.message.startsWith("[REVIEW_RESUME_IN_USE]")) {
       return new Error(`${failure.message}\n${error.message}`);
     }
     const cleanupFailure = await cleanupUnavailableReviewResumeArchive(archive);
@@ -826,7 +855,12 @@ export async function runReviewRpc(
         if (workLogFailure !== undefined) return;
         if (typeof record.type === "string") eventTypes.add(record.type);
         if (record.type === "response" && record.success === false) {
-          terminate(new Error("Pi RPC rejected the review prompt"));
+          terminate(
+            classifyReviewResumeFailure(
+              new Error("Pi RPC rejected the review prompt"),
+              "prompt_rejected",
+            ),
+          );
           return;
         }
         if (record.type === "message_update") {
@@ -948,11 +982,14 @@ export async function runReviewRpc(
       }
       if (containmentLost) {
         finish(
-          new Error(
-            diagnosticMessage(
-              "REVIEW_PROCESS_CONTAINMENT_FAILED",
-              "Pi exited but a descendant retained its RPC output pipe; Pioneer could not prove that the review process tree stopped.",
+          classifyReviewResumeFailure(
+            new Error(
+              diagnosticMessage(
+                "REVIEW_PROCESS_CONTAINMENT_FAILED",
+                "Pi exited but a descendant retained its RPC output pipe; Pioneer could not prove that the review process tree stopped.",
+              ),
             ),
+            "containment",
           ),
         );
         return;
@@ -1251,7 +1288,11 @@ async function runReviewInternal(
         const failure = error instanceof Error ? error : new Error(String(error));
         if (resumeArchive !== undefined) {
           resumeFailureHandled = true;
-          throw await handleResumeArchiveFailure(resumeArchive, failure);
+          throw await handleResumeArchiveFailure(
+            resumeArchive,
+            failure,
+            trustedResumeArchiveFailureKind(failure),
+          );
         }
         throw failure;
       }
@@ -1302,7 +1343,7 @@ async function runReviewInternal(
         const failure = error instanceof Error ? error : new Error(String(error));
         if (resumeArchive !== undefined) {
           resumeFailureHandled = true;
-          throw await handleResumeArchiveFailure(resumeArchive, failure);
+          throw await handleResumeArchiveFailure(resumeArchive, failure, "retainable");
         }
         throw failure;
       }
@@ -1432,7 +1473,7 @@ async function runReviewInternal(
           await retainReviewResumeArchive(resumeArchive, "REVIEW_REPORT_WRITE_FAILED");
           resumeFailureHandled = true;
         } catch (error) {
-          if (error instanceof Error && error.message.includes("[REVIEW_RESUME_IN_USE]")) {
+          if (error instanceof Error && error.message.startsWith("[REVIEW_RESUME_IN_USE]")) {
             reportWriteError = `${reportWriteError}\n${error.message}`;
           } else {
             const resumeCleanupFailure = await cleanupUnavailableReviewResumeArchive(resumeArchive);
@@ -1475,15 +1516,20 @@ async function runReviewInternal(
       runFailure = error instanceof Error ? error : new Error(String(error));
       if (
         resumeContext !== undefined &&
-        runFailure.message.includes("Pi RPC rejected the review prompt")
+        reviewResumeFailureKind(runFailure) === "prompt_rejected"
       ) {
-        runFailure = new Error(
-          "[REVIEW_RESUME_SESSION_INVALID] Pi rejected the stored native session",
+        runFailure = classifyReviewResumeFailure(
+          new Error("[REVIEW_RESUME_SESSION_INVALID] Pi rejected the stored native session"),
+          "rollback",
         );
       }
       if (resumeArchive !== undefined && shouldHandleReviewResumeFailure(resumeFailureHandled)) {
         resumeFailureHandled = true;
-        runFailure = await handleResumeArchiveFailure(resumeArchive, runFailure);
+        runFailure = await handleResumeArchiveFailure(
+          resumeArchive,
+          runFailure,
+          reviewResumeFailureKind(runFailure),
+        );
       } else if (resumeArchive !== undefined && resumeToken !== undefined) {
         runFailure = annotateHandledReviewResumeFailure(runFailure, resumeToken);
       }

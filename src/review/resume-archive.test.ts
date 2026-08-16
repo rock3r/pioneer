@@ -1099,6 +1099,48 @@ describe("recoverable review archive", () => {
     ).toHaveLength(10);
   });
 
+  it("recomputes count retention after a selected archive is freshly retained", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const now = Date.now();
+    const archives: Awaited<ReturnType<typeof createReviewResumeArchive>>[] = [];
+    for (let index = 0; index < 11; index += 1) {
+      const archive = await createReviewResumeArchive(root, {
+        sourceDir: "/repo",
+        prompt: `x-${index}`,
+        network: "none",
+        piVersion: "0.84.2",
+      });
+      const manifestPath = path.join(archive.archiveDir, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+      await writeFile(
+        manifestPath,
+        `${JSON.stringify({
+          ...manifest,
+          state: "retained",
+          retainedAt: new Date(now - (11 - index) * 1_000).toISOString(),
+        })}\n`,
+      );
+      await releaseLeasedReviewResumeArchive(archive);
+      archives.push(archive);
+    }
+    const refreshed = archives[0];
+    if (refreshed === undefined) throw new Error("Expected a retained archive fixture");
+
+    await pruneReviewResumeArchives(root, now, async () => {
+      const manifestPath = path.join(refreshed.archiveDir, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
+      await writeFile(
+        manifestPath,
+        `${JSON.stringify({ ...manifest, retainedAt: new Date(now + 1_000).toISOString() })}\n`,
+      );
+    });
+
+    await expect(stat(refreshed.archiveDir)).resolves.toBeDefined();
+    expect(
+      (await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory()),
+    ).toHaveLength(10);
+  });
+
   it("rejects an expired archive at token load", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
     const archive = await createReviewResumeArchive(root, {

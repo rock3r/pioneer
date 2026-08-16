@@ -514,13 +514,10 @@ async function pruneInactiveReviewResumeArchiveTemporaryEntries(
   }
 }
 
-export async function pruneInactiveReviewResumeArchive(directory: string): Promise<boolean> {
-  const archive: ReviewResumeArchive = {
-    token: path.basename(directory),
-    archiveDir: directory,
-    attemptsDir: path.join(directory, "attempts"),
-    activeAttemptDir: path.join(directory, "attempts", "0001"),
-  };
+async function removeLeasedReviewResumeArchive(
+  archive: ReviewResumeArchive,
+  shouldRemove: () => Promise<boolean> = async () => true,
+): Promise<boolean> {
   let leaseContents: string;
   try {
     leaseContents = await acquireReviewResumeArchiveLease(archive);
@@ -533,7 +530,8 @@ export async function pruneInactiveReviewResumeArchive(directory: string): Promi
   }
   let removed = false;
   try {
-    await rm(directory, { recursive: true, force: true });
+    if (!(await shouldRemove())) return false;
+    await rm(archive.archiveDir, { recursive: true, force: true });
     removed = true;
     return true;
   } finally {
@@ -541,12 +539,68 @@ export async function pruneInactiveReviewResumeArchive(directory: string): Promi
   }
 }
 
-export async function pruneReviewResumeArchives(root: string, now = Date.now()): Promise<void> {
+export async function pruneInactiveReviewResumeArchive(directory: string): Promise<boolean> {
+  const archive: ReviewResumeArchive = {
+    token: path.basename(directory),
+    archiveDir: directory,
+    attemptsDir: path.join(directory, "attempts"),
+    activeAttemptDir: path.join(directory, "attempts", "0001"),
+  };
+  return await removeLeasedReviewResumeArchive(archive);
+}
+
+async function retainedReviewResumeArchiveOrder(
+  root: string,
+  now: number,
+): Promise<Array<{ readonly directory: string; readonly timestamp: number }>> {
+  const retained: Array<{ directory: string; timestamp: number }> = [];
+  for (const entry of await readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !UUID.test(entry.name)) continue;
+    const directory = path.join(root, entry.name);
+    const stats = await statReviewResumeArchiveCandidate(directory);
+    if (stats === undefined || stats.isSymbolicLink()) continue;
+    const manifest = await readManifest(directory);
+    if (manifest === undefined) continue;
+    const timestamp = await archiveTimestamp(manifest);
+    if (timestamp === 0 || now - timestamp >= RESUME_RETENTION_MS) continue;
+    retained.push({ directory, timestamp });
+  }
+  retained.sort(
+    (left, right) =>
+      right.timestamp - left.timestamp || left.directory.localeCompare(right.directory),
+  );
+  return retained;
+}
+
+async function pruneExcessReviewResumeArchive(
+  root: string,
+  directory: string,
+  now: number,
+): Promise<boolean> {
+  const archive: ReviewResumeArchive = {
+    token: path.basename(directory),
+    archiveDir: directory,
+    attemptsDir: path.join(directory, "attempts"),
+    activeAttemptDir: path.join(directory, "attempts", "0001"),
+  };
+  return await removeLeasedReviewResumeArchive(archive, async () => {
+    const retained = await retainedReviewResumeArchiveOrder(root, now);
+    return (
+      retained.findIndex((candidate) => candidate.directory === directory) >=
+      MAX_RETAINED_RESUME_ARCHIVES
+    );
+  });
+}
+
+export async function pruneReviewResumeArchives(
+  root: string,
+  now = Date.now(),
+  beforeCountPrune: () => Promise<void> = async () => {},
+): Promise<void> {
   await privateDirectory(root);
   const candidates = (await readdir(root, { withFileTypes: true })).filter(
     (entry) => entry.isDirectory() && UUID.test(entry.name),
   );
-  const inactive: Array<{ directory: string; timestamp: number }> = [];
   for (const candidate of candidates) {
     const directory = path.join(root, candidate.name);
     try {
@@ -570,16 +624,17 @@ export async function pruneReviewResumeArchives(root: string, now = Date.now()):
       const expired = timestamp === 0 || now - timestamp >= RESUME_RETENTION_MS;
       if (expired) {
         await pruneInactiveReviewResumeArchive(directory);
-        continue;
       }
-      inactive.push({ directory, timestamp });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  inactive.sort((left, right) => right.timestamp - left.timestamp);
-  for (const candidate of inactive.slice(MAX_RETAINED_RESUME_ARCHIVES)) {
-    await pruneInactiveReviewResumeArchive(candidate.directory);
+  await beforeCountPrune();
+  for (;;) {
+    const retained = await retainedReviewResumeArchiveOrder(root, now);
+    const candidate = retained[MAX_RETAINED_RESUME_ARCHIVES];
+    if (candidate === undefined) break;
+    if (!(await pruneExcessReviewResumeArchive(root, candidate.directory, now))) break;
   }
 }
 

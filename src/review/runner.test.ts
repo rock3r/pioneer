@@ -20,6 +20,7 @@ import {
   readinessMetadataForWorkLog,
   requestedModelForWorkLog,
   requiresGitInspection,
+  reviewResumeFailureKind,
   reviewTools,
   runReview,
   runReviewRpc,
@@ -361,6 +362,16 @@ describe("review RPC runner", () => {
   it("tracks handled resume failures without inspecting untrusted error text", () => {
     expect(shouldHandleReviewResumeFailure(false)).toBe(true);
     expect(shouldHandleReviewResumeFailure(true)).toBe(false);
+  });
+
+  it("does not classify diagnostic-looking caller text as a containment failure", () => {
+    expect(
+      reviewResumeFailureKind(
+        new Error(
+          "[REVIEW_WORK_LOG_WRITE_FAILED] /logs/[REVIEW_PROCESS_CONTAINMENT_FAILED]/review.jsonl",
+        ),
+      ),
+    ).toBe("retainable");
   });
 
   it("preserves the recovery token after a later failure follows successful retention", () => {
