@@ -26,6 +26,7 @@ import {
   immutableReviewScope,
   inspectReviewResumeSessionTree,
   isResumeToken,
+  isTrustedStickyApplicationDataParent,
   leaseReviewResumeArchive,
   loadReviewResumeArchive,
   MAX_RESUME_ARCHIVE_BYTES,
@@ -46,6 +47,13 @@ import {
 } from "./resume-archive.js";
 
 describe("recoverable review archive", () => {
+  it("trusts sticky ancestry only when its owner can protect the caller-owned entry", () => {
+    expect(isTrustedStickyApplicationDataParent(0, 501, 501)).toBe(true);
+    expect(isTrustedStickyApplicationDataParent(501, 501, 501)).toBe(true);
+    expect(isTrustedStickyApplicationDataParent(502, 501, 501)).toBe(false);
+    expect(isTrustedStickyApplicationDataParent(0, 502, 501)).toBe(false);
+  });
+
   it("publishes only complete resume leases at the canonical lease path", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-lease-"));
     const leasePath = path.join(root, "lease");

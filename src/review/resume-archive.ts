@@ -104,6 +104,14 @@ export function defaultReviewReportDirectory(
   return platformPath(platform).join(appDataRoot(environment, platform, home), "reports");
 }
 
+export function isTrustedStickyApplicationDataParent(
+  parentUid: number,
+  childUid: number,
+  currentUid: number,
+): boolean {
+  return childUid === currentUid && (parentUid === currentUid || parentUid === 0);
+}
+
 async function assertStableApplicationDataParent(
   directory: string,
   platform: NodeJS.Platform,
@@ -135,7 +143,11 @@ async function assertStableApplicationDataParent(
       }
       if ((parentStats.mode & 0o022) !== 0) {
         const sticky = (parentStats.mode & 0o1000) !== 0;
-        if (!sticky || currentUid === undefined || childStats.uid !== currentUid) {
+        if (
+          !sticky ||
+          currentUid === undefined ||
+          !isTrustedStickyApplicationDataParent(parentStats.uid, childStats.uid, currentUid)
+        ) {
           throw new Error(`Review application-data parent is writable by another user: ${parent}`);
         }
       }
