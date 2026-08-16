@@ -53,6 +53,9 @@ are private to the current user and pruned to the newest 100 inactive files.
 Reservation markers bind the owning PID to its OS process-start identity; a
 later retention pass reclaims the sibling link after that controller exits, so
 interrupted reviews cannot accumulate permanently active reservations.
+The same pass removes inactive post-publication reservation and publication
+siblings so a transient cleanup failure cannot retain report content outside
+the visible 100-report bound.
 Pioneer canonicalizes and validates the prospective default target against all
 actor-visible grants and the Pi-home snapshot source before it creates, changes
 permissions on, or prunes that directory.

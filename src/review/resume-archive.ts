@@ -543,6 +543,9 @@ export async function createReviewResumeArchive(
 
 type ValidateReviewReportTarget = (target: string) => Promise<void>;
 
+const REVIEW_REPORT_SIDECAR =
+  /^\.(review-[0-9a-fzt-]+\.md)\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.pioneer-(?:reservation|publishing)$/i;
+
 export async function prepareValidatedDefaultReviewReportPath(
   validateTarget: ValidateReviewReportTarget,
   environment: NodeJS.ProcessEnv = process.env,
@@ -559,10 +562,25 @@ export async function prepareValidatedDefaultReviewReportPath(
   await privateDirectory(directory);
   const entries = await readdir(directory, { withFileTypes: true });
   const reports: string[] = [];
+  const sidecars: Array<{ readonly name: string; readonly targetName: string }> = [];
   for (const entry of entries) {
-    if (!entry.isFile() || !/^review-[0-9a-fzt-]+\.md$/i.test(entry.name)) continue;
-    const candidate = path.join(directory, entry.name);
-    if (!(await isActiveReviewReportReservation(candidate))) reports.push(entry.name);
+    if (!entry.isFile()) continue;
+    if (/^review-[0-9a-fzt-]+\.md$/i.test(entry.name)) {
+      const candidate = path.join(directory, entry.name);
+      if (!(await isActiveReviewReportReservation(candidate))) reports.push(entry.name);
+      continue;
+    }
+    const sidecar = REVIEW_REPORT_SIDECAR.exec(entry.name);
+    if (sidecar?.[1] !== undefined) {
+      sidecars.push({ name: entry.name, targetName: sidecar[1] });
+    }
+  }
+  for (const sidecar of sidecars) {
+    const target = path.join(directory, sidecar.targetName);
+    if (await isActiveReviewReportReservation(target)) continue;
+    await unlink(path.join(directory, sidecar.name)).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    });
   }
   reports.sort();
   for (const name of reports.slice(0, Math.max(0, reports.length - 99))) {

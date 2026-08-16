@@ -1,4 +1,5 @@
 import {
+  link,
   mkdir,
   mkdtemp,
   readdir,
@@ -13,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { reserveReviewReport } from "./report-output.js";
+import { publishReservedReviewReport, reserveReviewReport } from "./report-output.js";
 import {
   copyReviewResumeSession,
   createReviewResumeArchive,
@@ -131,6 +132,24 @@ describe("recoverable review archive", () => {
         (entry) => entry.isFile() && entry.name.endsWith(".md"),
       ),
     ).toHaveLength(100);
+  });
+
+  it("reclaims an orphaned published report reservation sibling", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
+    await mkdir(reportDirectory, { recursive: true });
+    const report = path.join(
+      reportDirectory,
+      "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
+    );
+    const reservation = await reserveReviewReport(report);
+    await publishReservedReviewReport(reservation, "No findings.");
+    await link(report, reservation.reservationPath);
+
+    await prepareDefaultReviewReportPath({}, process.platform, home);
+
+    expect(await readFile(report, "utf8")).toBe("No findings.\n");
+    await expect(stat(reservation.reservationPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("prunes completed reports that contain reservation-shaped model text", async () => {
