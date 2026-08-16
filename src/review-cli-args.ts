@@ -12,8 +12,12 @@ export interface ParsedReviewCliArgs {
   readonly reportPath: string | undefined;
   readonly workLogPath: string | undefined;
   readonly networkText: string;
+  readonly networkSpecified: boolean;
   readonly timeoutText: string | undefined;
+  readonly maxRpcOutputMbText: string | undefined;
   readonly allowUnsandboxedWindows: boolean;
+  readonly noResume: boolean;
+  readonly resumeToken: string | undefined;
   readonly remaining: readonly string[];
 }
 
@@ -50,6 +54,11 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
   const unsafeIndex = args.indexOf("--allow-unsandboxed-windows");
   const allowUnsandboxedWindows = unsafeIndex >= 0;
   if (unsafeIndex >= 0) args.splice(unsafeIndex, 1);
+  const noResume = args.includes("--no-resume");
+  if (noResume) args.splice(args.indexOf("--no-resume"), 1);
+  const networkSpecified = args.some(
+    (argument) => argument === "--network" || argument.startsWith("--network="),
+  );
   return {
     sourceDir: takeOption(args, "--source"),
     prompt: takeOption(args, "--prompt"),
@@ -62,8 +71,12 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
     reportPath: takeOption(args, "--report"),
     workLogPath: takeOption(args, "--work-log"),
     networkText: takeOption(args, "--network") ?? "full",
+    networkSpecified,
     timeoutText: takeOption(args, "--timeout-ms"),
+    maxRpcOutputMbText: takeOption(args, "--max-rpc-output-mb"),
     allowUnsandboxedWindows,
+    noResume,
+    resumeToken: takeOption(args, "--resume"),
     remaining: args,
   };
 }

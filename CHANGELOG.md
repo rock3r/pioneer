@@ -4,6 +4,9 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Make review RPC output bounded at 20 MiB by default and 64 MiB maximum with stable limit diagnostics, near-limit work-log events, and delta batching.
+- Persist verified reports privately by default and emit their controller-owned paths; add opt-out `--no-resume`, opaque native Pi session recovery, exact-token immutable-scope resume, archive/containment/torn-session/Pi-version safeguards, fresh Windows acknowledgement, and corresponding skill/evaluation coverage.
+
 ## 0.1.8 - 2026-08-15
 
 - Suppress provider-controlled response, assistant-error, and stderr text from review failures, and redact credential-shaped readiness metadata and authenticated URLs before diagnostics reach callers.

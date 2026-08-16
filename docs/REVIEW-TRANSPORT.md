@@ -26,9 +26,9 @@ const result = await runReview({
 
 `ReviewRequest.piHomeIncludes` is a repeatable exact-path opt-in relative to the selected Pi home. It is intended for a narrowly required additional file or directory, including a managed package directory; it does not support globs, negation, or persistent configuration. The shared snapshot applies the same hard exclusions and symlink checks as the CLI.
 
-`ReviewRequest.workLogPath` selects an absolute create-only work-log target. `onWorkLogReady` runs synchronously after that file is open and before long-running readiness or actor work. `ReviewResult` contains the Markdown `report`, the absolute `workLogPath`, optional effective `model` and `thinking`, a `sandboxed` boolean, an optional Windows warning, an optional `reportWriteError` when transport succeeds but requested report persistence fails, and an optional `workLogWriteError` when a close-time sync or retention failure occurs after the report has already been verified. Callers must still surface the report before treating either persistence error as terminal.
+`ReviewRequest.workLogPath` selects an absolute create-only work-log target. `onWorkLogReady` runs synchronously after that file is open and before long-running readiness or actor work. `ReviewRequest.maxRpcOutputBytes` accepts an integral byte value from 1 MiB through 64 MiB and defaults to 20 MiB; the CLI's `--max-rpc-output-mb` uses integral MiB values. `ReviewRequest.resumable` defaults to true; false restores the ephemeral `--no-session` launch. `ReviewResult` contains the Markdown `report`, absolute `reportPath` and `workLogPath`, optional effective `model` and `thinking`, a `sandboxed` boolean, an optional Windows warning, an optional `resumeToken` when report delivery failed, an optional `reportWriteError`, and an optional `workLogWriteError` when a close-time sync or retention failure occurs after the report has already been verified. Callers must still surface the report before treating either persistence error as terminal.
 
-The CLI prints only the report to stdout. The immediate `[PIONEER_WORK_LOG] ABSOLUTE_PATH` marker, errors, and the Windows warning go to stderr.
+The CLI prints only the report to stdout. The immediate `[PIONEER_WORK_LOG] ABSOLUTE_PATH` and `[PIONEER_REPORT] ABSOLUTE_PATH` markers, resume token, errors, and the Windows warning go to stderr.
 
 ## Target semantics
 
@@ -63,7 +63,7 @@ Thinking may be supplied separately with `--thinking`, or as the suffix in `--mo
 Reviews invoke `pi --mode rpc` and add these defaults unless the caller already supplied an incompatible explicit option:
 
 - `--offline`;
-- `--no-session`;
+- a private `--session-dir` for new resumable reviews, or `--no-session` only for `resumable: false` / `--no-resume`;
 - `--no-approve`;
 - `--no-extensions`;
 - Linux: `--tools read,bash,grep,find,ls`; macOS and opt-in Windows: `--tools read,ls`;
@@ -86,7 +86,7 @@ Stdout is treated as JSONL protocol data. Malformed JSON requests process termin
 
 Pioneer also converts each Pi RPC record into a restricted work-log event as it arrives. It retains allowlisted event types/subtypes, allowlisted tool names, a short hash of each tool-call ID, byte counts, retry counters/delays, boolean state, and presence/size metadata for Pi-controlled reasons and diagnostics. It never persists unrestricted Pi strings, payload content, prompt excerpts, or diagnostic text. Stderr contributes byte-count activity records; terminal transport diagnostics report only whether stderr was present and never return its text. A five-second heartbeat records the last allowlisted Pi event, idle duration, RPC/stderr byte counts, and child PID. Missing heartbeats distinguish a stalled controller/event loop from a live controller waiting on silent Pi activity.
 
-The 16 MiB per-run cap is fail-closed: Pioneer first writes `work_log_truncated`, then terminates the review with `[REVIEW_WORK_LOG_WRITE_FAILED]`. It never continues a run after heartbeats and terminal lifecycle records can no longer be persisted.
+The default cumulative raw RPC stdout cap is 20 MiB and callers may select 1 through 64 MiB. Pioneer counts bytes before JSON decoding, emits one sanitized `pi_rpc_near_limit` event at 75% and 90%, then terminates with `[REVIEW_RPC_OUTPUT_LIMIT]` when the selected bound is exceeded. The 16 MiB per-run work-log cap remains fail-closed: Pioneer first writes `work_log_truncated`, then terminates the review with `[REVIEW_WORK_LOG_WRITE_FAILED]`. After the first 1,000 thinking/text/tool delta metadata events, Pioneer emits fixed five-second type/subtype-counted batches so work-log volume does not preempt the new default RPC bound.
 
 Default Windows work logs inherit the per-user `%LOCALAPPDATA%` directory ACL. A custom Windows `workLogPath` inherits its existing parent ACL, which Pioneer cannot validate; callers must use a parent already private to the current user.
 
@@ -102,10 +102,14 @@ Networking is one of `full`, `public`, or `none`; see [SECURITY.md](SECURITY.md)
 
 ## Result and cleanup
 
-The report is Pi's final assistant text with surrounding whitespace removed. Pioneer does not rewrite severity, validate file references, or convert the report to JSON. Calling agents should present it as Pi's independent review and may separately add their own analysis.
+The report is Pi's final assistant text with surrounding whitespace removed. Pioneer does not rewrite severity, validate file references, or convert the report to JSON. Every strict-successful review atomically creates a private controller-owned report by default; `--report` only changes its target. Calling agents should present it as Pi's independent review and may separately add their own analysis.
 
-Proxy servers, Linux bridges, copied Pi state, and scratch data are removed on every success or failure path. The controller-owned work log remains available after completion and contains cleanup and terminal outcome records. Pioneer prints the canonical report to stdout. When persistence is required, `--report /absolute/path/report.md` atomically creates a controller-owned report only after the strict completion contract passes; a persistence error preserves stdout but exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. Use an explicit `--allow-write` directory only when Pi itself must create additional artifacts.
+## Native session recovery
 
-Pi 0.84.1 has a hidden interactive `/debug` command that writes `pi-debug.log`, but it is an on-demand TUI snapshot containing rendered terminal state and complete LLM messages. RPC reviews run with `--no-session` and do not expose a supported continuous native debug-log switch. Pioneer therefore does not copy or invoke that unsafe dump; the documented RPC stream is Pi's native real-time diagnostic source.
+New reviews create a private opaque Pi session archive under the per-user application-data root. The archive contains a controller-only manifest with immutable scope metadata and one active attempt directory; Pioneer never parses or exposes native session content. After containment is proven, a bounded regular session tree may be retained for seven days and at most ten archives. Success deletes the archive. A failure caused by a torn session, symlink/special-file entry, archive-size/count limit, failed containment, retry-layout exhaustion, active-lease conflict, or Pi-version mismatch is never converted into a fabricated report. `pioneer review --resume TOKEN` copies the latest attempt into a new attempt directory and selects it by exact path; previous attempts remain intact if the retry fails.
+
+Proxy servers, Linux bridges, copied Pi state, and scratch data are removed on every success or failure path. The controller-owned work log remains available after completion and contains cleanup and terminal outcome records. Pioneer prints the canonical report to stdout and atomically creates the private controller-owned report after the strict completion contract passes. `--report /absolute/path/report.md` overrides that target; a persistence error preserves stdout but exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. Use an explicit `--allow-write` directory only when Pi itself must create additional artifacts.
+
+Pi 0.84.1 has a hidden interactive `/debug` command that writes `pi-debug.log`, but it is an on-demand TUI snapshot containing rendered terminal state and complete LLM messages. Pioneer does not copy or invoke that unsafe dump; resumable RPC reviews use Pi's native session directory, while `--no-resume` retains the ephemeral no-session behavior. The documented RPC stream remains Pi's native real-time diagnostic source.
 
 Pioneer receives RPC events through the Pi child process's stdout pipe and synchronously flushes their sanitized metadata to its controller-owned work log. It does not use filesystem watchers, polling, or a `subagent-results` directory. Any `fs.watch` fallback reported by a calling agent runtime is outside Pioneer and cannot be the mechanism that delivers the report.

@@ -79,7 +79,7 @@ The target must be absolute, absent, outside every actor-visible grant, and bene
 
 ## Persist a report
 
-The canonical result is stdout. Use `--report` when Pioneer should atomically persist the verified final report outside the sandbox:
+The canonical result is stdout. Pioneer also atomically persists every verified final report to a private default report directory and prints `[PIONEER_REPORT] ABSOLUTE_PATH` on stderr. Use `--report` when Pioneer should select a different controller-owned target:
 
 ```bash
 pioneer review \
@@ -102,7 +102,13 @@ pioneer review \
 
 An explicit write grant is a real host capability. It must not overlap the source or a read-only grant.
 
-Without `--report`, Pioneer does not persist the canonical report automatically. Its private scratch directory is removed after every run.
+The private scratch directory is removed after every run. New reviews also retain a bounded opaque native Pi session after a non-success when containment is proven. If stderr includes both `[REVIEW_RPC_OUTPUT_LIMIT]` and `[PIONEER_REVIEW_RESUME] TOKEN`, retry exactly:
+
+```bash
+pioneer review --resume TOKEN
+```
+
+Resume keeps the original source, grants, model, thinking, Pi-home, and network policy immutable; only timeout, RPC bound, and controller-owned output paths may change. On Windows, pass a fresh `--allow-unsandboxed-windows` acknowledgement. Use `--no-resume` on a new review only when the caller explicitly wants the ephemeral privacy opt-out.
 
 ## Choose network scope
 

@@ -82,6 +82,7 @@ const PI_MESSAGE_UPDATE_TYPES = new Set([
   "toolcall_end",
   "toolcall_start",
 ]);
+const PI_DELTA_EVENT_TYPES = new Set(["text_delta", "thinking_delta", "toolcall_delta"]);
 const PI_TOOL_NAMES = new Set(["bash", "find", "grep", "ls", "read"]);
 const PI_MESSAGE_ROLES = new Set(["assistant", "system", "tool", "user"]);
 const PI_STOP_REASONS = new Set(["aborted", "error", "length", "stop", "toolUse"]);
@@ -91,6 +92,58 @@ export interface ReviewWorkLog {
   readonly runId: string;
   record(type: string, details?: Readonly<Record<string, unknown>>): void;
   close(): void;
+}
+
+export class PiDeltaBatcher {
+  private highVolumeCount = 0;
+  private readonly batches = new Map<
+    string,
+    { eventType: string; eventSubtype: string; count: number; deltaBytes: number }
+  >();
+  private timer: NodeJS.Timeout | undefined;
+
+  public constructor(private readonly emit: (details: Readonly<Record<string, unknown>>) => void) {}
+
+  public accept(event: Readonly<Record<string, unknown>>): void {
+    if (
+      event.eventType !== "message_update" ||
+      typeof event.eventSubtype !== "string" ||
+      !PI_DELTA_EVENT_TYPES.has(event.eventSubtype)
+    ) {
+      this.emit(event);
+      return;
+    }
+    if (this.highVolumeCount < 1_000) {
+      this.highVolumeCount += 1;
+      this.emit(event);
+      return;
+    }
+    this.highVolumeCount += 1;
+    const key = `${event.eventType}:${event.eventSubtype}`;
+    const existing = this.batches.get(key) ?? {
+      eventType: "message_update",
+      eventSubtype: event.eventSubtype,
+      count: 0,
+      deltaBytes: 0,
+    };
+    existing.count += 1;
+    existing.deltaBytes += typeof event.deltaBytes === "number" ? event.deltaBytes : 0;
+    this.batches.set(key, existing);
+    if (this.timer === undefined) {
+      this.timer = setTimeout(() => this.flush(), 5_000);
+      this.timer.unref();
+    }
+  }
+
+  public flush(): void {
+    if (this.timer !== undefined) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+    for (const batch of this.batches.values())
+      this.emit({ type: "pi_event_delta_batch", ...batch });
+    this.batches.clear();
+  }
 }
 
 export interface OpenReviewWorkLogOptions {

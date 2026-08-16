@@ -61,6 +61,24 @@ describe("Pi startup optimization", () => {
     ).toContain("--no-skills");
   });
 
+  it("uses a private native session directory for resumable reviews", () => {
+    expect(
+      optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+        sessionDir: "/private/review-resumes/token/attempts/0001",
+      }).command,
+    ).toContain("/private/review-resumes/token/attempts/0001");
+    expect(
+      optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+        noSession: true,
+      }).command,
+    ).toContain("--no-session");
+    expect(
+      optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+        resumeSession: "/private/review-resumes/token/attempts/0002",
+      }).command,
+    ).toEqual(expect.arrayContaining(["--session", "/private/review-resumes/token/attempts/0002"]));
+  });
+
   it("can disable optional extensions and allow only built-in inspection tools", () => {
     expect(
       optimizePiStartupCommand(["pi", "--mode", "rpc"], {

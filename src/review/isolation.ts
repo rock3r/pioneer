@@ -29,6 +29,7 @@ export interface ReviewSandboxConfigOptions extends ValidatedReviewPaths {
   readonly runtimeReadPaths: readonly string[];
   readonly network: ReviewNetworkMode;
   readonly parentProxyUrl?: string;
+  readonly sessionDir?: string;
 }
 
 function contains(parent: string, child: string): boolean {
@@ -254,7 +255,11 @@ export function buildReviewSandboxConfig(options: ReviewSandboxConfigOptions): S
   }
   return {
     readOnlyPaths: [options.sourceDir, ...options.allowReadPaths, ...options.runtimeReadPaths],
-    writablePaths: [options.scratchDir, ...options.allowWritePaths],
+    writablePaths: [
+      options.scratchDir,
+      ...(options.sessionDir === undefined ? [] : [options.sessionDir]),
+      ...options.allowWritePaths,
+    ],
     network: options.network === "none" ? "none" : "proxy",
     ...(options.parentProxyUrl === undefined ? {} : { proxyUrl: options.parentProxyUrl }),
   };

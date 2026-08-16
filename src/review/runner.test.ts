@@ -99,6 +99,18 @@ function delayedExitPi(): readonly [string, ...string[]] {
   return [process.execPath, "-e", "setTimeout(() => process.exit(0), 250);"];
 }
 
+function settledDelayedExitPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `process.stdin.once("data", () => {
+  process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: "Settled report." } }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n");
+  setTimeout(() => process.exit(0), 250);
+});`,
+  ];
+}
+
 function rejectedPromptPi(): readonly [string, ...string[]] {
   return [
     process.execPath,
@@ -239,6 +251,7 @@ describe("review RPC runner", () => {
       report: "No findings.",
       sandboxed: true,
       workLogPath: workLog.path,
+      reportPath: "/tmp/report.md",
     };
 
     expect(finalizeReviewWorkLog(workLog, { result })).toEqual({
@@ -690,6 +703,12 @@ describe("review RPC runner", () => {
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
+  it("allows a settled report a bounded close grace period", async () => {
+    await expect(
+      runReviewRpc(settledDelayedExitPi(), process.cwd(), process.env, "Review the source", 200),
+    ).resolves.toBe("Settled report.");
+  });
+
   it("collects delta-only message updates from Pi 0.84", async () => {
     await expect(
       runReviewRpc(
@@ -731,10 +750,12 @@ describe("review RPC runner", () => {
     ).rejects.toThrow("[REVIEW_ASSISTANT_FAILED]");
   });
 
-  it("rejects cumulative RPC output above 4 MiB", async () => {
+  it("rejects cumulative RPC output above the selected limit with a stable diagnostic", async () => {
     await expect(
-      runReviewRpc(oversizedDeltaPi(), process.cwd(), process.env, "Review the source", 5_000),
-    ).rejects.toThrow("Pi RPC output exceeded 4 MiB");
+      runReviewRpc(oversizedDeltaPi(), process.cwd(), process.env, "Review the source", 5_000, {
+        maxRpcOutputBytes: 1 * 1024 * 1024,
+      }),
+    ).rejects.toThrow("[REVIEW_RPC_OUTPUT_LIMIT] Pi RPC output exceeded the 1 MiB limit");
   });
 
   it("preserves UTF-8 split across RPC stdout chunks", async () => {
