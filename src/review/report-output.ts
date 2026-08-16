@@ -288,13 +288,35 @@ async function restoreQuarantinedReviewReportPath(
     await link(quarantinePath, originalPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error("Review report path changed again during reservation cleanup", {
+      const preservedPath = await preserveQuarantinedReviewReportPath(quarantinePath, originalPath);
+      throw new Error(`Review report replacement was preserved at ${preservedPath}`, {
         cause: error,
       });
     }
     throw error;
   }
   await unlink(quarantinePath);
+}
+
+async function preserveQuarantinedReviewReportPath(
+  quarantinePath: string,
+  originalPath: string,
+): Promise<string> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const preservedPath = path.join(
+      path.dirname(originalPath),
+      `${path.basename(originalPath)}.pioneer-preserved-${crypto.randomUUID()}`,
+    );
+    try {
+      await link(quarantinePath, preservedPath);
+      await unlink(quarantinePath);
+      return preservedPath;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
+      throw error;
+    }
+  }
+  throw new Error("Review report replacement could not be moved out of cleanup quarantine");
 }
 
 async function removeOwnedReviewReportPath(

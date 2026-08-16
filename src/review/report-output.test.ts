@@ -9,9 +9,16 @@ const unlinkFile = vi.hoisted(() =>
     return unlink(...args);
   }),
 );
+const linkFile = vi.hoisted(() =>
+  vi.fn(async (...args: Parameters<typeof import("node:fs/promises").link>) => {
+    const { link } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    return link(...args);
+  }),
+);
 
 vi.mock("node:fs/promises", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:fs/promises")>()),
+  link: linkFile,
   unlink: unlinkFile,
 }));
 
@@ -101,6 +108,30 @@ describe("review report output", () => {
     });
 
     expect(await readFile(target, "utf8")).toBe("replacement\n");
+  });
+
+  it("preserves a quarantined replacement visibly when restoration collides", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    linkFile.mockImplementationOnce(async (_existingPath, newPath) => {
+      await writeFile(newPath, "second replacement\n", { flag: "wx" });
+      throw Object.assign(new Error("path exists"), { code: "EEXIST" });
+    });
+
+    await expect(
+      releaseReviewReportReservation(reservation, async () => {
+        await import("node:fs/promises").then(({ rm }) => rm(target));
+        await writeFile(target, "first replacement\n");
+      }),
+    ).rejects.toThrow(/preserved/i);
+
+    expect(await readFile(target, "utf8")).toBe("second replacement\n");
+    const entries = await readdir(root);
+    const preserved = entries.filter((entry) => entry.startsWith("report.md.pioneer-preserved-"));
+    expect(preserved).toHaveLength(1);
+    expect(await readFile(path.join(root, preserved[0] ?? ""), "utf8")).toBe("first replacement\n");
+    expect(entries.some((entry) => entry.endsWith(".pioneer-releasing"))).toBe(false);
   });
 
   it("does not overwrite a report target replaced after ownership validation", async () => {
