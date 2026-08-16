@@ -1,16 +1,17 @@
 import crypto from "node:crypto";
 import type { Stats } from "node:fs";
-import { link, lstat, open, readFile, unlink } from "node:fs/promises";
+import { link, lstat, open, readdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { currentProcessInstanceIdentities, processInstanceIdentities } from "./work-log.js";
 
 export interface ReviewReportReservation {
   readonly target: string;
   readonly reservationPath: string;
+  readonly publicationPath: string;
   readonly device: number;
   readonly inode: number;
   readonly marker: string;
-  state: "reserved" | "published" | "released";
+  state: "reserved" | "publishing" | "published" | "released";
 }
 
 interface ReviewReportReservationOwner {
@@ -26,6 +27,13 @@ const REVIEW_REPORT_RESERVATION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROCESS_INSTANCE_IDENTITY = /^[0-9a-f]{64}$/i;
 const MAX_REVIEW_REPORT_RESERVATION_BYTES = 1024;
+
+function reviewReportPublicationPath(target: string, reservationId: string): string {
+  return path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${reservationId}.pioneer-publishing`,
+  );
+}
 
 function parseReviewReportReservationOwner(
   marker: string,
@@ -78,6 +86,37 @@ function reviewReportReservationOwnerIsLive(
 }
 
 export async function isActiveReviewReportReservation(target: string): Promise<boolean> {
+  const publicationPrefix = `.${path.basename(target)}.`;
+  const publicationSuffix = ".pioneer-publishing";
+  const publicationEntries = await readdir(path.dirname(target)).catch(
+    (error: unknown): string[] => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    },
+  );
+  for (const entry of publicationEntries) {
+    if (!entry.startsWith(publicationPrefix) || !entry.endsWith(publicationSuffix)) continue;
+    const publicationPath = path.join(path.dirname(target), entry);
+    try {
+      const stats = await lstat(publicationPath);
+      if (!stats.isFile() || stats.size === 0 || stats.size > MAX_REVIEW_REPORT_RESERVATION_BYTES) {
+        continue;
+      }
+      const marker = await readFile(publicationPath, "utf8");
+      const owner = parseReviewReportReservationOwner(marker);
+      if (
+        owner !== undefined &&
+        reviewReportReservationOwnerIsLive(owner.pid, owner.processIdentities)
+      ) {
+        return true;
+      }
+      await unlink(publicationPath).catch((error: unknown) => {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
   try {
     const targetStats = await lstat(target);
     if (
@@ -165,6 +204,36 @@ async function reservedSidecarStats(
   }
 }
 
+async function ownedPublishingFileStats(
+  file: string,
+  reservation: ReviewReportReservation,
+): Promise<Stats | undefined> {
+  try {
+    const stats = await lstat(file);
+    if (!stats.isFile()) return undefined;
+    const identity = sameKnownFileIdentity(stats, reservation);
+    if (identity === true) return stats;
+    if (identity === false || stats.size !== Buffer.byteLength(reservation.marker)) {
+      return undefined;
+    }
+    return (await readFile(file, "utf8")) === reservation.marker ? stats : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function readPublicationMarker(
+  reservation: ReviewReportReservation,
+): Promise<string | undefined> {
+  try {
+    return await readFile(reservation.publicationPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 type WriteReviewReportReservationMarker = (
   handle: Awaited<ReturnType<typeof open>>,
   marker: string,
@@ -178,6 +247,7 @@ export async function reserveReviewReport(
 ): Promise<ReviewReportReservation> {
   const reservationId = crypto.randomUUID();
   const reservationPath = reviewReportReservationPath(target, reservationId);
+  const publicationPath = reviewReportPublicationPath(target, reservationId);
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   const processIdentities = currentProcessInstanceIdentities(process.platform);
   if (processIdentities === undefined) {
@@ -193,6 +263,7 @@ export async function reserveReviewReport(
   let reservation: ReviewReportReservation = {
     target,
     reservationPath,
+    publicationPath,
     device: 0,
     inode: 0,
     marker,
@@ -220,6 +291,7 @@ export async function reserveReviewReport(
     reservation = {
       target,
       reservationPath,
+      publicationPath,
       device: stats.dev,
       inode: stats.ino,
       marker,
@@ -244,13 +316,21 @@ export async function publishReservedReviewReport(
   reservation: ReviewReportReservation,
   report: string,
   afterOwnershipValidation: () => Promise<void> = async () => {},
+  afterReportWrite: () => Promise<void> = async () => {},
 ): Promise<void> {
   if (reservation.state !== "reserved") {
     throw new Error(`Review report reservation is no longer active: ${reservation.target}`);
   }
   let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let publicationHandle: Awaited<ReturnType<typeof open>> | undefined;
   let failure: unknown;
   try {
+    publicationHandle = await open(reservation.publicationPath, "wx", 0o600);
+    await publicationHandle.writeFile(reservation.marker, "utf8");
+    await publicationHandle.sync();
+    await publicationHandle.close();
+    publicationHandle = undefined;
+    reservation.state = "publishing";
     handle = await open(reservation.reservationPath, "r+");
     const openedStats = await handle.stat();
     if (
@@ -284,6 +364,7 @@ export async function publishReservedReviewReport(
       if (bytesWritten <= 0) throw new Error("Review report reservation write made no progress");
       offset += bytesWritten;
     }
+    await afterReportWrite();
     await handle.truncate(contents.length);
     await handle.sync();
     const publishedStats = await lstat(reservation.target).catch(() => undefined);
@@ -302,11 +383,39 @@ export async function publishReservedReviewReport(
     await handle.close();
     handle = undefined;
     await unlink(reservation.reservationPath).catch(() => {});
+    await unlink(reservation.publicationPath).catch(() => {});
   } catch (error) {
     failure = error;
+    if (handle !== undefined) {
+      try {
+        const marker = Buffer.from(reservation.marker, "utf8");
+        let offset = 0;
+        while (offset < marker.length) {
+          const { bytesWritten } = await handle.write(
+            marker,
+            offset,
+            marker.length - offset,
+            offset,
+          );
+          if (bytesWritten <= 0) break;
+          offset += bytesWritten;
+        }
+        if (offset === marker.length) {
+          await handle.truncate(marker.length);
+          await handle.sync();
+        }
+      } catch {
+        // Preserve the publication failure; release uses the owned inode when available.
+      }
+    }
   }
   try {
     await handle?.close();
+  } catch (error) {
+    failure ??= error;
+  }
+  try {
+    await publicationHandle?.close();
   } catch (error) {
     failure ??= error;
   }
@@ -318,13 +427,23 @@ export async function publishReservedReviewReport(
 export async function releaseReviewReportReservation(
   reservation: ReviewReportReservation,
 ): Promise<void> {
-  if (reservation.state !== "reserved") return;
-  const [targetStats, sidecarStats] = await Promise.all([
-    reservedTargetStats(reservation),
-    reservedSidecarStats(reservation),
+  if (reservation.state === "published" || reservation.state === "released") return;
+  const targetStatsPromise =
+    reservation.state === "publishing"
+      ? ownedPublishingFileStats(reservation.target, reservation)
+      : reservedTargetStats(reservation);
+  const sidecarStatsPromise =
+    reservation.state === "publishing"
+      ? ownedPublishingFileStats(reservation.reservationPath, reservation)
+      : reservedSidecarStats(reservation);
+  const [targetStats, sidecarStats, publicationMarker] = await Promise.all([
+    targetStatsPromise,
+    sidecarStatsPromise,
+    readPublicationMarker(reservation),
   ]);
   if (targetStats !== undefined) await unlink(reservation.target);
   if (sidecarStats !== undefined) await unlink(reservation.reservationPath);
+  if (publicationMarker === reservation.marker) await unlink(reservation.publicationPath);
   reservation.state = "released";
 }
 

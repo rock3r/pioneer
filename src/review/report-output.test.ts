@@ -105,6 +105,50 @@ describe("review report output", () => {
     expect(await readFile(target, "utf8")).toBe("replacement\n");
   });
 
+  it("keeps a report reservation active while publishing through its owned inode", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    let observedPublishingState = false;
+
+    await publishReservedReviewReport(
+      reservation,
+      "No findings.",
+      async () => {},
+      async () => {
+        observedPublishingState = true;
+        expect(await readFile(target, "utf8")).not.toBe(reservation.marker);
+        await expect(isActiveReviewReportReservation(target)).resolves.toBe(true);
+      },
+    );
+
+    expect(observedPublishingState).toBe(true);
+    expect(await readFile(target, "utf8")).toBe("No findings.\n");
+  });
+
+  it("restores and removes its reservation after publication fails post-write", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reserved = await reserveReviewReport(target);
+    const reservation = { ...reserved, device: 0, inode: 0 };
+
+    await expect(
+      publishReservedReviewReport(
+        reservation,
+        "No findings.",
+        async () => {},
+        async () => {
+          throw new Error("publication failed");
+        },
+      ),
+    ).rejects.toThrow("publication failed");
+
+    expect(await readFile(target, "utf8")).toBe(reservation.marker);
+    await releaseReviewReportReservation(reservation);
+    await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(reservation.reservationPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("removes an unpublished report reservation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const target = path.join(root, "report.md");

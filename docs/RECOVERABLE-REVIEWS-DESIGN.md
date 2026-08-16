@@ -58,8 +58,12 @@ actor-visible grants and the Pi-home snapshot source before it creates, changes
 permissions on, or prunes that directory.
 
 Successful persistence writes through only the still-owned marked reservation
-inode and fails if the target identity changes. Failure cleanup removes only that reservation, never a path another
-process replaced. `--no-resume` does not create, chmod, or prune resume storage.
+inode and fails if the target identity changes. A separate random publication
+lease keeps retention from pruning that path while its contents are changing.
+If publication fails after writing begins, Pioneer restores the ownership marker
+before returning and failure cleanup removes only the inode it still owns, never
+a path another process replaced. `--no-resume` does not create, chmod, or prune
+resume storage.
 
 ### Resume
 
