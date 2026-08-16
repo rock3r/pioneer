@@ -16,6 +16,7 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
 }));
 
 import {
+  isActiveReviewReportReservation,
   publishReservedReviewReport,
   releaseReviewReportReservation,
   reserveReviewReport,
@@ -31,8 +32,22 @@ describe("review report output", () => {
     const reservation = await reserveReviewReport(target);
 
     expect(await readFile(target, "utf8")).toContain("PIONEER_REPORT_RESERVED");
+    await expect(isActiveReviewReportReservation(target)).resolves.toBe(true);
     await publishReservedReviewReport({ ...reservation, device: 0, inode: 0 }, "No findings.");
     expect(await readFile(target, "utf8")).toBe("No findings.\n");
+    await expect(isActiveReviewReportReservation(target)).resolves.toBe(false);
+    await expect(stat(reservation.reservationPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not let published model text spoof an active reservation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+
+    await publishReservedReviewReport(reservation, reservation.marker.trimEnd());
+
+    expect(await readFile(target, "utf8")).toBe(reservation.marker);
+    await expect(isActiveReviewReportReservation(target)).resolves.toBe(false);
   });
 
   it("does not publish over or remove a replaced report reservation", async () => {
@@ -58,6 +73,7 @@ describe("review report output", () => {
     await releaseReviewReportReservation(reservation);
 
     await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(reservation.reservationPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("does not remove a reservation that was modified in place", async () => {
@@ -83,6 +99,9 @@ describe("review report output", () => {
     ).rejects.toThrow("marker write failed");
 
     await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(path.join(root, ".report.md.pioneer-reservation"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 
   it("atomically creates a private report file", async () => {

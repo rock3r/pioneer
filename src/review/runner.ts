@@ -1503,6 +1503,7 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
         `${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed with this resume.`,
       );
     }
+    await assertReviewResumeOutputsOutsideArchive(loaded.archive.archiveDir, request);
     const thinking = loaded.scope.thinking;
     if (thinking !== undefined && !isThinkingLevel(thinking)) {
       throw new Error("[REVIEW_RESUME_UNAVAILABLE] Stored thinking level is invalid");
@@ -1554,5 +1555,41 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
       );
     }
     throw failure;
+  }
+}
+
+export async function assertReviewResumeOutputsOutsideArchive(
+  archiveDir: string,
+  outputs: Pick<ResumeReviewRequest, "reportPath" | "workLogPath">,
+): Promise<void> {
+  if (outputs.reportPath !== undefined) {
+    try {
+      await validateProspectiveReviewReportPath({
+        sourceDir: archiveDir,
+        reportPath: outputs.reportPath,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("actor-visible")) {
+        throw new Error(
+          `[REVIEW_RESUME_OUTPUT_INVALID] Review report target overlaps the retained archive: ${outputs.reportPath}`,
+        );
+      }
+      throw error;
+    }
+  }
+  if (outputs.workLogPath !== undefined) {
+    try {
+      await validateProspectiveReviewWorkLogPath({
+        sourceDir: archiveDir,
+        workLogPath: outputs.workLogPath,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("actor-visible")) {
+        throw new Error(
+          `[REVIEW_RESUME_OUTPUT_INVALID] Review work log target overlaps the retained archive: ${outputs.workLogPath}`,
+        );
+      }
+      throw error;
+    }
   }
 }

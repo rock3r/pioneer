@@ -26,7 +26,7 @@ For reviews:
 - the source and repeated `--allow-read` grants are read-only;
 - the private native Pi session attempt directory is a separate controller-created writable path; prior attempts and the archive parent are never granted to the actor;
 - the private scratch directory and repeated `--allow-write` grants are writable;
-- an optional `--report` target is controller-owned, create-only, and never granted to the actor; it must be absolute, absent, and outside every actor-visible grant; Pioneer exclusively reserves it with a private random ownership marker before announcing the path and atomically publishes only over that still-owned reservation;
+- an optional `--report` target is controller-owned, create-only, and never granted to the actor; it must be absolute, absent, and outside every actor-visible grant; Pioneer exclusively reserves it with a private random ownership marker plus a controller-owned sibling reservation link before announcing the path, so untrusted report text cannot impersonate an active reservation, and atomically publishes only over that still-owned reservation;
 - every review work log is controller-owned, create-only, and never granted to the actor; an explicit `--work-log` target must be absolute, absent, free of control characters, and outside every actor-visible grant;
 - a writable grant may not overlap the source or a read-only grant;
 - filesystem roots and the user's home directory are rejected as grants;

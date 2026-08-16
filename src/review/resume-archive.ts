@@ -699,8 +699,7 @@ export async function retainReviewResumeArchive(
     }
     let retainedUsage: { sizeBytes: number; fileCount: number; entryCount: number };
     try {
-      const usage = await inspectReviewResumeSessionTree(archive.activeAttemptDir);
-      if (usage.fileCount === 0) throw new Error("Review resume session candidate is empty");
+      await findReviewResumeSessionFile(archive.activeAttemptDir);
       const archiveUsage = await inspectReviewResumeArchive(archive);
       const manifestPath = path.join(archive.archiveDir, "manifest.json");
       const manifest = await readManifest(archive.archiveDir);

@@ -126,8 +126,37 @@ describe("recoverable review archive", () => {
 
     expect(await readFile(activeReport, "utf8")).toContain("PIONEER_REPORT_RESERVED");
     expect(
-      (await readdir(reportDirectory, { withFileTypes: true })).filter((entry) => entry.isFile()),
+      (await readdir(reportDirectory, { withFileTypes: true })).filter(
+        (entry) => entry.isFile() && entry.name.endsWith(".md"),
+      ),
     ).toHaveLength(100);
+  });
+
+  it("prunes completed reports that contain reservation-shaped model text", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
+    await mkdir(reportDirectory, { recursive: true });
+    const spoofedReport = path.join(
+      reportDirectory,
+      "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
+    );
+    await writeFile(
+      spoofedReport,
+      "<!-- PIONEER_REPORT_RESERVED 550e8400-e29b-41d4-a716-446655440000 -->\n",
+    );
+    for (let index = 0; index < 100; index += 1) {
+      await writeFile(
+        path.join(
+          reportDirectory,
+          `review-20260816T000000000Z-${String(index).padStart(32, "0")}.md`,
+        ),
+        "report",
+      );
+    }
+
+    await prepareDefaultReviewReportPath({}, process.platform, home);
+
+    await expect(stat(spoofedReport)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("uses private per-user sibling directories and UUID-only archive lookup", () => {
@@ -273,6 +302,33 @@ describe("recoverable review archive", () => {
     await expect(reviewResumeArchiveHasLiveLease(next)).resolves.toBe(true);
     await retainReviewResumeArchive(next, "REVIEW_RPC_INCOMPLETE");
     await expect(reviewResumeArchiveHasLiveLease(next)).resolves.toBe(false);
+  });
+
+  it("does not retain an attempt without exactly one native session file", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "sidecar.txt"), "sidecar");
+
+    await expect(retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE")).rejects.toThrow(
+      /exactly one native session file/i,
+    );
+
+    const secondArchive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "x",
+      network: "none",
+      piVersion: "0.84.2",
+    });
+    await writeFile(path.join(secondArchive.activeAttemptDir, "first.jsonl"), "first");
+    await writeFile(path.join(secondArchive.activeAttemptDir, "second.jsonl"), "second");
+    await expect(retainReviewResumeArchive(secondArchive, "REVIEW_RPC_INCOMPLETE")).rejects.toThrow(
+      /exactly one native session file/i,
+    );
   });
 
   it("rolls back to the prior committed attempt when a resumed session is not retainable", async () => {

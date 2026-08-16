@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  assertReviewResumeOutputsOutsideArchive,
   buildReviewPrompt,
   canonicalReviewPiHomeSource,
   cleanupCompletedReviewResumeArchive,
@@ -243,6 +244,21 @@ process.stdin.once("data", () => {
 }
 
 describe("review RPC runner", () => {
+  it("rejects resumed outputs inside the retained archive", async () => {
+    const archive = await mkdtemp(path.join(tmpdir(), "pioneer-resume-output-"));
+
+    await expect(
+      assertReviewResumeOutputsOutsideArchive(archive, {
+        reportPath: path.join(archive, "report.md"),
+      }),
+    ).rejects.toThrow(/archive/i);
+    await expect(
+      assertReviewResumeOutputsOutsideArchive(archive, {
+        workLogPath: path.join(archive, "review.jsonl"),
+      }),
+    ).rejects.toThrow(/archive/i);
+  });
+
   it("preserves a successful report while marking cleanup failure terminal", () => {
     const result = {
       report: "No findings.",
