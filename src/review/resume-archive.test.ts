@@ -134,6 +134,36 @@ describe("recoverable review archive", () => {
     ).toHaveLength(100);
   });
 
+  it("does not reclaim a live reservation before its target link is created", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
+    await mkdir(reportDirectory, { recursive: true });
+    const report = path.join(
+      reportDirectory,
+      "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
+    );
+    let markerReady!: () => void;
+    const markerWritten = new Promise<void>((resolve) => {
+      markerReady = resolve;
+    });
+    let continueSetup!: () => void;
+    const setupMayContinue = new Promise<void>((resolve) => {
+      continueSetup = resolve;
+    });
+    const reservationPromise = reserveReviewReport(report, async (handle, marker) => {
+      await handle.writeFile(marker, "utf8");
+      markerReady();
+      await setupMayContinue;
+    });
+    await markerWritten;
+
+    await prepareDefaultReviewReportPath({}, process.platform, home);
+    continueSetup();
+
+    const reservation = await reservationPromise;
+    expect(await readFile(report, "utf8")).toBe(reservation.marker);
+  });
+
   it("reclaims an orphaned published report reservation sibling", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);

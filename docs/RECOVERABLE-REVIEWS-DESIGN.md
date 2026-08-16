@@ -55,7 +55,10 @@ later retention pass reclaims the sibling link after that controller exits, so
 interrupted reviews cannot accumulate permanently active reservations.
 The same pass removes inactive post-publication reservation and publication
 siblings so a transient cleanup failure cannot retain report content outside
-the visible 100-report bound.
+the visible 100-report bound. It protects a sibling whose marker belongs to a
+live controller even before the target hard link exists, and grants an
+empty/partial marker a one-minute creation grace so concurrent retention cannot
+race reservation setup.
 Pioneer canonicalizes and validates the prospective default target against all
 actor-visible grants and the Pi-home snapshot source before it creates, changes
 permissions on, or prunes that directory.

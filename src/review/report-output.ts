@@ -27,6 +27,8 @@ const REVIEW_REPORT_RESERVATION_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROCESS_INSTANCE_IDENTITY = /^[0-9a-f]{64}$/i;
 const MAX_REVIEW_REPORT_RESERVATION_BYTES = 1024;
+const INCOMPLETE_REVIEW_REPORT_SIDECAR_GRACE_MS = 60_000;
+const REVIEW_REPORT_RESERVATION_PREFIX = "<!-- PIONEER_REPORT_RESERVED ";
 
 function reviewReportPublicationPath(target: string, reservationId: string): string {
   return path.join(
@@ -83,6 +85,36 @@ function reviewReportReservationOwnerIsLive(
     currentIdentities === undefined ||
     currentIdentities.some((identity) => ownerIdentities.includes(identity))
   );
+}
+
+export async function shouldProtectReviewReportSidecar(
+  sidecarPath: string,
+  now = Date.now(),
+): Promise<boolean> {
+  try {
+    const stats = await lstat(sidecarPath);
+    if (!stats.isFile() || stats.size > MAX_REVIEW_REPORT_RESERVATION_BYTES) return false;
+    const ageMs = now - stats.mtimeMs;
+    if (stats.size === 0) {
+      return (
+        ageMs >= -INCOMPLETE_REVIEW_REPORT_SIDECAR_GRACE_MS &&
+        ageMs <= INCOMPLETE_REVIEW_REPORT_SIDECAR_GRACE_MS
+      );
+    }
+    const marker = await readFile(sidecarPath, "utf8");
+    const owner = parseReviewReportReservationOwner(marker);
+    if (owner !== undefined) {
+      return reviewReportReservationOwnerIsLive(owner.pid, owner.processIdentities);
+    }
+    return (
+      marker.startsWith(REVIEW_REPORT_RESERVATION_PREFIX) &&
+      ageMs >= -INCOMPLETE_REVIEW_REPORT_SIDECAR_GRACE_MS &&
+      ageMs <= INCOMPLETE_REVIEW_REPORT_SIDECAR_GRACE_MS
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 export async function isActiveReviewReportReservation(target: string): Promise<boolean> {

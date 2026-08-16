@@ -16,7 +16,10 @@ import {
 import os from "node:os";
 import path from "node:path";
 import type { ReviewNetworkMode } from "./isolation.js";
-import { isActiveReviewReportReservation } from "./report-output.js";
+import {
+  isActiveReviewReportReservation,
+  shouldProtectReviewReportSidecar,
+} from "./report-output.js";
 import { currentProcessInstanceIdentities, processInstanceIdentities } from "./work-log.js";
 
 export interface ImmutableReviewScope {
@@ -576,9 +579,11 @@ export async function prepareValidatedDefaultReviewReportPath(
     }
   }
   for (const sidecar of sidecars) {
+    const sidecarPath = path.join(directory, sidecar.name);
+    if (await shouldProtectReviewReportSidecar(sidecarPath)) continue;
     const target = path.join(directory, sidecar.targetName);
     if (await isActiveReviewReportReservation(target)) continue;
-    await unlink(path.join(directory, sidecar.name)).catch((error: unknown) => {
+    await unlink(sidecarPath).catch((error: unknown) => {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     });
   }
