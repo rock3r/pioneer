@@ -71,6 +71,20 @@ describe("recoverable review archive", () => {
     expect(defaultReviewReportDirectory({}, "linux", "/home/test")).toBe(
       "/home/test/.local/share/pioneer/reports",
     );
+    expect(
+      defaultReviewResumeDirectory(
+        { LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" },
+        "win32",
+        "C:\\Users\\test",
+      ),
+    ).toBe("C:\\Users\\test\\AppData\\Local\\Pioneer\\review-resumes");
+    expect(
+      defaultReviewReportDirectory(
+        { LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" },
+        "win32",
+        "C:\\Users\\test",
+      ),
+    ).toBe("C:\\Users\\test\\AppData\\Local\\Pioneer\\reports");
     expect(isResumeToken("not-a-token")).toBe(false);
     expect(isResumeToken("550e8400-e29b-41d4-a716-446655440000")).toBe(true);
     expect(resumeArchivePath("/private/root", "550e8400-e29b-41d4-a716-446655440000")).toBe(

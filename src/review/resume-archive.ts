@@ -52,24 +52,29 @@ export const MAX_RESUME_ATTEMPT = 9_999;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function platformPath(platform: NodeJS.Platform): typeof path.posix | typeof path.win32 {
+  return platform === "win32" ? path.win32 : path.posix;
+}
+
 function appDataRoot(
   environment: NodeJS.ProcessEnv,
   platform: NodeJS.Platform,
   home: string,
 ): string {
+  const pathApi = platformPath(platform);
   const ensureAbsolute = (root: string): string => {
-    if (!path.isAbsolute(root)) throw new Error("Review application-data root must be absolute");
+    if (!pathApi.isAbsolute(root)) throw new Error("Review application-data root must be absolute");
     return root;
   };
   if (platform === "darwin") {
-    return ensureAbsolute(path.join(home, "Library", "Application Support", "Pioneer"));
+    return ensureAbsolute(pathApi.join(home, "Library", "Application Support", "Pioneer"));
   }
   if (platform === "win32") {
-    const base = environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local");
-    return ensureAbsolute(path.join(base, "Pioneer"));
+    const base = environment.LOCALAPPDATA ?? pathApi.join(home, "AppData", "Local");
+    return ensureAbsolute(pathApi.join(base, "Pioneer"));
   }
-  const base = environment.XDG_DATA_HOME ?? path.join(home, ".local", "share");
-  return ensureAbsolute(path.join(base, "pioneer"));
+  const base = environment.XDG_DATA_HOME ?? pathApi.join(home, ".local", "share");
+  return ensureAbsolute(pathApi.join(base, "pioneer"));
 }
 
 export function defaultReviewResumeDirectory(
@@ -77,7 +82,7 @@ export function defaultReviewResumeDirectory(
   platform: NodeJS.Platform = process.platform,
   home = os.homedir(),
 ): string {
-  return path.join(appDataRoot(environment, platform, home), "review-resumes");
+  return platformPath(platform).join(appDataRoot(environment, platform, home), "review-resumes");
 }
 
 export function defaultReviewReportDirectory(
@@ -85,7 +90,7 @@ export function defaultReviewReportDirectory(
   platform: NodeJS.Platform = process.platform,
   home = os.homedir(),
 ): string {
-  return path.join(appDataRoot(environment, platform, home), "reports");
+  return platformPath(platform).join(appDataRoot(environment, platform, home), "reports");
 }
 
 export function isResumeToken(token: string): boolean {
