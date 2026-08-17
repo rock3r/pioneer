@@ -79,7 +79,7 @@ The target must be absolute, absent, outside every actor-visible grant, and bene
 
 ## Persist a report
 
-The canonical result is stdout. Pioneer also atomically persists every verified final report to a private default report directory and prints `[PIONEER_REPORT] ABSOLUTE_PATH` on stderr. Use `--report` when Pioneer should select a different controller-owned target:
+The canonical result is stdout. Pioneer also persists every verified final report to a private default report directory and prints `[PIONEER_REPORT] ABSOLUTE_PATH` on stderr. While the command is running, that path is a protected reservation and may contain its ownership marker or report bytes being published in place; treat it as the completed durable report only after a successful terminal result. Use `--report` when Pioneer should select a different controller-owned target:
 
 ```bash
 pioneer review \
