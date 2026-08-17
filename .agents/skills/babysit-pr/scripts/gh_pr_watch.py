@@ -924,6 +924,78 @@ def gh_api_list_paginated(endpoint, repo=None, per_page=100, query_params=None):
     return items
 
 
+def gh_graphql_list_reviews(repo, pr_number):
+    owner, name = repo.split("/", 1)
+    query = (
+        "query($owner:String!, $name:String!, $number:Int!, $cursor:String) {"
+        " repository(owner:$owner, name:$name) {"
+        "   pullRequest(number:$number) {"
+        "     reviews(first:100, after:$cursor) {"
+        "       pageInfo { hasNextPage endCursor }"
+        "       nodes {"
+        "         id: databaseId"
+        "         user: author { login }"
+        "         author_association: authorAssociation"
+        "         submitted_at: submittedAt"
+        "         body"
+        "         state"
+        "         html_url: url"
+        "       }"
+        "     }"
+        "   }"
+        " }"
+        "}"
+    )
+
+    items = []
+    cursor = None
+    while True:
+        args = [
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"name={name}",
+            "-F",
+            f"number={pr_number}",
+        ]
+        if cursor is not None:
+            args.extend(["-F", f"cursor={cursor}"])
+
+        payload = gh_json(args, repo=repo)
+        if not isinstance(payload, dict):
+            raise GhCommandError("Unexpected GraphQL payload for reviews")
+
+        data = payload.get("data") or {}
+        repository = data.get("repository") or {}
+        pull_request = repository.get("pullRequest") or {}
+        reviews = pull_request.get("reviews") or {}
+        nodes = reviews.get("nodes") or []
+        if not isinstance(nodes, list):
+            raise GhCommandError("Unexpected reviews.nodes payload")
+        items.extend(nodes)
+
+        page_info = reviews.get("pageInfo") or {}
+        if not bool(page_info.get("hasNextPage")):
+            break
+        cursor = page_info.get("endCursor")
+        if not cursor:
+            raise GhCommandError("Missing GraphQL reviews pagination cursor")
+
+    return items
+
+
+def get_review_payload(repo, pr_number):
+    endpoint = comment_endpoints(repo, pr_number)["review"]
+    try:
+        return gh_api_list_paginated(endpoint, repo=repo)
+    except GhCommandError:
+        return gh_graphql_list_reviews(repo, pr_number)
+
+
 def normalize_issue_comments(items):
     out = []
     for item in items:
@@ -1079,7 +1151,7 @@ def fetch_new_review_items(pr, state, fresh_state, authenticated_login=None):
         endpoints["review_comment"],
         repo=repo,
     )
-    review_payload = gh_api_list_paginated(endpoints["review"], repo=repo)
+    review_payload = get_review_payload(repo, pr_number)
 
     issue_items = normalize_issue_comments(issue_payload)
     review_comment_items = normalize_review_comments(review_comment_payload)
