@@ -7,6 +7,9 @@ description: Monitor a Pioneer pull request until checks, automated reviews, and
 
 Use `scripts/gh_pr_watch.py` to monitor a pull request created from this repository.
 
+The watcher falls back to GitHub GraphQL when the REST review-list endpoint
+fails. It still fails closed when neither source can provide review state.
+
 ```bash
 python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr auto --once
 ```
