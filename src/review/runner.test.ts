@@ -81,6 +81,35 @@ process.stdin.once("data", () => {
   ];
 }
 
+function nearLimitAfterBatchedDeltasPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+process.stdin.once("data", () => {
+  let initial = "";
+  for (let index = 0; index < 1_001; index += 1) {
+    initial += JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "x" },
+    }) + "\\n";
+  }
+  process.stdout.write(initial, () => setTimeout(() => {
+    process.stdout.write(JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "y".repeat(700 * 1024) },
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({
+      type: "message_end",
+      message: { role: "assistant", content: "No findings." },
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n");
+  }, 100));
+});
+`,
+  ];
+}
+
 function splitUtf8Pi(): readonly [string, ...string[]] {
   return [
     process.execPath,
@@ -787,6 +816,24 @@ describe("review RPC runner", () => {
     expect(serialized).not.toContain("private source");
     expect(serialized).not.toContain("private finding");
     expect(serialized).toContain('"deltaBytes":15');
+  });
+
+  it("flushes queued Pi deltas before a later RPC near-limit record", async () => {
+    const { log, records } = recordingWorkLog();
+
+    await runReviewRpc(
+      nearLimitAfterBatchedDeltasPi(),
+      process.cwd(),
+      process.env,
+      "Review the source",
+      5_000,
+      { workLog: log, maxRpcOutputBytes: 1 * 1024 * 1024 },
+    );
+
+    const deltaBatchIndex = records.findIndex(({ type }) => type === "pi_event_delta_batch");
+    const nearLimitIndex = records.findIndex(({ type }) => type === "pi_rpc_near_limit");
+    expect(deltaBatchIndex).toBeGreaterThanOrEqual(0);
+    expect(nearLimitIndex).toBeGreaterThan(deltaBatchIndex);
   });
 
   it("redacts the original user prompt from Pi event metadata", async () => {

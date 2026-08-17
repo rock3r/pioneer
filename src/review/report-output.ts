@@ -131,17 +131,10 @@ export async function isActiveReviewReportReservation(target: string): Promise<b
     const publicationPath = path.join(path.dirname(target), entry);
     try {
       const stats = await lstat(publicationPath);
-      if (!stats.isFile() || stats.size === 0 || stats.size > MAX_REVIEW_REPORT_RESERVATION_BYTES) {
+      if (!stats.isFile() || stats.size > MAX_REVIEW_REPORT_RESERVATION_BYTES) {
         continue;
       }
-      const marker = await readFile(publicationPath, "utf8");
-      const owner = parseReviewReportReservationOwner(marker);
-      if (
-        owner !== undefined &&
-        reviewReportReservationOwnerIsLive(owner.pid, owner.processIdentities)
-      ) {
-        return true;
-      }
+      if (await shouldProtectReviewReportSidecar(publicationPath)) return true;
       await unlink(publicationPath).catch((error: unknown) => {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       });

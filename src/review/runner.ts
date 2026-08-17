@@ -759,7 +759,10 @@ export async function runReviewRpc(
       options.escalateProcess ??
       ((runningChild: ReturnType<typeof spawn>) => runningChild.kill("SIGKILL"));
     const workLogSecrets = [prompt, ...(options.sensitiveValues ?? [])];
-    const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
+    const writeWorkLogRecord = (
+      type: string,
+      details: Readonly<Record<string, unknown>> = {},
+    ): void => {
       if (options.workLog === undefined || workLogFailure !== undefined) return;
       try {
         options.workLog.record(type, details);
@@ -775,11 +778,15 @@ export async function runReviewRpc(
       }
     };
     const deltaBatcher = new PiDeltaBatcher((details) =>
-      recordWorkLog(
+      writeWorkLogRecord(
         details.type === "pi_event_delta_batch" ? "pi_event_delta_batch" : "pi_event",
         details,
       ),
     );
+    const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
+      deltaBatcher.flush();
+      writeWorkLogRecord(type, details);
+    };
     const finish = (error?: Error): void => {
       if (settled) return;
       deltaBatcher.flush();

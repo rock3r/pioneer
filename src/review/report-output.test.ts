@@ -198,6 +198,18 @@ describe("review report output", () => {
     expect(await readFile(target, "utf8")).toBe("No findings.\n");
   });
 
+  it("protects an incomplete publication marker during its setup grace", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    const incompleteMarker = reservation.marker.slice(0, -2);
+    await writeFile(target, "publication in progress\n");
+    await writeFile(reservation.publicationPath, incompleteMarker, { flag: "wx" });
+
+    await expect(isActiveReviewReportReservation(target)).resolves.toBe(true);
+    await expect(readFile(reservation.publicationPath, "utf8")).resolves.toBe(incompleteMarker);
+  });
+
   it("restores and removes its reservation after publication fails post-write", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
     const target = path.join(root, "report.md");
