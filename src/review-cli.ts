@@ -7,24 +7,13 @@ import { runEvalCli } from "./eval-command.js";
 import { formatModelCatalog, modelCatalogJson } from "./model-catalog-output.js";
 import { PIONEER_VERSION } from "./package-metadata.js";
 import { checkPiReadiness } from "./pi-readiness.js";
-import { runReview } from "./review/runner.js";
+import { validateRpcOutputLimitMiB } from "./review/rpc-limits.js";
+import { resumeReview, runReview } from "./review/runner.js";
 import { parseReviewCliArgs } from "./review-cli-args.js";
+import { REVIEW_USAGE } from "./review-cli-usage.js";
 import { isThinkingLevel } from "./thinking-level.js";
 import { checkForUpdate, type UpdateCheckResult } from "./update-check.js";
 import { runUpdateCommand } from "./update-command.js";
-
-const REVIEW_USAGE = `Usage:
-  pioneer review --source DIR --prompt TEXT [--model PROVIDER/MODEL] [--thinking LEVEL]
-    [--pi-home DIR] [--pi-home-include RELATIVE_PATH]... [--allow-read DIR] [--allow-write DIR]
-    [--report FILE] [--work-log FILE] [--network full|public|none] [--timeout-ms N]
-    [--allow-unsandboxed-windows]
-  pioneer doctor
-  pioneer models [--pi-home DIR] [--json]
-  pioneer check-update
-  pioneer update [--changelog] [--yes|-y]
-  pioneer eval prepare --skill DIR --evals FILE --output DIR
-  pioneer eval install-linux
-  pioneer eval run --run-dir DIR [options] -- COMMAND [ARG ...]`;
 
 function usage(): never {
   throw new CliUsageError(REVIEW_USAGE);
@@ -141,13 +130,69 @@ async function main(): Promise<void> {
       reportPath,
       workLogPath,
       networkText,
+      networkSpecified,
       timeoutText,
+      maxRpcOutputMbText,
+      noResume,
+      resumeToken,
       allowUnsandboxedWindows,
     } = parsed;
     const timeoutMs = timeoutText === undefined ? undefined : Number(timeoutText);
+    const maxRpcOutputBytes =
+      maxRpcOutputMbText === undefined
+        ? undefined
+        : validateRpcOutputLimitMiB(Number(maxRpcOutputMbText));
+    if (resumeToken !== undefined) {
+      if (
+        sourceDir !== undefined ||
+        prompt !== undefined ||
+        model !== undefined ||
+        thinkingText !== undefined ||
+        piHomeSource !== undefined ||
+        piHomeIncludes.length > 0 ||
+        allowReadPaths.length > 0 ||
+        allowWritePaths.length > 0 ||
+        networkText !== "full" ||
+        noResume ||
+        networkSpecified ||
+        parsed.remaining.length > 0 ||
+        (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1))
+      ) {
+        usage();
+      }
+      const result = await resumeReview({
+        resumeToken,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...(maxRpcOutputBytes === undefined ? {} : { maxRpcOutputBytes }),
+        ...(reportPath === undefined ? {} : { reportPath }),
+        ...(workLogPath === undefined ? {} : { workLogPath }),
+        allowUnsandboxedWindows,
+        onWorkLogReady: (logPath) => process.stderr.write(`[PIONEER_WORK_LOG] ${logPath}\n`),
+        onReportReady: (reportFile) => process.stderr.write(`[PIONEER_REPORT] ${reportFile}\n`),
+      });
+      if (result.warning) process.stderr.write(`WARNING: ${result.warning}\n`);
+      process.stdout.write(`${result.report}\n`);
+      if (result.resumeToken !== undefined) {
+        process.stderr.write(`[PIONEER_REVIEW_RESUME] ${result.resumeToken}\n`);
+      }
+      if (result.cleanupError !== undefined) {
+        process.stderr.write(`${result.cleanupError}\n`);
+        process.exitCode = 1;
+      }
+      if (result.reportWriteError !== undefined) {
+        process.stderr.write(`${result.reportWriteError}\n`);
+        process.exitCode = 1;
+      }
+      if (result.workLogWriteError !== undefined) {
+        process.stderr.write(`${result.workLogWriteError}\n`);
+        process.exitCode = 1;
+      }
+      return;
+    }
     if (
       !sourceDir ||
       !prompt ||
+      resumeToken !== undefined ||
       parsed.remaining.length > 0 ||
       !["full", "public", "none"].includes(networkText) ||
       (thinkingText !== undefined && !isThinkingLevel(thinkingText)) ||
@@ -169,9 +214,19 @@ async function main(): Promise<void> {
       ...(thinkingText === undefined ? {} : { thinking: thinkingText }),
       ...(piHomeSource === undefined ? {} : { piHomeSource: path.resolve(piHomeSource) }),
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(maxRpcOutputBytes === undefined ? {} : { maxRpcOutputBytes }),
+      ...(noResume ? { resumable: false } : {}),
+      onReportReady: (reportFile) => process.stderr.write(`[PIONEER_REPORT] ${reportFile}\n`),
     });
     if (result.warning) process.stderr.write(`WARNING: ${result.warning}\n`);
     process.stdout.write(`${result.report}\n`);
+    if (result.resumeToken !== undefined) {
+      process.stderr.write(`[PIONEER_REVIEW_RESUME] ${result.resumeToken}\n`);
+    }
+    if (result.cleanupError !== undefined) {
+      process.stderr.write(`${result.cleanupError}\n`);
+      process.exitCode = 1;
+    }
     if (result.reportWriteError !== undefined) {
       process.stderr.write(`${result.reportWriteError}\n`);
       process.exitCode = 1;

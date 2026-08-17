@@ -72,6 +72,12 @@ Ask naturally, for example:
 
 > Ask Pi to review the current working tree using provider/model at max thinking. Allow it to read `/absolute/reference`, but do not grant writes.
 
+The review skill preserves the CLI's private report and work-log path markers. If a
+terminal failure includes both `[REVIEW_RPC_OUTPUT_LIMIT]` and
+`[PIONEER_REVIEW_RESUME] TOKEN`, it retries exactly with `pioneer review --resume TOKEN`;
+the stored source, grants, model, thinking, Pi-home, network policy, and sandbox are not
+changed. Use `--no-resume` only when an explicitly ephemeral new review is wanted.
+
 ## Other coding agents
 
 Pioneer does not require a Codex- or Claude-specific runtime. Any coding agent that can execute local commands can use the CLI.

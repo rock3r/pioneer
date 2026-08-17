@@ -26,15 +26,42 @@ import {
   assertDistinctExistingReviewOutputs,
   buildReviewSandboxConfig,
   type ReviewNetworkMode,
+  validateProspectiveReviewReportPath,
   validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
 } from "./isolation.js";
-import { writeReviewReport } from "./report-output.js";
+import {
+  publishReservedReviewReport,
+  type ReviewReportReservation,
+  releaseReviewReportReservation,
+  reserveReviewReport,
+  writeReviewReport,
+} from "./report-output.js";
+import {
+  copyReviewResumeSession,
+  createReviewResumeArchive,
+  defaultReviewReportDirectory,
+  defaultReviewResumeDirectory,
+  deleteReviewResumeArchive,
+  findReviewResumeSessionFile,
+  type LoadedReviewResumeArchive,
+  loadReviewResumeArchive,
+  prepareDefaultReviewResumeDirectory,
+  prepareValidatedDefaultReviewReportPath,
+  pruneReviewResumeArchives,
+  type ReviewResumeArchive,
+  releaseLeasedReviewResumeArchive,
+  retainReviewResumeArchive,
+  rollbackReviewResumeArchiveToPriorAttempt,
+} from "./resume-archive.js";
+import { rpcOutputLimitDiagnostic, validateRpcOutputBytes } from "./rpc-limits.js";
 import { completeReviewRpc } from "./rpc-outcome.js";
 import {
   openReviewWorkLog,
+  PiDeltaBatcher,
   prepareValidatedDefaultReviewWorkLogPath,
   type ReviewWorkLog,
+  reviewWorkLogDirectory,
   sanitizeWorkLogDiagnostic,
   summarizePiEvent,
 } from "./work-log.js";
@@ -54,6 +81,9 @@ export interface ReviewRequest {
   readonly network?: ReviewNetworkMode;
   readonly allowUnsandboxedWindows?: boolean;
   readonly timeoutMs?: number;
+  readonly maxRpcOutputBytes?: number;
+  readonly resumable?: boolean;
+  readonly onReportReady?: (path: string) => void;
 }
 
 export interface ReviewResult {
@@ -62,15 +92,30 @@ export interface ReviewResult {
   readonly thinking?: ThinkingLevel;
   readonly sandboxed: boolean;
   readonly warning?: string;
+  readonly cleanupError?: string;
   readonly reportWriteError?: string;
   readonly workLogWriteError?: string;
   readonly workLogPath: string;
+  readonly reportPath: string;
+  readonly resumeToken?: string;
+}
+
+export interface ResumeReviewRequest {
+  readonly resumeToken: string;
+  readonly timeoutMs?: number;
+  readonly maxRpcOutputBytes?: number;
+  readonly reportPath?: string;
+  readonly workLogPath?: string;
+  readonly onWorkLogReady?: (path: string) => void;
+  readonly onReportReady?: (path: string) => void;
+  readonly allowUnsandboxedWindows?: boolean;
 }
 
 const WINDOWS_WARNING =
   "Windows review execution is unsandboxed. Read-only behavior and path restrictions are instructions, not operating-system security boundaries.";
+const REVIEW_CLEANUP_ERROR =
+  "[REVIEW_CLEANUP_FAILED] Pioneer completed the review, but cleanup did not fully succeed; inspect the controller work log.";
 const PIPE_CLOSE_GRACE_MS = 1_000;
-const MAX_RPC_OUTPUT_BYTES = 4 * 1024 * 1024;
 const WORK_LOG_HEARTBEAT_MS = 5_000;
 
 class ProspectiveReviewPathValidationError extends Error {
@@ -138,12 +183,207 @@ export function finalizeReviewWorkLog(
   throw outcome.failure;
 }
 
+export function markReviewCleanupFailure(result: ReviewResult): ReviewResult {
+  return { ...result, cleanupError: REVIEW_CLEANUP_ERROR };
+}
+
+export async function cleanupCompletedReviewResumeArchive(
+  archive: ReviewResumeArchive,
+  removeArchive: (archive: ReviewResumeArchive) => Promise<void> = deleteReviewResumeArchive,
+  releaseArchive: (
+    archive: ReviewResumeArchive,
+  ) => Promise<void> = releaseLeasedReviewResumeArchive,
+): Promise<Error | undefined> {
+  try {
+    await removeArchive(archive);
+    return undefined;
+  } catch (error) {
+    let failure = error instanceof Error ? error : new Error(String(error));
+    try {
+      await releaseArchive(archive);
+    } catch (releaseError) {
+      failure = combineReviewFailures(
+        failure,
+        releaseError instanceof Error ? releaseError : new Error(String(releaseError)),
+      );
+    }
+    return failure;
+  }
+}
+
+export async function cleanupUnavailableReviewResumeArchive(
+  archive: ReviewResumeArchive,
+  removeArchive: (archive: ReviewResumeArchive) => Promise<void> = deleteReviewResumeArchive,
+): Promise<Error | undefined> {
+  try {
+    await removeArchive(archive);
+    return undefined;
+  } catch (error) {
+    return new Error(
+      diagnosticMessage(
+        "REVIEW_RESUME_DELETE_FAILED",
+        "Pioneer could not delete unavailable private review resume data; inspect the controller work log.",
+      ),
+      { cause: error },
+    );
+  }
+}
+
+export function shouldHandleReviewResumeFailure(alreadyHandled: boolean): boolean {
+  return !alreadyHandled;
+}
+
+export type ReviewResumeFailureKind =
+  | "containment"
+  | "in_use"
+  | "prompt_rejected"
+  | "retainable"
+  | "rollback"
+  | "unavailable";
+
+const REVIEW_RESUME_FAILURE_KINDS = new WeakMap<Error, ReviewResumeFailureKind>();
+
+function classifyReviewResumeFailure(failure: Error, kind: ReviewResumeFailureKind): Error {
+  REVIEW_RESUME_FAILURE_KINDS.set(failure, kind);
+  return failure;
+}
+
+export function reviewResumeFailureKind(failure: Error): ReviewResumeFailureKind {
+  return REVIEW_RESUME_FAILURE_KINDS.get(failure) ?? "retainable";
+}
+
+function wrapReviewResumeFailure(failure: Error, message: string): Error {
+  const wrapped = new Error(message, { cause: failure });
+  const kind = REVIEW_RESUME_FAILURE_KINDS.get(failure);
+  return kind === undefined ? wrapped : classifyReviewResumeFailure(wrapped, kind);
+}
+
+function trustedResumeArchiveFailureKind(failure: Error): ReviewResumeFailureKind {
+  switch (workLogDiagnosticSummary(failure.message).diagnosticCode) {
+    case "REVIEW_RESUME_ATTEMPT_LIMIT":
+      return "unavailable";
+    case "REVIEW_RESUME_IN_USE":
+      return "in_use";
+    default:
+      return "retainable";
+  }
+}
+
+export function annotateHandledReviewResumeFailure(failure: Error, token: string): Error {
+  return new Error(`${failure.message}\n[PIONEER_REVIEW_RESUME] ${token}`, { cause: failure });
+}
+
+export async function canonicalReviewPiHomeSource(source: string): Promise<string> {
+  return await realpath(path.resolve(source));
+}
+
+export async function validateProspectiveDefaultReviewOutputs(
+  request: ReviewRequest,
+  piHomeSource: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home = os.homedir(),
+): Promise<void> {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  if (request.reportPath === undefined) {
+    const reportDirectory = defaultReviewReportDirectory(environment, platform, home);
+    await validateProspectiveReviewReportPath(
+      {
+        ...request,
+        piHomeSource,
+        reportPath: pathApi.join(reportDirectory, `prospective-${crypto.randomUUID()}.md`),
+      },
+      [pathApi.dirname(reportDirectory), reportDirectory],
+      platform,
+    );
+  }
+  if (request.workLogPath === undefined) {
+    const workLogDirectory = reviewWorkLogDirectory(environment, platform, home);
+    await validateProspectiveReviewWorkLogPath(
+      {
+        ...request,
+        piHomeSource,
+        workLogPath: pathApi.join(workLogDirectory, `prospective-${crypto.randomUUID()}.jsonl`),
+      },
+      [workLogDirectory],
+      platform,
+    );
+  }
+}
+
 function workLogDiagnosticSummary(message: string): Readonly<Record<string, unknown>> {
   const code = /^\[([A-Z][A-Z0-9_]*)\]/.exec(message)?.[1];
   return {
     diagnosticCode: code ?? "UNCLASSIFIED",
     diagnosticBytes: Buffer.byteLength(message),
   };
+}
+
+async function handleResumeArchiveFailure(
+  archive: ReviewResumeArchive,
+  failure: Error,
+  kind: ReviewResumeFailureKind,
+): Promise<Error> {
+  if (kind === "in_use") return failure;
+  if (kind === "containment" || kind === "unavailable") {
+    const cleanupFailure = await cleanupUnavailableReviewResumeArchive(archive);
+    const unavailableFailure = new Error(`${failure.message}\n[REVIEW_RESUME_UNAVAILABLE]`, {
+      cause: failure,
+    });
+    return cleanupFailure === undefined
+      ? unavailableFailure
+      : combineReviewFailures(unavailableFailure, cleanupFailure);
+  }
+  try {
+    const failureCode = workLogDiagnosticSummary(failure.message).diagnosticCode as string;
+    if (kind === "rollback") {
+      await rollbackReviewResumeArchiveToPriorAttempt(archive, failureCode);
+    } else {
+      await retainReviewResumeArchive(archive, failureCode);
+    }
+    return new Error(`${failure.message}\n[PIONEER_REVIEW_RESUME] ${archive.token}`);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("[REVIEW_RESUME_IN_USE]")) {
+      return new Error(`${failure.message}\n${error.message}`);
+    }
+    const cleanupFailure = await cleanupUnavailableReviewResumeArchive(archive);
+    const unavailableFailure = new Error(`${failure.message}\n[REVIEW_RESUME_UNAVAILABLE]`, {
+      cause: error,
+    });
+    return cleanupFailure === undefined
+      ? unavailableFailure
+      : combineReviewFailures(unavailableFailure, cleanupFailure);
+  }
+}
+
+function sameStringList(left: readonly string[] | undefined, right: readonly string[]): boolean {
+  return JSON.stringify(left ?? []) === JSON.stringify(right);
+}
+
+function assertImmutableResumeScope(
+  paths: Awaited<ReturnType<typeof validateReviewPaths>>,
+  request: ReviewRequest,
+  loaded: LoadedReviewResumeArchive,
+  piHomeSource: string,
+  model: string | undefined,
+  thinking: ThinkingLevel | undefined,
+  network: ReviewNetworkMode,
+): void {
+  const scope = loaded.scope;
+  if (
+    paths.sourceDir !== scope.sourceDir ||
+    !sameStringList(scope.allowReadPaths, paths.allowReadPaths) ||
+    !sameStringList(scope.allowWritePaths, paths.allowWritePaths) ||
+    piHomeSource !== (scope.piHomeSource ?? path.resolve(defaultPiAgentDir())) ||
+    !sameStringList(scope.piHomeIncludes, request.piHomeIncludes ?? []) ||
+    model !== scope.model ||
+    thinking !== scope.thinking ||
+    network !== scope.network
+  ) {
+    throw new Error(
+      "[REVIEW_RESUME_SCOPE_CHANGED] Stored review scope no longer resolves to the same canonical paths or policy",
+    );
+  }
 }
 
 export interface RunReviewRpcOptions {
@@ -153,6 +393,7 @@ export interface RunReviewRpcOptions {
   readonly terminateProcess?: (child: ReturnType<typeof spawn>) => void;
   readonly escalateProcess?: (child: ReturnType<typeof spawn>) => void;
   readonly startupFailureGraceMs?: number;
+  readonly maxRpcOutputBytes?: number;
 }
 
 interface ReviewPromptWriter {
@@ -263,13 +504,15 @@ export function requiresGitInspection(prompt: string): boolean {
 
 export function buildReviewPrompt(
   sourceDir: string,
-  scratchDir: string,
+  scratchDir: string | undefined,
   requestPrompt: string,
 ): string {
   return [
-    "Perform a code review. The source and reference paths are read-only. Use the writable scratch directory for temporary notes or reports. Do not attempt to modify read-only paths.",
+    scratchDir === undefined
+      ? "Perform a code review. The source and reference paths are read-only. Do not attempt to modify read-only paths."
+      : "Perform a code review. The source and reference paths are read-only. Use the writable scratch directory for temporary notes or reports. Do not attempt to modify read-only paths.",
     `Source: ${sourceDir}`,
-    `Scratch: ${scratchDir}`,
+    ...(scratchDir === undefined ? [] : [`Scratch: ${scratchDir}`]),
     requestPrompt,
   ].join("\n\n");
 }
@@ -332,10 +575,12 @@ export function reviewProcessEnvironment(
 export async function persistReviewReport(
   report: string,
   reportPath: string | undefined,
+  reservation?: ReviewReportReservation,
 ): Promise<string | undefined> {
   if (reportPath === undefined) return undefined;
   try {
-    await writeReviewReport(reportPath, report);
+    if (reservation === undefined) await writeReviewReport(reportPath, report);
+    else await publishReservedReviewReport(reservation, report);
     return undefined;
   } catch (error) {
     return diagnosticMessage(
@@ -343,6 +588,13 @@ export async function persistReviewReport(
       `Pioneer received a review report but could not persist it at ${reportPath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+export async function pruneValidatedReviewResumeArchives(
+  validated: boolean,
+  root = defaultReviewResumeDirectory(),
+): Promise<void> {
+  if (validated) await pruneReviewResumeArchives(root);
 }
 
 function assistantText(value: unknown): string | undefined {
@@ -468,6 +720,7 @@ export async function runReviewRpc(
   timeoutMs: number,
   options: RunReviewRpcOptions = {},
 ): Promise<string> {
+  const maxRpcOutputBytes = validateRpcOutputBytes(options.maxRpcOutputBytes);
   return await new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
       cwd,
@@ -500,12 +753,16 @@ export async function runReviewRpc(
     let lastPiEvent = "process_started";
     let lastPiEventAt = Date.now();
     let stderrBytes = 0;
+    const nearLimitReported = new Set<number>();
     const stopProcess = options.terminateProcess ?? terminateProcessTree;
     const escalateProcess =
       options.escalateProcess ??
       ((runningChild: ReturnType<typeof spawn>) => runningChild.kill("SIGKILL"));
     const workLogSecrets = [prompt, ...(options.sensitiveValues ?? [])];
-    const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
+    const writeWorkLogRecord = (
+      type: string,
+      details: Readonly<Record<string, unknown>> = {},
+    ): void => {
       if (options.workLog === undefined || workLogFailure !== undefined) return;
       try {
         options.workLog.record(type, details);
@@ -520,22 +777,38 @@ export async function runReviewRpc(
         stopProcess(child);
       }
     };
+    const deltaBatcher = new PiDeltaBatcher((details) =>
+      writeWorkLogRecord(
+        details.type === "pi_event_delta_batch" ? "pi_event_delta_batch" : "pi_event",
+        details,
+      ),
+    );
+    const recordWorkLog = (type: string, details: Readonly<Record<string, unknown>> = {}): void => {
+      deltaBatcher.flush();
+      writeWorkLogRecord(type, details);
+    };
     const finish = (error?: Error): void => {
       if (settled) return;
+      deltaBatcher.flush();
       if (error === undefined) {
         recordWorkLog("pi_rpc_completed", {
           reportBytes: Buffer.byteLength(report.trim()),
           rpcBytes: stdoutBytes,
+          rpcLimitBytes: maxRpcOutputBytes,
           stderrBytes,
         });
       } else {
         recordWorkLog("pi_rpc_failed", {
           ...workLogDiagnosticSummary(error.message),
           rpcBytes: stdoutBytes,
+          rpcLimitBytes: maxRpcOutputBytes,
           stderrBytes,
         });
       }
-      const finalError = workLogFailure ?? error;
+      const finalError =
+        error !== undefined && reviewResumeFailureKind(error) === "containment"
+          ? error
+          : (workLogFailure ?? error);
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       if (pipeCloseTimer !== undefined) clearTimeout(pipeCloseTimer);
@@ -594,11 +867,16 @@ export async function runReviewRpc(
         lastPiEvent =
           typeof eventSummary.eventType === "string" ? eventSummary.eventType : "unrecognized";
         lastPiEventAt = Date.now();
-        recordWorkLog("pi_event", eventSummary);
+        deltaBatcher.accept(eventSummary);
         if (workLogFailure !== undefined) return;
         if (typeof record.type === "string") eventTypes.add(record.type);
         if (record.type === "response" && record.success === false) {
-          terminate(new Error("Pi RPC rejected the review prompt"));
+          terminate(
+            classifyReviewResumeFailure(
+              new Error("Pi RPC rejected the review prompt"),
+              "prompt_rejected",
+            ),
+          );
           return;
         }
         if (record.type === "message_update") {
@@ -648,8 +926,18 @@ export async function runReviewRpc(
     child.stdout.on("data", (chunk: Buffer) => {
       if (!acceptRpcEvents || terminalFailure !== undefined || timedOut) return;
       stdoutBytes += chunk.length;
-      if (stdoutBytes > MAX_RPC_OUTPUT_BYTES) {
-        terminate(new Error("Pi RPC output exceeded 4 MiB"));
+      for (const threshold of [0.75, 0.9]) {
+        if (!nearLimitReported.has(threshold) && stdoutBytes >= maxRpcOutputBytes * threshold) {
+          nearLimitReported.add(threshold);
+          recordWorkLog("pi_rpc_near_limit", {
+            rpcBytes: stdoutBytes,
+            rpcLimitBytes: maxRpcOutputBytes,
+            threshold,
+          });
+        }
+      }
+      if (stdoutBytes > maxRpcOutputBytes) {
+        terminate(new Error(rpcOutputLimitDiagnostic(maxRpcOutputBytes)));
         return;
       }
       stdout += stdoutDecoder.write(chunk);
@@ -687,6 +975,41 @@ export async function runReviewRpc(
         stdout += stdoutDecoder.end();
         consume();
       }
+      if (containmentLost) {
+        const containmentFailure = classifyReviewResumeFailure(
+          new Error(
+            diagnosticMessage(
+              "REVIEW_PROCESS_CONTAINMENT_FAILED",
+              "Pi exited but a descendant retained its RPC output pipe; Pioneer could not prove that the review process tree stopped.",
+            ),
+          ),
+          "containment",
+        );
+        const earlierFailure =
+          workLogFailure ??
+          (timedOut
+            ? new Error(
+                diagnosticMessage(
+                  "REVIEW_TIMEOUT",
+                  `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr)})`,
+                ),
+              )
+            : terminalFailure === undefined
+              ? undefined
+              : wrapReviewResumeFailure(
+                  terminalFailure,
+                  `${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`,
+                ));
+        finish(
+          earlierFailure === undefined
+            ? containmentFailure
+            : classifyReviewResumeFailure(
+                combineReviewFailures(containmentFailure, earlierFailure),
+                "containment",
+              ),
+        );
+        return;
+      }
       if (workLogFailure !== undefined) {
         finish(workLogFailure);
         return;
@@ -704,17 +1027,9 @@ export async function runReviewRpc(
       }
       if (terminalFailure !== undefined) {
         finish(
-          new Error(`${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`),
-        );
-        return;
-      }
-      if (containmentLost) {
-        finish(
-          new Error(
-            diagnosticMessage(
-              "REVIEW_PROCESS_CONTAINMENT_FAILED",
-              "Pi exited but a descendant retained its RPC output pipe; Pioneer could not prove that the review process tree stopped.",
-            ),
+          wrapReviewResumeFailure(
+            terminalFailure,
+            `${terminalFailure.message} (${processOutcomeContext(code, signal, stderr)})`,
           ),
         );
         return;
@@ -756,11 +1071,25 @@ export async function runReviewRpc(
         lastPiEvent,
         idleMs: Math.max(0, Date.now() - lastPiEventAt),
         rpcBytes: stdoutBytes,
+        rpcLimitBytes: maxRpcOutputBytes,
         stderrBytes,
       });
     }, options.heartbeatMs ?? WORK_LOG_HEARTBEAT_MS);
     heartbeatTimer.unref();
     timer = setTimeout(() => {
+      if (completed) {
+        recordWorkLog("pi_settlement_close_grace", {
+          timeoutMs,
+          graceMs: PIPE_CLOSE_GRACE_MS,
+        });
+        timer = setTimeout(() => {
+          timedOut = true;
+          recordWorkLog("pi_timeout", { timeoutMs });
+          stopProcess(child);
+          if (childExited) schedulePipeCloseFallback();
+        }, PIPE_CLOSE_GRACE_MS);
+        return;
+      }
       timedOut = true;
       recordWorkLog("pi_timeout", { timeoutMs });
       stopProcess(child);
@@ -769,7 +1098,18 @@ export async function runReviewRpc(
   });
 }
 
+interface ResumeExecutionContext {
+  readonly loaded: LoadedReviewResumeArchive;
+}
+
 export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
+  return await runReviewInternal(request);
+}
+
+async function runReviewInternal(
+  request: ReviewRequest,
+  resumeContext?: ResumeExecutionContext,
+): Promise<ReviewResult> {
   if (!request.prompt.trim()) throw new Error("Review prompt must not be empty");
   if (request.thinking !== undefined && !isThinkingLevel(request.thinking))
     throw new Error(`Unsupported thinking level: ${String(request.thinking)}`);
@@ -789,17 +1129,71 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   }
   const network = request.network ?? "full";
   const timeoutMs = request.timeoutMs ?? 900_000;
+  const maxRpcOutputBytes = validateRpcOutputBytes(request.maxRpcOutputBytes);
+  const windows = process.platform === "win32";
+  if (windows && request.allowUnsandboxedWindows !== true) {
+    throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
+  }
+  await validateReviewPaths({
+    sourceDir: request.sourceDir,
+    ...(request.allowReadPaths === undefined ? {} : { allowReadPaths: request.allowReadPaths }),
+    ...(request.allowWritePaths === undefined ? {} : { allowWritePaths: request.allowWritePaths }),
+    ...(request.reportPath === undefined ? {} : { reportPath: request.reportPath }),
+    ...(request.workLogPath === undefined ? {} : { workLogPath: request.workLogPath }),
+  });
+  const piHomeSource = await canonicalReviewPiHomeSource(
+    request.piHomeSource ?? defaultPiAgentDir(),
+  );
+  await validateProspectiveDefaultReviewOutputs(request, piHomeSource);
+  let requestedReportPath = request.reportPath;
+  if (requestedReportPath === undefined) {
+    try {
+      requestedReportPath = await prepareValidatedDefaultReviewReportPath(
+        async (candidate, controllerMutationPaths) => {
+          try {
+            await validateProspectiveReviewReportPath(
+              {
+                ...request,
+                piHomeSource,
+                reportPath: candidate,
+              },
+              controllerMutationPaths,
+            );
+          } catch (error) {
+            throw new ProspectiveReviewPathValidationError(error);
+          }
+        },
+      );
+    } catch (error) {
+      if (error instanceof ProspectiveReviewPathValidationError) throw error.original;
+      throw new Error(
+        diagnosticMessage(
+          "REVIEW_REPORT_CREATE_FAILED",
+          `Pioneer could not prepare the default private review report path: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    }
+  }
   const defaultWorkLog = request.workLogPath === undefined;
   let requestedWorkLogPath = request.workLogPath;
   if (requestedWorkLogPath === undefined) {
     try {
-      requestedWorkLogPath = await prepareValidatedDefaultReviewWorkLogPath(async (candidate) => {
-        try {
-          await validateProspectiveReviewWorkLogPath({ ...request, workLogPath: candidate });
-        } catch (error) {
-          throw new ProspectiveReviewPathValidationError(error);
-        }
-      });
+      requestedWorkLogPath = await prepareValidatedDefaultReviewWorkLogPath(
+        async (candidate, controllerMutationPaths) => {
+          try {
+            await validateProspectiveReviewWorkLogPath(
+              {
+                ...request,
+                piHomeSource,
+                workLogPath: candidate,
+              },
+              controllerMutationPaths,
+            );
+          } catch (error) {
+            throw new ProspectiveReviewPathValidationError(error);
+          }
+        },
+      );
     } catch (error) {
       if (error instanceof ProspectiveReviewPathValidationError) throw error.original;
       throw new Error(
@@ -810,7 +1204,12 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       );
     }
   }
-  const paths = await validateReviewPaths({ ...request, workLogPath: requestedWorkLogPath });
+  const paths = await validateReviewPaths({
+    ...request,
+    piHomeSource,
+    reportPath: requestedReportPath,
+    workLogPath: requestedWorkLogPath,
+  });
   if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
   let workLog: ReviewWorkLog;
   try {
@@ -825,12 +1224,27 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
   }
 
   let outcome: ReviewExecutionOutcome;
+  let resumeArchive: ReviewResumeArchive | undefined = resumeContext?.loaded.archive;
+  let resumeToken: string | undefined = resumeContext?.loaded.archive.token;
+  let resumeFailureHandled = false;
+  let resumeStorageValidated = resumeContext !== undefined;
+  let reportReservation: ReviewReportReservation | undefined;
   try {
+    request.onWorkLogReady?.(workLog.path);
     if (paths.reportPath !== undefined) {
       await assertDistinctExistingReviewOutputs(paths.reportPath, workLog.path);
+      try {
+        reportReservation = await reserveReviewReport(paths.reportPath);
+      } catch (error) {
+        throw new Error(
+          diagnosticMessage(
+            "REVIEW_REPORT_CREATE_FAILED",
+            `Pioneer could not reserve the private review report at ${paths.reportPath}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      }
+      request.onReportReady?.(paths.reportPath);
     }
-    request.onWorkLogReady?.(workLog.path);
-    const windows = process.platform === "win32";
     recordReviewWorkLog(workLog, "review_started", {
       pioneerVersion: PIONEER_VERSION,
       platform: process.platform,
@@ -839,19 +1253,17 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       promptBytes: Buffer.byteLength(request.prompt),
       network,
       timeoutMs,
+      maxRpcOutputBytes,
       requestedModel: requestedModelForWorkLog(request.model, request.prompt),
       requestedThinking: request.thinking ?? "default",
       reportRequested: paths.reportPath !== undefined,
       sandboxed: !windows,
     });
-    if (windows && request.allowUnsandboxedWindows !== true)
-      throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
     if (process.platform !== "linux" && requiresGitInspection(request.prompt))
       throw new Error(
         "Git-target reviews require Linux, where Pioneer can inspect Git inside Bubblewrap. macOS and Windows support source-only reviews.",
       );
 
-    const piHomeSource = request.piHomeSource ?? defaultPiAgentDir();
     recordReviewWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
     const readiness = await assertPiReady({
       environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -863,36 +1275,154 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       warning: readiness.warning !== undefined,
     });
 
+    if (
+      resumeContext !== undefined &&
+      (readiness.version === undefined ||
+        readiness.version !== resumeContext.loaded.scope.piVersion)
+    ) {
+      throw new Error(
+        `[REVIEW_RESUME_PI_VERSION_MISMATCH] Stored Pi version ${resumeContext.loaded.scope.piVersion} does not match the current Pi version ${readiness.version ?? "unknown"}`,
+      );
+    }
+
+    if (
+      resumeContext === undefined &&
+      request.resumable !== false &&
+      readiness.version === undefined
+    ) {
+      throw new Error(
+        "[REVIEW_RESUME_CREATE_FAILED] Pioneer could not determine the current Pi version for a resumable review",
+      );
+    }
+
+    const model = readiness.resolvedModel;
+    const thinking =
+      request.thinking ??
+      (request.model === undefined ? undefined : thinkingFromModelShorthand(request.model));
+    if (resumeContext !== undefined) {
+      assertImmutableResumeScope(
+        paths,
+        request,
+        resumeContext.loaded,
+        piHomeSource,
+        model,
+        thinking,
+        network,
+      );
+    }
+
+    if (resumeContext !== undefined) {
+      try {
+        recordReviewWorkLog(workLog, "stage_started", { stage: "resume_session_copy" });
+        const attemptNumber = Number(path.basename(resumeArchive?.activeAttemptDir ?? "0001")) + 1;
+        if (resumeArchive === undefined || !Number.isSafeInteger(attemptNumber)) {
+          throw new Error("[REVIEW_RESUME_SESSION_INVALID] Review resume attempt is invalid");
+        }
+        resumeArchive = await copyReviewResumeSession(
+          resumeArchive,
+          resumeContext.loaded.archive.activeAttemptDir,
+          attemptNumber,
+        );
+        recordReviewWorkLog(workLog, "stage_completed", { stage: "resume_session_copy" });
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        if (resumeArchive !== undefined) {
+          resumeFailureHandled = true;
+          throw await handleResumeArchiveFailure(
+            resumeArchive,
+            failure,
+            trustedResumeArchiveFailureKind(failure),
+          );
+        }
+        throw failure;
+      }
+    } else if (request.resumable !== false) {
+      recordReviewWorkLog(workLog, "stage_started", { stage: "resume_archive" });
+      try {
+        resumeArchive = await createReviewResumeArchive(
+          await prepareDefaultReviewResumeDirectory({
+            actorVisiblePaths: [
+              paths.sourceDir,
+              ...paths.allowReadPaths,
+              ...paths.allowWritePaths,
+              piHomeSource,
+            ],
+          }),
+          {
+            sourceDir: paths.sourceDir,
+            prompt: request.prompt,
+            ...(model === undefined ? {} : { model }),
+            ...(thinking === undefined ? {} : { thinking }),
+            piHomeSource,
+            ...(request.piHomeIncludes === undefined
+              ? {}
+              : { piHomeIncludes: request.piHomeIncludes }),
+            ...(paths.allowReadPaths.length === 0 ? {} : { allowReadPaths: paths.allowReadPaths }),
+            ...(paths.allowWritePaths.length === 0
+              ? {}
+              : { allowWritePaths: paths.allowWritePaths }),
+            network,
+            piVersion: readiness.version ?? "unknown",
+          },
+          undefined,
+          [paths.sourceDir, ...paths.allowReadPaths, ...paths.allowWritePaths, piHomeSource],
+        );
+        resumeToken = resumeArchive.token;
+        resumeStorageValidated = true;
+      } catch (error) {
+        throw new Error(
+          diagnosticMessage(
+            "REVIEW_RESUME_CREATE_FAILED",
+            `Pioneer could not create the private review resume archive: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
+      }
+      try {
+        recordReviewWorkLog(workLog, "stage_completed", { stage: "resume_archive" });
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        if (resumeArchive !== undefined) {
+          resumeFailureHandled = true;
+          throw await handleResumeArchiveFailure(resumeArchive, failure, "retainable");
+        }
+        throw failure;
+      }
+    }
+
     const scratchBase = windows ? os.tmpdir() : "/tmp";
-    recordReviewWorkLog(workLog, "stage_started", { stage: "scratch_creation" });
-    const scratch = await createReviewScratchDirectory(scratchBase, () => {
-      recordReviewWorkLog(workLog, "stage_completed", { stage: "scratch_creation" });
-    });
+    let scratch: string | undefined;
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
     let bridgeRoot: string | undefined;
     let reviewResult: ReviewResult | undefined;
     let runFailure: Error | undefined;
+    let deferredCleanupFailure: Error | undefined;
     let reportBytes = 0;
     try {
+      recordReviewWorkLog(workLog, "stage_started", { stage: "scratch_creation" });
+      scratch = await createReviewScratchDirectory(scratchBase, () => {
+        recordReviewWorkLog(workLog, "stage_completed", { stage: "scratch_creation" });
+      });
+      const scratchDirectory = scratch;
       recordReviewWorkLog(workLog, "stage_started", { stage: "pi_home_snapshot" });
       const piHome = await prepareIsolatedPiHome({
         sourceDir: piHomeSource,
-        destination: path.join(scratch, "pi-home"),
+        destination: path.join(scratchDirectory, "pi-home"),
         mode: "review",
         ...(request.piHomeIncludes === undefined ? {} : { piHomeIncludes: request.piHomeIncludes }),
       });
       recordReviewWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
-      const model = readiness.resolvedModel;
       const command: [string, ...string[]] = ["pi", "--mode", "rpc"];
       if (model !== undefined) command.push("--model", model);
-      const thinking =
-        request.thinking ??
-        (request.model === undefined ? undefined : thinkingFromModelShorthand(request.model));
       if (thinking !== undefined) command.push("--thinking", thinking);
       const optimized = optimizePiStartupCommand(command, {
         disableExtensions: true,
         tools: reviewTools(),
+        ...(resumeContext !== undefined && resumeArchive !== undefined
+          ? { resumeSession: await findReviewResumeSessionFile(resumeArchive.activeAttemptDir) }
+          : resumeArchive === undefined
+            ? { noSession: true }
+            : { sessionDir: resumeArchive.activeAttemptDir }),
       });
       const environment = {
         ...optimized.environment,
@@ -906,7 +1436,11 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
             }
           : {}),
       };
-      const prompt = buildReviewPrompt(paths.sourceDir, scratch, request.prompt);
+      const prompt = buildReviewPrompt(
+        paths.sourceDir,
+        resumeArchive === undefined ? scratchDirectory : undefined,
+        request.prompt,
+      );
       let report: string;
       let sandboxed: boolean;
       if (windows) {
@@ -917,7 +1451,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
           reviewProcessEnvironment({}, environment),
           prompt,
           timeoutMs,
-          { workLog, sensitiveValues: [request.prompt] },
+          { workLog, sensitiveValues: [request.prompt], maxRpcOutputBytes },
         );
         sandboxed = false;
       } else {
@@ -944,13 +1478,14 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
         const config = buildReviewSandboxConfig({
           platform: process.platform as "darwin" | "linux",
           ...paths,
-          scratchDir: scratch,
+          scratchDir: scratchDirectory,
           runtimeReadPaths: [
             ...(await piRuntimePaths("pi")),
             ...(await piRuntimePaths("node")),
             ...(await macosRuntimeReadPaths(process.execPath)),
           ],
           network,
+          ...(resumeArchive === undefined ? {} : { sessionDir: resumeArchive.activeAttemptDir }),
           ...(proxy === undefined ? {} : { parentProxyUrl: proxy.url }),
         });
         const launch =
@@ -965,14 +1500,37 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
           reviewProcessEnvironment(launch.environment, environment),
           prompt,
           timeoutMs,
-          { workLog, sensitiveValues: [request.prompt] },
+          { workLog, sensitiveValues: [request.prompt], maxRpcOutputBytes },
         );
         sandboxed = true;
       }
       reportBytes = Buffer.byteLength(report);
       recordReviewWorkLog(workLog, "stage_completed", { stage: "pi_rpc", reportBytes });
       recordReviewWorkLog(workLog, "stage_started", { stage: "report_persistence" });
-      const reportWriteError = await persistReviewReport(report, paths.reportPath);
+      let reportWriteError = await persistReviewReport(report, paths.reportPath, reportReservation);
+      if (reportWriteError !== undefined && resumeArchive !== undefined) {
+        try {
+          await retainReviewResumeArchive(resumeArchive, "REVIEW_REPORT_WRITE_FAILED");
+          resumeFailureHandled = true;
+        } catch (error) {
+          if (error instanceof Error && error.message.startsWith("[REVIEW_RESUME_IN_USE]")) {
+            reportWriteError = `${reportWriteError}\n${error.message}`;
+          } else {
+            const resumeCleanupFailure = await cleanupUnavailableReviewResumeArchive(resumeArchive);
+            resumeArchive = undefined;
+            resumeToken = undefined;
+            reportWriteError = `${reportWriteError}\n[REVIEW_RESUME_UNAVAILABLE]`;
+            if (resumeCleanupFailure !== undefined) {
+              deferredCleanupFailure ??= resumeCleanupFailure;
+              reportWriteError = `${reportWriteError}\n${resumeCleanupFailure.message}`;
+            }
+          }
+        }
+      }
+      if (reportWriteError === undefined && resumeArchive !== undefined) {
+        deferredCleanupFailure = await cleanupCompletedReviewResumeArchive(resumeArchive);
+        if (deferredCleanupFailure === undefined) resumeArchive = undefined;
+      }
       recordReviewWorkLog(workLog, "stage_completed", {
         stage: "report_persistence",
         requested: paths.reportPath !== undefined,
@@ -983,6 +1541,7 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
         report,
         sandboxed,
         workLogPath: workLog.path,
+        reportPath: paths.reportPath ?? "",
         ...(windows
           ? { warning: combineWarnings(WINDOWS_WARNING, readiness.warning) ?? WINDOWS_WARNING }
           : readiness.warning === undefined
@@ -991,11 +1550,31 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
         ...(model === undefined ? {} : { model }),
         ...(thinking === undefined ? {} : { thinking }),
         ...(reportWriteError === undefined ? {} : { reportWriteError }),
+        ...(reportWriteError !== undefined && resumeToken !== undefined ? { resumeToken } : {}),
       };
     } catch (error) {
       runFailure = error instanceof Error ? error : new Error(String(error));
+      if (
+        resumeContext !== undefined &&
+        reviewResumeFailureKind(runFailure) === "prompt_rejected"
+      ) {
+        runFailure = classifyReviewResumeFailure(
+          new Error("[REVIEW_RESUME_SESSION_INVALID] Pi rejected the stored native session"),
+          "rollback",
+        );
+      }
+      if (resumeArchive !== undefined && shouldHandleReviewResumeFailure(resumeFailureHandled)) {
+        resumeFailureHandled = true;
+        runFailure = await handleResumeArchiveFailure(
+          resumeArchive,
+          runFailure,
+          reviewResumeFailureKind(runFailure),
+        );
+      } else if (resumeArchive !== undefined && resumeToken !== undefined) {
+        runFailure = annotateHandledReviewResumeFailure(runFailure, resumeToken);
+      }
     }
-    let cleanupFailure: Error | undefined;
+    let cleanupFailure = deferredCleanupFailure;
     try {
       recordReviewWorkLog(workLog, "stage_started", { stage: "cleanup" });
     } catch (error) {
@@ -1007,7 +1586,14 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
         if (bridgeRoot !== undefined) await rm(bridgeRoot, { recursive: true, force: true });
       },
       async () => proxy?.close(),
-      async () => rm(scratch, { recursive: true, force: true }),
+      async () => {
+        if (scratch !== undefined) await rm(scratch, { recursive: true, force: true });
+      },
+      async () => {
+        if (reportReservation !== undefined) {
+          await releaseReviewReportReservation(reportReservation);
+        }
+      },
     ]) {
       try {
         await cleanup();
@@ -1016,19 +1602,35 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
       }
     }
     try {
+      await pruneValidatedReviewResumeArchives(
+        resumeStorageValidated,
+        defaultReviewResumeDirectory(),
+      );
+    } catch (error) {
+      cleanupFailure ??= error instanceof Error ? error : new Error(String(error));
+    }
+    try {
       recordReviewWorkLog(workLog, "stage_completed", {
         stage: "cleanup",
         success: cleanupFailure === undefined,
         ...(cleanupFailure === undefined ? {} : workLogDiagnosticSummary(cleanupFailure.message)),
       });
-      if (reviewResult !== undefined && cleanupFailure === undefined) {
+      if (reviewResult !== undefined) {
         recordReviewWorkLog(workLog, "review_completed", {
           reportBytes,
           status: reviewResult.reportWriteError === undefined ? "success" : "report_write_failed",
+          cleanupSuccess: cleanupFailure === undefined,
         });
       }
     } catch (error) {
       cleanupFailure = error instanceof Error ? error : new Error(String(error));
+    }
+    if (cleanupFailure !== undefined && reviewResult !== undefined) {
+      reviewResult = markReviewCleanupFailure(reviewResult);
+      cleanupFailure = undefined;
+    }
+    if (cleanupFailure !== undefined && runFailure !== undefined) {
+      throw combineReviewFailures(runFailure, cleanupFailure);
     }
     if (cleanupFailure !== undefined) throw cleanupFailure;
     if (runFailure !== undefined) throw runFailure;
@@ -1036,6 +1638,16 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     outcome = { result: reviewResult };
   } catch (error) {
     let failure = error instanceof Error ? error : new Error(String(error));
+    if (reportReservation !== undefined) {
+      try {
+        await releaseReviewReportReservation(reportReservation);
+      } catch (cleanupError) {
+        failure = combineReviewFailures(
+          failure,
+          cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)),
+        );
+      }
+    }
     try {
       workLog.record("review_failed", {
         ...workLogDiagnosticSummary(failure.message),
@@ -1046,4 +1658,153 @@ export async function runReview(request: ReviewRequest): Promise<ReviewResult> {
     outcome = { failure };
   }
   return finalizeReviewWorkLog(workLog, outcome);
+}
+
+export async function resumeReview(request: ResumeReviewRequest): Promise<ReviewResult> {
+  let loaded: LoadedReviewResumeArchive;
+  try {
+    loaded = await loadReviewResumeArchive(
+      await prepareDefaultReviewResumeDirectory({ create: false }),
+      request.resumeToken,
+    );
+  } catch (error) {
+    if (error instanceof Error && /^\[REVIEW_/.test(error.message)) throw error;
+    throw new Error(
+      `[REVIEW_RESUME_UNAVAILABLE] Pioneer could not load the private review resume archive: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  try {
+    assertReviewResumeStateIsRecoverable(loaded.state);
+    if (process.platform === "win32" && request.allowUnsandboxedWindows !== true) {
+      throw new Error(
+        `${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed with this resume.`,
+      );
+    }
+    await assertReviewResumeOutputsOutsideStorage(loaded.archive, request);
+    const thinking = loaded.scope.thinking;
+    if (thinking !== undefined && !isThinkingLevel(thinking)) {
+      throw new Error("[REVIEW_RESUME_UNAVAILABLE] Stored thinking level is invalid");
+    }
+    const result = await runReviewInternal(
+      {
+        sourceDir: loaded.scope.sourceDir,
+        prompt:
+          "Continue the interrupted independent review. Any earlier run-local scratch path is retired; use only this run's execution environment. Reinspect the current source where necessary, complete unfinished analysis, and emit only the final Markdown review report.",
+        ...(loaded.scope.model === undefined ? {} : { model: loaded.scope.model }),
+        ...(thinking === undefined ? {} : { thinking }),
+        ...(loaded.scope.piHomeSource === undefined
+          ? {}
+          : { piHomeSource: loaded.scope.piHomeSource }),
+        ...(loaded.scope.piHomeIncludes === undefined
+          ? {}
+          : { piHomeIncludes: loaded.scope.piHomeIncludes }),
+        ...(loaded.scope.allowReadPaths === undefined
+          ? {}
+          : { allowReadPaths: loaded.scope.allowReadPaths }),
+        ...(loaded.scope.allowWritePaths === undefined
+          ? {}
+          : { allowWritePaths: loaded.scope.allowWritePaths }),
+        network: loaded.scope.network,
+        ...(request.reportPath === undefined ? {} : { reportPath: request.reportPath }),
+        ...(request.workLogPath === undefined ? {} : { workLogPath: request.workLogPath }),
+        ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
+        ...(request.maxRpcOutputBytes === undefined
+          ? {}
+          : { maxRpcOutputBytes: request.maxRpcOutputBytes }),
+        ...(request.allowUnsandboxedWindows === undefined
+          ? {}
+          : { allowUnsandboxedWindows: request.allowUnsandboxedWindows }),
+        ...(request.onWorkLogReady === undefined ? {} : { onWorkLogReady: request.onWorkLogReady }),
+        ...(request.onReportReady === undefined ? {} : { onReportReady: request.onReportReady }),
+      },
+      { loaded },
+    );
+    await releaseLeasedReviewResumeArchive(loaded.archive);
+    return result;
+  } catch (error) {
+    let failure = error instanceof Error ? error : new Error(String(error));
+    try {
+      await releaseLeasedReviewResumeArchive(loaded.archive);
+    } catch (releaseError) {
+      failure = combineReviewFailures(
+        failure,
+        releaseError instanceof Error ? releaseError : new Error(String(releaseError)),
+      );
+    }
+    throw failure;
+  }
+}
+
+export async function assertReviewResumeOutputsOutsideArchive(
+  archiveDir: string,
+  outputs: Pick<ResumeReviewRequest, "reportPath" | "workLogPath">,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home = os.homedir(),
+): Promise<void> {
+  const reportPath =
+    outputs.reportPath ??
+    path.join(
+      defaultReviewReportDirectory(environment, platform, home),
+      `prospective-${crypto.randomUUID()}.md`,
+    );
+  try {
+    await validateProspectiveReviewReportPath({
+      sourceDir: archiveDir,
+      reportPath,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("actor-visible")) {
+      throw new Error(
+        `[REVIEW_RESUME_OUTPUT_INVALID] Review report target overlaps the retained archive: ${reportPath}`,
+      );
+    }
+    throw error;
+  }
+  const workLogPath =
+    outputs.workLogPath ??
+    path.join(
+      reviewWorkLogDirectory(environment, platform, home),
+      `prospective-${crypto.randomUUID()}.jsonl`,
+    );
+  try {
+    await validateProspectiveReviewWorkLogPath({
+      sourceDir: archiveDir,
+      workLogPath,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("actor-visible")) {
+      throw new Error(
+        `[REVIEW_RESUME_OUTPUT_INVALID] Review work log target overlaps the retained archive: ${workLogPath}`,
+      );
+    }
+    throw error;
+  }
+}
+
+export async function assertReviewResumeOutputsOutsideStorage(
+  archive: Pick<ReviewResumeArchive, "archiveDir">,
+  outputs: Pick<ResumeReviewRequest, "reportPath" | "workLogPath">,
+  environment: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home = os.homedir(),
+): Promise<void> {
+  await assertReviewResumeOutputsOutsideArchive(
+    path.dirname(archive.archiveDir),
+    outputs,
+    environment,
+    platform,
+    home,
+  );
+}
+
+export function assertReviewResumeStateIsRecoverable(state: string): void {
+  if (state === "active") {
+    throw new Error(
+      "[REVIEW_RESUME_NOT_READY] The prior review process tree was not proven stopped before its controller exited",
+    );
+  }
+  if (state !== "retained" && state !== "report_delivery_failed") {
+    throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume archive is not recoverable");
+  }
 }

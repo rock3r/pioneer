@@ -54,6 +54,12 @@ pioneer review --source DIR --prompt TEXT
   [--work-log FILE]
   [--network full|public|none]
   [--timeout-ms N]
+  [--max-rpc-output-mb N]
+  [--no-resume]
+  [--allow-unsandboxed-windows]
+
+pioneer review --resume TOKEN
+  [--timeout-ms N] [--max-rpc-output-mb N] [--report FILE] [--work-log FILE]
   [--allow-unsandboxed-windows]
 ```
 
@@ -67,13 +73,19 @@ pioneer review --source DIR --prompt TEXT
 | `--pi-home-include RELATIVE_PATH` | none | Review-only, repeatable exact path relative to the selected Pi home; may select otherwise skipped content but not hard exclusions |
 | `--allow-read DIR` | none | Additional read-only directory; repeatable |
 | `--allow-write DIR` | none | Additional writable directory; repeatable and forbidden from overlapping read grants |
-| `--report FILE` | none | Absolute controller-owned output path for the final report; must not exist and must not be visible to the review actor |
+| `--report FILE` | private default | Absolute controller-owned output path for the final report; must not exist and must not be visible to the review actor |
 | `--work-log FILE` | platform log directory | Absolute controller-owned create-only JSONL path; must not exist, contain control characters, or be visible to the review actor |
 | `--network MODE` | `full` | Proxy destination policy |
 | `--timeout-ms N` | `900000` | Positive integer review timeout |
+| `--max-rpc-output-mb N` | `20` | Integral cumulative Pi RPC stdout bound from 1 through 64 MiB |
+| `--no-resume` | false | Explicitly disables private native-session retention for this new review |
 | `--allow-unsandboxed-windows` | false | Required acknowledgement for instruction-only Windows reviews |
 
-Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout. When `--report` is set, Pioneer additionally creates that file atomically only after the same success contract passes. If persistence fails, stdout still contains the verified report but Pioneer exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`; diagnostics and warnings use stderr.
+Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout and persisted to a private default report directory unless `--report` selects another target. Pioneer exclusively creates a private file containing a random ownership marker bound to the controller's OS process-start identity and a randomly named controller-owned sibling reservation link before emitting `[PIONEER_REPORT] ABSOLUTE_PATH` on stderr, then writes the verified report through that owned inode while a separate random publication lease keeps retention from pruning it. It restores the marker after a failed write and fails without overwriting or deleting another file if the target identity changes. An unsuccessful run removes only the reservation it still owns; later retention reclaims abandoned reservation and publication siblings after controller exit, plus inactive post-publication hard links left by transient cleanup failures. Immediate cleanup of now-unneeded siblings after durable publication is best effort and cannot turn a delivered report into failure. If persistence fails, stdout still contains the verified report, the recoverable session is retained when available, and Pioneer exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`; diagnostics and warnings use stderr.
+
+The default cumulative RPC stdout bound is 20 MiB; `--max-rpc-output-mb` accepts only integral values from 1 through 64. Overflow terminates the process tree and reports `[REVIEW_RPC_OUTPUT_LIMIT]` with byte metadata in the work log. High-volume delta metadata is batched after the first 1,000 events in five-second type/subtype windows, so the 16 MiB work-log cap remains an independent fail-closed bound.
+
+New reviews retain a private native Pi session after a strict non-success only when process-tree containment is proven and the opaque session tree is a regular candidate within the 32 MiB/5,000-entry committed-attempt cap. This leaves room for the next crash-safe copy inside the aggregate 64 MiB/10,000-entry archive cap. Pioneer emits `[PIONEER_REVIEW_RESUME] TOKEN`; resume accepts only the immutable stored source, grants, prompt scope, model, thinking, Pi-home, and network policy. It may change only timeout, bounded RPC output, and controller-owned output paths. A resume always requires a fresh Windows acknowledgement. If both `[REVIEW_RPC_OUTPUT_LIMIT]` and a resume token appear, clients must run exactly `pioneer review --resume TOKEN`; a tokenless failure is not resumable. `--no-resume` runs neither create nor prune the private resume store.
 
 Immediately after opening the controller-owned work log, Pioneer prints `[PIONEER_WORK_LOG] ABSOLUTE_PATH` to stderr. Without `--work-log`, it creates a unique `review-*.jsonl` file in:
 
@@ -87,7 +99,7 @@ On Windows, a custom target inherits its parent directory ACL because POSIX mode
 
 `[REVIEW_WORK_LOG_CREATE_FAILED]` means Pioneer could not establish the requested observability channel, while `[REVIEW_WORK_LOG_WRITE_FAILED]` means real-time flushing failed after creation. Either failure is terminal; Pioneer does not continue an unobservable review.
 
-Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report, `[REVIEW_ASSISTANT_FAILED]` when Pi reports a failed or aborted assistant run, `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling, `[REVIEW_PROCESS_FAILED]` when a settled Pi process with a report exits nonzero or by signal, `[REVIEW_PROCESS_CONTAINMENT_FAILED]` when Pioneer cannot prove the process tree stopped after its child exits, and the work-log failures described above.
+Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report, `[REVIEW_ASSISTANT_FAILED]` when Pi reports a failed or aborted assistant run, `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling, `[REVIEW_PROCESS_FAILED]` when a settled Pi process with a report exits nonzero or by signal, `[REVIEW_PROCESS_CONTAINMENT_FAILED]` when Pioneer cannot prove the process tree stopped after its child exits, `[REVIEW_RESUME_SESSION_INVALID]` for a torn native session, `[REVIEW_RESUME_PI_VERSION_MISMATCH]` for an exact Pi-version mismatch, `[REVIEW_RESUME_ATTEMPT_LIMIT]` when the bounded retry layout is exhausted, `[REVIEW_RESUME_IN_USE]` when another controller still owns the active archive lease, and the work-log failures described above. A containment, retry-layout, or in-use failure is never issued a usable resume token.
 
 ## `pioneer models`
 

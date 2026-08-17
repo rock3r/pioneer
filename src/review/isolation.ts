@@ -9,6 +9,7 @@ export type ReviewPlatform = "darwin" | "linux" | "win32";
 
 export interface ReviewPathSpec {
   readonly sourceDir: string;
+  readonly piHomeSource?: string;
   readonly allowReadPaths?: readonly string[];
   readonly allowWritePaths?: readonly string[];
   readonly reportPath?: string;
@@ -29,6 +30,7 @@ export interface ReviewSandboxConfigOptions extends ValidatedReviewPaths {
   readonly runtimeReadPaths: readonly string[];
   readonly network: ReviewNetworkMode;
   readonly parentProxyUrl?: string;
+  readonly sessionDir?: string;
 }
 
 function contains(parent: string, child: string): boolean {
@@ -175,18 +177,36 @@ async function canonicalProspectiveControllerOutputPath(
   return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
 }
 
+async function canonicalProspectiveControllerDirectoryPath(
+  candidate: string,
+  kind: string,
+): Promise<string> {
+  return path.dirname(
+    await canonicalProspectiveControllerOutputPath(
+      path.join(candidate, ".pioneer-controller-directory"),
+      kind,
+    ),
+  );
+}
+
 async function validateReviewPathsInternal(
   spec: ReviewPathSpec,
+  prospectiveReport: boolean,
   prospectiveWorkLog: boolean,
   platform: NodeJS.Platform,
+  prospectiveControllerDirectories: readonly string[] = [],
 ): Promise<ValidatedReviewPaths> {
   const sourceDir = await canonicalGrant(spec.sourceDir);
+  const piHomeSource =
+    spec.piHomeSource === undefined ? undefined : await canonicalGrant(spec.piHomeSource);
   const allowReadPaths = await canonicalList(spec.allowReadPaths ?? []);
   const allowWritePaths = await canonicalList(spec.allowWritePaths ?? []);
   const reportPath =
     spec.reportPath === undefined
       ? undefined
-      : await canonicalControllerOutputPath(spec.reportPath, "report");
+      : await (prospectiveReport
+          ? canonicalProspectiveControllerOutputPath(spec.reportPath, "report")
+          : canonicalControllerOutputPath(spec.reportPath, "report"));
   const workLogPath =
     spec.workLogPath === undefined
       ? undefined
@@ -202,14 +222,34 @@ async function validateReviewPathsInternal(
     }
   }
   if (
-    reportPath !== undefined &&
-    [sourceDir, ...allowReadPaths, ...allowWritePaths].some((grant) => contains(grant, reportPath))
+    piHomeSource !== undefined &&
+    [sourceDir, ...allowReadPaths, ...allowWritePaths].some((grant) =>
+      overlaps(piHomeSource, grant),
+    )
   ) {
+    throw new Error(`Review Pi home source overlaps an actor-visible grant: ${piHomeSource}`);
+  }
+  const actorVisiblePaths = [
+    sourceDir,
+    ...allowReadPaths,
+    ...allowWritePaths,
+    ...(piHomeSource === undefined ? [] : [piHomeSource]),
+  ];
+  for (const candidate of prospectiveControllerDirectories) {
+    const directory = await canonicalProspectiveControllerDirectoryPath(
+      candidate,
+      "controller directory",
+    );
+    if (actorVisiblePaths.some((grant) => overlaps(directory, grant))) {
+      throw new Error(`Review controller directory overlaps an actor-visible grant: ${directory}`);
+    }
+  }
+  if (reportPath !== undefined && actorVisiblePaths.some((grant) => contains(grant, reportPath))) {
     throw new Error(`Review report target is actor-visible: ${reportPath}`);
   }
   if (
     workLogPath !== undefined &&
-    [sourceDir, ...allowReadPaths, ...allowWritePaths].some((grant) => contains(grant, workLogPath))
+    actorVisiblePaths.some((grant) => contains(grant, workLogPath))
   ) {
     throw new Error(`Review work log target is actor-visible: ${workLogPath}`);
   }
@@ -231,18 +271,41 @@ async function validateReviewPathsInternal(
 
 export async function validateProspectiveReviewWorkLogPath(
   spec: ReviewPathSpec & { readonly workLogPath: string },
+  prospectiveControllerDirectories: readonly string[] = [],
   platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
-  const paths = await validateReviewPathsInternal(spec, true, platform);
+  const paths = await validateReviewPathsInternal(
+    spec,
+    false,
+    true,
+    platform,
+    prospectiveControllerDirectories,
+  );
   if (paths.workLogPath === undefined) throw new Error("Review work log path was not validated");
   return paths.workLogPath;
+}
+
+export async function validateProspectiveReviewReportPath(
+  spec: ReviewPathSpec & { readonly reportPath: string },
+  prospectiveControllerDirectories: readonly string[] = [],
+  platform: NodeJS.Platform = process.platform,
+): Promise<string> {
+  const paths = await validateReviewPathsInternal(
+    spec,
+    true,
+    false,
+    platform,
+    prospectiveControllerDirectories,
+  );
+  if (paths.reportPath === undefined) throw new Error("Review report path was not validated");
+  return paths.reportPath;
 }
 
 export async function validateReviewPaths(
   spec: ReviewPathSpec,
   platform: NodeJS.Platform = process.platform,
 ): Promise<ValidatedReviewPaths> {
-  return await validateReviewPathsInternal(spec, false, platform);
+  return await validateReviewPathsInternal(spec, false, false, platform);
 }
 
 export function buildReviewSandboxConfig(options: ReviewSandboxConfigOptions): SandboxPolicy {
@@ -254,7 +317,11 @@ export function buildReviewSandboxConfig(options: ReviewSandboxConfigOptions): S
   }
   return {
     readOnlyPaths: [options.sourceDir, ...options.allowReadPaths, ...options.runtimeReadPaths],
-    writablePaths: [options.scratchDir, ...options.allowWritePaths],
+    writablePaths: [
+      options.scratchDir,
+      ...(options.sessionDir === undefined ? [] : [options.sessionDir]),
+      ...options.allowWritePaths,
+    ],
     network: options.network === "none" ? "none" : "proxy",
     ...(options.parentProxyUrl === undefined ? {} : { proxyUrl: options.parentProxyUrl }),
   };

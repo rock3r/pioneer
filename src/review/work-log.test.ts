@@ -21,6 +21,7 @@ import {
   buildWindowsProcessStartLookup,
   classifyStaleActiveLeaseOwner,
   openReviewWorkLog,
+  PiDeltaBatcher,
   prepareDefaultReviewWorkLogPath,
   prepareValidatedDefaultReviewWorkLogPath,
   reviewWorkLogDirectory,
@@ -57,6 +58,45 @@ function processIdentityForTest(processId: number, platform: NodeJS.Platform): s
 }
 
 describe("review work log", () => {
+  it("batches high-volume delta metadata after the first 1,000 events", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const batcher = new PiDeltaBatcher((record) => records.push(record));
+    for (let index = 0; index < 1_500; index += 1) {
+      batcher.accept({ eventType: "message_update", eventSubtype: "text_delta", deltaBytes: 3 });
+    }
+    batcher.flush();
+    expect(records).toHaveLength(1_001);
+    expect(records.at(-1)).toEqual({
+      type: "pi_event_delta_batch",
+      eventType: "message_update",
+      eventSubtype: "text_delta",
+      count: 500,
+      deltaBytes: 1_500,
+    });
+  });
+
+  it("flushes queued deltas before a later lifecycle event", () => {
+    const records: Readonly<Record<string, unknown>>[] = [];
+    const batcher = new PiDeltaBatcher((record) => records.push(record));
+    for (let index = 0; index < 1_002; index += 1) {
+      batcher.accept({ eventType: "message_update", eventSubtype: "text_delta", deltaBytes: 3 });
+    }
+
+    batcher.accept({ eventType: "agent_settled" });
+    batcher.flush();
+
+    expect(records.slice(-2)).toEqual([
+      {
+        type: "pi_event_delta_batch",
+        eventType: "message_update",
+        eventSubtype: "text_delta",
+        count: 2,
+        deltaBytes: 6,
+      },
+      { eventType: "agent_settled" },
+    ]);
+  });
+
   it("requires renewal when a stale lease owner identity cannot be inspected", () => {
     const ownerIdentity = "a".repeat(64);
 

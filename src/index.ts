@@ -56,7 +56,13 @@ export {
   type ValidatedReviewPaths,
   validateReviewPaths,
 } from "./review/isolation.js";
-export { type ReviewRequest, type ReviewResult, runReview } from "./review/runner.js";
+export {
+  type ResumeReviewRequest,
+  type ReviewRequest,
+  type ReviewResult,
+  resumeReview,
+  runReview,
+} from "./review/runner.js";
 export {
   type OpenReviewWorkLogOptions,
   openReviewWorkLog,

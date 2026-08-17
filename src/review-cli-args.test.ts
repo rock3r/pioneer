@@ -27,4 +27,15 @@ describe("review CLI arguments", () => {
   it("accepts option-like Pi-home includes through attached values", () => {
     expect(parseReviewCliArgs(["--pi-home-include=--shared"]).piHomeIncludes).toEqual(["--shared"]);
   });
+
+  it("parses bounded RPC output and explicit no-resume options", () => {
+    expect(
+      parseReviewCliArgs(["--max-rpc-output-mb", "64", "--no-resume", "--resume", "token"]),
+    ).toMatchObject({
+      maxRpcOutputMbText: "64",
+      noResume: true,
+      resumeToken: "token",
+      networkSpecified: false,
+    });
+  });
 });

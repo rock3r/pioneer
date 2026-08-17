@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertDistinctExistingReviewOutputs,
   buildReviewSandboxConfig,
+  validateProspectiveReviewReportPath,
   validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
 } from "./isolation.js";
@@ -93,6 +94,56 @@ describe("review path grants", () => {
       validateProspectiveReviewWorkLogPath({ sourceDir: source, workLogPath: target }),
     ).rejects.toThrow(/actor-visible/i);
     await expect(lstat(path.join(source, "state"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a prospective default report before an actor-visible parent exists", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const target = path.join(source, "data", "pioneer", "reports", "review.md");
+    await mkdir(source);
+
+    await expect(
+      validateProspectiveReviewReportPath({ sourceDir: source, reportPath: target }),
+    ).rejects.toThrow(/actor-visible/i);
+    await expect(lstat(path.join(source, "data"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a prospective controller directory that contains an actor-visible grant", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const applicationDirectory = path.join(root, "pioneer");
+    const source = path.join(applicationDirectory, "project");
+    const reportDirectory = path.join(applicationDirectory, "reports");
+    await mkdir(source, { recursive: true });
+
+    await expect(
+      validateProspectiveReviewReportPath(
+        { sourceDir: source, reportPath: path.join(reportDirectory, "review.md") },
+        [applicationDirectory, reportDirectory],
+      ),
+    ).rejects.toThrow(/controller directory.*overlaps/i);
+    await expect(lstat(reportDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps prospective controller outputs outside the Pi-home snapshot source", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const source = path.join(root, "source");
+    const piHomeSource = path.join(root, "pi-home");
+    await Promise.all([mkdir(source), mkdir(piHomeSource)]);
+
+    await expect(
+      validateProspectiveReviewReportPath({
+        sourceDir: source,
+        piHomeSource,
+        reportPath: path.join(piHomeSource, "skills", "reports", "review.md"),
+      }),
+    ).rejects.toThrow(/actor-visible/i);
+    await expect(
+      validateProspectiveReviewWorkLogPath({
+        sourceDir: source,
+        piHomeSource,
+        workLogPath: path.join(piHomeSource, "skills", "logs", "review.jsonl"),
+      }),
+    ).rejects.toThrow(/actor-visible/i);
   });
 
   it("validates the full request before accepting a prospective work log", async () => {

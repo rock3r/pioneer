@@ -1,23 +1,36 @@
-import { lstat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { defaultReviewReportDirectory } from "./resume-archive.js";
 import {
+  annotateHandledReviewResumeFailure,
+  assertReviewResumeOutputsOutsideArchive,
+  assertReviewResumeOutputsOutsideStorage,
+  assertReviewResumeStateIsRecoverable,
   buildReviewPrompt,
+  canonicalReviewPiHomeSource,
+  cleanupCompletedReviewResumeArchive,
+  cleanupUnavailableReviewResumeArchive,
   createReviewScratchDirectory,
   finalizeReviewWorkLog,
+  markReviewCleanupFailure,
+  pruneValidatedReviewResumeArchives,
   type ReviewRequest,
   readinessMetadataForWorkLog,
   requestedModelForWorkLog,
   requiresGitInspection,
+  reviewResumeFailureKind,
   reviewTools,
   runReview,
   runReviewRpc,
   sendReviewPrompt,
+  shouldHandleReviewResumeFailure,
   shouldSchedulePipeCloseFallback,
   sourcePathForWorkLog,
+  validateProspectiveDefaultReviewOutputs,
 } from "./runner.js";
-import type { ReviewWorkLog } from "./work-log.js";
+import { type ReviewWorkLog, reviewWorkLogDirectory } from "./work-log.js";
 
 function recordingWorkLog(): {
   readonly log: ReviewWorkLog;
@@ -68,6 +81,35 @@ process.stdin.once("data", () => {
   ];
 }
 
+function nearLimitAfterBatchedDeltasPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+process.stdin.once("data", () => {
+  let initial = "";
+  for (let index = 0; index < 1_001; index += 1) {
+    initial += JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "x" },
+    }) + "\\n";
+  }
+  process.stdout.write(initial, () => setTimeout(() => {
+    process.stdout.write(JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "y".repeat(700 * 1024) },
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({
+      type: "message_end",
+      message: { role: "assistant", content: "No findings." },
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n");
+  }, 100));
+});
+`,
+  ];
+}
+
 function splitUtf8Pi(): readonly [string, ...string[]] {
   return [
     process.execPath,
@@ -97,6 +139,18 @@ function neverSettlingPi(): readonly [string, ...string[]] {
 
 function delayedExitPi(): readonly [string, ...string[]] {
   return [process.execPath, "-e", "setTimeout(() => process.exit(0), 250);"];
+}
+
+function settledDelayedExitPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `process.stdin.once("data", () => {
+  process.stdout.write(JSON.stringify({ type: "message_end", message: { role: "assistant", content: "Settled report." } }) + "\\n");
+  process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n");
+  setTimeout(() => process.exit(0), 250);
+});`,
+  ];
 }
 
 function rejectedPromptPi(): readonly [string, ...string[]] {
@@ -202,6 +256,25 @@ process.stdin.once("data", () => {
   ];
 }
 
+function rejectedPromptPipeHoldingDescendantPi(): readonly [string, ...string[]] {
+  return [
+    process.execPath,
+    "-e",
+    `
+const { spawn } = require("node:child_process");
+process.stdin.once("data", () => {
+  const descendant = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 1_500)"], {
+    detached: true,
+    stdio: "inherit",
+  });
+  descendant.unref();
+  process.stdout.write(JSON.stringify({ type: "response", success: false }) + "\\n");
+  setInterval(() => {}, 1_000);
+});
+`,
+  ];
+}
+
 function postExitForgingDescendantPi(): readonly [string, ...string[]] {
   return [
     process.execPath,
@@ -226,6 +299,158 @@ process.stdin.once("data", () => {
 }
 
 describe("review RPC runner", () => {
+  it("rejects resumed outputs inside the retained archive", async () => {
+    const archive = await mkdtemp(path.join(tmpdir(), "pioneer-resume-output-"));
+
+    await expect(
+      assertReviewResumeOutputsOutsideArchive(archive, {
+        reportPath: path.join(archive, "report.md"),
+      }),
+    ).rejects.toThrow(/archive/i);
+    await expect(
+      assertReviewResumeOutputsOutsideArchive(archive, {
+        workLogPath: path.join(archive, "review.jsonl"),
+      }),
+    ).rejects.toThrow(/archive/i);
+  });
+
+  it("rejects a default resume work log inside the retained archive", async () => {
+    const archive = await mkdtemp(path.join(tmpdir(), "pioneer-resume-output-"));
+    const environment =
+      process.platform === "win32"
+        ? { LOCALAPPDATA: archive }
+        : process.platform === "linux"
+          ? { XDG_STATE_HOME: archive }
+          : {};
+
+    await expect(
+      assertReviewResumeOutputsOutsideArchive(
+        archive,
+        { reportPath: path.join(tmpdir(), `${path.basename(archive)}-report.md`) },
+        environment,
+        process.platform,
+        archive,
+      ),
+    ).rejects.toThrow(/work log.*archive/i);
+  });
+
+  it("rejects resume outputs inside a different retained archive", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-output-"));
+    const currentArchive = path.join(root, "550e8400-e29b-41d4-a716-446655440000");
+    const otherArchive = path.join(root, "550e8400-e29b-41d4-a716-446655440001");
+    await mkdir(currentArchive);
+    await mkdir(otherArchive);
+
+    await expect(
+      assertReviewResumeOutputsOutsideStorage(
+        { archiveDir: currentArchive },
+        { reportPath: path.join(otherArchive, "report.md") },
+      ),
+    ).rejects.toThrow(/archive/i);
+  });
+
+  it("preserves a successful report while marking cleanup failure terminal", () => {
+    const result = {
+      report: "No findings.",
+      sandboxed: true,
+      warning: "Platform warning.",
+      workLogPath: "/tmp/review.jsonl",
+      reportPath: "/tmp/report.md",
+    };
+
+    expect(markReviewCleanupFailure(result)).toEqual({
+      ...result,
+      cleanupError:
+        "[REVIEW_CLEANUP_FAILED] Pioneer completed the review, but cleanup did not fully succeed; inspect the controller work log.",
+    });
+  });
+
+  it("turns completed archive deletion failure into deferred cleanup failure", async () => {
+    let released = false;
+    const failure = await cleanupCompletedReviewResumeArchive(
+      {
+        token: "550e8400-e29b-41d4-a716-446655440000",
+        archiveDir: "/private/archive",
+        attemptsDir: "/private/archive/attempts",
+        activeAttemptDir: "/private/archive/attempts/0001",
+      },
+      async () => {
+        throw new Error("archive delete failed");
+      },
+      async () => {
+        released = true;
+      },
+    );
+
+    expect(failure?.message).toBe("archive delete failed");
+    expect(released).toBe(true);
+  });
+
+  it("reports deletion failure for an unavailable resume archive", async () => {
+    const token = "550e8400-e29b-41d4-a716-446655440000";
+    const failure = await cleanupUnavailableReviewResumeArchive(
+      {
+        token,
+        archiveDir: `/private/${token}`,
+        attemptsDir: `/private/${token}/attempts`,
+        activeAttemptDir: `/private/${token}/attempts/0001`,
+      },
+      async () => {
+        throw new Error(`EACCES: archive delete failed, rm '/private/${token}'`);
+      },
+    );
+
+    expect(failure?.message).toBe(
+      "[REVIEW_RESUME_DELETE_FAILED] Pioneer could not delete unavailable private review resume data; inspect the controller work log.",
+    );
+    expect(failure?.message).not.toContain(token);
+    expect(failure?.message).not.toContain("/private/");
+  });
+
+  it("tracks handled resume failures without inspecting untrusted error text", () => {
+    expect(shouldHandleReviewResumeFailure(false)).toBe(true);
+    expect(shouldHandleReviewResumeFailure(true)).toBe(false);
+  });
+
+  it("does not classify diagnostic-looking caller text as a containment failure", () => {
+    expect(
+      reviewResumeFailureKind(
+        new Error(
+          "[REVIEW_WORK_LOG_WRITE_FAILED] /logs/[REVIEW_PROCESS_CONTAINMENT_FAILED]/review.jsonl",
+        ),
+      ),
+    ).toBe("retainable");
+  });
+
+  it("preserves the recovery token after a later failure follows successful retention", () => {
+    const token = "550e8400-e29b-41d4-a716-446655440000";
+    expect(annotateHandledReviewResumeFailure(new Error("work log failed"), token).message).toBe(
+      `work log failed\n[PIONEER_REVIEW_RESUME] ${token}`,
+    );
+  });
+
+  it("rejects active archives whose prior actor may still be running", () => {
+    expect(() => assertReviewResumeStateIsRecoverable("active")).toThrow(
+      "[REVIEW_RESUME_NOT_READY]",
+    );
+    expect(() => assertReviewResumeStateIsRecoverable("retained")).not.toThrow();
+    expect(() => assertReviewResumeStateIsRecoverable("report_delivery_failed")).not.toThrow();
+  });
+
+  it("canonicalizes the Pi home before freezing the resumable scope", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-pi-home-source-"));
+    try {
+      const target = path.join(root, "target");
+      const alias = path.join(root, "alias");
+      await mkdir(target);
+      await symlink(target, alias, process.platform === "win32" ? "junction" : "dir");
+
+      await expect(canonicalReviewPiHomeSource(alias)).resolves.toBe(await realpath(target));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("preserves a successful report when closing its work log fails", () => {
     const workLog: ReviewWorkLog = {
       path: "/tmp/review.jsonl",
@@ -239,6 +464,7 @@ describe("review RPC runner", () => {
       report: "No findings.",
       sandboxed: true,
       workLogPath: workLog.path,
+      reportPath: "/tmp/report.md",
     };
 
     expect(finalizeReviewWorkLog(workLog, { result })).toEqual({
@@ -352,7 +578,12 @@ describe("review RPC runner", () => {
     );
 
     await expect(
-      runReview({ sourceDir, prompt: "Review source", reportPath: "relative-review.md" }),
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        reportPath: "relative-review.md",
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
     ).rejects.toThrow(/^Review report path is not absolute:/);
   });
 
@@ -384,6 +615,47 @@ describe("review RPC runner", () => {
 
   it("does not inject controller-collected repository data into read-only reviews", () => {
     expect(buildReviewPrompt("/repo", "/scratch", "Review changes")).not.toContain("Git context");
+  });
+
+  it("does not persist a run-local scratch path in resumable review prompts", () => {
+    expect(buildReviewPrompt("/repo", undefined, "Review changes")).not.toContain("Scratch:");
+  });
+
+  it("does not create or prune resume storage unless this run validated it", async () => {
+    const root = path.join(
+      await import("node:fs/promises").then(({ mkdtemp }) =>
+        mkdtemp(path.join(tmpdir(), "pioneer-no-resume-")),
+      ),
+      "review-resumes",
+    );
+
+    await pruneValidatedReviewResumeArchives(false, root);
+
+    await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("validates both default outputs before either output directory is mutated", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-default-output-preflight-"));
+    const environment =
+      process.platform === "win32"
+        ? { LOCALAPPDATA: path.join(root, "data") }
+        : { XDG_DATA_HOME: path.join(root, "data"), XDG_STATE_HOME: path.join(root, "state") };
+    const workLogDirectory = reviewWorkLogDirectory(environment, process.platform, root);
+    const sourceDir = path.join(workLogDirectory, "source");
+    const piHomeSource = path.join(root, "pi-home");
+    const reportDirectory = defaultReviewReportDirectory(environment, process.platform, root);
+    await Promise.all([mkdir(sourceDir, { recursive: true }), mkdir(piHomeSource)]);
+
+    await expect(
+      validateProspectiveDefaultReviewOutputs(
+        { sourceDir, prompt: "Review source" },
+        piHomeSource,
+        environment,
+        process.platform,
+        root,
+      ),
+    ).rejects.toThrow(/work log.*actor-visible|controller directory.*overlaps/i);
+    await expect(lstat(reportDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("recognizes Git-target requests that macOS and Windows cannot inspect", () => {
@@ -546,6 +818,24 @@ describe("review RPC runner", () => {
     expect(serialized).toContain('"deltaBytes":15');
   });
 
+  it("flushes queued Pi deltas before a later RPC near-limit record", async () => {
+    const { log, records } = recordingWorkLog();
+
+    await runReviewRpc(
+      nearLimitAfterBatchedDeltasPi(),
+      process.cwd(),
+      process.env,
+      "Review the source",
+      5_000,
+      { workLog: log, maxRpcOutputBytes: 1 * 1024 * 1024 },
+    );
+
+    const deltaBatchIndex = records.findIndex(({ type }) => type === "pi_event_delta_batch");
+    const nearLimitIndex = records.findIndex(({ type }) => type === "pi_rpc_near_limit");
+    expect(deltaBatchIndex).toBeGreaterThanOrEqual(0);
+    expect(nearLimitIndex).toBeGreaterThan(deltaBatchIndex);
+  });
+
   it("redacts the original user prompt from Pi event metadata", async () => {
     const { log, records } = recordingWorkLog();
     const userPrompt = "private user request";
@@ -690,6 +980,12 @@ describe("review RPC runner", () => {
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
+  it("allows a settled report a bounded close grace period", async () => {
+    await expect(
+      runReviewRpc(settledDelayedExitPi(), process.cwd(), process.env, "Review the source", 200),
+    ).resolves.toBe("Settled report.");
+  });
+
   it("collects delta-only message updates from Pi 0.84", async () => {
     await expect(
       runReviewRpc(
@@ -731,10 +1027,12 @@ describe("review RPC runner", () => {
     ).rejects.toThrow("[REVIEW_ASSISTANT_FAILED]");
   });
 
-  it("rejects cumulative RPC output above 4 MiB", async () => {
+  it("rejects cumulative RPC output above the selected limit with a stable diagnostic", async () => {
     await expect(
-      runReviewRpc(oversizedDeltaPi(), process.cwd(), process.env, "Review the source", 5_000),
-    ).rejects.toThrow("Pi RPC output exceeded 4 MiB");
+      runReviewRpc(oversizedDeltaPi(), process.cwd(), process.env, "Review the source", 5_000, {
+        maxRpcOutputBytes: 1 * 1024 * 1024,
+      }),
+    ).rejects.toThrow("[REVIEW_RPC_OUTPUT_LIMIT] Pi RPC output exceeded the 1 MiB limit");
   });
 
   it("preserves UTF-8 split across RPC stdout chunks", async () => {
@@ -1142,9 +1440,25 @@ describe("review RPC runner", () => {
   });
 
   it("includes the final child termination state for a rejected prompt", async () => {
-    await expect(
-      runReviewRpc(rejectedPromptPi(), process.cwd(), process.env, "Review the source", 1_000),
-    ).rejects.toThrow(/Pi RPC rejected the review prompt .*exit .*signal (?:SIGKILL|none)/s);
+    let failure: Error | undefined;
+    try {
+      await runReviewRpc(
+        rejectedPromptPi(),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+      );
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+
+    expect(failure?.message).toMatch(
+      /Pi RPC rejected the review prompt .*exit .*signal (?:SIGKILL|none)/s,
+    );
+    expect(failure === undefined ? undefined : reviewResumeFailureKind(failure)).toBe(
+      "prompt_rejected",
+    );
   });
 
   it("terminates the isolated child tree when Pioneer receives SIGINT", async () => {
@@ -1208,6 +1522,30 @@ describe("review RPC runner", () => {
       setTimeout(() => process.emit("SIGINT"), 250);
       await expect(review).rejects.toThrow("[REVIEW_PROCESS_CONTAINMENT_FAILED]");
       expect(performance.now() - started).toBeLessThan(1_400);
+    },
+    5_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "classifies containment loss ahead of an earlier terminal RPC failure",
+    async () => {
+      let failure: Error | undefined;
+      try {
+        await runReviewRpc(
+          rejectedPromptPipeHoldingDescendantPi(),
+          process.cwd(),
+          process.env,
+          "Review the source",
+          500,
+        );
+      } catch (error) {
+        failure = error instanceof Error ? error : new Error(String(error));
+      }
+
+      expect(failure?.message).toContain("[REVIEW_PROCESS_CONTAINMENT_FAILED]");
+      expect(failure === undefined ? undefined : reviewResumeFailureKind(failure)).toBe(
+        "containment",
+      );
     },
     5_000,
   );

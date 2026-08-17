@@ -7,6 +7,9 @@ export interface PiStartupOptions {
   readonly disableExtensions?: boolean;
   readonly disableSkills?: boolean;
   readonly tools?: readonly string[];
+  readonly noSession?: boolean;
+  readonly sessionDir?: string;
+  readonly resumeSession?: string;
 }
 
 const PI_STARTUP_ENVIRONMENT = {
@@ -51,7 +54,26 @@ export function optimizePiStartupCommand(
   const args = command.slice(1);
   const additions: string[] = [];
   if (!hasAny(args, ["--offline"])) additions.push("--offline");
-  if (
+  if (options.resumeSession !== undefined) {
+    additions.push("--session", options.resumeSession);
+  } else if (options.sessionDir !== undefined) {
+    additions.push("--session-dir", options.sessionDir);
+  } else if (
+    options.noSession === true &&
+    !hasAny(args, [
+      "--no-session",
+      "--session",
+      "--session-id",
+      "--continue",
+      "-c",
+      "--resume",
+      "-r",
+      "--fork",
+    ])
+  ) {
+    additions.push("--no-session");
+  } else if (
+    options.noSession !== false &&
     !hasAny(args, [
       "--no-session",
       "--session",

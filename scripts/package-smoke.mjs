@@ -156,6 +156,7 @@ try {
   const invalidReportPath = run(process.execPath, [
     primaryCli,
     "review",
+    ...(process.platform === "win32" ? ["--allow-unsandboxed-windows"] : []),
     "--source",
     process.cwd(),
     "--prompt",

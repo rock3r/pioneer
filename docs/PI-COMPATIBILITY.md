@@ -2,7 +2,7 @@
 
 Pioneer treats Pi's command-line interface as a versioned external contract. The authoritative range and required capabilities live in [`pi-compatibility.json`](../pi-compatibility.json).
 
-The current supported range is Pi `0.80.6` through `0.84.2`, inclusive. Older versions fail with `PI_VERSION_TOO_OLD`. A newer semantic version is allowed with `PI_VERSION_UNTESTED` on stderr and in doctor machine output so users are not blocked merely because Pi published first.
+The current supported range is Pi `0.80.6` through `0.84.2`, inclusive. Older versions fail with `PI_VERSION_TOO_OLD`. A newer semantic version is allowed with `PI_VERSION_UNTESTED` on stderr and in doctor machine output so users are not blocked merely because Pi published first. Resumable reviews additionally require the stored exact Pi version to match on resume.
 
 ## Why the minimum is 0.80.6
 
@@ -13,6 +13,7 @@ The minimum is the earliest released Pi version that satisfies every Pioneer fea
 - `--no-approve`, which prevents untrusted project-local Pi configuration from loading;
 - disabled prompt-template, theme, and skill discovery where Pioneer requires it;
 - every thinking level Pioneer exposes, including `max`.
+- RPC mode accepts the private `--session-dir` / exact `--session` recovery paths used by resumable reviews; a compatibility update must verify both flags and the on-disk session contract without parsing session content.
 
 Pi `0.79.0` introduced the project-trust flags, but `max` first appears in the released CLI contract at [`v0.80.6`](https://github.com/earendil-works/pi/blob/v0.80.6/packages/coding-agent/src/cli/args.ts). Supporting an earlier version would make either project trust or the advertised thinking-level contract conditional.
 
@@ -44,5 +45,7 @@ Pioneer parses the first line of `pi --version` as SemVer before model discovery
 - within the range: continue normally;
 - above `testedMaximum`: continue with `PI_VERSION_UNTESTED`;
 - non-SemVer output: fail with `PI_VERSION_UNRECOGNIZED`.
+
+Resume is stricter than a new review: the stored exact Pi version must match the current readiness version. A newer or older binary therefore receives `[REVIEW_RESUME_PI_VERSION_MISMATCH]` until a fresh review creates a new archive under the reviewed compatibility contract.
 
 A binary claiming an in-range version but missing `--no-approve` fails with `PI_CLI_INCOMPATIBLE`. The compatibility smoke catches official-package regressions; users should reinstall an official Pi release if a custom or stale standalone binary diverges from its reported version.
