@@ -934,7 +934,7 @@ def gh_graphql_list_reviews(repo, pr_number):
         "       pageInfo { hasNextPage endCursor }"
         "       nodes {"
         "         id: databaseId"
-        "         user: author { login }"
+        "         user: author { login type: __typename }"
         "         author_association: authorAssociation"
         "         submitted_at: submittedAt"
         "         body"
@@ -968,17 +968,37 @@ def gh_graphql_list_reviews(repo, pr_number):
         payload = gh_json(args, repo=repo)
         if not isinstance(payload, dict):
             raise GhCommandError("Unexpected GraphQL payload for reviews")
+        if payload.get("errors"):
+            raise GhCommandError("GraphQL reviews query returned errors")
 
-        data = payload.get("data") or {}
-        repository = data.get("repository") or {}
-        pull_request = repository.get("pullRequest") or {}
-        reviews = pull_request.get("reviews") or {}
-        nodes = reviews.get("nodes") or []
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise GhCommandError("Unexpected GraphQL reviews data payload")
+        repository = data.get("repository")
+        if not isinstance(repository, dict):
+            raise GhCommandError("Unexpected GraphQL reviews repository payload")
+        pull_request = repository.get("pullRequest")
+        if not isinstance(pull_request, dict):
+            raise GhCommandError("Unexpected GraphQL reviews pull-request payload")
+        reviews = pull_request.get("reviews")
+        if not isinstance(reviews, dict):
+            raise GhCommandError("Unexpected GraphQL reviews connection payload")
+        nodes = reviews.get("nodes")
         if not isinstance(nodes, list):
             raise GhCommandError("Unexpected reviews.nodes payload")
-        items.extend(nodes)
+        for node in nodes:
+            if not isinstance(node, dict):
+                raise GhCommandError("Unexpected GraphQL review node payload")
+            user = node.get("user")
+            if isinstance(user, dict) and user.get("type") == "Bot":
+                login = user.get("login")
+                if isinstance(login, str) and login and not login.endswith("[bot]"):
+                    node = {**node, "user": {**user, "login": f"{login}[bot]"}}
+            items.append(node)
 
-        page_info = reviews.get("pageInfo") or {}
+        page_info = reviews.get("pageInfo")
+        if not isinstance(page_info, dict):
+            raise GhCommandError("Unexpected GraphQL reviews pageInfo payload")
         if not bool(page_info.get("hasNextPage")):
             break
         cursor = page_info.get("endCursor")

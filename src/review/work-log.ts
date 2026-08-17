@@ -110,6 +110,7 @@ export class PiDeltaBatcher {
       typeof event.eventSubtype !== "string" ||
       !PI_DELTA_EVENT_TYPES.has(event.eventSubtype)
     ) {
+      this.flush();
       this.emit(event);
       return;
     }

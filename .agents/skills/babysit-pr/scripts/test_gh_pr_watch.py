@@ -37,6 +37,42 @@ class ReviewPayloadTests(unittest.TestCase):
         self.assertEqual(payload, graphql_reviews)
         graphql_fetch.assert_called_once_with("rock3r/pioneer", 27)
 
+    def test_graphql_bot_author_uses_rest_login_shape(self):
+        payload = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviews": {
+                            "nodes": [
+                                {
+                                    "id": 123,
+                                    "user": {"login": "cursor", "type": "Bot"},
+                                    "author_association": "NONE",
+                                    "submitted_at": "2026-08-17T14:00:00Z",
+                                    "body": "Found an issue",
+                                    "state": "COMMENTED",
+                                    "html_url": "https://example.test/review/123",
+                                }
+                            ],
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        }
+                    }
+                }
+            }
+        }
+
+        with patch.object(gh_pr_watch, "gh_json", return_value=payload):
+            reviews = gh_pr_watch.gh_graphql_list_reviews("rock3r/pioneer", 27)
+
+        self.assertEqual(reviews[0]["user"]["login"], "cursor[bot]")
+
+    def test_graphql_errors_fail_closed(self):
+        payload = {"data": None, "errors": [{"message": "backend unavailable"}]}
+
+        with patch.object(gh_pr_watch, "gh_json", return_value=payload):
+            with self.assertRaisesRegex(gh_pr_watch.GhCommandError, "GraphQL.*reviews"):
+                gh_pr_watch.gh_graphql_list_reviews("rock3r/pioneer", 27)
+
 
 if __name__ == "__main__":
     unittest.main()
