@@ -559,24 +559,24 @@ async function runEvalCommandWithInterruption(
   } catch (error) {
     throw evalWorkLogCreateError(validatedWorkLogPath, error);
   }
-  options.onWorkLogReady?.(workLog.path);
-  recordEvalWorkLog(workLog, "eval_started", {
-    pioneerVersion: PIONEER_VERSION,
-    platform: process.platform,
-    controllerPid: process.pid,
-  });
-  recordEvalWorkLog(workLog, "stage_completed", { stage: "sandbox_readiness" });
-  if (readiness !== undefined) {
-    recordEvalWorkLog(workLog, "stage_completed", {
-      stage: "pi_readiness",
-      warning: readiness.warning !== undefined,
-    });
-  }
   let workLogCloseFailure: unknown;
   let completedResult: EvalRunResult | undefined;
   let primaryFailure: unknown;
   let cleanupFailure: unknown;
   try {
+    options.onWorkLogReady?.(workLog.path);
+    recordEvalWorkLog(workLog, "eval_started", {
+      pioneerVersion: PIONEER_VERSION,
+      platform: process.platform,
+      controllerPid: process.pid,
+    });
+    recordEvalWorkLog(workLog, "stage_completed", { stage: "sandbox_readiness" });
+    if (readiness !== undefined) {
+      recordEvalWorkLog(workLog, "stage_completed", {
+        stage: "pi_readiness",
+        warning: readiness.warning !== undefined,
+      });
+    }
     const optimizedPi = optimizePiStartupCommand(validated.command, {
       disableExtensions: true,
       disableSkills: true,
@@ -855,7 +855,7 @@ async function runEvalCommandWithInterruption(
   if (workLogCloseFailure !== undefined && primaryFailure !== undefined) {
     throw new EvalCleanupFailed(
       [primaryFailure, workLogCloseFailure],
-      "Eval execution failed and work-log close also failed",
+      `${primaryFailure instanceof Error ? primaryFailure.message : String(primaryFailure)}\n${workLogCloseFailure instanceof Error ? workLogCloseFailure.message : String(workLogCloseFailure)}`,
     );
   }
   if (workLogCloseFailure !== undefined) throw workLogCloseFailure;
