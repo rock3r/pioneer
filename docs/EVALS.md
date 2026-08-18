@@ -85,7 +85,7 @@ The writable `--run-dir` and every caller-supplied read-only `--runtime-read` gr
 
 The runner snapshots `PI_CODING_AGENT_DIR` (or `~/.pi/agent`) into a canonical private temporary tree outside the persistent eval run using the fixed root allowlist `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`. The actor receives that selected configuration in a writable isolated `agentDir` so Pi 0.84.x can create `auth.json.lock` and `settings.json.lock`, plus separate ephemeral writable home/tmp scratch. The source Pi home is never mounted. Controller launch/probe files are not placed in the actor run, and the entire temporary tree is removed on every exit path. Configured skills are excluded, as are default-skipped package/runtime trees. Sessions, logs, `.npm`, `.cache`, transient directories, and log files are hard exclusions, matched case-insensitively on macOS and Windows; evals have no include flag. Optional extension discovery is disabled for Pi eval actors. `--pi-home DIR` selects another snapshot source; the source is validated and copied, never used in place. The selected snapshot alone is subject to the 500,000-entry and 1 GiB backstops.
 
-Every `eval run` writes a controller-owned JSONL work log. Pass `--work-log FILE` for a create-only absolute path that must not be actor-visible; otherwise Pioneer creates a unique `eval-*.jsonl` file in:
+After native-sandbox and default Pi-home readiness succeed, every `eval run` writes a controller-owned JSONL work log. Pass `--work-log FILE` for a create-only absolute path that must not be actor-visible; otherwise Pioneer creates a unique `eval-*.jsonl` file in:
 
 - macOS: `~/Library/Logs/Pioneer/evals/`;
 - Linux: `${XDG_STATE_HOME:-~/.local/state}/pioneer/logs/evals/`;

@@ -629,6 +629,23 @@ export async function validateEvalWorkLogPath(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+  await assertEvalWorkLogNotActorVisible(target, actorGrantPaths);
+  return target;
+}
+
+export async function assertEvalWorkLogNotActorVisible(
+  workLogPath: string,
+  actorGrantPaths: readonly string[],
+): Promise<void> {
+  let canonicalWorkLogPath = path.normalize(workLogPath);
+  try {
+    canonicalWorkLogPath = path.join(
+      await realpath(path.dirname(workLogPath)),
+      path.basename(workLogPath),
+    );
+  } catch {
+    // The log file or parent may not exist yet during create-only validation.
+  }
   const canonicalGrants: string[] = [];
   for (const grantPath of actorGrantPaths) {
     try {
@@ -637,10 +654,9 @@ export async function validateEvalWorkLogPath(
       canonicalGrants.push(path.normalize(grantPath));
     }
   }
-  if (canonicalGrants.some((grantPath) => isWithin(grantPath, target))) {
-    throw new Error(`Eval work log target is actor-visible: ${target}`);
+  if (canonicalGrants.some((grantPath) => isWithin(grantPath, canonicalWorkLogPath))) {
+    throw new Error(`Eval work log target is actor-visible: ${workLogPath}`);
   }
-  return target;
 }
 
 export async function validateEvalRunSpec(spec: EvalRunSpec): Promise<ValidatedEvalRunSpec> {

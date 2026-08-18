@@ -26,6 +26,7 @@ import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-p
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { executableRuntimeRoot } from "../sandbox/runtime-paths.js";
 import {
+  assertEvalWorkLogNotActorVisible,
   assertPiHomeSeparatedFromActorGrants,
   buildEvalExecutableReadPaths,
   buildEvalSandboxConfig,
@@ -619,6 +620,14 @@ async function runEvalCommandWithInterruption(
       ...executableReadPaths,
     ];
     assertPiHomeSeparatedFromActorGrants(validatedPiHomeSource, completeActorReadPaths);
+    try {
+      await assertEvalWorkLogNotActorVisible(workLog.path, [
+        validated.runDir,
+        ...completeActorReadPaths,
+      ]);
+    } catch (error) {
+      throw evalWorkLogCreateError(workLog.path, error);
+    }
     const readinessOptions = {
       environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
       ...(requestedModel === undefined ? {} : { requestedModel }),
@@ -804,7 +813,6 @@ async function runEvalCommandWithInterruption(
       else primaryFailure = error;
     } finally {
       delete process.env.PIONEER_HOST_SECRET;
-      recordEvalWorkLog(workLog, "stage_started", { stage: "cleanup" });
       const cleanupResults = await Promise.allSettled([
         bridge?.close(),
         bridgeRoot === undefined ? undefined : rm(bridgeRoot, { recursive: true, force: true }),
@@ -816,10 +824,14 @@ async function runEvalCommandWithInterruption(
       cleanupFailure = cleanupResults.find(
         (result): result is PromiseRejectedResult => result.status === "rejected",
       )?.reason;
-      recordEvalWorkLog(workLog, "stage_completed", {
-        stage: "cleanup",
-        failed: cleanupFailure !== undefined,
-      });
+      try {
+        recordEvalWorkLog(workLog, "stage_completed", {
+          stage: "cleanup",
+          failed: cleanupFailure !== undefined,
+        });
+      } catch (error) {
+        workLogCloseFailure ??= error;
+      }
     }
     if (completedResult !== undefined) {
       recordEvalWorkLog(workLog, "eval_completed", {

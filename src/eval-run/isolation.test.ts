@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  assertEvalWorkLogNotActorVisible,
   assertPiHomeSeparatedFromActorGrants,
   buildEvalExecutableReadPaths,
   buildEvalSandboxConfig,
@@ -761,6 +762,18 @@ describe("validateEvalWorkLogPath", () => {
 
   it("rejects a relative work log path", async () => {
     await expect(validateEvalWorkLogPath("eval.jsonl", [])).rejects.toThrow(/absolute/i);
+  });
+
+  it("rejects an already-created work log that later overlaps a derived executable grant", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-package-"));
+    const runDir = path.join(temp, "run");
+    const packageRoot = path.join(temp, "pi-package");
+    await mkdir(runDir);
+    await mkdir(packageRoot);
+    const target = path.join(packageRoot, "eval.jsonl");
+    await expect(assertEvalWorkLogNotActorVisible(target, [runDir, packageRoot])).rejects.toThrow(
+      /actor-visible/i,
+    );
   });
 });
 
