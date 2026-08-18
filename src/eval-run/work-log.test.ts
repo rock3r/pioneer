@@ -56,7 +56,13 @@ describe("eval work log", () => {
       now: () => new Date("2026-08-18T12:00:00.000Z"),
     });
     log.record("eval_started", { platform: "darwin" });
-    log.record("stage_started", { stage: "pi_home_snapshot", token: "secret-token-value" });
+    log.record("stage_started", {
+      stage: "pi_home_snapshot",
+      token: "secret-token-value",
+      apiKey: "tenant-private-value",
+      accessToken: "access-token-value",
+      clientSecret: 12345,
+    });
     log.close();
 
     const records = (await readFile(target, "utf8"))
@@ -72,7 +78,12 @@ describe("eval work log", () => {
       platform: "darwin",
     });
     expect(records[1]?.stage).toBe("pi_home_snapshot");
+    expect(records[1]?.token).toBe("[REDACTED]");
+    expect(records[1]?.apiKey).toBe("[REDACTED]");
+    expect(records[1]?.accessToken).toBe("[REDACTED]");
+    expect(records[1]?.clientSecret).toBe("[REDACTED]");
     expect(JSON.stringify(records[1])).not.toContain("secret-token-value");
+    expect(JSON.stringify(records[1])).not.toContain("tenant-private-value");
   });
 
   it("fails closed when the target already exists", async () => {

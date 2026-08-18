@@ -3,7 +3,7 @@ import { closeSync, constants, fsyncSync, lstatSync, openSync, writeSync } from 
 import { chmod, lstat, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { diagnosticMessage, sanitizeDiagnostic } from "../diagnostics.js";
+import { diagnosticMessage, isCredentialLabel, sanitizeDiagnostic } from "../diagnostics.js";
 
 const MAX_WORK_LOG_BYTES = 16 * 1024 * 1024;
 const MIN_WORK_LOG_BYTES = 1_024;
@@ -81,14 +81,9 @@ export async function prepareDefaultEvalWorkLogDirectory(
   if (platform !== "win32") await chmod(directory, 0o700);
 }
 
-const SECRET_DETAIL_KEY =
-  /(?:^|[_-])(?:authorization|token|secret|password|passphrase|credential|cookie|key)(?:$|[_-])/i;
-
 function jsonSafe(value: unknown, key?: string): unknown {
-  if (typeof value === "string") {
-    if (key !== undefined && SECRET_DETAIL_KEY.test(key)) return "[REDACTED]";
-    return sanitizeDiagnostic(value);
-  }
+  if (key !== undefined && isCredentialLabel(key)) return "[REDACTED]";
+  if (typeof value === "string") return sanitizeDiagnostic(value);
   if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
   if (Array.isArray(value)) return value.map((entry) => jsonSafe(entry, key));
   return undefined;
