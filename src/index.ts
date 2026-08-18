@@ -11,6 +11,12 @@ export {
   prepareEvalBattery,
 } from "./eval-run/setup.js";
 export {
+  type EvalWorkLog,
+  evalWorkLogDirectory,
+  type OpenEvalWorkLogOptions,
+  openEvalWorkLog,
+} from "./eval-run/work-log.js";
+export {
   formatModelCatalog,
   type ModelCatalogEntry,
   type ModelCatalogJson,

@@ -13,6 +13,7 @@ import {
 } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { PIONEER_VERSION } from "../package-metadata.js";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
 import { isPiExecutable, optimizePiStartupCommand, requestedPiModel } from "../pi-startup.js";
@@ -29,16 +30,26 @@ import {
   buildEvalExecutableReadPaths,
   buildEvalSandboxConfig,
   type EvalRunSpec,
+  evalIsolatedPiHomeWritablePaths,
   findValidatedPiPackageRoot,
   isTrustedPiInstallation,
   pathsOverlap,
   type ResolvedEvalExecutable,
   resolveEvalExecutable,
   validateEvalRunSpec,
+  validateEvalWorkLogPath,
 } from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
 import { macosRuntimeReadPaths } from "./macos-runtime.js";
 import { startPublicEgressProxy } from "./public-egress-proxy.js";
+import {
+  type EvalWorkLog,
+  evalWorkLogCreateError,
+  evalWorkLogWriteError,
+  generatedDefaultEvalWorkLogPath,
+  openEvalWorkLog,
+  prepareDefaultEvalWorkLogDirectory,
+} from "./work-log.js";
 
 export interface EvalRunResult {
   readonly exitCode: number;
@@ -49,11 +60,14 @@ export interface EvalRunResult {
   readonly containmentFailure?: boolean;
   readonly interrupted?: NodeJS.Signals;
   readonly warning?: string;
+  readonly workLogPath?: string;
 }
 
 export interface RunEvalOptions {
   readonly deniedReadProbePaths?: readonly string[];
   readonly timeoutMs?: number;
+  readonly workLogPath?: string;
+  readonly onWorkLogReady?: (path: string) => void;
 }
 
 const OUTSIDE_SENTINEL_CONTENT = "outside-root sentinel";
@@ -177,7 +191,34 @@ function interruptedEvalResult(signal: NodeJS.Signals, completed?: EvalRunResult
     ),
     interrupted: signal,
     ...(completed?.warning === undefined ? {} : { warning: completed.warning }),
+    ...(completed?.workLogPath === undefined ? {} : { workLogPath: completed.workLogPath }),
   };
+}
+
+function recordEvalWorkLog(
+  workLog: EvalWorkLog | undefined,
+  type: string,
+  details: Readonly<Record<string, unknown>> = {},
+): void {
+  if (workLog === undefined) return;
+  try {
+    workLog.record(type, details);
+  } catch (error) {
+    throw evalWorkLogWriteError(workLog.path, error);
+  }
+}
+
+function closeEvalWorkLog(workLog: EvalWorkLog | undefined): void {
+  if (workLog === undefined) return;
+  try {
+    workLog.close();
+  } catch (error) {
+    throw evalWorkLogWriteError(workLog.path, error);
+  }
+}
+
+function withWorkLogPath(result: EvalRunResult, workLogPath: string | undefined): EvalRunResult {
+  return workLogPath === undefined ? result : { ...result, workLogPath };
 }
 
 interface EvalInterruptionState {
@@ -471,17 +512,9 @@ async function runEvalCommandWithInterruption(
   throwIfEvalInterrupted(interruption);
   const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
-  const initialReadinessOptions = {
-    environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
-    ...(requestedModel === undefined ? {} : { requestedModel }),
-    signal: interruption.abortSignal,
-  };
   const sandboxRuntimeExecutable = await realpath(process.execPath);
   throwIfEvalInterrupted(interruption);
   await assertNativeSandboxReady();
-  throwIfEvalInterrupted(interruption);
-  let readiness =
-    spec.piHomeSource === undefined ? await assertPiReady(initialReadinessOptions) : undefined;
   throwIfEvalInterrupted(interruption);
   const validated = await validateEvalRunSpec({
     ...spec,
@@ -493,218 +526,312 @@ async function runEvalCommandWithInterruption(
   if (validatedPiHomeSource === undefined) {
     throw new Error("Validated eval Pi home source is unavailable");
   }
-  const optimizedPi = optimizePiStartupCommand(validated.command, {
-    disableExtensions: true,
-    disableSkills: true,
-  });
-  const resolvedExecutable = await resolveEvalExecutable(
-    optimizedPi.command[0],
-    validated.runDir,
-    sanitizedBrokerEnvironment(process.env).PATH ?? "",
-  );
-  throwIfEvalInterrupted(interruption);
-  const sandboxCommand = buildEvalLaunchCommand(resolvedExecutable, optimizedPi.command.slice(1));
-  const piActor = isPiExecutable(spec.command[0]);
-  const controllerPiInstallation = piActor
-    ? await (async () => {
-        try {
-          const controllerPi = await resolveEvalExecutable(
-            "pi",
-            validated.runDir,
-            sanitizedBrokerEnvironment(process.env).PATH ?? "",
-          );
-          return await findValidatedPiPackageRoot(controllerPi.commandPath);
-        } catch {
-          return undefined;
-        }
-      })()
-    : undefined;
-  const piInstallation = piActor
-    ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath, validated.runDir)
-    : undefined;
-  throwIfEvalInterrupted(interruption);
-  if (piActor && !isTrustedPiInstallation(piInstallation, controllerPiInstallation)) {
-    throw new Error("Pi eval actor is not a validated Pi installation");
+  const defaultWorkLog = options.workLogPath === undefined;
+  const requestedWorkLogPath = options.workLogPath ?? generatedDefaultEvalWorkLogPath();
+  if (defaultWorkLog) {
+    try {
+      await prepareDefaultEvalWorkLogDirectory(requestedWorkLogPath);
+    } catch (error) {
+      throw evalWorkLogCreateError(requestedWorkLogPath, error);
+    }
   }
-  const executableReadPaths = buildEvalExecutableReadPaths(resolvedExecutable, piInstallation);
-  const platformRuntimeReadPaths = await macosRuntimeReadPaths(process.execPath);
-  throwIfEvalInterrupted(interruption);
-  const completeActorReadPaths = [
-    ...validated.runtimeReadPaths,
-    sandboxRuntimeExecutable,
-    ...platformRuntimeReadPaths,
-    ...executableReadPaths,
-  ];
-  assertPiHomeSeparatedFromActorGrants(validatedPiHomeSource, completeActorReadPaths);
-  const readinessOptions = {
-    environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
-    ...(requestedModel === undefined ? {} : { requestedModel }),
-    signal: interruption.abortSignal,
-  };
-  readiness ??= await assertPiReady(readinessOptions);
-  throwIfEvalInterrupted(interruption);
-  const controllerTempRoot = await realpath(
-    process.platform === "darwin" ? "/private/tmp" : "/tmp",
-  );
-  throwIfEvalInterrupted(interruption);
-  const createdIsolationDir = await mkdtemp(path.join(controllerTempRoot, "pioneer-eval-control-"));
-  let isolationDir: string;
+  let validatedWorkLogPath: string;
   try {
-    isolationDir = await realpath(createdIsolationDir);
+    validatedWorkLogPath = await validateEvalWorkLogPath(requestedWorkLogPath, [
+      validated.runDir,
+      ...validated.runtimeReadPaths,
+    ]);
   } catch (error) {
-    await rm(createdIsolationDir, { recursive: true, force: true });
-    throw error;
+    throw evalWorkLogCreateError(requestedWorkLogPath, error);
   }
-  const throwIfSetupInterrupted = (): void => {
-    throwIfEvalInterrupted(interruption);
-  };
-  const actorScratchDir = path.join(isolationDir, "actor-scratch");
-  const probeScript = path.join(isolationDir, "probe.mjs");
-  const probeSpec = path.join(isolationDir, "probe.json");
-  const launcherScript = path.join(isolationDir, "launch.mjs");
-  const launchSpec = path.join(isolationDir, "launch.json");
-  const deniedWritePath = path.join(
-    path.dirname(validated.runDir),
-    `.escape-${randomBytes(8).toString("hex")}`,
-  );
-  let lanProbe: Awaited<ReturnType<typeof listenForLanProbe>> | undefined;
-  let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
-  let bridge: LinuxProxyBridge | undefined;
-  let bridgeRoot: string | undefined;
+  let workLog: EvalWorkLog;
+  try {
+    workLog = openEvalWorkLog(validatedWorkLogPath);
+  } catch (error) {
+    throw evalWorkLogCreateError(validatedWorkLogPath, error);
+  }
+  options.onWorkLogReady?.(workLog.path);
+  recordEvalWorkLog(workLog, "eval_started", {
+    pioneerVersion: PIONEER_VERSION,
+    platform: process.platform,
+    controllerPid: process.pid,
+  });
+  recordEvalWorkLog(workLog, "stage_completed", { stage: "sandbox_readiness" });
+  let readiness: Awaited<ReturnType<typeof assertPiReady>> | undefined;
+  let workLogCloseFailure: unknown;
   let completedResult: EvalRunResult | undefined;
   let primaryFailure: unknown;
   let cleanupFailure: unknown;
   try {
-    const actorGrantPaths = [validated.runDir, ...completeActorReadPaths];
-    if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
-      throw new Error("Eval controller directory must not overlap actor grants");
-    }
-    throwIfSetupInterrupted();
-    await mkdir(actorScratchDir, { mode: 0o700 });
-    throwIfSetupInterrupted();
-    const piHome = await prepareIsolatedPiHome({
-      sourceDir: validatedPiHomeSource,
-      destination: path.join(actorScratchDir, "pi-home"),
-      mode: "eval",
-      checkAborted: throwIfSetupInterrupted,
+    const optimizedPi = optimizePiStartupCommand(validated.command, {
+      disableExtensions: true,
+      disableSkills: true,
     });
-    throwIfSetupInterrupted();
-    await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
-    await writeFile(probeScript, PROBE_SOURCE, { flag: "wx", mode: 0o500 });
-    await writeFile(launcherScript, LAUNCHER_SOURCE, { flag: "wx", mode: 0o500 });
-    await writeFile(
-      launchSpec,
-      JSON.stringify({
-        command: sandboxCommand,
-        cwd: validated.runDir,
-        environment: { ...optimizedPi.environment, ...piHome.environment },
-      }),
-      { flag: "wx", mode: 0o400 },
+    const resolvedExecutable = await resolveEvalExecutable(
+      optimizedPi.command[0],
+      validated.runDir,
+      sanitizedBrokerEnvironment(process.env).PATH ?? "",
     );
-    throwIfSetupInterrupted();
-
-    lanProbe = await listenForLanProbe();
-    throwIfSetupInterrupted();
-    await writeFile(
-      probeSpec,
-      JSON.stringify({
-        deniedReadPaths: [deniedWritePath, ...(options.deniedReadProbePaths ?? [])],
-        deniedWritePath,
-        localPort: lanProbe.port,
-      }),
-      { flag: "wx", mode: 0o400 },
-    );
-    throwIfSetupInterrupted();
-
-    proxy = await startPublicEgressProxy(randomBytes(32).toString("hex"));
-    throwIfSetupInterrupted();
-    const linuxBwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
-    if (process.platform === "linux" && linuxBwrapPath === undefined) {
-      throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");
+    throwIfEvalInterrupted(interruption);
+    const sandboxCommand = buildEvalLaunchCommand(resolvedExecutable, optimizedPi.command.slice(1));
+    const piActor = isPiExecutable(spec.command[0]);
+    const controllerPiInstallation = piActor
+      ? await (async () => {
+          try {
+            const controllerPi = await resolveEvalExecutable(
+              "pi",
+              validated.runDir,
+              sanitizedBrokerEnvironment(process.env).PATH ?? "",
+            );
+            return await findValidatedPiPackageRoot(controllerPi.commandPath);
+          } catch {
+            return undefined;
+          }
+        })()
+      : undefined;
+    const piInstallation = piActor
+      ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath, validated.runDir)
+      : undefined;
+    throwIfEvalInterrupted(interruption);
+    if (piActor && !isTrustedPiInstallation(piInstallation, controllerPiInstallation)) {
+      throw new Error("Pi eval actor is not a validated Pi installation");
     }
-    if (process.platform === "linux") {
-      bridgeRoot = await mkdtemp("/tmp/pir-bridge-");
-      bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
-      throwIfSetupInterrupted();
-    }
-    const sharedRuntimeReadPaths = [
+    const executableReadPaths = buildEvalExecutableReadPaths(resolvedExecutable, piInstallation);
+    const platformRuntimeReadPaths = await macosRuntimeReadPaths(process.execPath);
+    throwIfEvalInterrupted(interruption);
+    const completeActorReadPaths = [
       ...validated.runtimeReadPaths,
       sandboxRuntimeExecutable,
       ...platformRuntimeReadPaths,
+      ...executableReadPaths,
     ];
-    const probeConfig = buildEvalSandboxConfig({
-      platform: process.platform as "darwin" | "linux" | "win32",
-      runDir: validated.runDir,
-      runtimeReadPaths: [...sharedRuntimeReadPaths, probeScript, probeSpec],
-      parentProxyUrl: proxy.url,
+    assertPiHomeSeparatedFromActorGrants(validatedPiHomeSource, completeActorReadPaths);
+    const readinessOptions = {
+      environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
+      ...(requestedModel === undefined ? {} : { requestedModel }),
+      signal: interruption.abortSignal,
+    };
+    recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
+    readiness = await assertPiReady(readinessOptions);
+    recordEvalWorkLog(workLog, "stage_completed", {
+      stage: "pi_readiness",
+      warning: readiness.warning !== undefined,
     });
-    const actorConfig = buildEvalSandboxConfig({
-      platform: process.platform as "darwin" | "linux" | "win32",
-      runDir: validated.runDir,
-      runtimeReadPaths: [
-        ...sharedRuntimeReadPaths,
-        launcherScript,
-        launchSpec,
-        piHome.agentDir,
-        ...executableReadPaths,
-      ],
-      writableScratchPaths: [piHome.homeDir, piHome.tmpDir],
-      parentProxyUrl: proxy.url,
-    });
-    process.env.PIONEER_HOST_SECRET = randomBytes(32).toString("hex");
-    const timeoutMs = options.timeoutMs ?? 300_000;
-    throwIfSetupInterrupted();
-    const probeResult = await sandboxAndCapture(
-      probeConfig,
-      [sandboxRuntimeExecutable, probeScript, probeSpec],
-      validated.runDir,
-      Math.min(timeoutMs, 30_000),
-      linuxBwrapPath,
-      bridge?.socketPath,
-      sandboxRuntimeExecutable,
+    throwIfEvalInterrupted(interruption);
+    const controllerTempRoot = await realpath(
+      process.platform === "darwin" ? "/private/tmp" : "/tmp",
     );
-    if (probeResult.interrupted !== undefined) {
-      completedResult = probeResult;
-    } else if (probeResult.exitCode !== 0 || probeResult.stdout.trim() !== "isolation-ok") {
-      throw new Error(
-        `Eval isolation probe failed closed: ${probeResult.stderr || probeResult.stdout}`,
-      );
-    } else if ((await readFile(deniedWritePath, "utf8")) !== OUTSIDE_SENTINEL_CONTENT) {
-      throw new Error("Eval isolation probe failed closed: host sentinel was modified");
-    } else {
+    throwIfEvalInterrupted(interruption);
+    const createdIsolationDir = await mkdtemp(
+      path.join(controllerTempRoot, "pioneer-eval-control-"),
+    );
+    let isolationDir: string;
+    try {
+      isolationDir = await realpath(createdIsolationDir);
+    } catch (error) {
+      await rm(createdIsolationDir, { recursive: true, force: true });
+      throw error;
+    }
+    const throwIfSetupInterrupted = (): void => {
+      throwIfEvalInterrupted(interruption);
+    };
+    const actorScratchDir = path.join(isolationDir, "actor-scratch");
+    const probeScript = path.join(isolationDir, "probe.mjs");
+    const probeSpec = path.join(isolationDir, "probe.json");
+    const launcherScript = path.join(isolationDir, "launch.mjs");
+    const launchSpec = path.join(isolationDir, "launch.json");
+    const deniedWritePath = path.join(
+      path.dirname(validated.runDir),
+      `.escape-${randomBytes(8).toString("hex")}`,
+    );
+    let lanProbe: Awaited<ReturnType<typeof listenForLanProbe>> | undefined;
+    let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
+    let bridge: LinuxProxyBridge | undefined;
+    let bridgeRoot: string | undefined;
+    try {
+      const actorGrantPaths = [validated.runDir, ...completeActorReadPaths];
+      if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
+        throw new Error("Eval controller directory must not overlap actor grants");
+      }
       throwIfSetupInterrupted();
-      const result = await sandboxAndCapture(
-        actorConfig,
-        [sandboxRuntimeExecutable, launcherScript, launchSpec],
+      await mkdir(actorScratchDir, { mode: 0o700 });
+      throwIfSetupInterrupted();
+      recordEvalWorkLog(workLog, "stage_started", { stage: "pi_home_snapshot" });
+      const piHome = await prepareIsolatedPiHome({
+        sourceDir: validatedPiHomeSource,
+        destination: path.join(actorScratchDir, "pi-home"),
+        mode: "eval",
+        checkAborted: throwIfSetupInterrupted,
+      });
+      recordEvalWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
+      throwIfSetupInterrupted();
+      await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
+      await writeFile(probeScript, PROBE_SOURCE, { flag: "wx", mode: 0o500 });
+      await writeFile(launcherScript, LAUNCHER_SOURCE, { flag: "wx", mode: 0o500 });
+      await writeFile(
+        launchSpec,
+        JSON.stringify({
+          command: sandboxCommand,
+          cwd: validated.runDir,
+          environment: { ...optimizedPi.environment, ...piHome.environment },
+        }),
+        { flag: "wx", mode: 0o400 },
+      );
+      throwIfSetupInterrupted();
+
+      lanProbe = await listenForLanProbe();
+      throwIfSetupInterrupted();
+      await writeFile(
+        probeSpec,
+        JSON.stringify({
+          deniedReadPaths: [deniedWritePath, ...(options.deniedReadProbePaths ?? [])],
+          deniedWritePath,
+          localPort: lanProbe.port,
+        }),
+        { flag: "wx", mode: 0o400 },
+      );
+      throwIfSetupInterrupted();
+
+      recordEvalWorkLog(workLog, "stage_started", { stage: "network_proxy" });
+      proxy = await startPublicEgressProxy(randomBytes(32).toString("hex"));
+      throwIfSetupInterrupted();
+      const linuxBwrapPath =
+        process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
+      if (process.platform === "linux" && linuxBwrapPath === undefined) {
+        throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");
+      }
+      if (process.platform === "linux") {
+        bridgeRoot = await mkdtemp("/tmp/pir-bridge-");
+        bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
+        throwIfSetupInterrupted();
+      }
+      const sharedRuntimeReadPaths = [
+        ...validated.runtimeReadPaths,
+        sandboxRuntimeExecutable,
+        ...platformRuntimeReadPaths,
+      ];
+      const probeConfig = buildEvalSandboxConfig({
+        platform: process.platform as "darwin" | "linux" | "win32",
+        runDir: validated.runDir,
+        runtimeReadPaths: [...sharedRuntimeReadPaths, probeScript, probeSpec],
+        parentProxyUrl: proxy.url,
+      });
+      const actorConfig = buildEvalSandboxConfig({
+        platform: process.platform as "darwin" | "linux" | "win32",
+        runDir: validated.runDir,
+        runtimeReadPaths: [
+          ...sharedRuntimeReadPaths,
+          launcherScript,
+          launchSpec,
+          ...executableReadPaths,
+        ],
+        writableScratchPaths: [...evalIsolatedPiHomeWritablePaths(piHome)],
+        parentProxyUrl: proxy.url,
+      });
+      recordEvalWorkLog(workLog, "stage_completed", { stage: "network_proxy" });
+      process.env.PIONEER_HOST_SECRET = randomBytes(32).toString("hex");
+      const timeoutMs = options.timeoutMs ?? 300_000;
+      throwIfSetupInterrupted();
+      recordEvalWorkLog(workLog, "stage_started", { stage: "isolation_probe" });
+      const probeResult = await sandboxAndCapture(
+        probeConfig,
+        [sandboxRuntimeExecutable, probeScript, probeSpec],
         validated.runDir,
-        timeoutMs,
+        Math.min(timeoutMs, 30_000),
         linuxBwrapPath,
         bridge?.socketPath,
         sandboxRuntimeExecutable,
       );
-      completedResult = {
-        ...result,
-        ...(readiness.warning === undefined ? {} : { warning: readiness.warning }),
-      };
+      recordEvalWorkLog(workLog, "stage_completed", {
+        stage: "isolation_probe",
+        exitCode: probeResult.exitCode,
+        interrupted: probeResult.interrupted !== undefined,
+      });
+      if (probeResult.interrupted !== undefined) {
+        completedResult = withWorkLogPath(probeResult, workLog.path);
+      } else if (probeResult.exitCode !== 0 || probeResult.stdout.trim() !== "isolation-ok") {
+        throw new Error(
+          `Eval isolation probe failed closed: ${probeResult.stderr || probeResult.stdout}`,
+        );
+      } else if ((await readFile(deniedWritePath, "utf8")) !== OUTSIDE_SENTINEL_CONTENT) {
+        throw new Error("Eval isolation probe failed closed: host sentinel was modified");
+      } else {
+        throwIfSetupInterrupted();
+        recordEvalWorkLog(workLog, "stage_started", { stage: "actor" });
+        const result = await sandboxAndCapture(
+          actorConfig,
+          [sandboxRuntimeExecutable, launcherScript, launchSpec],
+          validated.runDir,
+          timeoutMs,
+          linuxBwrapPath,
+          bridge?.socketPath,
+          sandboxRuntimeExecutable,
+        );
+        recordEvalWorkLog(workLog, "stage_completed", {
+          stage: "actor",
+          exitCode: result.exitCode,
+          timedOut: result.timedOut === true,
+          containmentFailure: result.containmentFailure === true,
+          stdoutBytes: Buffer.byteLength(result.stdout),
+          stderrBytes: Buffer.byteLength(result.stderr),
+        });
+        completedResult = withWorkLogPath(
+          {
+            ...result,
+            ...(readiness.warning === undefined ? {} : { warning: readiness.warning }),
+          },
+          workLog.path,
+        );
+      }
+    } catch (error) {
+      if (error instanceof EvalSetupInterrupted)
+        completedResult = withWorkLogPath(interruptedEvalResult(error.signal), workLog.path);
+      else primaryFailure = error;
+    } finally {
+      delete process.env.PIONEER_HOST_SECRET;
+      recordEvalWorkLog(workLog, "stage_started", { stage: "cleanup" });
+      const cleanupResults = await Promise.allSettled([
+        bridge?.close(),
+        bridgeRoot === undefined ? undefined : rm(bridgeRoot, { recursive: true, force: true }),
+        proxy?.close(),
+        lanProbe?.close(),
+        unlink(deniedWritePath).catch(() => undefined),
+        rm(isolationDir, { recursive: true, force: true }),
+      ]);
+      cleanupFailure = cleanupResults.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      )?.reason;
+      recordEvalWorkLog(workLog, "stage_completed", {
+        stage: "cleanup",
+        failed: cleanupFailure !== undefined,
+      });
     }
-  } catch (error) {
-    if (error instanceof EvalSetupInterrupted)
-      completedResult = interruptedEvalResult(error.signal);
-    else primaryFailure = error;
+    if (completedResult !== undefined) {
+      recordEvalWorkLog(workLog, "eval_completed", {
+        exitCode: completedResult.exitCode,
+        timedOut: completedResult.timedOut === true,
+        containmentFailure: completedResult.containmentFailure === true,
+        interrupted: completedResult.interrupted !== undefined,
+      });
+    } else if (primaryFailure !== undefined) {
+      recordEvalWorkLog(workLog, "eval_failed", {
+        error: primaryFailure instanceof Error ? primaryFailure.message : String(primaryFailure),
+      });
+    }
   } finally {
-    delete process.env.PIONEER_HOST_SECRET;
-    const cleanupResults = await Promise.allSettled([
-      bridge?.close(),
-      bridgeRoot === undefined ? undefined : rm(bridgeRoot, { recursive: true, force: true }),
-      proxy?.close(),
-      lanProbe?.close(),
-      unlink(deniedWritePath).catch(() => undefined),
-      rm(isolationDir, { recursive: true, force: true }),
-    ]);
-    cleanupFailure = cleanupResults.find(
-      (result): result is PromiseRejectedResult => result.status === "rejected",
-    )?.reason;
+    try {
+      closeEvalWorkLog(workLog);
+    } catch (error) {
+      workLogCloseFailure = error;
+    }
   }
+  if (workLogCloseFailure !== undefined && primaryFailure !== undefined) {
+    throw new EvalCleanupFailed(
+      [primaryFailure, workLogCloseFailure],
+      "Eval execution failed and work-log close also failed",
+    );
+  }
+  if (workLogCloseFailure !== undefined) throw workLogCloseFailure;
   if (primaryFailure !== undefined && cleanupFailure !== undefined) {
     throw new EvalCleanupFailed(
       [primaryFailure, cleanupFailure],
@@ -716,8 +843,11 @@ async function runEvalCommandWithInterruption(
   }
   if (primaryFailure !== undefined) throw primaryFailure;
   if (interruption.signal !== undefined && completedResult?.interrupted === undefined) {
-    completedResult = interruptedEvalResult(interruption.signal, completedResult);
+    completedResult = withWorkLogPath(
+      interruptedEvalResult(interruption.signal, completedResult),
+      workLog.path,
+    );
   }
   if (completedResult === undefined) throw new Error("Eval run ended without a result");
-  return completedResult;
+  return withWorkLogPath(completedResult, workLog.path);
 }

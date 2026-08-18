@@ -36,6 +36,18 @@ export interface EvalSandboxConfigOptions {
   readonly parentProxyUrl: string;
 }
 
+export interface EvalIsolatedPiHomePaths {
+  readonly agentDir: string;
+  readonly homeDir: string;
+  readonly tmpDir: string;
+}
+
+export function evalIsolatedPiHomeWritablePaths(
+  piHome: EvalIsolatedPiHomePaths,
+): readonly string[] {
+  return [piHome.homeDir, piHome.tmpDir, piHome.agentDir];
+}
+
 export interface ValidatedPiInstallation {
   readonly packageRoot: string;
 }
@@ -583,6 +595,52 @@ export function assertPiHomeSeparatedFromActorGrants(
   if (actorGrantPaths.some((grantPath) => pathsOverlap(grantPath, piHomeSource))) {
     throw new Error(`Pi home source must not overlap eval actor grants: ${piHomeSource}`);
   }
+}
+
+export async function validateEvalWorkLogPath(
+  workLogPath: string,
+  actorGrantPaths: readonly string[],
+): Promise<string> {
+  if (workLogPath.length === 0 || workLogPath.includes("\0") || /[\p{Cc}]/u.test(workLogPath)) {
+    throw new Error("Eval work log path must be a non-empty path without control characters");
+  }
+  if (!path.isAbsolute(workLogPath)) {
+    throw new Error("Eval work log path must be absolute");
+  }
+  const absolute = path.normalize(workLogPath);
+  const parent = path.dirname(absolute);
+  let parentStats: Awaited<ReturnType<typeof lstat>>;
+  try {
+    parentStats = await lstat(parent);
+  } catch {
+    throw new Error(`Eval work log parent is missing: ${parent}`);
+  }
+  if (parentStats.isSymbolicLink()) {
+    throw new Error(`Eval work log parent is a symbolic link: ${parent}`);
+  }
+  if (!parentStats.isDirectory()) {
+    throw new Error(`Eval work log parent is not a directory: ${parent}`);
+  }
+  const canonicalParent = await realpath(parent);
+  const target = path.join(canonicalParent, path.basename(absolute));
+  try {
+    await lstat(target);
+    throw new Error(`Eval work log target already exists: ${target}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const canonicalGrants: string[] = [];
+  for (const grantPath of actorGrantPaths) {
+    try {
+      canonicalGrants.push(await realpath(grantPath));
+    } catch {
+      canonicalGrants.push(path.normalize(grantPath));
+    }
+  }
+  if (canonicalGrants.some((grantPath) => isWithin(grantPath, target))) {
+    throw new Error(`Eval work log target is actor-visible: ${target}`);
+  }
+  return target;
 }
 
 export async function validateEvalRunSpec(spec: EvalRunSpec): Promise<ValidatedEvalRunSpec> {

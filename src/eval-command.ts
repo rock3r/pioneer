@@ -9,7 +9,7 @@ export function evalUsage(commandName: string): string {
   return `Usage:
   ${commandName} prepare --skill DIR --evals FILE --output DIR
   ${commandName} install-linux
-  ${commandName} run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] -- COMMAND [ARG ...]`;
+  ${commandName} run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] [--work-log FILE] -- COMMAND [ARG ...]`;
 }
 
 function usage(commandName: string): never {
@@ -73,6 +73,7 @@ export async function runEvalCli(cliArgs: readonly string[], commandName: string
     const deniedReadProbePaths = takeRepeatedOption(args, "--deny-read-probe", commandName);
     const timeoutText = takeOption(args, "--timeout-ms", commandName);
     const timeoutMs = timeoutText === undefined ? undefined : Number(timeoutText);
+    const workLogPath = takeOption(args, "--work-log", commandName);
     if (
       !runDir ||
       args.length > 0 ||
@@ -87,7 +88,12 @@ export async function runEvalCli(cliArgs: readonly string[], commandName: string
         runtimeReadPaths,
         ...(piHomeSource === undefined ? {} : { piHomeSource: path.resolve(piHomeSource) }),
       },
-      { deniedReadProbePaths, ...(timeoutMs === undefined ? {} : { timeoutMs }) },
+      {
+        deniedReadProbePaths,
+        onWorkLogReady: (logPath) => process.stderr.write(`[PIONEER_EVAL_WORK_LOG] ${logPath}\n`),
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...(workLogPath === undefined ? {} : { workLogPath: path.resolve(workLogPath) }),
+      },
     );
     process.stdout.write(result.stdout);
     if (result.warning !== undefined) process.stderr.write(`WARNING: ${result.warning}\n`);
