@@ -833,17 +833,25 @@ async function runEvalCommandWithInterruption(
         workLogCloseFailure ??= error;
       }
     }
-    if (completedResult !== undefined) {
-      recordEvalWorkLog(workLog, "eval_completed", {
-        exitCode: completedResult.exitCode,
-        timedOut: completedResult.timedOut === true,
-        containmentFailure: completedResult.containmentFailure === true,
-        interrupted: completedResult.interrupted !== undefined,
-      });
-    } else if (primaryFailure !== undefined) {
-      recordEvalWorkLog(workLog, "eval_failed", {
-        error: primaryFailure instanceof Error ? primaryFailure.message : String(primaryFailure),
-      });
+    if (workLogCloseFailure === undefined && completedResult !== undefined) {
+      try {
+        recordEvalWorkLog(workLog, "eval_completed", {
+          exitCode: completedResult.exitCode,
+          timedOut: completedResult.timedOut === true,
+          containmentFailure: completedResult.containmentFailure === true,
+          interrupted: completedResult.interrupted !== undefined,
+        });
+      } catch (error) {
+        workLogCloseFailure = error;
+      }
+    } else if (workLogCloseFailure === undefined && primaryFailure !== undefined) {
+      try {
+        recordEvalWorkLog(workLog, "eval_failed", {
+          error: primaryFailure instanceof Error ? primaryFailure.message : String(primaryFailure),
+        });
+      } catch (error) {
+        workLogCloseFailure = error;
+      }
     }
   } finally {
     try {
