@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { nativeSandboxReadinessErrors } from "../sandbox/platform-readiness.js";
 import { evalIsolatedPiHomeWritablePaths } from "./isolation.js";
 import { buildEvalLaunchCommand, captureEvalProcess, runEvalCommand } from "./runner.js";
 
@@ -199,28 +200,29 @@ describe("eval isolated Pi credential locks", () => {
     ]);
   });
 
-  it.skipIf(process.platform === "win32")(
-    "lets a sandboxed actor create Pi credential lock directories beside snapshotted auth files",
-    async () => {
-      const root = await mkdtemp(path.join(tmpdir(), "pioneer-eval-lock-"));
-      createdRoots.push(root);
-      const runDir = path.join(root, "run");
-      const piHome = path.join(root, "pi-home");
-      const binDir = path.join(root, "bin");
-      await mkdir(runDir);
-      await mkdir(piHome);
-      await mkdir(binDir);
-      await writeFile(path.join(piHome, "auth.json"), '{"marker":"eval-auth-secret"}\n');
-      await writeFile(path.join(piHome, "settings.json"), "{}\n");
-      await writeFile(
-        path.join(binDir, "pi"),
-        '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.2; exit 0; fi\nif [ ! -d "$PI_CODING_AGENT_DIR" ]; then echo "No models available."; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
-        { mode: 0o755 },
-      );
-      const actor = path.join(binDir, "lock-actor");
-      await writeFile(
-        actor,
-        `#!${process.execPath}
+  it("lets a sandboxed actor create Pi credential lock directories beside snapshotted auth files", async (context) => {
+    if ((await nativeSandboxReadinessErrors()).length > 0) {
+      context.skip();
+    }
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-eval-lock-"));
+    createdRoots.push(root);
+    const runDir = path.join(root, "run");
+    const piHome = path.join(root, "pi-home");
+    const binDir = path.join(root, "bin");
+    await mkdir(runDir);
+    await mkdir(piHome);
+    await mkdir(binDir);
+    await writeFile(path.join(piHome, "auth.json"), '{"marker":"eval-auth-secret"}\n');
+    await writeFile(path.join(piHome, "settings.json"), "{}\n");
+    await writeFile(
+      path.join(binDir, "pi"),
+      '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.84.2; exit 0; fi\nif [ ! -d "$PI_CODING_AGENT_DIR" ]; then echo "No models available."; exit 0; fi\nprintf \'provider  model  context  max-out  thinking  images\\nsmoke  actor  1K  1K  no  no\\n\'\n',
+      { mode: 0o755 },
+    );
+    const actor = path.join(binDir, "lock-actor");
+    await writeFile(
+      actor,
+      `#!${process.execPath}
 const fs = require("node:fs");
 const path = require("node:path");
 const agentDir = process.env.PI_CODING_AGENT_DIR;
@@ -245,37 +247,36 @@ if (!auth.includes("eval-auth-secret")) {
 }
 process.stdout.write("pi-credential-lock-ok\\n");
 `,
-        { mode: 0o755 },
-      );
+      { mode: 0o755 },
+    );
 
-      const workLogPath = path.join(root, "eval.jsonl");
-      const previousPath = process.env.PATH;
-      process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
-      try {
-        const result = await runEvalCommand(
-          {
-            runDir,
-            command: ["lock-actor"],
-            piHomeSource: piHome,
-          },
-          { timeoutMs: 15_000, workLogPath },
-        );
-        expect(result.exitCode).toBe(0);
-        expect(result.stdout).toBe("pi-credential-lock-ok\n");
-        expect(result.stderr).not.toMatch(/lock-failed|EPERM/);
-        expect(result.workLogPath).toBe(path.join(await realpath(root), "eval.jsonl"));
-        const stages = (await readFile(result.workLogPath ?? workLogPath, "utf8"))
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line) as { type?: string; stage?: string });
-        expect(stages.some((record) => record.stage === "pi_home_snapshot")).toBe(true);
-        expect(stages.some((record) => record.stage === "isolation_probe")).toBe(true);
-        expect(stages.some((record) => record.stage === "actor")).toBe(true);
-        expect(stages.at(-1)?.type).toBe("eval_completed");
-      } finally {
-        if (previousPath === undefined) delete process.env.PATH;
-        else process.env.PATH = previousPath;
-      }
-    },
-  );
+    const workLogPath = path.join(root, "eval.jsonl");
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
+    try {
+      const result = await runEvalCommand(
+        {
+          runDir,
+          command: ["lock-actor"],
+          piHomeSource: piHome,
+        },
+        { timeoutMs: 15_000, workLogPath },
+      );
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("pi-credential-lock-ok\n");
+      expect(result.stderr).not.toMatch(/lock-failed|EPERM/);
+      expect(result.workLogPath).toBe(path.join(await realpath(root), "eval.jsonl"));
+      const stages = (await readFile(result.workLogPath ?? workLogPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type?: string; stage?: string });
+      expect(stages.some((record) => record.stage === "pi_home_snapshot")).toBe(true);
+      expect(stages.some((record) => record.stage === "isolation_probe")).toBe(true);
+      expect(stages.some((record) => record.stage === "actor")).toBe(true);
+      expect(stages.at(-1)?.type).toBe("eval_completed");
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
+  });
 });
