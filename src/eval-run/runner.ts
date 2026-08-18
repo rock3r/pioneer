@@ -512,9 +512,17 @@ async function runEvalCommandWithInterruption(
   throwIfEvalInterrupted(interruption);
   const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
+  const initialReadinessOptions = {
+    environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
+    ...(requestedModel === undefined ? {} : { requestedModel }),
+    signal: interruption.abortSignal,
+  };
   const sandboxRuntimeExecutable = await realpath(process.execPath);
   throwIfEvalInterrupted(interruption);
   await assertNativeSandboxReady();
+  throwIfEvalInterrupted(interruption);
+  let readiness =
+    spec.piHomeSource === undefined ? await assertPiReady(initialReadinessOptions) : undefined;
   throwIfEvalInterrupted(interruption);
   const validated = await validateEvalRunSpec({
     ...spec,
@@ -557,7 +565,12 @@ async function runEvalCommandWithInterruption(
     controllerPid: process.pid,
   });
   recordEvalWorkLog(workLog, "stage_completed", { stage: "sandbox_readiness" });
-  let readiness: Awaited<ReturnType<typeof assertPiReady>> | undefined;
+  if (readiness !== undefined) {
+    recordEvalWorkLog(workLog, "stage_completed", {
+      stage: "pi_readiness",
+      warning: readiness.warning !== undefined,
+    });
+  }
   let workLogCloseFailure: unknown;
   let completedResult: EvalRunResult | undefined;
   let primaryFailure: unknown;
@@ -611,12 +624,14 @@ async function runEvalCommandWithInterruption(
       ...(requestedModel === undefined ? {} : { requestedModel }),
       signal: interruption.abortSignal,
     };
-    recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
-    readiness = await assertPiReady(readinessOptions);
-    recordEvalWorkLog(workLog, "stage_completed", {
-      stage: "pi_readiness",
-      warning: readiness.warning !== undefined,
-    });
+    if (readiness === undefined) {
+      recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
+      readiness = await assertPiReady(readinessOptions);
+      recordEvalWorkLog(workLog, "stage_completed", {
+        stage: "pi_readiness",
+        warning: readiness.warning !== undefined,
+      });
+    }
     throwIfEvalInterrupted(interruption);
     const controllerTempRoot = await realpath(
       process.platform === "darwin" ? "/private/tmp" : "/tmp",
