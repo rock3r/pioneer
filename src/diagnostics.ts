@@ -75,7 +75,7 @@ function credentialLabelTokens(label: string): readonly string[] {
     .map((token) => token.toLowerCase().replace(/\d+$/, ""));
 }
 
-function isCredentialLabel(label: string): boolean {
+export function isCredentialLabel(label: string): boolean {
   const tokens = credentialLabelTokens(label);
   if (tokens.some((token) => CREDENTIAL_TOKENS.has(token))) return true;
   const joined = tokens.join("");

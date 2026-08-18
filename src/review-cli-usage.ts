@@ -11,4 +11,4 @@ export const REVIEW_USAGE = `Usage:
   pioneer update [--changelog] [--yes|-y]
   pioneer eval prepare --skill DIR --evals FILE --output DIR
   pioneer eval install-linux
-  pioneer eval run --run-dir DIR [options] -- COMMAND [ARG ...]`;
+  pioneer eval run --run-dir DIR [options] [--work-log FILE] -- COMMAND [ARG ...]`;

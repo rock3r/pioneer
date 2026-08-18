@@ -3,15 +3,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  assertEvalWorkLogNotActorVisible,
   assertPiHomeSeparatedFromActorGrants,
   buildEvalExecutableReadPaths,
   buildEvalSandboxConfig,
+  evalIsolatedPiHomeWritablePaths,
   findValidatedPiPackageRoot,
   isPublicInternetAddress,
   isTrustedPiInstallation,
   MAX_SHEBANG_RESOLUTION_DEPTH,
   resolveEvalExecutable,
   validateEvalRunSpec,
+  validateEvalWorkLogPath,
 } from "./isolation.js";
 
 function uniquePaths(paths: readonly string[]): string[] {
@@ -597,6 +600,31 @@ describe("cross-platform sandbox config", () => {
     },
   );
 
+  it("grants the isolated Pi agent directory writable so credential lock files can be created", () => {
+    const piHome = {
+      agentDir: "/tmp/pioneer-control/actor-scratch/pi-home/agent",
+      homeDir: "/tmp/pioneer-control/actor-scratch/pi-home/home",
+      tmpDir: "/tmp/pioneer-control/actor-scratch/pi-home/tmp",
+    };
+    const writableScratchPaths = evalIsolatedPiHomeWritablePaths(piHome);
+    const config = buildEvalSandboxConfig({
+      platform: "darwin",
+      runDir: "/tmp/pioneer-eval/run",
+      runtimeReadPaths: ["/opt/homebrew/bin/pi"],
+      writableScratchPaths,
+      parentProxyUrl: "http://srt:token@127.0.0.1:43123",
+    });
+
+    expect(writableScratchPaths).toEqual([piHome.homeDir, piHome.tmpDir, piHome.agentDir]);
+    expect(config.writablePaths).toEqual([
+      "/tmp/pioneer-eval/run",
+      piHome.homeDir,
+      piHome.tmpDir,
+      piHome.agentDir,
+    ]);
+    expect(config.readOnlyPaths).not.toContain(piHome.agentDir);
+  });
+
   it.each(["darwin", "linux"] as const)(
     "adds only a separate narrow controller-created actor scratch on %s",
     (platform) => {
@@ -707,6 +735,45 @@ describe("cross-platform sandbox config", () => {
     expect(config.readOnlyPaths).toEqual([actor.commandPath]);
     expect(config.readOnlyPaths).not.toContain("/private/tmp/unrelated-package/bin");
     expect(config.readOnlyPaths).not.toContain("/private/tmp/unrelated-package");
+  });
+});
+
+describe("validateEvalWorkLogPath", () => {
+  it("accepts a create-only controller path outside actor grants", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-path-"));
+    const runDir = path.join(temp, "run");
+    const logs = path.join(temp, "logs");
+    await mkdir(runDir);
+    await mkdir(logs);
+    const target = path.join(logs, "eval.jsonl");
+    await expect(validateEvalWorkLogPath(target, [runDir])).resolves.toBe(
+      path.join(await realpath(logs), "eval.jsonl"),
+    );
+  });
+
+  it("rejects an actor-visible work log", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-visible-"));
+    const runDir = path.join(temp, "run");
+    await mkdir(runDir);
+    await expect(
+      validateEvalWorkLogPath(path.join(runDir, "eval.jsonl"), [runDir]),
+    ).rejects.toThrow(/actor-visible/i);
+  });
+
+  it("rejects a relative work log path", async () => {
+    await expect(validateEvalWorkLogPath("eval.jsonl", [])).rejects.toThrow(/absolute/i);
+  });
+
+  it("rejects an already-created work log that later overlaps a derived executable grant", async () => {
+    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-package-"));
+    const runDir = path.join(temp, "run");
+    const packageRoot = path.join(temp, "pi-package");
+    await mkdir(runDir);
+    await mkdir(packageRoot);
+    const target = path.join(packageRoot, "eval.jsonl");
+    await expect(assertEvalWorkLogNotActorVisible(target, [runDir, packageRoot])).rejects.toThrow(
+      /actor-visible/i,
+    );
   });
 });
 

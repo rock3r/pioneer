@@ -197,12 +197,17 @@ pioneer eval run --run-dir DIR
   [--runtime-read PATH]...
   [--deny-read-probe PATH]...
   [--timeout-ms N]
+  [--work-log FILE]
   -- COMMAND [ARG ...]
 ```
 
 The command after `--` is executed as discrete argv in the strict sandbox. The runner first performs mandatory filesystem, environment, and loopback probes. Before creating launch artifacts it validates the executable: bare names use the selected sanitized `PATH`, relative paths are anchored to the run directory, and absolute/symlinked launchers are canonicalized with narrow exact grants. Actor stdout and stderr observed before termination are propagated within a 4 MiB stdout and 64 KiB stderr bound; exit status and terminating signal are also returned.
 
-Eval failures return nonzero. Stable stderr diagnostics are `[EVAL_TIMEOUT]` for timeout, `[EVAL_INTERRUPTED]` for SIGINT/SIGTERM, `[EVAL_SPAWN_FAILED]` for sandbox launch failure, `[EVAL_SHEBANG_RESOLUTION_FAILED]` for a cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` interpreter chain, `[EVAL_PROCESS_CONTAINMENT_FAILED]` when inherited pipes prevent proving the process tree stopped, and `[EVAL_OUTPUT_LIMIT]` when the output bound is exceeded. These diagnostics do not print the actor environment, Pi configuration, or authenticated proxy URL.
+The isolated Pi snapshot `agentDir` is writable so Pi can create credential lock directories next to snapshotted `auth.json` and `settings.json`. The source Pi home is never mounted.
+
+Immediately after opening the controller-owned work log, Pioneer prints `[PIONEER_EVAL_WORK_LOG] ABSOLUTE_PATH` to stderr. Without `--work-log`, it creates a unique `eval-*.jsonl` file in the platform Pioneer evals log directory. An explicit `--work-log` target must be absolute, absent, free of control characters, and outside every actor-visible grant. Work-log records cover runner stages and bounded exit metadata only. `[EVAL_WORK_LOG_CREATE_FAILED]` and `[EVAL_WORK_LOG_WRITE_FAILED]` are terminal.
+
+Eval failures return nonzero. Stable stderr diagnostics are `[EVAL_TIMEOUT]` for timeout, `[EVAL_INTERRUPTED]` for SIGINT/SIGTERM, `[EVAL_SPAWN_FAILED]` for sandbox launch failure, `[EVAL_SHEBANG_RESOLUTION_FAILED]` for a cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` interpreter chain, `[EVAL_PROCESS_CONTAINMENT_FAILED]` when inherited pipes prevent proving the process tree stopped, `[EVAL_OUTPUT_LIMIT]` when the output bound is exceeded, and the work-log failures described above. These diagnostics do not print the actor environment, Pi configuration, or authenticated proxy URL.
 
 When the actor executable is Pi, fast-start flags are added automatically and skills are disabled. The writable run directory and read-only runtime paths must all be narrow and non-overlapping. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, temporary, variable-data, and home roots, are rejected after canonicalization; narrowly selected read-only system runtimes and disposable temporary descendants remain supported. Eval networking is always public-only.
 

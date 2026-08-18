@@ -142,7 +142,7 @@ try {
   await writeFile(evalMiddle, `#!/usr/bin/env final\n${nestedInterpreter}`, { mode: 0o755 });
   await writeFile(
     evalActor,
-    `#!/usr/bin/env middle\nconst fs = require("node:fs");\nconst path = require("node:path");\nconst probes = ${JSON.stringify([evalSiblingSecret, evalPackageSecret])};\nconst leaked = probes.filter((probe) => { try { fs.readFileSync(probe); return true; } catch { return false; } });\nif (leaked.length > 0) { process.stdout.write("implicit-read-allowed:" + leaked.join(",") + "\\n"); process.exit(1); }\nconst piAgentDir = process.env.PI_CODING_AGENT_DIR;\nif (!piAgentDir || !path.relative(process.cwd(), piAgentDir).startsWith("..")) { process.stdout.write("pi-home-not-externalized\\n"); process.exit(1); }\ntry { fs.writeFileSync(path.join(piAgentDir, "auth.json"), "tampered"); process.stdout.write("pi-auth-writable\\n"); process.exit(1); } catch {}\nfs.writeFileSync(path.join(process.cwd(), "pi-home-path.txt"), path.dirname(piAgentDir));\nif (fs.existsSync(path.join(process.cwd(), ".isolation"))) { process.stdout.write("controller-artifacts-visible\\n"); process.exit(1); }\nif (process.argv.at(-1) !== "nested-argument") { process.stdout.write("nested-argument-lost\\n"); process.exit(1); }\nprocess.stdout.write("eval-production-path-ok\\n"); process.stderr.write("eval-production-path-err\\n");\n`,
+    `#!/usr/bin/env middle\nconst fs = require("node:fs");\nconst path = require("node:path");\nconst probes = ${JSON.stringify([evalSiblingSecret, evalPackageSecret])};\nconst leaked = probes.filter((probe) => { try { fs.readFileSync(probe); return true; } catch { return false; } });\nif (leaked.length > 0) { process.stdout.write("implicit-read-allowed:" + leaked.join(",") + "\\n"); process.exit(1); }\nconst piAgentDir = process.env.PI_CODING_AGENT_DIR;\nif (!piAgentDir || !path.relative(process.cwd(), piAgentDir).startsWith("..")) { process.stdout.write("pi-home-not-externalized\\n"); process.exit(1); }\nfor (const name of ["auth.json.lock", "settings.json.lock"]) {\n  try {\n    const lockDir = path.join(piAgentDir, name);\n    fs.mkdirSync(lockDir);\n    fs.writeFileSync(path.join(lockDir, "owner"), "eval-lock");\n  } catch (error) {\n    process.stdout.write("pi-lock-failed:" + name + ":" + (error.code || error.message) + "\\n");\n    process.exit(1);\n  }\n}\nfs.writeFileSync(path.join(process.cwd(), "pi-home-path.txt"), path.dirname(piAgentDir));\nif (fs.existsSync(path.join(process.cwd(), ".isolation"))) { process.stdout.write("controller-artifacts-visible\\n"); process.exit(1); }\nif (process.argv.at(-1) !== "nested-argument") { process.stdout.write("nested-argument-lost\\n"); process.exit(1); }\nprocess.stdout.write("eval-production-path-ok\\n"); process.stderr.write("eval-production-path-err\\n");\n`,
     { mode: 0o755 },
   );
   await writeFile(
@@ -157,6 +157,10 @@ try {
   );
   const previousPath = process.env.PATH;
   process.env.PATH = `${evalBin}${path.delimiter}${previousPath ?? ""}`;
+  const evalLogs = path.join(root, "eval-logs");
+  await mkdir(evalLogs);
+  let evalLogIndex = 0;
+  const nextEvalWorkLog = () => path.join(evalLogs, `eval-${evalLogIndex++}.jsonl`);
   try {
     const evalResult = await runEvalCommand(
       {
@@ -164,7 +168,7 @@ try {
         command: ["eval-actor", "nested-argument"],
         piHomeSource: evalHome,
       },
-      { timeoutMs: 5_000 },
+      { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
     );
     if (
       evalResult.exitCode !== 0 ||
@@ -192,7 +196,7 @@ try {
     try {
       await runEvalCommand(
         { runDir: scratch, command: ["eval-actor", "nested-argument"] },
-        { timeoutMs: 5_000 },
+        { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
       );
     } catch (error) {
       defaultPiHomeOverlapRejected =
@@ -211,7 +215,7 @@ try {
     try {
       await runEvalCommand(
         { runDir: evalSetupInterruptionRun, command: ["eval-actor", "nested-argument"] },
-        { timeoutMs: 5_000 },
+        { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
       );
     } catch (error) {
       missingDefaultError = error instanceof Error ? error.message : String(error);
@@ -237,7 +241,7 @@ try {
           command: ["eval-actor", "nested-argument"],
           piHomeSource: evalHome,
         },
-        { timeoutMs: 5_000 },
+        { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
       );
       if (environmentControlledTempResult.exitCode !== 0) {
         throw new Error(
@@ -254,7 +258,7 @@ try {
         command: ["eval-actor", "nested-argument"],
         piHomeSource: evalHome,
       },
-      { timeoutMs: 5_000 },
+      { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
     );
     process.emit("SIGTERM");
     const setupInterruptionResult = await setupInterruptionPromise;
@@ -275,7 +279,7 @@ try {
         command: ["eval-timeout-actor"],
         piHomeSource: evalHome,
       },
-      { timeoutMs: 500 },
+      { timeoutMs: 500, workLogPath: nextEvalWorkLog() },
     );
     const timeoutElapsed = performance.now() - timeoutStarted;
     if (
@@ -297,7 +301,7 @@ try {
         command: ["eval-containment-actor"],
         piHomeSource: evalHome,
       },
-      { timeoutMs: 5_000 },
+      { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
     );
     const containmentElapsed = performance.now() - containmentStarted;
     const linuxContainmentHandled =
