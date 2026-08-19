@@ -22,13 +22,21 @@ The unit suite's global setup compiles the Linux network supervisor beside its s
 
 ## Temporary directories
 
-Unit tests must claim every temporary path through `registerManagedTempPaths()` in
+The unit suite runs inside a run-scoped temporary root rather than the operator's temporary
+directory. `test/temp-root-setup.ts` creates one short directory per run, every worker adopts
+it through `test/support/temp-root-worker.ts`, and teardown removes it. Containment does not
+depend on a case remembering to clean up, so a full `npm test` leaves the platform temporary
+directory exactly as it found it no matter how a path was created. Teardown fails the run and
+names what survived, which is the guarantee; keep the root short, because a Unix socket bound
+below it must fit in `sun_path`.
+
+Within that root, claim every temporary path through `registerManagedTempPaths()` in
 `test/support/temp-dir.ts`, which removes the claimed trees in an `afterEach` hook. Use
 `createTempDir(prefix)` for a directory the case creates itself and `reserveTempPath(name)`
-for a path the code under test creates. Never remove a temporary tree inline, because the
-case still depends on it while it runs. `test/temp-dir-hygiene.test.ts` fails the suite when
-a unit test calls `mkdtemp` directly, so a full `npm test` leaves the platform temporary
-directory as it found it.
+for a path the code under test creates. Never remove a temporary tree inline, because the case
+still depends on it while it runs. `test/temp-dir-hygiene.test.ts` fails when a unit test calls
+`mkdtemp` directly; it duplicates no coverage but attributes a leak to a file, which the
+teardown check cannot do.
 
 ## Required cases
 
