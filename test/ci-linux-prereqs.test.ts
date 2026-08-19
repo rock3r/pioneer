@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
@@ -73,9 +74,16 @@ describe("Linux sandbox prerequisite installation", () => {
     expect(program).toContain("bubblewrap");
   });
 
-  it("ships the shared installer as an executable file", async () => {
+  it("tracks the shared installer as an executable file", async () => {
     const details = await stat(PREREQ_SCRIPT);
     expect(details.isFile()).toBe(true);
-    expect(details.mode & 0o111, `${PREREQ_SCRIPT} must be executable`).toBeGreaterThan(0);
+
+    // NTFS has no POSIX execute bit, so the filesystem mode says nothing on Windows.
+    // The index mode is what the Linux runner checks out, and git records it the same
+    // way on every platform.
+    const entry = execFileSync("git", ["ls-files", "--stage", "--", PREREQ_SCRIPT], {
+      encoding: "utf8",
+    });
+    expect(entry.startsWith("100755 "), `${PREREQ_SCRIPT} must be tracked executable`).toBe(true);
   });
 });
