@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
+import { access, lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { diagnosticMessage } from "../diagnostics.js";
 
@@ -161,14 +161,10 @@ export function inferGitTargets(prompt: string): ReviewGitTarget[] {
   const sinceMatch = prompt.match(
     /\b(?:since|against|with)\s+(?:`([^`]+)`|(HEAD(?:[~^]\d*)?|origin\/[A-Za-z0-9._/-]+|(?:main|master)\b))/i,
   );
-  if (sinceMatch?.[1] || sinceMatch?.[2]) {
-    add({
-      kind: "range",
-      from: validatedRef(sinceMatch[1] ?? sinceMatch[2] ?? ""),
-      to: "HEAD",
-      symmetric: true,
-    });
-  }
+  const againstRef =
+    sinceMatch?.[1] || sinceMatch?.[2]
+      ? validatedRef(sinceMatch[1] ?? sinceMatch[2] ?? "")
+      : undefined;
   const commitMatch = prompt.match(
     /\b(?:commit|tag)\s+(?:`([^`]+)`|(HEAD(?:[~^]\d*)?|[0-9a-f]{6,64}|[A-Za-z0-9._/@~^:-]+))/i,
   );
@@ -201,8 +197,16 @@ export function inferGitTargets(prompt: string): ReviewGitTarget[] {
   const branchMatch = prompt.match(
     /\b(?:review|inspect|compare)\s+(?:the\s+)?branch\s+(?:`([^`]+)`|([A-Za-z0-9._/-]+))/i,
   );
-  if (branchMatch?.[1] || branchMatch?.[2]) {
-    add({ kind: "commit", ref: validatedRef(branchMatch[1] ?? branchMatch[2] ?? "") });
+  const branchRef =
+    branchMatch?.[1] || branchMatch?.[2]
+      ? validatedRef(branchMatch[1] ?? branchMatch[2] ?? "")
+      : undefined;
+  if (againstRef !== undefined && branchRef !== undefined) {
+    add({ kind: "range", from: againstRef, to: branchRef, symmetric: true });
+  } else if (againstRef !== undefined) {
+    add({ kind: "range", from: againstRef, to: "HEAD", symmetric: true });
+  } else if (branchRef !== undefined) {
+    add({ kind: "commit", ref: branchRef });
   }
   if (targets.length === 0) {
     throw new Error(
@@ -512,13 +516,24 @@ async function collectTarget(
       runner,
       emptyTree,
     );
-    const diff = await runAllowlistedGit(
-      executable,
-      repo,
-      ["diff", "HEAD", "--no-ext-diff", "--no-textconv", "--no-color"],
-      runner,
-      emptyTree,
-    );
+    let diff: string;
+    try {
+      diff = await runAllowlistedGit(
+        executable,
+        repo,
+        ["diff", "HEAD", "--no-ext-diff", "--no-textconv", "--no-color"],
+        runner,
+        emptyTree,
+      );
+    } catch {
+      diff = await runAllowlistedGit(
+        executable,
+        repo,
+        ["diff", emptyTree, "--no-ext-diff", "--no-textconv", "--no-color"],
+        runner,
+        emptyTree,
+      );
+    }
     return `## working-tree\n${status || "(clean status)"}\n\n${diff || "(no working-tree diff)"}`;
   }
   if (target.kind === "staged") {
@@ -586,6 +601,26 @@ async function assertNoExternalObjectStores(
   } catch {
     // Older Git still uses the absolute git directory as the object store root.
   }
+  const sourceGit = path.join(repo, ".git");
+  let sourceGitStats: Awaited<ReturnType<typeof stat>>;
+  try {
+    sourceGitStats = await lstat(sourceGit);
+  } catch {
+    throw new Error(
+      diagnosticMessage(
+        "REVIEW_GIT_REPOSITORY_INVALID",
+        "Git review source is not a readable Git repository",
+      ),
+    );
+  }
+  if (sourceGitStats.isSymbolicLink()) {
+    throw new Error(
+      diagnosticMessage(
+        "REVIEW_GIT_REPOSITORY_INVALID",
+        "Git-target reviews reject a symbolic-link .git directory",
+      ),
+    );
+  }
   const roots = new Set<string>();
   for (const candidate of [gitDir, commonDir]) {
     try {
@@ -597,6 +632,19 @@ async function assertNoExternalObjectStores(
           "Git review source is not a readable Git repository",
         ),
       );
+    }
+  }
+  if (sourceGitStats.isDirectory()) {
+    for (const root of roots) {
+      const relative = path.relative(repo, root);
+      if (relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error(
+          diagnosticMessage(
+            "REVIEW_GIT_REPOSITORY_INVALID",
+            "Git-target reviews reject a Git directory outside the source",
+          ),
+        );
+      }
     }
   }
   for (const root of roots) {
@@ -618,6 +666,23 @@ async function assertNoExternalObjectStores(
         }
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
+    }
+    const infoAttributes = path.join(root, "info", "attributes");
+    try {
+      const details = await stat(infoAttributes);
+      if (details.isFile() && details.size > 0) {
+        throw new Error(
+          diagnosticMessage(
+            "REVIEW_GIT_REPOSITORY_INVALID",
+            "Git-target reviews reject repositories that define info attributes",
+          ),
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("[REVIEW_GIT_REPOSITORY_INVALID]")) {
+        throw error;
+      }
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
 }

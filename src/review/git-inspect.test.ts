@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -54,6 +54,9 @@ describe("git target parsing", () => {
     expect(inferGitTargets("Please review abc1234.")).toEqual([{ kind: "commit", ref: "abc1234" }]);
     expect(inferGitTargets("Review changes introduced by abc1234.")).toEqual([
       { kind: "commit", ref: "abc1234" },
+    ]);
+    expect(inferGitTargets("Review branch feature against main.")).toEqual([
+      { kind: "range", from: "main", to: "feature", symmetric: true },
     ]);
   });
 
@@ -132,6 +135,7 @@ describe("controller Git collection", () => {
 
   it("collects working-tree and staged diffs through injected Git", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-collect-"));
+    await mkdir(path.join(root, ".git"));
     await writeFile(path.join(root, "keep"), "ok\n");
     const commands: string[][] = [];
     const runner: GitRunner = async (_executable, args) => {
@@ -170,6 +174,7 @@ describe("controller Git collection", () => {
 
   it("validates commit refs before show and rejects mutating command names", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-ref-"));
+    await mkdir(path.join(root, ".git"));
     const runner: GitRunner = async (_executable, args) => {
       if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
       if (args.includes("--show-object-format"))
@@ -192,6 +197,7 @@ describe("controller Git collection", () => {
 
   it("rejects rev-parse output that is not a commit object name", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-hash-"));
+    await mkdir(path.join(root, ".git"));
     const runner: GitRunner = async (_executable, args) => {
       if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
       if (args.includes("--show-object-format"))
@@ -225,6 +231,7 @@ describe("controller Git collection", () => {
 
   it("truncates oversized Git context", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-oversize-"));
+    await mkdir(path.join(root, ".git"));
     const runner: GitRunner = async (_executable, args) => {
       if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
       if (args.includes("--show-object-format"))
@@ -436,5 +443,71 @@ describe("real Git inspection", () => {
     await expect(collectGitContext(decoyRoot, [{ kind: "commit", ref: "HEAD" }])).rejects.toThrow(
       "alternate object stores",
     );
+  });
+
+  it("rejects info attributes and a symbolic-link .git directory", async (ctx) => {
+    let git: string;
+    try {
+      git = await resolveGitExecutable();
+    } catch {
+      ctx.skip();
+      return;
+    }
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-info-"));
+    const env = {
+      ...gitInspectEnvironment(),
+      GIT_AUTHOR_NAME: "Pioneer Test",
+      GIT_AUTHOR_EMAIL: "pioneer@example.test",
+      GIT_COMMITTER_NAME: "Pioneer Test",
+      GIT_COMMITTER_EMAIL: "pioneer@example.test",
+    };
+    const runGit = async (args: string[]) =>
+      await new Promise<{ exitCode: number }>((resolve, reject) => {
+        const child = spawn(git, ["-c", "commit.gpgsign=false", ...args], {
+          cwd: root,
+          env,
+          shell: false,
+        });
+        child.once("error", reject);
+        child.once("close", (code) => resolve({ exitCode: code ?? 1 }));
+      });
+    expect((await runGit(["init"])).exitCode).toBe(0);
+    await writeFile(path.join(root, "tracked.txt"), "base\n");
+    expect((await runGit(["add", "tracked.txt"])).exitCode).toBe(0);
+    expect((await runGit(["commit", "-m", "init"])).exitCode).toBe(0);
+    await writeFile(path.join(root, ".git", "info", "attributes"), "*.txt filter=pwn\n");
+    await expect(collectGitContext(root, [{ kind: "working-tree" }])).rejects.toThrow(
+      "info attributes",
+    );
+
+    const linked = await mkdtemp(path.join(tmpdir(), "pioneer-git-link-"));
+    await symlink(path.join(root, ".git"), path.join(linked, ".git"));
+    await writeFile(path.join(linked, "tracked.txt"), "base\n");
+    await expect(collectGitContext(linked, [{ kind: "working-tree" }])).rejects.toThrow(
+      "symbolic-link .git",
+    );
+  });
+
+  it("collects an unborn working tree against the empty tree", async (ctx) => {
+    let git: string;
+    try {
+      git = await resolveGitExecutable();
+    } catch {
+      ctx.skip();
+      return;
+    }
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-unborn-"));
+    const env = gitInspectEnvironment();
+    const runGit = async (args: string[]) =>
+      await new Promise<{ exitCode: number }>((resolve, reject) => {
+        const child = spawn(git, args, { cwd: root, env, shell: false });
+        child.once("error", reject);
+        child.once("close", (code) => resolve({ exitCode: code ?? 1 }));
+      });
+    expect((await runGit(["init"])).exitCode).toBe(0);
+    await writeFile(path.join(root, "first.txt"), "initial\n");
+    expect((await runGit(["add", "first.txt"])).exitCode).toBe(0);
+    const collected = await collectGitContext(root, [{ kind: "working-tree" }]);
+    expect(collected?.text).toContain("initial");
   });
 });
