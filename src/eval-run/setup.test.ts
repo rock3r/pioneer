@@ -1,11 +1,13 @@
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { prepareEvalBattery } from "./setup.js";
 
+const { createTempDir } = registerManagedTempPaths();
+
 async function createSkillFixture(): Promise<{ root: string; skillDir: string }> {
-  const root = await mkdtemp(path.join(tmpdir(), "pioneer-battery-"));
+  const root = await createTempDir("pioneer-battery-");
   const skillDir = path.join(root, "example-skill");
   await mkdir(path.join(skillDir, "evals", "files"), { recursive: true });
   await mkdir(path.join(skillDir, "references"), { recursive: true });

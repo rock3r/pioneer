@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import {
   lstat,
   mkdir,
-  mkdtemp,
   readFile,
   readlink,
   realpath,
@@ -11,16 +10,18 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../test/support/temp-dir.js";
 import { prepareIsolatedPiHome } from "./pi-home.js";
+
+const { createTempDir } = registerManagedTempPaths();
 
 const execFileAsync = promisify(execFile);
 
 async function fixture(): Promise<{ root: string; source: string; destination: string }> {
-  const root = await mkdtemp(path.join(tmpdir(), "pioneer-home-"));
+  const root = await createTempDir("pioneer-home-");
   const source = path.join(root, "source-agent");
   const destination = path.join(root, "run", "pi");
   await mkdir(path.join(source, "skills", "review"), { recursive: true });

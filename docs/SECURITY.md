@@ -88,7 +88,7 @@ macOS uses the legacy `sandbox-exec` interface, for which Apple provides no publ
 
 ### Linux
 
-Bubblewrap creates an empty tmpfs root, explicit read-only and writable binds, new user/PID/network/IPC/UTS namespaces, private `/proc` and `/dev`, parent-death behavior, and no capabilities. The detached controller capture process owns the dedicated session/process group used for containment and termination. Ubuntu systems that restrict unprivileged user namespaces can use the narrow root-owned Bubblewrap copy and AppArmor profile described in [EVALS.md](EVALS.md).
+Bubblewrap creates an empty tmpfs root, explicit read-only and writable binds, new user/PID/network/IPC/UTS namespaces, private `/proc` and `/dev`, parent-death behavior, and no capabilities. The detached controller capture process owns the dedicated session/process group used for containment and termination. Because Bubblewrap is PID 1 of the actor's PID namespace, the kernel destroys every remaining process in that namespace when the actor exits, so a descendant holding inherited pipes cannot outlive the run. Linux process containment is therefore structural rather than detected, and `[EVAL_PROCESS_CONTAINMENT_FAILED]` is not reachable there. Every Bubblewrap option Pioneer compiles has been available since bubblewrap 0.2.0, so Pioneer does not probe for a version. Ubuntu systems that restrict unprivileged user namespaces can use the narrow root-owned Bubblewrap copy and AppArmor profile described in [EVALS.md](EVALS.md).
 
 ### Windows
 
@@ -118,7 +118,7 @@ Pioneer checks only the fixed `@rock3r/pioneer` npm package name and public npm 
 - A writable reference path is a real host write capability. Grant it sparingly.
 - Proxy-unaware tools cannot use Linux networking.
 - Windows reviews have no OS filesystem boundary.
-- A descendant that deliberately escapes the expected process-group behavior may retain resources until the bounded containment grace expires; Pioneer reports containment failure and destroys its capture streams, but cannot retroactively revoke resources outside the native sandbox.
+- On macOS and Windows, a descendant that deliberately escapes the expected process-group behavior may retain resources until the bounded containment grace expires; Pioneer reports containment failure and destroys its capture streams, but cannot retroactively revoke resources outside the native sandbox. Linux is not exposed to this because the actor's PID namespace is destroyed with it.
 - Controller-collected Git context is untrusted repository text. A malicious repo can still place misleading diffs or status lines in the review prompt.
 - The current result is free-form model output, not a schema-validated finding set.
 

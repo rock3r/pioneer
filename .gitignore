@@ -1,5 +1,8 @@
 node_modules/
 dist/
+# Compiled beside its source by the unit-test global setup so source-mode Linux
+# sandbox launches resolve the supervisor exactly as a published install does.
+src/sandbox/linux-network-supervisor.js
 coverage/
 *.tsbuildinfo
 

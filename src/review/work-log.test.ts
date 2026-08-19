@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { describe, expect, it, vi } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   buildWindowsProcessStartLookup,
   classifyStaleActiveLeaseOwner,
@@ -31,6 +32,8 @@ import {
   summarizePiEvent,
   windowsProcessInstanceIdentities,
 } from "./work-log.js";
+
+const { reserveTempPath } = registerManagedTempPaths();
 
 const WINDOWS_RETENTION_TEST_TIMEOUT_MS = 15_000;
 
@@ -174,10 +177,7 @@ describe("review work log", () => {
   });
 
   it("writes JSONL records that are visible before close with private POSIX mode", async () => {
-    const target = path.join(
-      tmpdir(),
-      `pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`,
-    );
+    const target = reserveTempPath(`pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`);
     const timestamps = [new Date("2026-08-11T10:00:00.000Z"), new Date("2026-08-11T10:00:01.000Z")];
     const log = await openReviewWorkLog(target, {
       runId: "run-1",
@@ -215,10 +215,7 @@ describe("review work log", () => {
   });
 
   it("fails closed after marking a bounded log as truncated", async () => {
-    const target = path.join(
-      tmpdir(),
-      `pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`,
-    );
+    const target = reserveTempPath(`pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`);
     const log = await openReviewWorkLog(target, { runId: "run-1", maxBytes: 1_024 });
     log.record("review_started", { detail: "small" });
     expect(() => log.record("pi_event", { detail: "x".repeat(2_000) })).toThrow(
@@ -240,8 +237,7 @@ describe("review work log", () => {
   it.each([0, 1_023, Number.POSITIVE_INFINITY, Number.NaN])(
     "rejects an unsafe work-log byte limit of %s",
     async (maxBytes) => {
-      const target = path.join(
-        tmpdir(),
+      const target = reserveTempPath(
         `pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`,
       );
 
@@ -254,8 +250,7 @@ describe("review work log", () => {
   it.each(["", "contains whitespace", "x".repeat(129)])(
     "rejects an unsafe work-log run identifier",
     async (runId) => {
-      const target = path.join(
-        tmpdir(),
+      const target = reserveTempPath(
         `pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`,
       );
 
@@ -266,10 +261,7 @@ describe("review work log", () => {
   );
 
   it("closes the descriptor even when the final sync fails", async () => {
-    const target = path.join(
-      tmpdir(),
-      `pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`,
-    );
+    const target = reserveTempPath(`pioneer-work-log-${process.pid}-${crypto.randomUUID()}.jsonl`);
     let closeCalls = 0;
     const log = await openReviewWorkLog(target, {
       fileOperations: {
@@ -290,8 +282,7 @@ describe("review work log", () => {
   });
 
   it("completes short writes before declaring a record persisted", async () => {
-    const target = path.join(
-      tmpdir(),
+    const target = reserveTempPath(
       `pioneer-work-log-short-write-${process.pid}-${crypto.randomUUID()}.jsonl`,
     );
     let writes = 0;
@@ -320,8 +311,7 @@ describe("review work log", () => {
   it("syncs dirty records after one second without waiting for another event", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-11T10:00:00.000Z"));
-    const target = path.join(
-      tmpdir(),
+    const target = reserveTempPath(
       `pioneer-work-log-periodic-sync-${process.pid}-${crypto.randomUUID()}.jsonl`,
     );
     let syncCalls = 0;
@@ -351,8 +341,7 @@ describe("review work log", () => {
   it(
     "retains at most 100 auto-created review logs without touching other files",
     async () => {
-      const stateRoot = path.join(
-        tmpdir(),
+      const stateRoot = reserveTempPath(
         `pioneer-work-log-state-${process.pid}-${crypto.randomUUID()}`,
       );
       let log: Awaited<ReturnType<typeof openReviewWorkLog>> | undefined;
@@ -411,8 +400,7 @@ describe("review work log", () => {
   );
 
   it("retains at most 100 default logs across sequentially prepared concurrent reviews", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-concurrent-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -460,8 +448,7 @@ describe("review work log", () => {
   });
 
   it("prunes the inactive pool after overlapping default logs finish", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-close-retention-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -503,8 +490,7 @@ describe("review work log", () => {
   });
 
   it("finishes creation-time retention before yielding the event loop", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-creation-lock-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -541,8 +527,7 @@ describe("review work log", () => {
   });
 
   it("does not reclaim a stale-looking retention lock owned by a live process", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-live-lock-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -596,8 +581,7 @@ describe("review work log", () => {
   });
 
   it("reclaims an abandoned retention lock after its PID is reused", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-reused-lock-pid-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -635,8 +619,7 @@ describe("review work log", () => {
   it(
     "keeps renewing its active lease while waiting for close-time retention",
     async () => {
-      const stateRoot = path.join(
-        tmpdir(),
+      const stateRoot = reserveTempPath(
         `pioneer-work-log-close-lease-${process.pid}-${crypto.randomUUID()}`,
       );
       const platform = process.platform;
@@ -701,8 +684,7 @@ describe("review work log", () => {
   );
 
   it("removes its active marker when close-time retention cannot acquire the lock", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-close-timeout-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -744,8 +726,7 @@ describe("review work log", () => {
   });
 
   it("reclaims expired leases when an overlapping batch drains on close", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-close-stale-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -791,8 +772,7 @@ describe("review work log", () => {
   });
 
   it("does not prune a default log that is still active", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-active-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -834,8 +814,7 @@ describe("review work log", () => {
   });
 
   it("preserves a stale lease owned by the same live process instance", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-suspended-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -891,8 +870,7 @@ describe("review work log", () => {
   });
 
   it("revalidates a stale-looking lease that is renewed by its live owner", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-revalidate-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -958,8 +936,7 @@ describe("review work log", () => {
   });
 
   it("removes a stale active marker and prunes its completed log", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-stale-active-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -1041,8 +1018,7 @@ describe("review work log", () => {
   });
 
   it("validates a generated target before creating or pruning its directory", async () => {
-    const stateRoot = path.join(
-      tmpdir(),
+    const stateRoot = reserveTempPath(
       `pioneer-work-log-state-${process.pid}-${crypto.randomUUID()}`,
     );
     const platform = process.platform;
@@ -1072,12 +1048,10 @@ describe("review work log", () => {
   it.skipIf(process.platform === "win32")(
     "rejects a symbolic-link default directory before pruning it",
     async () => {
-      const stateRoot = path.join(
-        tmpdir(),
+      const stateRoot = reserveTempPath(
         `pioneer-work-log-state-${process.pid}-${crypto.randomUUID()}`,
       );
-      const external = path.join(
-        tmpdir(),
+      const external = reserveTempPath(
         `pioneer-work-log-external-${process.pid}-${crypto.randomUUID()}`,
       );
       const parent = path.join(stateRoot, "pioneer", "logs");

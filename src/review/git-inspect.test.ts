@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   collectGitContext,
   defaultGitRunner,
@@ -16,6 +16,8 @@ import {
   serializeGitTarget,
   validatedRef,
 } from "./git-inspect.js";
+
+const { createTempDir } = registerManagedTempPaths();
 
 describe("git target parsing", () => {
   it("parses explicit working-tree, staged, commit, and range targets", () => {
@@ -86,7 +88,7 @@ describe("git target parsing", () => {
 describe("controller Git collection", () => {
   it("runs only allowlisted read-only Git argv and requires the source to be the repository root", async () => {
     const commands: string[][] = [];
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-source-"));
+    const root = await createTempDir("pioneer-git-source-");
     const nested = path.join(root, "nested");
     await mkdir(nested);
     const runner: GitRunner = async (_executable, args) => {
@@ -135,7 +137,7 @@ describe("controller Git collection", () => {
   });
 
   it("collects working-tree and staged diffs through injected Git", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-collect-"));
+    const root = await createTempDir("pioneer-git-collect-");
     await mkdir(path.join(root, ".git"));
     await writeFile(path.join(root, "keep"), "ok\n");
     const commands: string[][] = [];
@@ -174,7 +176,7 @@ describe("controller Git collection", () => {
   });
 
   it("validates commit refs before show and rejects mutating command names", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-ref-"));
+    const root = await createTempDir("pioneer-git-ref-");
     await mkdir(path.join(root, ".git"));
     const runner: GitRunner = async (_executable, args) => {
       if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
@@ -197,7 +199,7 @@ describe("controller Git collection", () => {
   });
 
   it("rejects rev-parse output that is not a commit object name", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-hash-"));
+    const root = await createTempDir("pioneer-git-hash-");
     await mkdir(path.join(root, ".git"));
     const runner: GitRunner = async (_executable, args) => {
       if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
@@ -220,7 +222,7 @@ describe("controller Git collection", () => {
   });
 
   it("maps a failed repository probe to a repository diagnostic", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-missing-"));
+    const root = await createTempDir("pioneer-git-missing-");
     const runner: GitRunner = async () => ({ stdout: "", stderr: "not a git repo", exitCode: 128 });
     await expect(
       collectGitContext(root, [{ kind: "working-tree" }], {
@@ -231,7 +233,7 @@ describe("controller Git collection", () => {
   });
 
   it("truncates oversized Git context", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-oversize-"));
+    const root = await createTempDir("pioneer-git-oversize-");
     await mkdir(path.join(root, ".git"));
     const runner: GitRunner = async (_executable, args) => {
       if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
@@ -251,7 +253,7 @@ describe("controller Git collection", () => {
   });
 
   it("times out a hung Git process", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-timeout-"));
+    const root = await createTempDir("pioneer-git-timeout-");
     await expect(
       defaultGitRunner(
         process.execPath,
@@ -273,7 +275,7 @@ describe("real Git inspection", () => {
       ctx.skip();
       return;
     }
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-real-"));
+    const root = await createTempDir("pioneer-git-real-");
     const env = {
       ...gitInspectEnvironment(),
       GIT_AUTHOR_NAME: "Pioneer Test",
@@ -321,7 +323,7 @@ describe("real Git inspection", () => {
       ctx.skip();
       return;
     }
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-filter-"));
+    const root = await createTempDir("pioneer-git-filter-");
     const marker = path.join(root, "pwned");
     const env = {
       ...gitInspectEnvironment(),
@@ -365,7 +367,7 @@ describe("real Git inspection", () => {
       ctx.skip();
       return;
     }
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-staged-wt-"));
+    const root = await createTempDir("pioneer-git-staged-wt-");
     const env = {
       ...gitInspectEnvironment(),
       GIT_AUTHOR_NAME: "Pioneer Test",
@@ -406,8 +408,8 @@ describe("real Git inspection", () => {
       ctx.skip();
       return;
     }
-    const secretRoot = await mkdtemp(path.join(tmpdir(), "pioneer-git-secret-"));
-    const decoyRoot = await mkdtemp(path.join(tmpdir(), "pioneer-git-decoy-"));
+    const secretRoot = await createTempDir("pioneer-git-secret-");
+    const decoyRoot = await createTempDir("pioneer-git-decoy-");
     const env = {
       ...gitInspectEnvironment(),
       GIT_AUTHOR_NAME: "Pioneer Test",
@@ -454,7 +456,7 @@ describe("real Git inspection", () => {
       ctx.skip();
       return;
     }
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-info-"));
+    const root = await createTempDir("pioneer-git-info-");
     const env = {
       ...gitInspectEnvironment(),
       GIT_AUTHOR_NAME: "Pioneer Test",
@@ -481,7 +483,7 @@ describe("real Git inspection", () => {
       "info attributes",
     );
 
-    const linked = await mkdtemp(path.join(tmpdir(), "pioneer-git-link-"));
+    const linked = await createTempDir("pioneer-git-link-");
     await symlink(path.join(root, ".git"), path.join(linked, ".git"));
     await writeFile(path.join(linked, "tracked.txt"), "base\n");
     await expect(collectGitContext(linked, [{ kind: "working-tree" }])).rejects.toThrow(
@@ -497,7 +499,7 @@ describe("real Git inspection", () => {
       ctx.skip();
       return;
     }
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-unborn-"));
+    const root = await createTempDir("pioneer-git-unborn-");
     const env = gitInspectEnvironment();
     const runGit = async (args: string[]) =>
       await new Promise<{ exitCode: number }>((resolve, reject) => {
@@ -520,8 +522,8 @@ describe("real Git inspection", () => {
       ctx.skip();
       return;
     }
-    const secretRoot = await mkdtemp(path.join(tmpdir(), "pioneer-git-obj-secret-"));
-    const decoyRoot = await mkdtemp(path.join(tmpdir(), "pioneer-git-obj-decoy-"));
+    const secretRoot = await createTempDir("pioneer-git-obj-secret-");
+    const decoyRoot = await createTempDir("pioneer-git-obj-decoy-");
     const env = {
       ...gitInspectEnvironment(),
       GIT_AUTHOR_NAME: "Pioneer Test",

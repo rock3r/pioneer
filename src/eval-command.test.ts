@@ -1,8 +1,10 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../test/support/temp-dir.js";
 import { runEvalCli } from "./eval-command.js";
+
+const { createTempDir } = registerManagedTempPaths();
 
 interface CapturedOutput {
   readonly stdout: string[];
@@ -25,7 +27,7 @@ function capture(): CapturedOutput & {
 }
 
 async function createSkill(prompt: string): Promise<{ root: string; skillDir: string }> {
-  const root = await mkdtemp(path.join(tmpdir(), "pioneer-eval-cli-"));
+  const root = await createTempDir("pioneer-eval-cli-");
   const skillDir = path.join(root, "example-skill");
   await mkdir(path.join(skillDir, "evals", "files"), { recursive: true });
   await writeFile(path.join(skillDir, "SKILL.md"), "# Example\n");

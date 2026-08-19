@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -12,19 +11,18 @@ vi.mock("./report-output.js", async (importOriginal) => ({
   reserveReviewReport: mocks.reserveReviewReport,
 }));
 
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { runReview } from "./runner.js";
 
-describe("review setup", () => {
-  const roots: string[] = [];
+const { createTempDir } = registerManagedTempPaths();
 
+describe("review setup", () => {
   afterEach(async () => {
     mocks.reserveReviewReport.mockReset();
-    await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
   it("announces the work log before report reservation can fail", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-setup-"));
-    roots.push(root);
+    const root = await createTempDir("pioneer-review-setup-");
     const sourceDir = path.join(root, "source");
     const piHomeSource = path.join(root, "pi-home");
     const outputDir = path.join(root, "outputs");
