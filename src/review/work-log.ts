@@ -237,7 +237,7 @@ export function windowsProcessInstanceIdentities(
   );
 }
 
-export function processInstanceIdentities(
+function inspectProcessInstanceIdentities(
   processId: number,
   platform: NodeJS.Platform,
 ): readonly string[] | undefined {
@@ -274,15 +274,24 @@ export function processInstanceIdentities(
   return [hashProcessInstanceIdentity(platform, rawIdentity)];
 }
 
+export function processInstanceIdentities(
+  processId: number,
+  platform: NodeJS.Platform,
+): readonly string[] | undefined {
+  if (processId === process.pid && currentProcessIdentityCache?.platform === platform) {
+    return currentProcessIdentityCache.identities;
+  }
+  const identities = inspectProcessInstanceIdentities(processId, platform);
+  if (processId === process.pid && identities !== undefined) {
+    currentProcessIdentityCache = { identities, platform };
+  }
+  return identities;
+}
+
 export function currentProcessInstanceIdentities(
   platform: NodeJS.Platform,
 ): readonly string[] | undefined {
-  if (currentProcessIdentityCache?.platform === platform) {
-    return currentProcessIdentityCache.identities;
-  }
-  const identities = processInstanceIdentities(process.pid, platform);
-  if (identities !== undefined) currentProcessIdentityCache = { identities, platform };
-  return identities;
+  return processInstanceIdentities(process.pid, platform);
 }
 
 function activeLeaseIsFresh(modifiedAtMs: number): boolean {

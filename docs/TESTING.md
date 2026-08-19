@@ -42,6 +42,14 @@ Pi-home snapshot changes must test the positive root allowlist, review/eval skil
 
 Tests must not read real credential files, contact model providers by default, or depend on the user's current repositories.
 
+## Timeouts and Windows concurrency
+
+`npm test` keeps Vitest's 5 s default `testTimeout` on macOS and Linux. On Windows it serializes files (`fileParallelism: false`, `maxWorkers: 1`) and raises `testTimeout`/`hookTimeout` to 15 s. That is load-dependent filesystem headroom, not a hang budget: Windows CI has timed out many otherwise-passing cases together when workers oversubscribe a slow disk, and the same job reports far more cumulative test time than wall-clock time.
+
+Prefer a per-case timeout with a comment when one test is genuinely long-running (for example two resume-archive creates plus a live-owner lease inspection, or work-log retention that waits on a lock). Do not skip, quarantine, or weaken a test to make the Windows job pass, and do not use a large global timeout to hide a hang.
+
+End-to-end tests keep their own 120 s serial budget in `vitest.e2e.config.ts`.
+
 ## Commands
 
 ```bash

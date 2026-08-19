@@ -21,10 +21,12 @@ import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   buildWindowsProcessStartLookup,
   classifyStaleActiveLeaseOwner,
+  currentProcessInstanceIdentities,
   openReviewWorkLog,
   PiDeltaBatcher,
   prepareDefaultReviewWorkLogPath,
   prepareValidatedDefaultReviewWorkLogPath,
+  processInstanceIdentities,
   reviewWorkLogDirectory,
   sanitizeWorkLogDiagnostic,
   summarizePiEvent,
@@ -137,6 +139,22 @@ describe("review work log", () => {
 
     expect(inspectedProcessId).toBe(String(process.pid));
     expect(identities).toContain(createHash("sha256").update("win32:1700000000123").digest("hex"));
+  });
+
+  it("reuses the current-process identity cache for the live pid", () => {
+    const current = currentProcessInstanceIdentities(process.platform);
+    expect(current).toBeDefined();
+
+    expect(processInstanceIdentities(process.pid, process.platform)).toBe(current);
+    expect(currentProcessInstanceIdentities(process.platform)).toBe(current);
+  });
+
+  it("does not treat a different pid as the current process identity", () => {
+    const current = currentProcessInstanceIdentities(process.platform);
+    expect(current).toBeDefined();
+
+    const other = processInstanceIdentities(2_147_483_647, process.platform);
+    expect(other).not.toBe(current);
   });
 
   it("uses a documented per-user log directory on every platform", () => {
@@ -597,35 +615,38 @@ describe("review work log", () => {
     expect((await lstat(target)).isFile()).toBe(true);
   }, 5_000);
 
-  it("keeps renewing its active lease while waiting for close-time retention", async () => {
-    const stateRoot = reserveTempPath(
-      `pioneer-work-log-close-lease-${process.pid}-${crypto.randomUUID()}`,
-    );
-    const platform = process.platform;
-    const environment =
-      platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
-    const home = stateRoot;
-    const directory = reviewWorkLogDirectory(environment, platform, home);
-    const target = await prepareDefaultReviewWorkLogPath(
-      environment,
-      platform,
-      home,
-      new Date("2026-08-11T10:00:00.000Z"),
-      "00000000-0000-0000-0000-000000000003",
-    );
-    const log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
-    const marker = (await readdir(directory)).find((entry) =>
-      entry.startsWith(`${path.basename(target)}.active-`),
-    );
-    expect(marker).toBeDefined();
-    const markerPath = path.join(directory, marker ?? "missing");
-    expect(await readFile(markerPath, "utf8")).toBe(
-      `${processIdentityForTest(process.pid, platform)}\n`,
-    );
-    const lockPath = path.join(directory, ".pioneer-retention.lock");
-    await writeFile(lockPath, "held\n", { flag: "wx", mode: 0o600 });
-    const lockHolder = new Worker(
-      `
+  // Waits 5.5s for the lock holder; Windows FS delay has exceeded a 10s budget.
+  it(
+    "keeps renewing its active lease while waiting for close-time retention",
+    async () => {
+      const stateRoot = reserveTempPath(
+        `pioneer-work-log-close-lease-${process.pid}-${crypto.randomUUID()}`,
+      );
+      const platform = process.platform;
+      const environment =
+        platform === "win32" ? { LOCALAPPDATA: stateRoot } : { XDG_STATE_HOME: stateRoot };
+      const home = stateRoot;
+      const directory = reviewWorkLogDirectory(environment, platform, home);
+      const target = await prepareDefaultReviewWorkLogPath(
+        environment,
+        platform,
+        home,
+        new Date("2026-08-11T10:00:00.000Z"),
+        "00000000-0000-0000-0000-000000000003",
+      );
+      const log = await openReviewWorkLog(target, { retainDefaultLogs: true, platform });
+      const marker = (await readdir(directory)).find((entry) =>
+        entry.startsWith(`${path.basename(target)}.active-`),
+      );
+      expect(marker).toBeDefined();
+      const markerPath = path.join(directory, marker ?? "missing");
+      expect(await readFile(markerPath, "utf8")).toBe(
+        `${processIdentityForTest(process.pid, platform)}\n`,
+      );
+      const lockPath = path.join(directory, ".pioneer-retention.lock");
+      await writeFile(lockPath, "held\n", { flag: "wx", mode: 0o600 });
+      const lockHolder = new Worker(
+        `
           const { lstatSync, unlinkSync } = require("node:fs");
           const { workerData } = require("node:worker_threads");
           const wait = new Int32Array(new SharedArrayBuffer(4));
@@ -635,30 +656,32 @@ describe("review work log", () => {
           }
           unlinkSync(workerData.lockPath);
         `,
-      {
-        eval: true,
-        workerData: { lockPath, markerPath, staleMs: 5_000, waitMs: 5_500 },
-      },
-    );
-    const lockReleased = new Promise<void>((resolve, reject) => {
-      lockHolder.once("error", reject);
-      lockHolder.once("exit", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`Retention lock-holder worker exited with code ${code}`));
+        {
+          eval: true,
+          workerData: { lockPath, markerPath, staleMs: 5_000, waitMs: 5_500 },
+        },
+      );
+      const lockReleased = new Promise<void>((resolve, reject) => {
+        lockHolder.once("error", reject);
+        lockHolder.once("exit", (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`Retention lock-holder worker exited with code ${code}`));
+        });
       });
-    });
-    let closeFailure: unknown;
+      let closeFailure: unknown;
 
-    try {
-      log.close();
-    } catch (error) {
-      closeFailure = error;
-    }
-    await lockReleased;
+      try {
+        log.close();
+      } catch (error) {
+        closeFailure = error;
+      }
+      await lockReleased;
 
-    expect(closeFailure).toBeUndefined();
-    expect((await lstat(target)).isFile()).toBe(true);
-  }, 10_000);
+      expect(closeFailure).toBeUndefined();
+      expect((await lstat(target)).isFile()).toBe(true);
+    },
+    WINDOWS_RETENTION_TEST_TIMEOUT_MS,
+  );
 
   it("removes its active marker when close-time retention cannot acquire the lock", async () => {
     const stateRoot = reserveTempPath(
