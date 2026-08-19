@@ -20,6 +20,16 @@ Use test-driven development for behavior changes:
 
 The unit suite's global setup compiles the Linux network supervisor beside its source, because `buildLinuxSandboxArgv` binds that compiled sibling exactly as a published install resolves it. Without it every proxied Bubblewrap launch from the TypeScript sources would fail, so Linux sandbox cases must never be skipped for a missing build artifact.
 
+## Temporary directories
+
+Unit tests must claim every temporary path through `registerManagedTempPaths()` in
+`test/support/temp-dir.ts`, which removes the claimed trees in an `afterEach` hook. Use
+`createTempDir(prefix)` for a directory the case creates itself and `reserveTempPath(name)`
+for a path the code under test creates. Never remove a temporary tree inline, because the
+case still depends on it while it runs. `test/temp-dir-hygiene.test.ts` fails the suite when
+a unit test calls `mkdtemp` directly, so a full `npm test` leaves the platform temporary
+directory as it found it.
+
 ## Required cases
 
 Security-sensitive changes should include negative tests for malformed JSONL, unsupported thinking levels, invalid model IDs, path escapes, invalid refs, oversized output, subprocess failure, timeout, and cancellation isolation as applicable.

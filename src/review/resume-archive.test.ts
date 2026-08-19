@@ -2,7 +2,6 @@ import {
   chmod,
   link,
   mkdir,
-  mkdtemp,
   readdir,
   readFile,
   rename,
@@ -13,9 +12,9 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { publishReservedReviewReport, reserveReviewReport } from "./report-output.js";
 import {
   copyReviewResumeSession,
@@ -50,6 +49,8 @@ import {
   validatePublishedReviewResumeArchiveLease,
 } from "./resume-archive.js";
 
+const { createTempDir } = registerManagedTempPaths();
+
 describe("recoverable review archive", () => {
   it("trusts sticky ancestry only when its owner can protect the caller-owned entry", () => {
     expect(isTrustedApplicationDataOwner(0, 501)).toBe(true);
@@ -62,7 +63,7 @@ describe("recoverable review archive", () => {
   });
 
   it("publishes only complete resume leases at the canonical lease path", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-lease-"));
+    const root = await createTempDir("pioneer-resume-lease-");
     const leasePath = path.join(root, "lease");
     const contents = `${JSON.stringify({ pid: process.pid, nonce: "lease" })}\n`;
 
@@ -75,7 +76,7 @@ describe("recoverable review archive", () => {
   });
 
   it("does not overwrite a contender while restoring a displaced lease", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-lease-"));
+    const root = await createTempDir("pioneer-resume-lease-");
     const leasePath = path.join(root, "lease");
     const displacedPath = path.join(root, "lease.stale-race");
     await writeFile(displacedPath, "displaced-owner\n");
@@ -89,8 +90,8 @@ describe("recoverable review archive", () => {
   });
 
   it("backs a publisher off when a displaced live owner could not be restored", async () => {
-    const displacedRoot = await mkdtemp(path.join(tmpdir(), "pioneer-resume-lease-"));
-    const contenderRoot = await mkdtemp(path.join(tmpdir(), "pioneer-resume-lease-"));
+    const displacedRoot = await createTempDir("pioneer-resume-lease-");
+    const contenderRoot = await createTempDir("pioneer-resume-lease-");
     const displaced = await createReviewResumeArchive(displacedRoot, {
       sourceDir: "/repo",
       prompt: "displaced",
@@ -124,7 +125,7 @@ describe("recoverable review archive", () => {
   });
 
   it("counts directories toward the bounded session-entry limit", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-tree-"));
+    const root = await createTempDir("pioneer-resume-tree-");
     try {
       await mkdir(path.join(root, "one"));
       await mkdir(path.join(root, "two"));
@@ -139,7 +140,7 @@ describe("recoverable review archive", () => {
   });
 
   it("prepares a private default report target without creating it", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const home = await createTempDir("pioneer-report-home-");
     const reportPath = await prepareDefaultReviewReportPath({}, process.platform, home);
     expect(reportPath.startsWith(defaultReviewReportDirectory({}, process.platform, home))).toBe(
       true,
@@ -151,7 +152,7 @@ describe("recoverable review archive", () => {
   });
 
   it("creates a private default report directory regardless of the caller's umask", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const home = await createTempDir("pioneer-report-home-");
     // A permissive umask is the default on several Linux distributions. Pioneer must still
     // create its own application-data chain privately, because a group-writable ancestor is
     // rejected as replaceable before any report is prepared.
@@ -174,7 +175,7 @@ describe("recoverable review archive", () => {
   });
 
   it("validates the default report target before creating or pruning its directory", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const home = await createTempDir("pioneer-report-home-");
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
 
     await expect(
@@ -191,7 +192,7 @@ describe("recoverable review archive", () => {
   });
 
   it("prunes generated default reports using their timestamped names", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const home = await createTempDir("pioneer-report-home-");
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
     await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     for (let index = 0; index < 101; index += 1) {
@@ -210,7 +211,7 @@ describe("recoverable review archive", () => {
   });
 
   it("does not prune an active default report reservation", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const home = await createTempDir("pioneer-report-home-");
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
     await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const activeReport = path.join(
@@ -239,7 +240,7 @@ describe("recoverable review archive", () => {
   }, 15_000);
 
   it("revalidates a report reservation immediately before retention unlinks it", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const home = await createTempDir("pioneer-report-home-");
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
     await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const lateReport = path.join(
@@ -289,7 +290,7 @@ describe("recoverable review archive", () => {
   });
 
   it("does not reclaim a live reservation before its target link is created", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const home = await createTempDir("pioneer-report-home-");
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
     await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const report = path.join(
@@ -319,7 +320,7 @@ describe("recoverable review archive", () => {
   });
 
   it("reclaims an orphaned published report reservation sibling", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const home = await createTempDir("pioneer-report-home-");
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
     await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const report = path.join(
@@ -337,7 +338,7 @@ describe("recoverable review archive", () => {
   });
 
   it("reclaims a crashed report-release quarantine after its setup grace", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const home = await createTempDir("pioneer-report-home-");
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
     await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const report = path.join(
@@ -359,7 +360,7 @@ describe("recoverable review archive", () => {
   });
 
   it("prunes completed reports that contain reservation-shaped model text", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    const home = await createTempDir("pioneer-report-home-");
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
     await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const spoofedReport = path.join(
@@ -416,7 +417,7 @@ describe("recoverable review archive", () => {
   it.runIf(process.platform !== "win32")(
     "rejects a replaceable application-data parent before creating resume storage",
     async () => {
-      const sharedData = await mkdtemp(path.join(tmpdir(), "pioneer-shared-data-"));
+      const sharedData = await createTempDir("pioneer-shared-data-");
       await chmod(sharedData, 0o777);
 
       await expect(
@@ -436,7 +437,7 @@ describe("recoverable review archive", () => {
   it.runIf(process.platform !== "win32")(
     "allows a trusted sticky application-data parent with a caller-owned private child",
     async () => {
-      const stickyData = await mkdtemp(path.join(tmpdir(), "pioneer-sticky-data-"));
+      const stickyData = await createTempDir("pioneer-sticky-data-");
       await chmod(stickyData, 0o1777);
 
       const resumeRoot = await prepareDefaultReviewResumeDirectory(
@@ -454,7 +455,7 @@ describe("recoverable review archive", () => {
   it.runIf(process.platform !== "win32")(
     "rejects a replaceable application-data parent before preparing default reports",
     async () => {
-      const sharedData = await mkdtemp(path.join(tmpdir(), "pioneer-shared-reports-"));
+      const sharedData = await createTempDir("pioneer-shared-reports-");
       await chmod(sharedData, 0o777);
 
       await expect(
@@ -474,7 +475,7 @@ describe("recoverable review archive", () => {
   it.runIf(process.platform !== "win32")(
     "rejects a private data root owned by a replaceable directory entry",
     async () => {
-      const sharedParent = await mkdtemp(path.join(tmpdir(), "pioneer-shared-parent-"));
+      const sharedParent = await createTempDir("pioneer-shared-parent-");
       const privateData = path.join(sharedParent, "private-data");
       await chmod(sharedParent, 0o777);
       await mkdir(privateData, { mode: 0o700 });
@@ -494,7 +495,7 @@ describe("recoverable review archive", () => {
   );
 
   it("rejects an overlapping default resume root before mutating its application directory", async () => {
-    const sourceDir = await mkdtemp(path.join(tmpdir(), "pioneer-resume-parent-overlap-"));
+    const sourceDir = await createTempDir("pioneer-resume-parent-overlap-");
     const environment =
       process.platform === "win32" ? { LOCALAPPDATA: sourceDir } : { XDG_DATA_HOME: sourceDir };
     const applicationDirectory =
@@ -519,7 +520,7 @@ describe("recoverable review archive", () => {
     expect(() =>
       defaultReviewResumeDirectory({ XDG_DATA_HOME: ".pioneer-data" }, "linux", "/home/test"),
     ).toThrow("Review application-data root must be absolute");
-    const sourceDir = await mkdtemp(path.join(tmpdir(), "pioneer-resume-source-"));
+    const sourceDir = await createTempDir("pioneer-resume-source-");
     await expect(
       createReviewResumeArchive(
         path.join(sourceDir, "resume-data"),
@@ -543,7 +544,7 @@ describe("recoverable review archive", () => {
   });
 
   it("writes an immutable scope manifest without storing prompt or session content", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(
       root,
       {
@@ -586,7 +587,7 @@ describe("recoverable review archive", () => {
   }, 15_000);
 
   it("rejects symlinked archive roots before reading them", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const target = path.join(root, "real");
     const alias = path.join(root, "alias");
     await mkdir(target);
@@ -607,7 +608,7 @@ describe("recoverable review archive", () => {
   });
 
   it("retains bounded native session data and copies it into a new attempt", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -635,7 +636,7 @@ describe("recoverable review archive", () => {
   });
 
   it("does not retain an attempt without exactly one native session file", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -662,7 +663,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rolls back to the prior committed attempt when a resumed session is not retainable", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -684,7 +685,7 @@ describe("recoverable review archive", () => {
   });
 
   it("keeps a valid newer attempt when post-retention pruning fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -710,7 +711,7 @@ describe("recoverable review archive", () => {
   });
 
   it("holds a caller-acquired lease while copying the next attempt", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -728,7 +729,7 @@ describe("recoverable review archive", () => {
   });
 
   it("protects a loaded archive from pruning until its lease is released", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -754,7 +755,7 @@ describe("recoverable review archive", () => {
   });
 
   it("acquires the archive lease before validating loaded contents", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -776,7 +777,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rolls a Pi-rejected copied attempt back to the prior session", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -798,7 +799,7 @@ describe("recoverable review archive", () => {
   });
 
   it("does not copy a session while its active controller lease is live", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -812,7 +813,7 @@ describe("recoverable review archive", () => {
   });
 
   it("does not treat a reused live PID as the archived lease owner", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -832,7 +833,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rejects attempts beyond the bounded four-digit archive layout", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -846,7 +847,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rejects oversized or unsafe native session trees before retention", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -860,7 +861,7 @@ describe("recoverable review archive", () => {
       /bounded retention limit/i,
     );
 
-    const safeRoot = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const safeRoot = await createTempDir("pioneer-resume-");
     const unsafeArchive = await createReviewResumeArchive(safeRoot, {
       sourceDir: "/repo",
       prompt: "x",
@@ -874,7 +875,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rejects a retained session that cannot fit beside its next resume attempt", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -891,7 +892,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rejects symlinked source attempts before a resume copy", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -905,7 +906,7 @@ describe("recoverable review archive", () => {
   });
 
   it("fails closed instead of retaining an archive with a corrupt manifest", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -920,7 +921,7 @@ describe("recoverable review archive", () => {
   });
 
   it("does not unlink a lease that replaced the controller's lease", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -939,7 +940,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rejects an oversized manifest before parsing it", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -959,7 +960,7 @@ describe("recoverable review archive", () => {
   });
 
   it("normalizes torn manifest and attempts metadata failures", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -986,7 +987,7 @@ describe("recoverable review archive", () => {
   });
 
   it("prunes stale staging and manifest temporary entries", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1007,7 +1008,7 @@ describe("recoverable review archive", () => {
   });
 
   it("preserves stale temporary entries while a live lease owns the archive", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1030,14 +1031,14 @@ describe("recoverable review archive", () => {
   });
 
   it("ignores an archive candidate removed after the pruning snapshot", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const vanished = path.join(root, "550e8400-e29b-41d4-a716-446655440000");
 
     await expect(statReviewResumeArchiveCandidate(vanished)).resolves.toBeUndefined();
   });
 
   it("prunes stale lease takeover and publication temporary entries", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1058,7 +1059,7 @@ describe("recoverable review archive", () => {
   });
 
   it("does not expire an archive while any live lease holds it", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1079,7 +1080,7 @@ describe("recoverable review archive", () => {
   });
 
   it("acquires a candidate lease before pruning it", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1099,7 +1100,7 @@ describe("recoverable review archive", () => {
   });
 
   it("does not prune a manifest-less archive while its lease is live", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1112,7 +1113,7 @@ describe("recoverable review archive", () => {
   });
 
   it("uses a distinct report-delivery state and prunes expired archives", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1133,7 +1134,7 @@ describe("recoverable review archive", () => {
   });
 
   it("loads the manifest's committed attempt instead of an uncommitted newer directory", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1150,7 +1151,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rejects a stored Pi home that overlaps the resume root at load time", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1167,7 +1168,7 @@ describe("recoverable review archive", () => {
   });
 
   it("replaces a crashed uncommitted attempt before atomically committing the next one", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1189,7 +1190,7 @@ describe("recoverable review archive", () => {
   });
 
   it("reclaims crashed staging attempts before copying the next attempt", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1211,7 +1212,7 @@ describe("recoverable review archive", () => {
   });
 
   it("never deletes the committed attempt when a duplicate attempt is requested", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1229,7 +1230,7 @@ describe("recoverable review archive", () => {
   });
 
   it("reclaims abandoned active archives toward the bounded retention count", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     for (let index = 0; index < 11; index += 1) {
       const archive = await createReviewResumeArchive(root, {
         sourceDir: "/repo",
@@ -1249,7 +1250,7 @@ describe("recoverable review archive", () => {
   });
 
   it("recomputes count retention after a selected archive is freshly retained", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const now = Date.now();
     const archives: Awaited<ReturnType<typeof createReviewResumeArchive>>[] = [];
     for (let index = 0; index < 11; index += 1) {
@@ -1291,7 +1292,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rejects an expired archive at token load", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1311,7 +1312,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rejects every malformed present immutable-scope field", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",
@@ -1356,7 +1357,7 @@ describe("recoverable review archive", () => {
   });
 
   it("rejects and prunes an implausibly future archive timestamp", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-"));
+    const root = await createTempDir("pioneer-resume-");
     const archive = await createReviewResumeArchive(root, {
       sourceDir: "/repo",
       prompt: "x",

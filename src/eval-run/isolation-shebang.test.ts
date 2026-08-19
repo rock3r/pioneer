@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
@@ -31,12 +30,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { MAX_SHEBANG_READ_BYTES, resolveEvalExecutable } from "./isolation.js";
+
+const { createTempDir } = registerManagedTempPaths();
 
 describe("bounded eval shebang inspection", () => {
   it("reads only a bounded prefix of a large executable", async () => {
     observation.readLengths.length = 0;
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-shebang-prefix-"));
+    const temp = await createTempDir("pioneer-eval-shebang-prefix-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -54,7 +56,7 @@ describe("bounded eval shebang inspection", () => {
 
   it("rejects a shebang whose first line exceeds the bounded prefix", async () => {
     observation.readLengths.length = 0;
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-shebang-prefix-"));
+    const temp = await createTempDir("pioneer-eval-shebang-prefix-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -73,7 +75,7 @@ describe("bounded eval shebang inspection", () => {
 
   it("keeps a non-shebang binary with no newline valid", async () => {
     observation.readLengths.length = 0;
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-shebang-binary-"));
+    const temp = await createTempDir("pioneer-eval-shebang-binary-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);

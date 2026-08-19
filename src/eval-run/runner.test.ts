@@ -1,10 +1,12 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { nativeSandboxReadinessErrors } from "../sandbox/platform-readiness.js";
 import { evalIsolatedPiHomeWritablePaths } from "./isolation.js";
 import { buildEvalLaunchCommand, captureEvalProcess, runEvalCommand } from "./runner.js";
+
+const { createTempDir } = registerManagedTempPaths();
 
 function actor(source: string): readonly [string, ...string[]] {
   return [process.execPath, "-e", source];
@@ -198,14 +200,6 @@ describe("eval process capture", () => {
 });
 
 describe("eval isolated Pi credential locks", () => {
-  const createdRoots: string[] = [];
-
-  afterEach(async () => {
-    await Promise.all(
-      createdRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-    );
-  });
-
   it("exposes the isolated agent directory as writable scratch", () => {
     expect(
       evalIsolatedPiHomeWritablePaths({
@@ -224,8 +218,7 @@ describe("eval isolated Pi credential locks", () => {
     if ((await nativeSandboxReadinessErrors()).length > 0) {
       context.skip();
     }
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-eval-lock-"));
-    createdRoots.push(root);
+    const root = await createTempDir("pioneer-eval-lock-");
     const runDir = path.join(root, "run");
     const piHome = path.join(root, "pi-home");
     const binDir = path.join(root, "bin");

@@ -1,10 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { startLinuxProxyBridge } from "./linux-proxy-bridge.js";
+
+const { createTempDir } = registerManagedTempPaths();
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -20,8 +21,7 @@ describe("Linux proxy bridge", () => {
       cleanups.push(() => new Promise((resolve) => upstream.close(() => resolve())));
       const address = upstream.address();
       if (address === null || typeof address === "string") throw new Error("missing port");
-      const root = await mkdtemp(path.join(tmpdir(), "pioneer-bridge-test-"));
-      cleanups.push(() => rm(root, { recursive: true, force: true }));
+      const root = await createTempDir("pioneer-bridge-test-");
       const socketPath = path.join(root, "proxy.sock");
       const bridge = await startLinuxProxyBridge(`http://127.0.0.1:${address.port}`, socketPath);
       cleanups.push(() => bridge.close());
