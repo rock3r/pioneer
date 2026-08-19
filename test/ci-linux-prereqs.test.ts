@@ -60,6 +60,12 @@ describe("Linux sandbox prerequisite installation", () => {
     expect(program).toContain("DPkg::Lock::Timeout");
     expect(commands.some((line) => line.includes("attempt"))).toBe(true);
 
+    // A retry that re-reads the same mirror list just rolls the same dice. Every observed
+    // stall was azure.archive.ubuntu.com while archive.ubuntu.com stayed reachable, so a
+    // failed attempt has to narrow the mirror list before trying again.
+    expect(program, "a retry must drop the mirror that just stalled").toContain("apt-mirrors.txt");
+    expect(program).toContain("archive.ubuntu.com");
+
     // `apparmor_parser` ships in `apparmor`; nothing in Pioneer uses the aa-* tooling.
     expect(program, "apparmor-utils is unused and only widens the download window").not.toContain(
       "apparmor-utils",

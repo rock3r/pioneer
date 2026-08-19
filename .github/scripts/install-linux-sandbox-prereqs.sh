@@ -37,6 +37,24 @@ readonly APT_OPTIONS=(
   -o DPkg::Lock::Timeout=120
 )
 
+# The runner points apt at a mirror list whose first entry is the Azure mirror. That
+# is the host that stalls: it was the only one ignored in every hang observed, while
+# Ubuntu's canonical archive stayed reachable and served the recovery at ~1 MB/s. A
+# retry that re-reads the unchanged list just picks the broken mirror again, so the
+# first failure narrows the list for the attempts that follow.
+readonly MIRROR_LIST=/etc/apt/apt-mirrors.txt
+readonly FALLBACK_MIRROR=http://archive.ubuntu.com/ubuntu/
+mirror_pinned=0
+
+pin_fallback_mirror() {
+  if ((mirror_pinned == 1)) || [[ ! -f "${MIRROR_LIST}" ]]; then
+    return 0
+  fi
+  mirror_pinned=1
+  echo "Pinning apt to ${FALLBACK_MIRROR} for the remaining attempts."
+  echo "${FALLBACK_MIRROR}" | sudo tee "${MIRROR_LIST}" >/dev/null
+}
+
 # run_apt BUDGET_SECONDS LABEL ARGS...
 run_apt() {
   local budget="$1" label="$2"
@@ -68,6 +86,7 @@ run_apt() {
 
     # A terminated transaction can leave dpkg half-configured; recover before retrying.
     sudo env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+    pin_fallback_mirror
     sleep $((attempt * 5))
   done
 }
