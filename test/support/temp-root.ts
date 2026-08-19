@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -12,9 +12,16 @@ export const TEST_TEMP_ROOT_VARIABLE = "PIONEER_TEST_TEMP_ROOT";
  * fails with an explanation instead of the `EINVAL` a caller would otherwise have to decode.
  * A longer socket path needs this raised, which in turn demands a shorter `TMPDIR`: the
  * default macOS per-user directory already spends 48 of the 104 bytes on its own.
+ *
+ * Windows binds no Unix socket in this suite, so the budget does not apply there and must not
+ * reject a valid host whose profile directory is simply long.
  */
-const UNIX_SOCKET_PATH_LIMIT = process.platform === "darwin" ? 104 : 108;
 const UNIX_SOCKET_PATH_RESERVE = 40;
+
+function unixSocketPathLimit(platform: NodeJS.Platform): number | undefined {
+  if (platform === "win32") return undefined;
+  return platform === "darwin" ? 104 : 108;
+}
 
 /**
  * Entries the platform or the runtime owns. They appear inside the run root without any
@@ -22,21 +29,36 @@ const UNIX_SOCKET_PATH_RESERVE = 40;
  */
 export const UNMANAGED_TEMP_ROOT_ENTRIES: readonly string[] = ["node-compile-cache"];
 
+export interface TestTempRootOptions {
+  /** Defaults to the platform temporary directory; injected so the budget can be tested. */
+  readonly parentDir?: string;
+  /** Defaults to the running platform. */
+  readonly platform?: NodeJS.Platform;
+}
+
 /**
  * Creates the run-scoped root that every worker uses as its temporary directory. The name is
  * deliberately short because the whole point is to prefix every temporary path in the suite.
+ *
+ * A root that fails the socket budget is removed before the error propagates, because leaving
+ * it behind is the very leak this containment exists to prevent.
  */
-export async function createTestTempRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "pio-"));
-  const headroom = UNIX_SOCKET_PATH_LIMIT - Buffer.byteLength(root);
-  if (headroom < UNIX_SOCKET_PATH_RESERVE) {
-    throw new Error(
-      `Test temporary root ${root} leaves ${String(headroom)} bytes for Unix socket paths, ` +
-        `below the ${String(UNIX_SOCKET_PATH_RESERVE)} a case may need. ` +
-        "Point TMPDIR at a shorter directory before running the suite.",
-    );
-  }
-  return root;
+export async function createTestTempRoot(options: TestTempRootOptions = {}): Promise<string> {
+  const parentDir = options.parentDir ?? tmpdir();
+  const platform = options.platform ?? process.platform;
+  const root = await mkdtemp(path.join(parentDir, "pio-"));
+  const limit = unixSocketPathLimit(platform);
+  if (limit === undefined) return root;
+
+  const headroom = limit - Buffer.byteLength(root);
+  if (headroom >= UNIX_SOCKET_PATH_RESERVE) return root;
+
+  await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  throw new Error(
+    `Test temporary root ${root} leaves ${String(headroom)} bytes for Unix socket paths, ` +
+      `below the ${String(UNIX_SOCKET_PATH_RESERVE)} a case may need. ` +
+      "Point TMPDIR at a shorter directory before running the suite.",
+  );
 }
 
 /** Redirects this process's temporary directory, covering the POSIX and Windows variables. */
