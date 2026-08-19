@@ -28,6 +28,18 @@ const CREDENTIAL_TOKENS = new Set([
   "secret",
   "token",
 ]);
+/**
+ * Every `CREDENTIAL_CORE` alternative contains at least one of these literals, so a value
+ * holding none of them cannot match `SECRET_LABEL`. Those label scans are quadratic in the
+ * input length, so skipping them keeps separator-dense provider text that holds no credential
+ * label from paying for a scan that cannot match. `connection` is listed separately because
+ * `connection[-_ ]?string` is the one alternative sharing no literal with `CREDENTIAL_TOKENS`.
+ *
+ * Adding a `CREDENTIAL_CORE` alternative that shares no literal with this list would silently
+ * stop redacting it, so `diagnostics.test.ts` exercises every alternative through this path.
+ */
+const CREDENTIAL_CORE_LITERALS: readonly string[] = [...CREDENTIAL_TOKENS, "connection"];
+
 const COMPOUND_CREDENTIAL_SUFFIXES = [
   "apikey",
   "privatekey",
@@ -61,6 +73,11 @@ function stripTerminalControls(value: string): string {
       );
     })
     .join("");
+}
+
+function mayContainCredentialLabel(value: string): boolean {
+  const lowered = value.toLowerCase();
+  return CREDENTIAL_CORE_LITERALS.some((literal) => lowered.includes(literal));
 }
 
 function credentialLabelTokens(label: string): readonly string[] {
@@ -101,6 +118,7 @@ function redactQuotedCredentialAssignments(value: string): string {
     (match, quote: string, label: string) =>
       isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
   );
+  if (!mayContainCredentialLabel(broadQuotedLabels)) return broadQuotedLabels;
   return broadQuotedLabels.replaceAll(
     new RegExp(
       `(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*')`,
@@ -112,6 +130,7 @@ function redactQuotedCredentialAssignments(value: string): string {
 }
 
 function redactUnquotedCredentialLines(value: string): string {
+  if (!mayContainCredentialLabel(value)) return value;
   const structuredScalars = value.replaceAll(
     new RegExp(
       `(["']?)\\b(${SECRET_LABEL})\\1\\s*:\\s*(?!["']|\\[REDACTED\\])(?:null|true|false|-?\\d+(?:\\.\\d+)?(?:e[+-]?\\d+)?)(?=\\s*[,}])`,
@@ -128,6 +147,7 @@ function redactUnquotedCredentialLines(value: string): string {
 }
 
 function redactFoldedCredentialHeaders(value: string): string {
+  if (!mayContainCredentialLabel(value)) return value;
   return value.replaceAll(
     new RegExp(
       `\\b(${SECRET_LABEL})\\s*:\\s*(?!["']|\\[REDACTED\\])[^\\r\\n]*(?:\\r?\\n[ \\t]+[^\\r\\n]*)+`,
@@ -235,6 +255,9 @@ function redactQueryCredentials(value: string): string {
 }
 
 function redactPercentEncodedUrlUserinfo(value: string): string {
+  // Both patterns below terminate at a literal `@` or a percent-encoded `%40`, so a value
+  // containing neither character cannot match either and can skip both scans.
+  if (!value.includes("@") && !value.includes("%")) return value;
   const encodedAuthorities = value.replaceAll(
     /((?:(?:[a-z][a-z0-9+.-]*)%(?:25){0,4}3a)?%(?<percentDepth>(?:25){0,4})2f%\k<percentDepth>2f)(?:(?![&?#/\s,"'{}]|%\k<percentDepth>(?:2f|3f|23)).)+(%(?:25){0,4}40|@)/gi,
     "$1[REDACTED]$3",
@@ -284,17 +307,24 @@ export function sanitizeDiagnostic(value: string, secrets: readonly string[] = [
       if (normalized) sanitized = sanitized.replaceAll(normalized, "[REDACTED]");
     }
   }
-  return redactQuotedCredentialAssignments(sanitized)
-    .replaceAll(
-      /((?:\b[a-z][a-z0-9+.-]*:)?\/\/)[^/\s?#"{}[\]<>]+@/gi,
-      (_match, authorityPrefix: string) => `${authorityPrefix}[REDACTED]@`,
-    )
-    .replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
-    .replaceAll(
-      new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?!\\[REDACTED\\])[^\\s,;]+`, "gi"),
-      (match, quote: string, label: string) =>
-        isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
-    )
+  const withoutQuotedCredentials = redactQuotedCredentialAssignments(sanitized);
+  // The userinfo pattern requires a literal `@`, so skip it when the value has none.
+  const withoutAuthorityCredentials = (
+    withoutQuotedCredentials.includes("@")
+      ? withoutQuotedCredentials.replaceAll(
+          /((?:\b[a-z][a-z0-9+.-]*:)?\/\/)[^/\s?#"{}[\]<>]+@/gi,
+          (_match, authorityPrefix: string) => `${authorityPrefix}[REDACTED]@`,
+        )
+      : withoutQuotedCredentials
+  ).replaceAll(/\bbearer\s+[^\s,;]+/gi, "Bearer [REDACTED]");
+  const withoutLabelledCredentials = mayContainCredentialLabel(withoutAuthorityCredentials)
+    ? withoutAuthorityCredentials.replaceAll(
+        new RegExp(`(["']?)\\b(${SECRET_LABEL})\\1\\s*[:=]\\s*(?!\\[REDACTED\\])[^\\s,;]+`, "gi"),
+        (match, quote: string, label: string) =>
+          isCredentialLabel(label) ? `${quote}${label}${quote}=[REDACTED]` : match,
+      )
+    : withoutAuthorityCredentials;
+  return withoutLabelledCredentials
     .replaceAll(new RegExp(STANDALONE_CREDENTIAL_SOURCE, "g"), "[REDACTED]")
     .trim()
     .slice(0, 500);

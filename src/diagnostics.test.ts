@@ -7,12 +7,13 @@ import {
 } from "./diagnostics.js";
 
 /**
- * Wall-clock ceiling for the credential-label scan. The scan itself costs roughly 220ms in
- * steady state on an idle host, so this bound has only about 4.5x of headroom and a loaded
- * machine can consume it. Catastrophic backtracking, which is what the bound exists to catch,
- * would take seconds. See issue #36 before widening or narrowing it.
+ * Wall-clock ceiling for the credential-label scan. The credential-keyword fast path means this
+ * keyword-free input no longer reaches the quadratic label scans, so it costs well under a
+ * millisecond and this bound now has several orders of magnitude of headroom. It was 1000ms
+ * against a ~220ms scan, a margin thin enough to flake under parallel load; see issue #36.
+ * Keep it tight enough to catch a regression back to the unguarded cost.
  */
-const CREDENTIAL_SCAN_BUDGET_MS = 1_000;
+const CREDENTIAL_SCAN_BUDGET_MS = 100;
 
 describe("diagnostics", () => {
   it("bounds provider-controlled input before credential-label scans", () => {
@@ -37,6 +38,53 @@ describe("diagnostics", () => {
       CREDENTIAL_SCAN_BUDGET_MS,
     );
     expect(sanitized.length).toBeLessThanOrEqual(500);
+  });
+
+  it("skips the credential-label scan for separator-dense text with no credential keyword", () => {
+    // The credential-label pattern is quadratic in the input length, so text that cannot
+    // contain a credential label must not pay for that scan. The bound is deliberately far
+    // above the fast path and far below the unguarded cost, so it stays meaningful without
+    // becoming another marginal wall-clock budget. See issue #36.
+    const input = `${"a-".repeat(2_000)}: x`;
+    const startedAt = performance.now();
+    const sanitized = sanitizeDiagnostic(input);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(sanitized).not.toContain("[REDACTED]");
+    expect(
+      elapsedMs,
+      `keyword-free credential scan took ${elapsedMs.toFixed(1)}ms on ${process.platform}`,
+    ).toBeLessThan(10);
+  });
+
+  it.each([
+    "authorization",
+    "api-key",
+    "api_key",
+    "apikey",
+    "private-key",
+    "access-key-id",
+    "access-token",
+    "refresh-token",
+    "client-secret",
+    "secret-access-key",
+    "session",
+    "session-id",
+    "session-token",
+    "connection-string",
+    "cookie",
+    "passphrase",
+    "credential",
+    "signature",
+    "sig",
+    "key",
+    "token",
+    "password",
+    "secret",
+  ])("still redacts %s assignments after the credential-keyword fast path", (label) => {
+    const sanitized = sanitizeDiagnostic(`${label}=hunter2-should-not-survive`);
+    expect(sanitized).not.toContain("hunter2-should-not-survive");
+    expect(sanitized).toContain("[REDACTED]");
   });
 
   it("removes zero-width format controls before credential matching", () => {
