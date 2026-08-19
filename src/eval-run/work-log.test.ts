@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   evalWorkLogDirectory,
   generatedDefaultEvalWorkLogPath,
@@ -9,15 +9,9 @@ import {
   prepareDefaultEvalWorkLogDirectory,
 } from "./work-log.js";
 
+const { createTempDir } = registerManagedTempPaths();
+
 describe("eval work log", () => {
-  const createdRoots: string[] = [];
-
-  afterEach(async () => {
-    await Promise.all(
-      createdRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-    );
-  });
-
   it("places default logs in the platform Pioneer evals directory", () => {
     expect(evalWorkLogDirectory({}, "darwin", "/Users/operator")).toBe(
       "/Users/operator/Library/Logs/Pioneer/evals",
@@ -48,8 +42,7 @@ describe("eval work log", () => {
   });
 
   it("writes schema-versioned stage records and redacts secrets", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-"));
-    createdRoots.push(root);
+    const root = await createTempDir("pioneer-eval-work-log-");
     const target = path.join(root, "eval.jsonl");
     const log = openEvalWorkLog(target, {
       runId: "run-1",
@@ -87,16 +80,14 @@ describe("eval work log", () => {
   });
 
   it("fails closed when the target already exists", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-"));
-    createdRoots.push(root);
+    const root = await createTempDir("pioneer-eval-work-log-");
     const target = path.join(root, "eval.jsonl");
     await writeFile(target, "existing\n");
     expect(() => openEvalWorkLog(target)).toThrow("[EVAL_WORK_LOG_CREATE_FAILED]");
   });
 
   it("fails closed after writing a truncation marker", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-"));
-    createdRoots.push(root);
+    const root = await createTempDir("pioneer-eval-work-log-");
     const target = path.join(root, "eval.jsonl");
     const log = openEvalWorkLog(target, { runId: "run-1", maxBytes: 1_024 });
     expect(() => {
@@ -108,8 +99,7 @@ describe("eval work log", () => {
   });
 
   it("creates the default directory with owner-only mode", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-dir-"));
-    createdRoots.push(root);
+    const root = await createTempDir("pioneer-eval-work-log-dir-");
     const target = path.join(root, "evals", "eval.jsonl");
     await prepareDefaultEvalWorkLogDirectory(target);
     const { stat } = await import("node:fs/promises");

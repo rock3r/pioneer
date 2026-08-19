@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
@@ -22,6 +21,7 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
   unlink: unlinkFile,
 }));
 
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   isActiveReviewReportReservation,
   publishReservedReviewReport,
@@ -31,9 +31,11 @@ import {
 } from "./report-output.js";
 import { persistReviewReport } from "./runner.js";
 
+const { createTempDir } = registerManagedTempPaths();
+
 describe("review report output", () => {
   it("reserves the private report target before publishing it", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
 
     const reservation = await reserveReviewReport(target);
@@ -47,7 +49,7 @@ describe("review report output", () => {
   });
 
   it("does not let published model text spoof an active reservation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
 
@@ -58,7 +60,7 @@ describe("review report output", () => {
   });
 
   it("reclaims a report reservation whose controller is no longer live", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
     await writeFile(target, reservation.marker.replace(`"pid":${process.pid}`, '"pid":2147483647'));
@@ -70,7 +72,7 @@ describe("review report output", () => {
   });
 
   it("does not let an orphaned sidecar block reusing an absent report target", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const orphaned = await reserveReviewReport(target);
     await import("node:fs/promises").then(({ rm }) => rm(target));
@@ -83,7 +85,7 @@ describe("review report output", () => {
   });
 
   it("does not publish over or remove a replaced report reservation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
     await import("node:fs/promises").then(({ rm }) => rm(target));
@@ -98,7 +100,7 @@ describe("review report output", () => {
   });
 
   it("does not remove a report target replaced after release ownership validation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
 
@@ -111,7 +113,7 @@ describe("review report output", () => {
   });
 
   it("preserves a quarantined replacement visibly when restoration collides", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
     linkFile.mockClear();
@@ -137,7 +139,7 @@ describe("review report output", () => {
   });
 
   it("keeps a visible preserved inode when the restored path is removed concurrently", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
     linkFile.mockClear();
@@ -163,7 +165,7 @@ describe("review report output", () => {
   });
 
   it("does not overwrite a report target replaced after ownership validation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
 
@@ -178,7 +180,7 @@ describe("review report output", () => {
   });
 
   it("keeps a report reservation active while publishing through its owned inode", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
     let observedPublishingState = false;
@@ -199,7 +201,7 @@ describe("review report output", () => {
   });
 
   it("protects an incomplete publication marker during its setup grace", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
     const incompleteMarker = reservation.marker.slice(0, -2);
@@ -211,7 +213,7 @@ describe("review report output", () => {
   });
 
   it("restores and removes its reservation after publication fails post-write", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reserved = await reserveReviewReport(target);
     const reservation = { ...reserved, device: 0, inode: 0 };
@@ -234,7 +236,7 @@ describe("review report output", () => {
   });
 
   it("preserves a durable report when closing its published handle fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
     let closeAttempted = false;
@@ -259,7 +261,7 @@ describe("review report output", () => {
   });
 
   it("does not remove publication sidecars replaced after final report validation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
 
@@ -285,7 +287,7 @@ describe("review report output", () => {
   });
 
   it("removes an unpublished report reservation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
 
@@ -296,7 +298,7 @@ describe("review report output", () => {
   });
 
   it("does not remove a reservation that was modified in place", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
     await writeFile(target, "replacement\n");
@@ -307,7 +309,7 @@ describe("review report output", () => {
   });
 
   it("does not orphan the create-only target when marker preparation fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
 
     await expect(
@@ -324,7 +326,7 @@ describe("review report output", () => {
   });
 
   it("creates a private report file through its owned reservation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const reports = path.join(root, "reports");
     const target = path.join(reports, "report.md");
     await mkdir(reports);
@@ -338,7 +340,7 @@ describe("review report output", () => {
   });
 
   it("never overwrites an existing report target", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     await writeFile(target, "existing\n");
 
@@ -348,7 +350,7 @@ describe("review report output", () => {
   });
 
   it("does not turn a published report into a failure when sidecar cleanup fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     const reservation = await reserveReviewReport(target);
     unlinkFile.mockRejectedValueOnce(new Error("sidecar cleanup failed"));
@@ -360,7 +362,7 @@ describe("review report output", () => {
   });
 
   it("preserves a valid report when optional persistence fails", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-review-report-"));
+    const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");
     await writeFile(target, "existing\n");
 

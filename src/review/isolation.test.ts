@@ -1,7 +1,7 @@
-import { link, lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { link, lstat, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   assertDistinctExistingReviewOutputs,
   buildReviewSandboxConfig,
@@ -10,9 +10,11 @@ import {
   validateReviewPaths,
 } from "./isolation.js";
 
+const { createTempDir } = registerManagedTempPaths();
+
 describe("review path grants", () => {
   it("canonicalizes explicit read and write grants", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const reference = path.join(root, "reference");
     const output = path.join(root, "output");
@@ -30,7 +32,7 @@ describe("review path grants", () => {
   });
 
   it("rejects writable grants overlapping the read-only source", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     await mkdir(source);
     await expect(
@@ -39,7 +41,7 @@ describe("review path grants", () => {
   });
 
   it("rejects symlink grants and filesystem roots", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const link = path.join(root, "link");
     await mkdir(source);
@@ -53,7 +55,7 @@ describe("review path grants", () => {
   });
 
   it("accepts an absolute report target outside every actor-visible grant", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const reference = path.join(root, "reference");
     const output = path.join(root, "output");
@@ -71,7 +73,7 @@ describe("review path grants", () => {
   });
 
   it("accepts a controller-owned work log outside every actor-visible grant", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const logs = path.join(root, "logs");
     await Promise.all([mkdir(source), mkdir(logs)]);
@@ -85,7 +87,7 @@ describe("review path grants", () => {
   });
 
   it("rejects a prospective default work log before an actor-visible parent exists", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const target = path.join(source, "state", "pioneer", "logs", "reviews", "review.jsonl");
     await mkdir(source);
@@ -97,7 +99,7 @@ describe("review path grants", () => {
   });
 
   it("rejects a prospective default report before an actor-visible parent exists", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const target = path.join(source, "data", "pioneer", "reports", "review.md");
     await mkdir(source);
@@ -109,7 +111,7 @@ describe("review path grants", () => {
   });
 
   it("rejects a prospective controller directory that contains an actor-visible grant", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const applicationDirectory = path.join(root, "pioneer");
     const source = path.join(applicationDirectory, "project");
     const reportDirectory = path.join(applicationDirectory, "reports");
@@ -125,7 +127,7 @@ describe("review path grants", () => {
   });
 
   it("keeps prospective controller outputs outside the Pi-home snapshot source", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const piHomeSource = path.join(root, "pi-home");
     await Promise.all([mkdir(source), mkdir(piHomeSource)]);
@@ -147,7 +149,7 @@ describe("review path grants", () => {
   });
 
   it("validates the full request before accepting a prospective work log", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const output = path.join(root, "output");
     const target = path.join(root, "state", "pioneer", "logs", "reviews", "review.jsonl");
@@ -171,7 +173,7 @@ describe("review path grants", () => {
   });
 
   it("rejects report targets that are relative or actor-visible", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const output = path.join(root, "output");
     await Promise.all([source, output].map((entry) => mkdir(entry)));
@@ -192,7 +194,7 @@ describe("review path grants", () => {
   });
 
   it("rejects case-equivalent output targets on case-insensitive platforms", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const output = path.join(root, "output");
     await Promise.all([mkdir(source), mkdir(output)]);
@@ -210,7 +212,7 @@ describe("review path grants", () => {
   });
 
   it("rejects Unicode-equivalent output targets on normalization-insensitive macOS", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const output = path.join(root, "output");
     await Promise.all([mkdir(source), mkdir(output)]);
@@ -228,7 +230,7 @@ describe("review path grants", () => {
   });
 
   it("rejects output paths that resolve to the same existing filesystem object", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const reportPath = path.join(root, "Review.md");
     const workLogPath = path.join(root, "review.jsonl");
     await writeFile(workLogPath, "work log\n");
@@ -240,7 +242,7 @@ describe("review path grants", () => {
   });
 
   it("rejects existing targets, symlink parents, and missing parents", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const reports = path.join(root, "reports");
     const linkedReports = path.join(root, "linked-reports");
@@ -263,7 +265,7 @@ describe("review path grants", () => {
   });
 
   it("rejects work logs that are relative, existing, or actor-visible", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pi-review-paths-"));
+    const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
     const logs = path.join(root, "logs");
     await Promise.all([mkdir(source), mkdir(logs)]);

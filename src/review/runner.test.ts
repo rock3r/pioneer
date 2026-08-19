@@ -1,7 +1,8 @@
-import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { lstat, mkdir, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { defaultReviewReportDirectory } from "./resume-archive.js";
 import {
   annotateHandledReviewResumeFailure,
@@ -31,6 +32,8 @@ import {
   validateProspectiveDefaultReviewOutputs,
 } from "./runner.js";
 import { type ReviewWorkLog, reviewWorkLogDirectory } from "./work-log.js";
+
+const { createTempDir } = registerManagedTempPaths();
 
 function recordingWorkLog(): {
   readonly log: ReviewWorkLog;
@@ -300,7 +303,7 @@ process.stdin.once("data", () => {
 
 describe("review RPC runner", () => {
   it("rejects resumed outputs inside the retained archive", async () => {
-    const archive = await mkdtemp(path.join(tmpdir(), "pioneer-resume-output-"));
+    const archive = await createTempDir("pioneer-resume-output-");
 
     await expect(
       assertReviewResumeOutputsOutsideArchive(archive, {
@@ -315,7 +318,7 @@ describe("review RPC runner", () => {
   });
 
   it("rejects a default resume work log inside the retained archive", async () => {
-    const archive = await mkdtemp(path.join(tmpdir(), "pioneer-resume-output-"));
+    const archive = await createTempDir("pioneer-resume-output-");
     const environment =
       process.platform === "win32"
         ? { LOCALAPPDATA: archive }
@@ -335,7 +338,7 @@ describe("review RPC runner", () => {
   });
 
   it("rejects resume outputs inside a different retained archive", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-resume-output-"));
+    const root = await createTempDir("pioneer-resume-output-");
     const currentArchive = path.join(root, "550e8400-e29b-41d4-a716-446655440000");
     const otherArchive = path.join(root, "550e8400-e29b-41d4-a716-446655440001");
     await mkdir(currentArchive);
@@ -438,7 +441,7 @@ describe("review RPC runner", () => {
   });
 
   it("canonicalizes the Pi home before freezing the resumable scope", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-pi-home-source-"));
+    const root = await createTempDir("pioneer-pi-home-source-");
     try {
       const target = path.join(root, "target");
       const alias = path.join(root, "alias");
@@ -495,9 +498,10 @@ describe("review RPC runner", () => {
 
   it("removes a newly created scratch directory when post-create work fails", async () => {
     let scratch: string | undefined;
+    const scratchBase = await createTempDir("pioneer-scratch-base-");
 
     await expect(
-      createReviewScratchDirectory(tmpdir(), (created) => {
+      createReviewScratchDirectory(scratchBase, (created) => {
         scratch = created;
         throw new Error("work log failed");
       }),
@@ -508,10 +512,11 @@ describe("review RPC runner", () => {
 
   it("preserves the post-create failure when scratch cleanup also fails", async () => {
     let cleanupAttempted = false;
+    const scratchBase = await createTempDir("pioneer-scratch-base-");
 
     await expect(
       createReviewScratchDirectory(
-        tmpdir(),
+        scratchBase,
         () => {
           throw new Error("work log failed");
         },
@@ -573,9 +578,7 @@ describe("review RPC runner", () => {
   });
 
   it("does not classify unrelated request validation as a work-log creation failure", async () => {
-    const sourceDir = await import("node:fs/promises").then(({ mkdtemp }) =>
-      mkdtemp(path.join(tmpdir(), "pioneer-review-source-")),
-    );
+    const sourceDir = await createTempDir("pioneer-review-source-");
 
     await expect(
       runReview({
@@ -631,12 +634,7 @@ describe("review RPC runner", () => {
   });
 
   it("does not create or prune resume storage unless this run validated it", async () => {
-    const root = path.join(
-      await import("node:fs/promises").then(({ mkdtemp }) =>
-        mkdtemp(path.join(tmpdir(), "pioneer-no-resume-")),
-      ),
-      "review-resumes",
-    );
+    const root = path.join(await createTempDir("pioneer-no-resume-"), "review-resumes");
 
     await pruneValidatedReviewResumeArchives(false, root);
 
@@ -644,7 +642,7 @@ describe("review RPC runner", () => {
   });
 
   it("validates both default outputs before either output directory is mutated", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "pioneer-default-output-preflight-"));
+    const root = await createTempDir("pioneer-default-output-preflight-");
     const environment =
       process.platform === "win32"
         ? { LOCALAPPDATA: path.join(root, "data") }
