@@ -12,8 +12,17 @@ function actor(source: string): readonly [string, ...string[]] {
   return [process.execPath, "-e", source];
 }
 
-/** Wall-clock ceiling for a bounded timeout capture. See issue #36. */
-const TIMEOUT_CAPTURE_BUDGET_MS = 1_500;
+/**
+ * The actor must boot an interpreter and flush both pipes before this timeout fires, or the
+ * pre-timeout markers never reach the controller and the case fails asserting them. Measured
+ * boot-to-first-byte is about 36ms idle and up to 94ms under CPU contention, and a CI worker
+ * is slower still, so the previous 100ms timeout could be consumed entirely by interpreter
+ * startup. Keep this far above startup rather than close to it; see issue #36.
+ */
+const TIMEOUT_CAPTURE_TIMEOUT_MS = 2_000;
+
+/** Loose upper bound on the whole capture: the timeout plus process-group teardown. */
+const TIMEOUT_CAPTURE_BUDGET_MS = 6_000;
 
 describe("eval process capture", () => {
   it("launches a symlinked executable through its lexical path", () => {
@@ -48,12 +57,11 @@ describe("eval process capture", () => {
       `),
       process.cwd(),
       process.env,
-      100,
+      TIMEOUT_CAPTURE_TIMEOUT_MS,
     );
 
-    // A 100ms budget races the actor's own startup: the pre-timeout markers are only observed
-    // if the child boots and flushes both pipes before the kill. Report exactly what arrived so
-    // a failure distinguishes a lost marker from a broken capture path. See issue #36.
+    // Report exactly what arrived, so a failure distinguishes a marker lost to slow interpreter
+    // startup from a genuinely broken capture path. See issue #36.
     const elapsedMs = performance.now() - started;
     const context = [
       `elapsed=${elapsedMs.toFixed(1)}ms`,
