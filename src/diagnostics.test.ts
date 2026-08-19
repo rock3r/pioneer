@@ -42,9 +42,11 @@ describe("diagnostics", () => {
 
   it("skips the credential-label scan for separator-dense text with no credential keyword", () => {
     // The credential-label pattern is quadratic in the input length, so text that cannot
-    // contain a credential label must not pay for that scan. The bound is deliberately far
-    // above the fast path and far below the unguarded cost, so it stays meaningful without
-    // becoming another marginal wall-clock budget. See issue #36.
+    // contain a credential label must not pay for that scan. This input costs about 210ms
+    // unguarded and well under a millisecond through the fast path, so the shared budget
+    // still catches a regression while leaving roughly two orders of magnitude of headroom.
+    // `performance.now()` includes time this worker spends descheduled, so a tighter bound
+    // would only reintroduce the marginal wall-clock problem tracked in issue #36.
     const input = `${"a-".repeat(2_000)}: x`;
     const startedAt = performance.now();
     const sanitized = sanitizeDiagnostic(input);
@@ -54,7 +56,7 @@ describe("diagnostics", () => {
     expect(
       elapsedMs,
       `keyword-free credential scan took ${elapsedMs.toFixed(1)}ms on ${process.platform}`,
-    ).toBeLessThan(10);
+    ).toBeLessThan(CREDENTIAL_SCAN_BUDGET_MS);
   });
 
   it.each([

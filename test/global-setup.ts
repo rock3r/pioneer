@@ -9,9 +9,26 @@ const source = path.join(repoRoot, "src", `${relativeSupervisor}.ts`);
 const sourceSibling = path.join(repoRoot, "src", `${relativeSupervisor}.js`);
 const built = path.join(repoRoot, "dist", `${relativeSupervisor}.js`);
 
-function newerThanSource(candidate: string): boolean {
+/**
+ * The emitted supervisor depends on more than its own source: the build configuration, the
+ * build script, and the compiler version all change its output. Comparing against the newest
+ * of them keeps a stale artifact from surviving a toolchain or configuration change.
+ */
+const buildInputs = [
+  source,
+  path.join(repoRoot, "tsconfig.json"),
+  path.join(repoRoot, "tsconfig.build.json"),
+  path.join(repoRoot, "scripts", "build.mjs"),
+  path.join(repoRoot, "node_modules", "typescript", "package.json"),
+];
+
+function newestBuildInputMs(): number {
+  return Math.max(...buildInputs.map((input) => (existsSync(input) ? statSync(input).mtimeMs : 0)));
+}
+
+function isFresh(candidate: string): boolean {
   if (!existsSync(candidate)) return false;
-  return statSync(candidate).mtimeMs >= statSync(source).mtimeMs;
+  return statSync(candidate).mtimeMs >= newestBuildInputMs();
 }
 
 /**
@@ -25,8 +42,8 @@ function newerThanSource(candidate: string): boolean {
  * build configuration rather than a duplicated compiler invocation.
  */
 export default function setup(): void {
-  if (newerThanSource(sourceSibling)) return;
-  if (!newerThanSource(built)) {
+  if (isFresh(sourceSibling)) return;
+  if (!isFresh(built)) {
     const build = spawnSync(process.execPath, [path.join(repoRoot, "scripts", "build.mjs")], {
       cwd: repoRoot,
       stdio: "inherit",
