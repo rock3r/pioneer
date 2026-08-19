@@ -10,6 +10,9 @@ function actor(source: string): readonly [string, ...string[]] {
   return [process.execPath, "-e", source];
 }
 
+/** Wall-clock ceiling for a bounded timeout capture. See issue #36. */
+const TIMEOUT_CAPTURE_BUDGET_MS = 1_500;
+
 describe("eval process capture", () => {
   it("launches a symlinked executable through its lexical path", () => {
     expect(
@@ -46,12 +49,29 @@ describe("eval process capture", () => {
       100,
     );
 
-    expect(result.exitCode).not.toBe(0);
-    expect(result.timedOut).toBe(true);
-    expect(result.stdout).toContain("before-timeout");
-    expect(result.stderr).toContain("before-error");
-    expect(result.stderr).toContain("[EVAL_TIMEOUT]");
-    expect(performance.now() - started).toBeLessThan(1_500);
+    // A 100ms budget races the actor's own startup: the pre-timeout markers are only observed
+    // if the child boots and flushes both pipes before the kill. Report exactly what arrived so
+    // a failure distinguishes a lost marker from a broken capture path. See issue #36.
+    const elapsedMs = performance.now() - started;
+    const context = [
+      `elapsed=${elapsedMs.toFixed(1)}ms`,
+      `timedOut=${String(result.timedOut)}`,
+      `exitCode=${String(result.exitCode)}`,
+      `signal=${String(result.signal)}`,
+      `stdout=${JSON.stringify(result.stdout.slice(0, 200))}`,
+      `stderr=${JSON.stringify(result.stderr.slice(0, 200))}`,
+      `platform=${process.platform}`,
+    ].join(" ");
+    if (elapsedMs > TIMEOUT_CAPTURE_BUDGET_MS / 2) {
+      process.stderr.write(`[PIONEER_TEST_TIMING] eval timeout capture near budget: ${context}\n`);
+    }
+
+    expect(result.exitCode, context).not.toBe(0);
+    expect(result.timedOut, context).toBe(true);
+    expect(result.stdout, context).toContain("before-timeout");
+    expect(result.stderr, context).toContain("before-error");
+    expect(result.stderr, context).toContain("[EVAL_TIMEOUT]");
+    expect(elapsedMs, context).toBeLessThan(TIMEOUT_CAPTURE_BUDGET_MS);
   });
 
   it.skipIf(process.platform === "win32")(

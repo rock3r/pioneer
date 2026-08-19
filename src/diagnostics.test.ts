@@ -6,13 +6,36 @@ import {
   sanitizeDiagnostic,
 } from "./diagnostics.js";
 
+/**
+ * Wall-clock ceiling for the credential-label scan. The scan itself costs roughly 220ms in
+ * steady state on an idle host, so this bound has only about 4.5x of headroom and a loaded
+ * machine can consume it. Catastrophic backtracking, which is what the bound exists to catch,
+ * would take seconds. See issue #36 before widening or narrowing it.
+ */
+const CREDENTIAL_SCAN_BUDGET_MS = 1_000;
+
 describe("diagnostics", () => {
   it("bounds provider-controlled input before credential-label scans", () => {
     const input = `${"a-".repeat(8_000)}: x`;
+    // The budget exists to catch catastrophic backtracking, not to measure absolute speed, so
+    // a cheap calibration sample taken beside the measurement separates a real regression from
+    // a starved test host. Catastrophic backtracking is slow in every sample; a loaded machine
+    // inflates both numbers together.
+    const calibrationStartedAt = performance.now();
+    sanitizeDiagnostic("token=short-value");
+    const calibrationMs = performance.now() - calibrationStartedAt;
+
     const startedAt = performance.now();
     const sanitized = sanitizeDiagnostic(input);
+    const elapsedMs = performance.now() - startedAt;
 
-    expect(performance.now() - startedAt).toBeLessThan(1_000);
+    const context = `elapsed=${elapsedMs.toFixed(1)}ms calibration=${calibrationMs.toFixed(3)}ms input=${input.length}B platform=${process.platform}`;
+    if (elapsedMs > CREDENTIAL_SCAN_BUDGET_MS / 2) {
+      process.stderr.write(`[PIONEER_TEST_TIMING] credential-label scan near budget: ${context}\n`);
+    }
+    expect(elapsedMs, `credential-label scan budget exceeded (${context})`).toBeLessThan(
+      CREDENTIAL_SCAN_BUDGET_MS,
+    );
     expect(sanitized.length).toBeLessThanOrEqual(500);
   });
 
