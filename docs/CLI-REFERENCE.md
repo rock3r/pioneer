@@ -53,6 +53,7 @@ pioneer review --source DIR --prompt TEXT
   [--report FILE]
   [--work-log FILE]
   [--network full|public|none]
+  [--git TARGET]...
   [--timeout-ms N]
   [--max-rpc-output-mb N]
   [--no-resume]
@@ -73,6 +74,7 @@ pioneer review --resume TOKEN
 | `--pi-home-include RELATIVE_PATH` | none | Review-only, repeatable exact path relative to the selected Pi home; may select otherwise skipped content but not hard exclusions |
 | `--allow-read DIR` | none | Additional read-only directory; repeatable |
 | `--allow-write DIR` | none | Additional writable directory; repeatable and forbidden from overlapping read grants |
+| `--git TARGET` | inferred for Git-target prompts | Repeatable controller Git inspection target: `working-tree`, `staged`, `untracked`, `commit:REF`, or `range:FROM...TO` / `range:FROM..TO`. Incompatible with `--resume`. |
 | `--report FILE` | private default | Absolute controller-owned output path for the final report; must not exist and must not be visible to the review actor |
 | `--work-log FILE` | platform log directory | Absolute controller-owned create-only JSONL path; must not exist, contain control characters, or be visible to the review actor |
 | `--network MODE` | `full` | Proxy destination policy |
@@ -85,7 +87,7 @@ Exit status is zero only when Pi settles with a non-empty report. The report is 
 
 The default cumulative RPC stdout bound is 20 MiB; `--max-rpc-output-mb` accepts only integral values from 1 through 64. Overflow terminates the process tree and reports `[REVIEW_RPC_OUTPUT_LIMIT]` with byte metadata in the work log. High-volume delta metadata is batched after the first 1,000 events in five-second type/subtype windows, so the 16 MiB work-log cap remains an independent fail-closed bound.
 
-New reviews retain a private native Pi session after a strict non-success only when process-tree containment is proven and the opaque session tree is a regular candidate within the 32 MiB/5,000-entry committed-attempt cap. This leaves room for the next crash-safe copy inside the aggregate 64 MiB/10,000-entry archive cap. Pioneer emits `[PIONEER_REVIEW_RESUME] TOKEN`; resume accepts only the immutable stored source, grants, prompt scope, model, thinking, Pi-home, and network policy. It may change only timeout, bounded RPC output, and controller-owned output paths. A resume always requires a fresh Windows acknowledgement. If both `[REVIEW_RPC_OUTPUT_LIMIT]` and a resume token appear, clients must run exactly `pioneer review --resume TOKEN`; a tokenless failure is not resumable. `--no-resume` runs neither create nor prune the private resume store.
+New reviews retain a private native Pi session after a strict non-success only when process-tree containment is proven and the opaque session tree is a regular candidate within the 32 MiB/5,000-entry committed-attempt cap. This leaves room for the next crash-safe copy inside the aggregate 64 MiB/10,000-entry archive cap. Pioneer emits `[PIONEER_REVIEW_RESUME] TOKEN`; resume accepts only the immutable stored source, grants, prompt scope, model, thinking, Pi-home, Git targets, and network policy. It may change only timeout, bounded RPC output, and controller-owned output paths. A resume always requires a fresh Windows acknowledgement. If both `[REVIEW_RPC_OUTPUT_LIMIT]` and a resume token appear, clients must run exactly `pioneer review --resume TOKEN`; a tokenless failure is not resumable. `--no-resume` runs neither create nor prune the private resume store.
 
 Immediately after opening the controller-owned work log, Pioneer prints `[PIONEER_WORK_LOG] ABSOLUTE_PATH` to stderr. Without `--work-log`, it creates a unique `review-*.jsonl` file in:
 

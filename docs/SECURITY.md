@@ -11,13 +11,14 @@ This is containment, not a claim that model output is correct or non-malicious.
 Trusted controller responsibilities:
 
 - validate and canonicalize all paths;
+- collect Git-target review context with a canonical Git executable, argument arrays, and an allowlisted read-only subcommand set;
 - prepare a private Pi configuration snapshot;
 - create and authenticate the network proxy;
 - compile the native sandbox policy;
 - parse bounded Pi RPC output;
 - remove run-local state.
 
-Untrusted actor inputs include the source tree, reference directories, eval fixtures, Pi skills copied into a review snapshot, commands invoked by Pi, provider responses, and the final report. Pi package content may be present in the copied home, but Pioneer disables extension discovery for review and eval actors.
+Untrusted actor inputs include the source tree, reference directories, Git refs and command output, eval fixtures, Pi skills copied into a review snapshot, commands invoked by Pi, provider responses, and the final report. Pi package content may be present in the copied home, but Pioneer disables extension discovery for review and eval actors.
 
 ## Filesystem policy
 
@@ -96,6 +97,7 @@ Review isolation is not enforced. The caller must explicitly pass `--allow-unsan
 ## Process and output controls
 
 - Every subprocess uses discrete argv with `shell: false`; Windows controller helpers use absolute paths under the validated system root rather than current-directory or `PATH` lookup.
+- Git-target reviews never grant Pi a shell on macOS or Windows. The controller resolves Git canonically, runs only `status`, `diff`, `show`, and `rev-parse` with disabled hooks, pager, editor, external-diff, credential helpers, LFS filters, and `file`/`ext` protocols, validates refs and object names, and bounds each command to 256 KiB and the assembled context to 1 MiB. Repository output is injected into the prompt as untrusted text. `--source` must be the repository root.
 - Review RPC buffers are limited to a cumulative 20 MiB by default and 64 MiB maximum; stderr retains only the final 64 KiB. The collector counts raw stdout bytes before JSON decoding and reports stable `[REVIEW_RPC_OUTPUT_LIMIT]` diagnostics plus bounded byte metadata.
 - Eval actors are resolved and validated before sandbox artifacts are created. Bare executable lookup uses only the sanitized selected `PATH`; relative paths are anchored to the validated run directory; symlink launchers grant only their exact lexical path and canonical target. `/usr/bin/env` shebang inspection reads a bounded prefix and follows canonical interpreter paths only through a bounded, cycle-checked chain. Eval capture uses a distinct native process group, close-based completion, a bounded pipe-close grace period, and group termination on timeout or interruption. Partial output is retained within 4 MiB stdout and 64 KiB stderr limits, with stable nonzero diagnostics for timeout, interruption, spawn, shebang-resolution, containment, and output-limit failures.
 - Review work logs are mode `0600` on macOS and Linux. Default Windows logs use the per-user `%LOCALAPPDATA%` directory ACL; a custom Windows target inherits its existing parent directory ACL, which Pioneer cannot validate, so a parent private to the current user is a caller precondition. Logs are synchronously written after every JSONL record, synced by a dirty-log timer within one second and again on close, limited to 16 MiB per run, and fail the review after writing an explicit truncation record at the bound. A worker thread refreshes each private nonce-backed active lease independently of the controller event loop, and the marker carries the owner's OS process-start identity. A stale-looking lease is preserved when both its PID and process identity still match, handling suspension and clock steps without treating PID liveness alone as ownership; legacy markers and temporarily unavailable identity lookups receive one bounded renewal interval. Abandoned leases expire after crashes or PID reuse and are reclaimed by both creation-time and close-time retention. Both passes complete their bounded critical section synchronously under a private cross-process lock whose PID, nonce, and OS process-start identity are atomically published. Windows derives both owner and inspector identity from the same OS process-start timestamp and uses a narrow millisecond-scale hashed window to absorb clock-source rounding; Linux uses kernel boot/start ticks, and macOS hashes a C-locale UTC start time. Suspension preserves identity while PID reuse changes it, and release verifies the exact owner record before unlinking. A closer renews its log lease until it owns that lock; its pass excludes its finishing target, tolerates concurrently vanished candidates, and orders inactive candidates by last write time while pruning toward the newest 100 total. Pioneer does not rotate custom targets outside that reserved naming pattern.
@@ -117,6 +119,7 @@ Pioneer checks only the fixed `@rock3r/pioneer` npm package name and public npm 
 - Proxy-unaware tools cannot use Linux networking.
 - Windows reviews have no OS filesystem boundary.
 - A descendant that deliberately escapes the expected process-group behavior may retain resources until the bounded containment grace expires; Pioneer reports containment failure and destroys its capture streams, but cannot retroactively revoke resources outside the native sandbox.
+- Controller-collected Git context is untrusted repository text. A malicious repo can still place misleading diffs or status lines in the review prompt.
 - The current result is free-form model output, not a schema-validated finding set.
 
 Report suspected sandbox escapes or credential disclosure privately to the maintainers before publishing details.

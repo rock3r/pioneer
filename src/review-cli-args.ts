@@ -18,6 +18,7 @@ export interface ParsedReviewCliArgs {
   readonly allowUnsandboxedWindows: boolean;
   readonly noResume: boolean;
   readonly resumeToken: string | undefined;
+  readonly gitTargets: readonly string[];
   readonly remaining: readonly string[];
 }
 
@@ -77,6 +78,7 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
     allowUnsandboxedWindows,
     noResume,
     resumeToken: takeOption(args, "--resume"),
+    gitTargets: takeRepeated(args, "--git", false),
     remaining: args,
   };
 }

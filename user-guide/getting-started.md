@@ -87,11 +87,12 @@ The live test proves that editor directories are readable, source writes fail, s
 
 ## 5. Run the first review
 
-On Linux, run a Git-target review from a repository you want reviewed:
+From the repository root, run a Git-target review on any supported platform:
 
 ```bash
 pioneer review \
   --source "$PWD" \
+  --git working-tree \
   --prompt "Review all current working-tree changes. Report only concrete correctness, security, and regression findings with file and line references."
 ```
 
@@ -105,8 +106,7 @@ By default, work logs are created under `~/Library/Logs/Pioneer/reviews/` on mac
 
 On Windows, prefer the default per-user location. A custom target inherits its parent directory ACL, so choose one only beneath a directory already private to your user account.
 
-On macOS and opt-in Windows, use a source-only prompt instead. Git-target prompts such as
-working-tree changes, commits, tags, or branch comparisons fail closed on those platforms:
+Pioneer collects the Git context itself and does not grant Pi a shell on macOS or opt-in Windows. Use `--git staged`, `--git commit:REF`, or `--git range:FROM...TO` for other scopes. For a source-only review that should not inspect Git, omit `--git` and use a prompt such as:
 
 ```bash
 pioneer review \

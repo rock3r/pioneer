@@ -48,11 +48,12 @@ pioneer models
 
 If an agent terminal hides Pi configuration, `doctor` reports that access denial separately from a genuinely unconfigured Pi installation. Its diagnosis never reads configuration contents; approve outer-terminal escalation when prompted, while Pioneer continues to sandbox the Pi actor.
 
-On Linux, run a review from the repository to inspect the current Git changes:
+On any supported platform, run a review from the repository root to inspect the current Git changes:
 
 ```bash
 pioneer review \
   --source "$PWD" \
+  --git working-tree \
   --prompt "Review all current working-tree changes. Report concrete correctness, security, and regression findings with file and line references." \
   --model provider/model \
   --thinking max
@@ -60,7 +61,7 @@ pioneer review \
 
 Pioneer immediately prints `[PIONEER_WORK_LOG] /absolute/path.jsonl` to stderr, then flushes controller and sanitized Pi activity to that JSONL file while the review runs. It uses mode `0600` on macOS and Linux; default Windows logs rely on the per-user `%LOCALAPPDATA%` ACL. Pass `--work-log /absolute/path.jsonl` to select a create-only target; otherwise Pioneer uses the platform log directory. Windows custom targets inherit their parent directory ACL, so use only a directory already private to the current user. The final report remains Markdown on stdout and is also persisted through an exclusively owned controller reservation. Pioneer announces its path as `[PIONEER_REPORT] /absolute/path.md` on stderr; pass `--report /absolute/path/report.md` to override the private default target without granting Pi write access to either controller-owned file. Pioneer creates and announces the work log first so readiness failures are observable, then resolves model names before launching Pi. A missing or ambiguous model fails with the configured model list and leaves its diagnostic work log in place.
 
-On macOS and opt-in Windows, use a source-only prompt such as `Review the implementation under src/auth for correctness and regressions.` Explicit Git-target prompts fail closed because those platforms do not grant Pi Git execution.
+Pioneer collects that Git context in the controller with an allowlisted read-only Git invocation and injects it into the prompt. macOS and opt-in Windows still do not grant Pi a shell. Use `--git staged`, `--git commit:REF`, or `--git range:FROM...TO` for other scopes, or omit `--git` to infer conservative targets from a Git-target prompt. Source-only prompts such as `Review the implementation under src/auth for correctness and regressions.` do not collect Git.
 
 ## Install for your agent
 
@@ -133,7 +134,7 @@ Read [AGENTS.md](AGENTS.md) before changing production code. The smoke test is a
 ## Current boundaries
 
 - Reviews are synchronous and return free-form Markdown.
-- Linux reviews can inspect Git inside Bubblewrap. macOS and opt-in Windows provide read-only source inspection without controller-side Git execution, and fail closed for explicit Git-target requests.
+- Git-target reviews collect allowlisted read-only Git context in the controller on every platform. Linux Pi additionally has `bash` inside Bubblewrap; macOS and opt-in Windows keep Pi on `read` and `ls`.
 - Windows cannot enforce source immutability and requires `--allow-unsandboxed-windows` after explicit user approval.
 - The eval harness prepares and isolates baseline and with-skill actors; automated grading remains separate work.
 

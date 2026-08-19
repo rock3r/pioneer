@@ -28,6 +28,14 @@ describe("review CLI arguments", () => {
     expect(parseReviewCliArgs(["--pi-home-include=--shared"]).piHomeIncludes).toEqual(["--shared"]);
   });
 
+  it("parses repeated Git review targets", () => {
+    expect(
+      parseReviewCliArgs(["--git", "working-tree", "--git", "commit:HEAD", "--git=staged"]),
+    ).toMatchObject({
+      gitTargets: ["working-tree", "commit:HEAD", "staged"],
+    });
+  });
+
   it("parses bounded RPC output and explicit no-resume options", () => {
     expect(
       parseReviewCliArgs(["--max-rpc-output-mb", "64", "--no-resume", "--resume", "token"]),

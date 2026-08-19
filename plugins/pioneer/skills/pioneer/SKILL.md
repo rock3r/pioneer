@@ -20,20 +20,18 @@ Use the `pioneer` CLI to run an independent review through the operator's existi
 
 ## Review command
 
-On Linux, run this from the repository being reviewed when the user requests a Git-target review:
+When the user requests a Git-target review, run this from the repository root and pass explicit `--git` targets:
 
 ```bash
 pioneer review \
   --source "$PWD" \
+  --git working-tree \
   --prompt "Review the current changes for correctness, security, and regressions. Report concrete findings with file and line references." \
   --model provider/model \
   --thinking high
 ```
 
-On macOS and Windows, do not submit Git-target prompts such as current changes, working-tree
-changes, commits, tags, or branch comparisons: Pioneer rejects them before Pi starts. For a
-source-only review, keep the same command shape but use a scope such as `Review the implementation
-under src for correctness, security, and regressions.`
+`--git` may be repeated. Accepted values are `working-tree`, `staged`, `untracked`, `commit:REF`, and `range:FROM...TO` or `range:FROM..TO`. Pioneer collects that Git context in the controller on every platform; do not assume Pi can run Git on macOS or Windows. GitHub pull-request numbers and URLs are not Git targets—ask for a local `--git` value instead. For a source-only review, omit `--git` and use a scope such as `Review the implementation under src for correctness, security, and regressions.`
 
 Only include `--model` or `--thinking` when requested. A requested thinking level is binding: include the exact `--thinking <level>` argument in the review command and do not silently omit or substitute it. Supported thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 

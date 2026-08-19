@@ -534,6 +534,7 @@ describe("recoverable review archive", () => {
         allowWritePaths: [],
         network: "none",
         piVersion: "0.84.2",
+        gitTargets: ["working-tree", "commit:HEAD"],
       },
       "550e8400-e29b-41d4-a716-446655440000",
     );
@@ -552,6 +553,7 @@ describe("recoverable review archive", () => {
         allowWritePaths: [],
         network: "none",
         piVersion: "0.84.2",
+        gitTargets: ["working-tree", "commit:HEAD"],
       }),
     );
     expect(JSON.stringify(manifest)).not.toContain("private prompt");
@@ -1315,6 +1317,7 @@ describe("recoverable review archive", () => {
       ["piHomeIncludes", ["skills/example", 42]],
       ["allowReadPaths", ["/reference", false]],
       ["allowWritePaths", "/output"],
+      ["gitTargets", ["working-tree", 42]],
     ] as const) {
       await writeFile(
         manifestPath,

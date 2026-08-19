@@ -13,9 +13,10 @@ The TypeScript API is:
 ```ts
 import { runReview } from "@rock3r/pioneer";
 
-// On Linux, this reviews the current Git changes.
+// Controller-collected Git context works on every platform.
 const result = await runReview({
   sourceDir: "/absolute/repository",
+  gitTargets: ["working-tree"],
   prompt: "Review the current changes",
   model: "provider/model",
   thinking: "high",
@@ -23,6 +24,8 @@ const result = await runReview({
   onWorkLogReady: (path) => console.error(`work log: ${path}`),
 });
 ```
+
+`ReviewRequest.gitTargets` is a repeatable explicit Git inspection contract (`working-tree`, `staged`, `untracked`, `commit:REF`, `range:FROM...TO` or `range:FROM..TO`). When it is omitted, Pioneer infers conservative targets from Git-target prompts and fails closed for GitHub pull-request URLs. Collected Git output is untrusted prompt context; it does not grant Pi a shell on macOS or Windows.
 
 `ReviewRequest.piHomeIncludes` is a repeatable exact-path opt-in relative to the selected Pi home. It is intended for a narrowly required additional file or directory, including a managed package directory; it does not support globs, negation, or persistent configuration. The shared snapshot applies the same hard exclusions and symlink checks as the CLI.
 
@@ -32,13 +35,17 @@ The CLI prints only the report to stdout. The immediate `[PIONEER_WORK_LOG] ABSO
 
 ## Target semantics
 
-`--source` grants a directory to Pi and sets it as the working directory. Linux Pi can inspect Git directly inside its PID namespace. macOS and opt-in Windows provide read-only source inspection without controller-side Git execution and reject explicit Git-target requests rather than report on an unverified scope. On those platforms, use a source-only prompt such as `Review the implementation under src/auth for correctness.` Put the intended Linux Git scope in the prompt, for example:
+`--source` grants a directory to Pi and sets it as the working directory. Git-target reviews collect bounded read-only Git context in the Pioneer controller on every platform, then inject it into the prompt as untrusted repository output. `--source` must be the Git repository root for those reviews. Prefer an explicit `--git` target:
 
-- “Review all current working-tree changes.”
-- “Review commit `abc123` against its first parent.”
-- “Review the implementation under `src/auth` against `docs/auth-design.md`.”
+- `--git working-tree` for tracked and untracked working-tree changes
+- `--git staged` for the index
+- `--git untracked` for untracked paths only
+- `--git commit:REF` for a validated commit or tag
+- `--git range:FROM...TO` or `--git range:FROM..TO` for a validated revision range
 
-Pi uses its allowlisted built-in inspection tools inside the granted source tree. The native sandbox keeps that source read-only.
+Git-target prompts without `--git` still infer those same conservative targets. GitHub pull-request numbers and URLs fail closed; pass a local `--git` target instead. Source-only prompts such as `Review the implementation under src/auth for correctness.` do not collect Git.
+
+Pi uses its allowlisted built-in inspection tools inside the granted source tree. The native sandbox keeps that source read-only. Linux additionally permits `bash` inside Bubblewrap; macOS and Windows keep Pi on `read` and `ls` and rely on the controller Git context.
 
 ## Readiness and model resolution
 
@@ -72,7 +79,7 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 - `PI_OFFLINE=1`;
 - `PI_TELEMETRY=0`.
 
-Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion depends only on Pi's built-in RPC mode and built-in inspection tools. `write` and `edit` are excluded. macOS and opt-in Windows reviews use `read` and `ls`, so source discovery remains available without allowing Pi to request a child process; macOS also denies process creation in Seatbelt. Pioneer does not execute Git in its controller on those platforms. Linux reviews retain `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
+Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion depends only on Pi's built-in RPC mode and built-in inspection tools. `write` and `edit` are excluded. macOS and opt-in Windows reviews use `read` and `ls`, so source discovery remains available without allowing Pi to request a child process; macOS also denies process creation in Seatbelt. Git-target inspection on those platforms is controller-collected, not executed by Pi. Linux reviews retain `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace in addition to the same controller Git collection. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
 
 ## RPC framing and completion
 
