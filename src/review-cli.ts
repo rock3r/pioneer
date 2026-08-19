@@ -135,6 +135,7 @@ async function main(): Promise<void> {
       maxRpcOutputMbText,
       noResume,
       resumeToken,
+      gitTargets,
       allowUnsandboxedWindows,
     } = parsed;
     const timeoutMs = timeoutText === undefined ? undefined : Number(timeoutText);
@@ -152,6 +153,7 @@ async function main(): Promise<void> {
         piHomeIncludes.length > 0 ||
         allowReadPaths.length > 0 ||
         allowWritePaths.length > 0 ||
+        gitTargets.length > 0 ||
         networkText !== "full" ||
         noResume ||
         networkSpecified ||
@@ -216,6 +218,7 @@ async function main(): Promise<void> {
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
       ...(maxRpcOutputBytes === undefined ? {} : { maxRpcOutputBytes }),
       ...(noResume ? { resumable: false } : {}),
+      ...(gitTargets.length === 0 ? {} : { gitTargets }),
       onReportReady: (reportFile) => process.stderr.write(`[PIONEER_REPORT] ${reportFile}\n`),
     });
     if (result.warning) process.stderr.write(`WARNING: ${result.warning}\n`);

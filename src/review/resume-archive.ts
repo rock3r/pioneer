@@ -34,6 +34,7 @@ export interface ImmutableReviewScope {
   readonly allowWritePaths?: readonly string[];
   readonly network: ReviewNetworkMode;
   readonly piVersion: string;
+  readonly gitTargets?: readonly string[];
 }
 
 export interface ReviewResumeArchive {
@@ -229,6 +230,7 @@ export function immutableReviewScope(
     allowWritePaths: scope.allowWritePaths,
     network: scope.network,
     piVersion: scope.piVersion,
+    ...(scope.gitTargets === undefined ? {} : { gitTargets: scope.gitTargets }),
   };
 }
 
@@ -1256,7 +1258,8 @@ async function readReviewResumeArchiveContents(
     !optionalString(rawScope.piHomeSource) ||
     !optionalStringList(rawScope.piHomeIncludes) ||
     !optionalStringList(rawScope.allowReadPaths) ||
-    !optionalStringList(rawScope.allowWritePaths)
+    !optionalStringList(rawScope.allowWritePaths) ||
+    !optionalStringList(rawScope.gitTargets)
   ) {
     throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume scope is invalid");
   }
@@ -1327,6 +1330,7 @@ async function readReviewResumeArchiveContents(
       : {}),
     network: rawScope.network as ReviewNetworkMode,
     piVersion: rawScope.piVersion,
+    ...(Array.isArray(rawScope.gitTargets) ? { gitTargets: rawScope.gitTargets as string[] } : {}),
   };
   return {
     archive,

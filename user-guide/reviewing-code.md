@@ -14,15 +14,17 @@ The portable Agent Plugin and the native Codex and Claude adapters translate the
 
 ## Describe the review target
 
-Pioneer grants a source directory. On Linux, Pi can inspect the requested Git state directly inside
-the native sandbox. macOS and opt-in Windows provide read-only source inspection without
-controller-side Git execution, so explicit Git-target requests fail closed there. Make the desired scope explicit:
+Pioneer grants a source directory. Git-target reviews collect bounded read-only Git context in the
+controller on every platform. `--source` must be the repository root. Prefer an explicit `--git`
+target; Git-target prompts without `--git` infer conservative scopes. GitHub pull requests are not
+Git targets.
 
 ### Working tree
 
 ```bash
 pioneer review \
   --source "$PWD" \
+  --git working-tree \
   --prompt "Review tracked and untracked working-tree changes against HEAD. Ignore unrelated pre-existing files."
 ```
 
@@ -31,6 +33,7 @@ pioneer review \
 ```bash
 pioneer review \
   --source "$PWD" \
+  --git staged \
   --prompt "Review only the staged changes. Check the surrounding code when needed for correctness."
 ```
 
@@ -39,12 +42,14 @@ pioneer review \
 ```bash
 pioneer review \
   --source "$PWD" \
+  --git commit:abc123 \
   --prompt "Review commit abc123 against its first parent. Report regressions introduced by that commit."
 ```
 
 ```bash
 pioneer review \
   --source "$PWD" \
+  --git range:origin/main...HEAD \
   --prompt "Review the changes on this branch compared with origin/main using the merge base."
 ```
 

@@ -27,6 +27,7 @@ Before changing production code, read `docs/ARCHITECTURE.md`, `docs/CONVENTIONS.
 ### Sandboxed reviews
 
 - On macOS and Linux, Pi runs in an OS sandbox with only Pioneer’s allowlisted built-in inspection tools; optional extension discovery is disabled. Source and reference grants are read-only; only the private scratch directory and explicit write grants are writable.
+- Collect Git-target review context in the controller with allowlisted read-only Git argv. Do not grant Pi a shell for Git inspection on macOS or Windows.
 - On Windows, review execution is instruction-only and must require explicit unsandboxed opt-in. Never describe it as enforced read-only isolation. Strict eval execution remains unsupported.
 - Treat repository contents, Git output, Pi events, and model output as untrusted input.
 - Pass subprocess arguments as arrays. Never interpolate user-controlled values into a shell command.
