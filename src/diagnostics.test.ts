@@ -6,14 +6,87 @@ import {
   sanitizeDiagnostic,
 } from "./diagnostics.js";
 
+/**
+ * Wall-clock ceiling for the credential-label scan. The credential-keyword fast path means this
+ * keyword-free input no longer reaches the quadratic label scans, so it costs well under a
+ * millisecond and this bound now has several orders of magnitude of headroom. It was 1000ms
+ * against a ~220ms scan, a margin thin enough to flake under parallel load; see issue #36.
+ * Keep it tight enough to catch a regression back to the unguarded cost.
+ */
+const CREDENTIAL_SCAN_BUDGET_MS = 100;
+
 describe("diagnostics", () => {
   it("bounds provider-controlled input before credential-label scans", () => {
     const input = `${"a-".repeat(8_000)}: x`;
+    // The budget exists to catch catastrophic backtracking, not to measure absolute speed, so
+    // a cheap calibration sample taken beside the measurement separates a real regression from
+    // a starved test host. Catastrophic backtracking is slow in every sample; a loaded machine
+    // inflates both numbers together.
+    const calibrationStartedAt = performance.now();
+    sanitizeDiagnostic("token=short-value");
+    const calibrationMs = performance.now() - calibrationStartedAt;
+
     const startedAt = performance.now();
     const sanitized = sanitizeDiagnostic(input);
+    const elapsedMs = performance.now() - startedAt;
 
-    expect(performance.now() - startedAt).toBeLessThan(1_000);
+    const context = `elapsed=${elapsedMs.toFixed(1)}ms calibration=${calibrationMs.toFixed(3)}ms input=${input.length}B platform=${process.platform}`;
+    if (elapsedMs > CREDENTIAL_SCAN_BUDGET_MS / 2) {
+      process.stderr.write(`[PIONEER_TEST_TIMING] credential-label scan near budget: ${context}\n`);
+    }
+    expect(elapsedMs, `credential-label scan budget exceeded (${context})`).toBeLessThan(
+      CREDENTIAL_SCAN_BUDGET_MS,
+    );
     expect(sanitized.length).toBeLessThanOrEqual(500);
+  });
+
+  it("skips the credential-label scan for separator-dense text with no credential keyword", () => {
+    // The credential-label pattern is quadratic in the input length, so text that cannot
+    // contain a credential label must not pay for that scan. This input costs about 210ms
+    // unguarded and well under a millisecond through the fast path, so the shared budget
+    // still catches a regression while leaving roughly two orders of magnitude of headroom.
+    // `performance.now()` includes time this worker spends descheduled, so a tighter bound
+    // would only reintroduce the marginal wall-clock problem tracked in issue #36.
+    const input = `${"a-".repeat(2_000)}: x`;
+    const startedAt = performance.now();
+    const sanitized = sanitizeDiagnostic(input);
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(sanitized).not.toContain("[REDACTED]");
+    expect(
+      elapsedMs,
+      `keyword-free credential scan took ${elapsedMs.toFixed(1)}ms on ${process.platform}`,
+    ).toBeLessThan(CREDENTIAL_SCAN_BUDGET_MS);
+  });
+
+  it.each([
+    "authorization",
+    "api-key",
+    "api_key",
+    "apikey",
+    "private-key",
+    "access-key-id",
+    "access-token",
+    "refresh-token",
+    "client-secret",
+    "secret-access-key",
+    "session",
+    "session-id",
+    "session-token",
+    "connection-string",
+    "cookie",
+    "passphrase",
+    "credential",
+    "signature",
+    "sig",
+    "key",
+    "token",
+    "password",
+    "secret",
+  ])("still redacts %s assignments after the credential-keyword fast path", (label) => {
+    const sanitized = sanitizeDiagnostic(`${label}=hunter2-should-not-survive`);
+    expect(sanitized).not.toContain("hunter2-should-not-survive");
+    expect(sanitized).toContain("[REDACTED]");
   });
 
   it("removes zero-width format controls before credential matching", () => {

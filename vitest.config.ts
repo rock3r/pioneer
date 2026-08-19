@@ -8,6 +8,7 @@ export default defineConfig({
       reporter: ["text", "json", "html"],
     },
     exclude: [...configDefaults.exclude, "test/e2e/**"],
+    globalSetup: ["test/global-setup.ts"],
     include: ["src/**/*.test.ts", "test/**/*.test.ts"],
   },
 });

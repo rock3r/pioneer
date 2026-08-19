@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -12,6 +11,9 @@ const { createTempDir } = registerManagedTempPaths();
 function actor(source: string): readonly [string, ...string[]] {
   return [process.execPath, "-e", source];
 }
+
+/** Wall-clock ceiling for a bounded timeout capture. See issue #36. */
+const TIMEOUT_CAPTURE_BUDGET_MS = 1_500;
 
 describe("eval process capture", () => {
   it("launches a symlinked executable through its lexical path", () => {
@@ -49,12 +51,29 @@ describe("eval process capture", () => {
       100,
     );
 
-    expect(result.exitCode).not.toBe(0);
-    expect(result.timedOut).toBe(true);
-    expect(result.stdout).toContain("before-timeout");
-    expect(result.stderr).toContain("before-error");
-    expect(result.stderr).toContain("[EVAL_TIMEOUT]");
-    expect(performance.now() - started).toBeLessThan(1_500);
+    // A 100ms budget races the actor's own startup: the pre-timeout markers are only observed
+    // if the child boots and flushes both pipes before the kill. Report exactly what arrived so
+    // a failure distinguishes a lost marker from a broken capture path. See issue #36.
+    const elapsedMs = performance.now() - started;
+    const context = [
+      `elapsed=${elapsedMs.toFixed(1)}ms`,
+      `timedOut=${String(result.timedOut)}`,
+      `exitCode=${String(result.exitCode)}`,
+      `signal=${String(result.signal)}`,
+      `stdout=${JSON.stringify(result.stdout.slice(0, 200))}`,
+      `stderr=${JSON.stringify(result.stderr.slice(0, 200))}`,
+      `platform=${process.platform}`,
+    ].join(" ");
+    if (elapsedMs > TIMEOUT_CAPTURE_BUDGET_MS / 2) {
+      process.stderr.write(`[PIONEER_TEST_TIMING] eval timeout capture near budget: ${context}\n`);
+    }
+
+    expect(result.exitCode, context).not.toBe(0);
+    expect(result.timedOut, context).toBe(true);
+    expect(result.stdout, context).toContain("before-timeout");
+    expect(result.stderr, context).toContain("before-error");
+    expect(result.stderr, context).toContain("[EVAL_TIMEOUT]");
+    expect(elapsedMs, context).toBeLessThan(TIMEOUT_CAPTURE_BUDGET_MS);
   });
 
   it.skipIf(process.platform === "win32")(
@@ -180,18 +199,6 @@ describe("eval process capture", () => {
   });
 });
 
-/**
- * Linux binds the compiled network supervisor next to the launcher module, so a
- * sandbox launched from the TypeScript sources cannot start. The built CLI covers
- * the same path end to end in test/e2e.
- */
-function sandboxLaunchableFromSource(): boolean {
-  return (
-    process.platform !== "linux" ||
-    existsSync(new URL("../sandbox/linux-network-supervisor.js", import.meta.url))
-  );
-}
-
 describe("eval isolated Pi credential locks", () => {
   it("exposes the isolated agent directory as writable scratch", () => {
     expect(
@@ -208,7 +215,7 @@ describe("eval isolated Pi credential locks", () => {
   });
 
   it("lets a sandboxed actor create Pi credential lock directories beside snapshotted auth files", async (context) => {
-    if ((await nativeSandboxReadinessErrors()).length > 0 || !sandboxLaunchableFromSource()) {
+    if ((await nativeSandboxReadinessErrors()).length > 0) {
       context.skip();
     }
     const root = await createTempDir("pioneer-eval-lock-");
