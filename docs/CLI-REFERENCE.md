@@ -191,6 +191,8 @@ pioneer eval prepare --skill DIR --evals FILE --output DIR
 
 The output must not exist and its canonical parent must keep it outside the source skill. Pioneer revalidates the created destination before populating it. The command rejects symlinks in the skill, requires `skill_name` to be one portable path component valid on Windows and Unix, including the 255-byte filename limit, parses `evals.json`, and creates controller metadata plus baseline/with-skill actor directories.
 
+Fixtures are staged under `fixtures/` inside each actor run directory, and each prepared prompt is rewritten so the paths it names resolve from the actor working directory. `case.json` records `id`, the rewritten `prompt`, the original `source_prompt`, `fixtures_dir`, and the staged `files`. Ambiguous basenames shared by several staged fixtures are left unrewritten. The JSON result adds `actorContract` with `caseFile`, `fixturesDir`, `promptField`, and a one-sentence `description`; the same sentence is printed to stderr as `[PIONEER_EVAL_ACTOR_CONTRACT]`.
+
 ## `pioneer eval run`
 
 ```text
@@ -204,6 +206,8 @@ pioneer eval run --run-dir DIR
 ```
 
 The command after `--` is executed as discrete argv in the strict sandbox. The runner first performs mandatory filesystem, environment, and loopback probes. Before creating launch artifacts it validates the executable: bare names use the selected sanitized `PATH`, relative paths are anchored to the run directory, and absolute/symlinked launchers are canonicalized with narrow exact grants. Actor stdout and stderr observed before termination are propagated within a 4 MiB stdout and 64 KiB stderr bound; exit status and terminating signal are also returned.
+
+Before the actor starts, Pioneer prints one `[PIONEER_EVAL_ACTOR_CONTRACT]` stderr line naming the actor working directory, the `fixtures/` directory, and `case.json`, followed by one `[PIONEER_EVAL_FIXTURES]` line per staged file. The listing reads at most 256 KiB of `case.json`, ignores absolute, escaping, over-long, and control-character entries because the run directory stays actor-writable, prints at most 20 paths, and then reports how many remain. A run directory without a usable `case.json` still gets the contract line.
 
 The isolated Pi snapshot `agentDir` is writable so Pi can create credential lock directories next to snapshotted `auth.json` and `settings.json`. The source Pi home is never mounted.
 

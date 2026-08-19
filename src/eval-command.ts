@@ -1,9 +1,24 @@
 import path from "node:path";
 import { CliUsageError } from "./diagnostics.js";
+import { formatEvalActorContract, readPreparedEvalCase } from "./eval-run/actor-contract.js";
 import { installLinuxSandboxSupport } from "./eval-run/linux-install.js";
 import { runEvalCommand } from "./eval-run/runner.js";
 import { prepareEvalBattery } from "./eval-run/setup.js";
 import { PIONEER_VERSION } from "./package-metadata.js";
+
+export interface EvalCliOutput {
+  readonly stdout: (text: string) => void;
+  readonly stderr: (text: string) => void;
+}
+
+const processOutput: EvalCliOutput = {
+  stdout: (text) => {
+    process.stdout.write(text);
+  },
+  stderr: (text) => {
+    process.stderr.write(text);
+  },
+};
 
 export function evalUsage(commandName: string): string {
   return `Usage:
@@ -34,13 +49,17 @@ function takeRepeatedOption(args: string[], name: string, commandName: string): 
   }
 }
 
-export async function runEvalCli(cliArgs: readonly string[], commandName: string): Promise<void> {
+export async function runEvalCli(
+  cliArgs: readonly string[],
+  commandName: string,
+  output: EvalCliOutput = processOutput,
+): Promise<void> {
   if (cliArgs.length === 1 && (cliArgs[0] === "--version" || cliArgs[0] === "-v")) {
-    process.stdout.write(`${PIONEER_VERSION}\n`);
+    output.stdout(`${PIONEER_VERSION}\n`);
     return;
   }
   if (cliArgs.includes("--help") || cliArgs.includes("-h")) {
-    process.stdout.write(`${evalUsage(commandName)}\n`);
+    output.stdout(`${evalUsage(commandName)}\n`);
     return;
   }
   const [subcommand, ...rawArgs] = cliArgs;
@@ -51,14 +70,15 @@ export async function runEvalCli(cliArgs: readonly string[], commandName: string
     const outputRoot = takeOption(args, "--output", commandName);
     if (!skillDir || !evalsPath || !outputRoot || args.length > 0) usage(commandName);
     const prepared = await prepareEvalBattery({ skillDir, evalsPath, outputRoot });
-    process.stdout.write(`${JSON.stringify(prepared, null, 2)}\n`);
+    output.stdout(`${JSON.stringify(prepared, null, 2)}\n`);
+    output.stderr(`[PIONEER_EVAL_ACTOR_CONTRACT] ${prepared.actorContract.description}\n`);
     return;
   }
 
   if (subcommand === "install-linux") {
     if (process.platform !== "linux" || rawArgs.length > 0) usage(commandName);
     await installLinuxSandboxSupport();
-    process.stdout.write("Linux sandbox support installed\n");
+    output.stdout("Linux sandbox support installed\n");
     return;
   }
 
@@ -81,25 +101,32 @@ export async function runEvalCli(cliArgs: readonly string[], commandName: string
       (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1))
     )
       usage(commandName);
+    const resolvedRunDir = path.resolve(runDir);
+    for (const line of formatEvalActorContract(
+      resolvedRunDir,
+      await readPreparedEvalCase(resolvedRunDir),
+    )) {
+      output.stderr(`${line}\n`);
+    }
     const result = await runEvalCommand(
       {
-        runDir: path.resolve(runDir),
+        runDir: resolvedRunDir,
         command: command as [string, ...string[]],
         runtimeReadPaths,
         ...(piHomeSource === undefined ? {} : { piHomeSource: path.resolve(piHomeSource) }),
       },
       {
         deniedReadProbePaths,
-        onWorkLogReady: (logPath) => process.stderr.write(`[PIONEER_EVAL_WORK_LOG] ${logPath}\n`),
+        onWorkLogReady: (logPath) => output.stderr(`[PIONEER_EVAL_WORK_LOG] ${logPath}\n`),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(workLogPath === undefined ? {} : { workLogPath: path.resolve(workLogPath) }),
       },
     );
-    process.stdout.write(result.stdout);
-    if (result.warning !== undefined) process.stderr.write(`WARNING: ${result.warning}\n`);
-    process.stderr.write(result.stderr);
+    output.stdout(result.stdout);
+    if (result.warning !== undefined) output.stderr(`WARNING: ${result.warning}\n`);
+    output.stderr(result.stderr);
     if (result.signal !== null) {
-      process.stderr.write(`Eval actor terminated by ${result.signal}\n`);
+      output.stderr(`Eval actor terminated by ${result.signal}\n`);
     }
     process.exitCode = result.exitCode;
     return;

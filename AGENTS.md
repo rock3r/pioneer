@@ -80,6 +80,7 @@ npm ci
 npm run lint
 npm run typecheck
 npm test
+npm run test:e2e
 npm run build
 npm run check
 ```

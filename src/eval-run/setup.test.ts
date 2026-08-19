@@ -72,6 +72,68 @@ describe("prepareEvalBattery", () => {
     );
   });
 
+  it("stages fixtures at the path the prepared prompt names", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [
+          {
+            id: 7,
+            prompt: "Review this panel. File: fixture.txt",
+            files: ["evals/files/fixture.txt"],
+          },
+        ],
+      }),
+    );
+
+    const result = await prepareEvalBattery({
+      skillDir: fixture.skillDir,
+      evalsPath,
+      outputRoot: path.join(fixture.root, "battery"),
+    });
+
+    const runDir = path.join(result.actorRunsDir, "eval-7", "with-skill");
+    const preparedCase = JSON.parse(await readFile(path.join(runDir, "case.json"), "utf8")) as {
+      prompt: string;
+      source_prompt: string;
+      fixtures_dir: string;
+      files: string[];
+    };
+    expect(preparedCase.prompt).toBe("Review this panel. File: fixtures/fixture.txt");
+    expect(preparedCase.source_prompt).toBe("Review this panel. File: fixture.txt");
+    expect(preparedCase.fixtures_dir).toBe("fixtures");
+    expect(preparedCase.files).toEqual(["fixtures/fixture.txt"]);
+    expect(await readFile(path.join(runDir, preparedCase.files[0] ?? ""), "utf8")).toBe(
+      "prompt-safe fixture",
+    );
+    expect(result.actorContract).toEqual({
+      caseFile: "case.json",
+      fixturesDir: "fixtures",
+      promptField: "prompt",
+      description:
+        "Run each actor with its run directory as the working directory. Prepared prompts reference staged fixtures as fixtures/NAME relative to that directory, and case.json lists every staged file.",
+    });
+  });
+
+  it("leaves a prompt that names no staged fixture unchanged", async () => {
+    const fixture = await createSkillFixture();
+
+    const result = await prepareEvalBattery({
+      skillDir: fixture.skillDir,
+      evalsPath: path.join(fixture.skillDir, "evals", "evals.json"),
+      outputRoot: path.join(fixture.root, "battery"),
+    });
+
+    const baselineCase = JSON.parse(
+      await readFile(path.join(result.actorRunsDir, "eval-1", "baseline", "case.json"), "utf8"),
+    ) as { prompt: string; source_prompt: string };
+    expect(baselineCase.prompt).toBe("Review the fixture.");
+    expect(baselineCase.source_prompt).toBe("Review the fixture.");
+  });
+
   it("refuses source skills containing symlinks", async () => {
     const fixture = await createSkillFixture();
     await symlink(
