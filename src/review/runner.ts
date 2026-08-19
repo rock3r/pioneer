@@ -1281,7 +1281,7 @@ async function runReviewInternal(
       gitContextText = collected?.text;
       recordReviewWorkLog(workLog, "stage_completed", {
         stage: "git_inspect",
-        gitTargets: gitTargets.map(serializeGitTarget),
+        gitTargets: gitTargets.map((target) => target.kind),
         contextBytes: Buffer.byteLength(gitContextText ?? ""),
       });
     }

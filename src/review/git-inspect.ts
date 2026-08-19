@@ -481,6 +481,7 @@ export async function collectGitContext(
     // Git before object-format probing still uses SHA-1.
   }
   const emptyTree = emptyTreeForObjectFormat(objectFormat);
+  await assertNoExternalObjectStores(executable, canonicalSource, runner);
   const sections: string[] = [];
   for (const target of targets) {
     sections.push(await collectTarget(executable, canonicalSource, target, runner, emptyTree));
@@ -514,11 +515,11 @@ async function collectTarget(
     const diff = await runAllowlistedGit(
       executable,
       repo,
-      ["diff", "--no-ext-diff", "--no-textconv", "--no-color"],
+      ["diff", "HEAD", "--no-ext-diff", "--no-textconv", "--no-color"],
       runner,
       emptyTree,
     );
-    return `## working-tree\n${status || "(clean status)"}\n\n${diff || "(no unstaged diff)"}`;
+    return `## working-tree\n${status || "(clean status)"}\n\n${diff || "(no working-tree diff)"}`;
   }
   if (target.kind === "staged") {
     const diff = await runAllowlistedGit(
@@ -566,6 +567,59 @@ async function collectTarget(
     emptyTree,
   );
   return `## range ${serializeGitTarget(target)}\n${diff || "(empty range)"}`;
+}
+
+async function assertNoExternalObjectStores(
+  executable: string,
+  repo: string,
+  runner: GitRunner,
+): Promise<void> {
+  const gitDir = (
+    await runAllowlistedGit(executable, repo, ["rev-parse", "--absolute-git-dir"], runner)
+  ).trim();
+  let commonDir = gitDir;
+  try {
+    const probed = (
+      await runAllowlistedGit(executable, repo, ["rev-parse", "--git-common-dir"], runner)
+    ).trim();
+    commonDir = path.isAbsolute(probed) ? probed : path.resolve(repo, probed);
+  } catch {
+    // Older Git still uses the absolute git directory as the object store root.
+  }
+  const roots = new Set<string>();
+  for (const candidate of [gitDir, commonDir]) {
+    try {
+      roots.add(await realpath(candidate));
+    } catch {
+      throw new Error(
+        diagnosticMessage(
+          "REVIEW_GIT_REPOSITORY_INVALID",
+          "Git review source is not a readable Git repository",
+        ),
+      );
+    }
+  }
+  for (const root of roots) {
+    for (const name of ["alternates", "http-alternates"] as const) {
+      const alternates = path.join(root, "objects", "info", name);
+      try {
+        const details = await stat(alternates);
+        if (details.isFile() && details.size > 0) {
+          throw new Error(
+            diagnosticMessage(
+              "REVIEW_GIT_REPOSITORY_INVALID",
+              "Git-target reviews reject repositories that use alternate object stores",
+            ),
+          );
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("[REVIEW_GIT_REPOSITORY_INVALID]")) {
+          throw error;
+        }
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+  }
 }
 
 async function verifyCommit(

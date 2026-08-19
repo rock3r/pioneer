@@ -141,6 +141,9 @@ describe("controller Git collection", () => {
       }
       if (args.includes("--show-object-format"))
         return { stdout: "sha1\n", stderr: "", exitCode: 0 };
+      if (args.includes("--absolute-git-dir") || args.includes("--git-common-dir")) {
+        return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
+      }
       if (args.includes("status")) return { stdout: " M file.ts\n", stderr: "", exitCode: 0 };
       if (args.includes("diff") && args.includes("--cached")) {
         return { stdout: "staged-diff\n", stderr: "", exitCode: 0 };
@@ -169,6 +172,11 @@ describe("controller Git collection", () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-ref-"));
     const runner: GitRunner = async (_executable, args) => {
       if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
+      if (args.includes("--show-object-format"))
+        return { stdout: "sha1\n", stderr: "", exitCode: 0 };
+      if (args.includes("--absolute-git-dir") || args.includes("--git-common-dir")) {
+        return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
+      }
       if (args.includes("rev-parse") && args.some((arg) => arg.includes("^{commit}"))) {
         return { stdout: "", stderr: "bad", exitCode: 128 };
       }
@@ -186,6 +194,11 @@ describe("controller Git collection", () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-hash-"));
     const runner: GitRunner = async (_executable, args) => {
       if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
+      if (args.includes("--show-object-format"))
+        return { stdout: "sha1\n", stderr: "", exitCode: 0 };
+      if (args.includes("--absolute-git-dir") || args.includes("--git-common-dir")) {
+        return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
+      }
       if (args.includes("rev-parse") && args.some((arg) => arg.includes("^{commit}"))) {
         return { stdout: "--output=/tmp/pwned\n", stderr: "", exitCode: 0 };
       }
@@ -214,6 +227,11 @@ describe("controller Git collection", () => {
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-oversize-"));
     const runner: GitRunner = async (_executable, args) => {
       if (args.includes("--show-toplevel")) return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
+      if (args.includes("--show-object-format"))
+        return { stdout: "sha1\n", stderr: "", exitCode: 0 };
+      if (args.includes("--absolute-git-dir") || args.includes("--git-common-dir")) {
+        return { stdout: `${root}\n`, stderr: "", exitCode: 0 };
+      }
       return { stdout: "x".repeat(600 * 1024), stderr: "", exitCode: 0 };
     };
     const collected = await collectGitContext(root, [{ kind: "working-tree" }], {
@@ -329,5 +347,94 @@ describe("real Git inspection", () => {
 
     await collectGitContext(root, [{ kind: "working-tree" }]);
     await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("includes staged tracked changes in working-tree collection", async (ctx) => {
+    let git: string;
+    try {
+      git = await resolveGitExecutable();
+    } catch {
+      ctx.skip();
+      return;
+    }
+    const root = await mkdtemp(path.join(tmpdir(), "pioneer-git-staged-wt-"));
+    const env = {
+      ...gitInspectEnvironment(),
+      GIT_AUTHOR_NAME: "Pioneer Test",
+      GIT_AUTHOR_EMAIL: "pioneer@example.test",
+      GIT_COMMITTER_NAME: "Pioneer Test",
+      GIT_COMMITTER_EMAIL: "pioneer@example.test",
+    };
+    const runGit = async (args: string[]) =>
+      await new Promise<{ stdout: string; exitCode: number }>((resolve, reject) => {
+        const child = spawn(git, ["-c", "commit.gpgsign=false", ...args], {
+          cwd: root,
+          env,
+          shell: false,
+        });
+        let stdout = "";
+        child.stdout?.on("data", (chunk: Buffer) => {
+          stdout += chunk.toString("utf8");
+        });
+        child.once("error", reject);
+        child.once("close", (code) => resolve({ stdout, exitCode: code ?? 1 }));
+      });
+    expect((await runGit(["init"])).exitCode).toBe(0);
+    await writeFile(path.join(root, "tracked.txt"), "base\n");
+    expect((await runGit(["add", "tracked.txt"])).exitCode).toBe(0);
+    expect((await runGit(["commit", "-m", "init"])).exitCode).toBe(0);
+    await writeFile(path.join(root, "tracked.txt"), "staged-change\n");
+    expect((await runGit(["add", "tracked.txt"])).exitCode).toBe(0);
+
+    const collected = await collectGitContext(root, [{ kind: "working-tree" }]);
+    expect(collected?.text).toContain("staged-change");
+  });
+
+  it("rejects repositories that expose alternate object stores", async (ctx) => {
+    let git: string;
+    try {
+      git = await resolveGitExecutable();
+    } catch {
+      ctx.skip();
+      return;
+    }
+    const secretRoot = await mkdtemp(path.join(tmpdir(), "pioneer-git-secret-"));
+    const decoyRoot = await mkdtemp(path.join(tmpdir(), "pioneer-git-decoy-"));
+    const env = {
+      ...gitInspectEnvironment(),
+      GIT_AUTHOR_NAME: "Pioneer Test",
+      GIT_AUTHOR_EMAIL: "pioneer@example.test",
+      GIT_COMMITTER_NAME: "Pioneer Test",
+      GIT_COMMITTER_EMAIL: "pioneer@example.test",
+    };
+    const runGit = async (cwd: string, args: string[]) =>
+      await new Promise<{ stdout: string; exitCode: number }>((resolve, reject) => {
+        const child = spawn(git, ["-c", "commit.gpgsign=false", ...args], {
+          cwd,
+          env,
+          shell: false,
+        });
+        let stdout = "";
+        child.stdout?.on("data", (chunk: Buffer) => {
+          stdout += chunk.toString("utf8");
+        });
+        child.once("error", reject);
+        child.once("close", (code) => resolve({ stdout, exitCode: code ?? 1 }));
+      });
+    expect((await runGit(secretRoot, ["init"])).exitCode).toBe(0);
+    await writeFile(path.join(secretRoot, "secret.txt"), "private-object\n");
+    expect((await runGit(secretRoot, ["add", "secret.txt"])).exitCode).toBe(0);
+    expect((await runGit(secretRoot, ["commit", "-m", "secret"])).exitCode).toBe(0);
+    const secretHead = (await runGit(secretRoot, ["rev-parse", "HEAD"])).stdout.trim();
+    const secretObjects = path.join(await realpath(secretRoot), ".git", "objects");
+    expect((await runGit(decoyRoot, ["init"])).exitCode).toBe(0);
+    const decoyGit = path.join(decoyRoot, ".git");
+    await mkdir(path.join(decoyGit, "objects", "info"), { recursive: true });
+    await writeFile(path.join(decoyGit, "objects", "info", "alternates"), `${secretObjects}\n`);
+    await writeFile(path.join(decoyGit, "HEAD"), secretHead);
+
+    await expect(collectGitContext(decoyRoot, [{ kind: "commit", ref: "HEAD" }])).rejects.toThrow(
+      "alternate object stores",
+    );
   });
 });
