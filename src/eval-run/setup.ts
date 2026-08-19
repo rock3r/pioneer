@@ -1,5 +1,11 @@
 import { cp, lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  EVAL_CASE_FILE_NAME,
+  EVAL_FIXTURES_DIR_NAME,
+  type StagedEvalFixture,
+  stagePromptFixtureReferences,
+} from "./actor-contract.js";
 
 interface EvalCase {
   readonly id: number;
@@ -13,13 +19,28 @@ export interface PrepareEvalBatteryOptions {
   readonly outputRoot: string;
 }
 
+export interface PreparedEvalActorContract {
+  readonly caseFile: string;
+  readonly fixturesDir: string;
+  readonly promptField: string;
+  readonly description: string;
+}
+
 export interface PreparedEvalBattery {
   readonly outputRoot: string;
   readonly actorRunsDir: string;
   readonly controllerDir: string;
   readonly skillName: string;
   readonly evalIds: readonly number[];
+  readonly actorContract: PreparedEvalActorContract;
 }
+
+const PREPARED_ACTOR_CONTRACT: PreparedEvalActorContract = {
+  caseFile: EVAL_CASE_FILE_NAME,
+  fixturesDir: EVAL_FIXTURES_DIR_NAME,
+  promptField: "prompt",
+  description: `Run each actor with its run directory as the working directory. Prepared prompts reference staged fixtures as ${EVAL_FIXTURES_DIR_NAME}/NAME relative to that directory, and ${EVAL_CASE_FILE_NAME} lists every staged file.`,
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -163,30 +184,45 @@ export async function prepareEvalBattery(
   for (const evalCase of parsed.evals) {
     for (const arm of ["baseline", "with-skill"] as const) {
       const runDir = path.join(actorRunsDir, `eval-${evalCase.id}`, arm);
-      await mkdir(path.join(runDir, "fixtures"), { recursive: true });
+      await mkdir(path.join(runDir, EVAL_FIXTURES_DIR_NAME), { recursive: true });
       await mkdir(path.join(runDir, "home"), { recursive: true });
       await mkdir(path.join(runDir, "tmp"), { recursive: true });
       await mkdir(path.join(runDir, "work"), { recursive: true });
 
-      const stagedFiles: string[] = [];
+      const stagedFixtures: StagedEvalFixture[] = [];
       for (const relativeFile of evalCase.files) {
         const source = path.resolve(skillDir, relativeFile);
         ensureWithin(skillDir, source, "fixture");
         const canonicalSource = await realpath(source);
         ensureWithin(skillDir, canonicalSource, "fixture");
         const destinationRelative = fixtureDestination(relativeFile);
-        const destination = path.join(runDir, "fixtures", destinationRelative);
-        ensureWithin(path.join(runDir, "fixtures"), destination, "fixture destination");
+        const fixturesDir = path.join(runDir, EVAL_FIXTURES_DIR_NAME);
+        const destination = path.join(fixturesDir, destinationRelative);
+        ensureWithin(fixturesDir, destination, "fixture destination");
         await mkdir(path.dirname(destination), { recursive: true });
         await cp(canonicalSource, destination, { force: false });
-        stagedFiles.push(
-          path.posix.join("fixtures", destinationRelative.split(path.sep).join("/")),
-        );
+        stagedFixtures.push({
+          sourcePath: relativeFile,
+          stagedPath: path.posix.join(
+            EVAL_FIXTURES_DIR_NAME,
+            destinationRelative.split(path.sep).join("/"),
+          ),
+        });
       }
 
       await writeFile(
-        path.join(runDir, "case.json"),
-        `${JSON.stringify({ id: evalCase.id, prompt: evalCase.prompt, files: stagedFiles }, null, 2)}\n`,
+        path.join(runDir, EVAL_CASE_FILE_NAME),
+        `${JSON.stringify(
+          {
+            id: evalCase.id,
+            prompt: stagePromptFixtureReferences(evalCase.prompt, stagedFixtures),
+            source_prompt: evalCase.prompt,
+            fixtures_dir: EVAL_FIXTURES_DIR_NAME,
+            files: stagedFixtures.map(({ stagedPath }) => stagedPath),
+          },
+          null,
+          2,
+        )}\n`,
         { flag: "wx" },
       );
       if (arm === "with-skill") {
@@ -219,5 +255,6 @@ export async function prepareEvalBattery(
     controllerDir,
     skillName: parsed.skillName,
     evalIds: parsed.evals.map(({ id }) => id),
+    actorContract: PREPARED_ACTOR_CONTRACT,
   };
 }

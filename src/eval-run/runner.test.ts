@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -177,6 +178,18 @@ describe("eval process capture", () => {
   });
 });
 
+/**
+ * Linux binds the compiled network supervisor next to the launcher module, so a
+ * sandbox launched from the TypeScript sources cannot start. The built CLI covers
+ * the same path end to end in test/e2e.
+ */
+function sandboxLaunchableFromSource(): boolean {
+  return (
+    process.platform !== "linux" ||
+    existsSync(new URL("../sandbox/linux-network-supervisor.js", import.meta.url))
+  );
+}
+
 describe("eval isolated Pi credential locks", () => {
   const createdRoots: string[] = [];
 
@@ -201,7 +214,7 @@ describe("eval isolated Pi credential locks", () => {
   });
 
   it("lets a sandboxed actor create Pi credential lock directories beside snapshotted auth files", async (context) => {
-    if ((await nativeSandboxReadinessErrors()).length > 0) {
+    if ((await nativeSandboxReadinessErrors()).length > 0 || !sandboxLaunchableFromSource()) {
       context.skip();
     }
     const root = await mkdtemp(path.join(tmpdir(), "pioneer-eval-lock-"));

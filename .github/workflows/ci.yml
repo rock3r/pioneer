@@ -75,6 +75,7 @@ jobs:
             sudo node dist/review-cli.js eval install-linux
           fi
       - run: npm run sandbox:smoke
+      - run: npm run test:e2e
 
   windows-sandbox-prototype:
     name: Windows AppContainer prototype

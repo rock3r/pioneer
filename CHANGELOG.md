@@ -4,6 +4,9 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Make the staged fixture location part of the eval actor contract: `eval prepare` rewrites prompts so referenced fixtures resolve from the actor working directory, keeps the original wording in `case.json`'s `source_prompt`, and reports the contract on stdout and stderr; `eval run` prints the working directory, `fixtures/`, and the bounded staged file list before the actor starts.
+- Add credential-free end-to-end eval regression tests (`npm run test:e2e`) that drive the built CLI against a scripted Pi installation for fixture discovery, run-directory listing, credential locks, work-log stages, injected Pi startup flags, process-tree timeouts, fail-closed Pi and model preflight, and controller-material denial.
+
 ## 0.2.0 - 2026-08-19
 
 - Collect Git-target review context in the controller with allowlisted read-only Git, explicit `--git` targets, and prompt inference on every platform, including macOS and Windows.

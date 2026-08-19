@@ -45,10 +45,11 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build && npm run test:e2e",
     "format": "biome format --write .",
     "lint": "biome check .",
     "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json",
     "pioneer": "npm run build --silent && node dist/review-cli.js",

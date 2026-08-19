@@ -61,7 +61,15 @@ new-eval-battery/
             └── skills/example-skill/
 ```
 
-`case.json` contains only the case ID, prompt, and staged fixture paths. The baseline arm has no candidate skill. The with-skill arm receives a sanitized copy.
+`case.json` contains only the case ID, the actor-ready prompt, the original `source_prompt`, the staged fixtures directory name, and the staged fixture paths. The baseline arm has no candidate skill. The with-skill arm receives a sanitized copy.
+
+### Staged fixture contract
+
+Actors run with their run directory as the working directory, and fixtures are staged one level down under `fixtures/`. Pioneer therefore rewrites each prepared prompt so the paths it names resolve from that working directory: a source prompt saying `File: fixture_42.kt` becomes `File: fixtures/fixture_42.kt`, while `source_prompt` keeps the original wording. A basename shared by two staged fixtures is left alone, because only its distinct relative path is unambiguous.
+
+Use `case.json` as the actor prompt source. Nothing else is needed to locate a fixture: the run directory and `fixtures/` can be listed directly, so an actor never has to run a `find`-style search that the eval sandbox may refuse to launch.
+
+`pioneer eval prepare` reports the same contract in its JSON output under `actorContract`, and as a `[PIONEER_EVAL_ACTOR_CONTRACT]` stderr line.
 
 ## Run an actor
 
@@ -75,7 +83,7 @@ pioneer eval run \
   -- your-agent-adapter --case case.json
 ```
 
-Repeat with the `with-skill` directory. The command after `--` is passed as discrete arguments, not interpreted by a shell. The writable `--run-dir` must identify one narrow actor directory. `--runtime-read` is repeatable, read-only, and intended for narrow non-overlapping tool runtimes. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and their canonical aliases, are rejected; narrow read-only system runtimes and disposable temporary descendants remain supported.
+Repeat with the `with-skill` directory. Before the actor starts, Pioneer prints the actor contract to stderr: one `[PIONEER_EVAL_ACTOR_CONTRACT]` line naming the working directory, the `fixtures/` directory, and `case.json`, followed by one bounded `[PIONEER_EVAL_FIXTURES]` line per staged file. The command after `--` is passed as discrete arguments, not interpreted by a shell. The writable `--run-dir` must identify one narrow actor directory. `--runtime-read` is repeatable, read-only, and intended for narrow non-overlapping tool runtimes. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and their canonical aliases, are rejected; narrow read-only system runtimes and disposable temporary descendants remain supported.
 
 `--deny-read-probe` is also repeatable. Use it for every controller-side answer key or sensitive reference whose invisibility you want the mandatory preflight to prove.
 
