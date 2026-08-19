@@ -66,7 +66,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Install Linux sandbox prerequisites
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y apparmor apparmor-utils bubblewrap
+        timeout-minutes: 15
+        run: .github/scripts/install-linux-sandbox-prereqs.sh
       - name: Install narrow Ubuntu AppArmor profile when required
         if: runner.os == 'Linux'
         run: |
