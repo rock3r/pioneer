@@ -1,4 +1,5 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -82,6 +83,20 @@ describe("stagePromptFixtureReferences", () => {
     ).toBe("Compare fixtures/a/panel.kt, fixtures/b/panel.kt, and panel.kt");
   });
 
+  it("keeps an already-staged reference pointing at its own fixture", () => {
+    const fixtures = [
+      fixture("evals/files/foo.kt", "fixtures/foo.kt"),
+      fixture("evals/files/fixtures/foo.kt", "fixtures/fixtures/foo.kt"),
+    ];
+
+    expect(stagePromptFixtureReferences("Review fixtures/foo.kt", fixtures)).toBe(
+      "Review fixtures/foo.kt",
+    );
+    expect(stagePromptFixtureReferences("Review evals/files/fixtures/foo.kt", fixtures)).toBe(
+      "Review fixtures/fixtures/foo.kt",
+    );
+  });
+
   it("returns the prompt unchanged when no fixture is staged", () => {
     expect(stagePromptFixtureReferences("Review the fixture.", [])).toBe("Review the fixture.");
   });
@@ -133,6 +148,32 @@ describe("readPreparedEvalCase", () => {
     });
   });
 
+  it.skipIf(process.platform === "win32")(
+    "does not block on a case file an actor replaced with a FIFO",
+    async () => {
+      const runDir = await mkdtemp(path.join(tmpdir(), "pioneer-case-"));
+      const created = spawnSync("mkfifo", [path.join(runDir, EVAL_CASE_FILE_NAME)]);
+      if (created.status !== 0) return;
+
+      await expect(readPreparedEvalCase(runDir)).resolves.toBeUndefined();
+    },
+    2_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "does not follow a case file an actor replaced with a symbolic link",
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), "pioneer-case-"));
+      const runDir = path.join(root, "run");
+      await mkdir(runDir);
+      const outside = path.join(root, "outside.json");
+      await writeFile(outside, JSON.stringify({ id: 1, files: ["fixtures/outside.kt"] }));
+      await symlink(outside, path.join(runDir, EVAL_CASE_FILE_NAME));
+
+      await expect(readPreparedEvalCase(runDir)).resolves.toBeUndefined();
+    },
+  );
+
   it("returns undefined for an oversized or unparsable case file", async () => {
     const runDir = await mkdtemp(path.join(tmpdir(), "pioneer-case-"));
     await writeFile(path.join(runDir, EVAL_CASE_FILE_NAME), "x".repeat(300 * 1024));
@@ -170,6 +211,16 @@ describe("formatEvalActorContract", () => {
     });
 
     expect(lines[1]).toBe("[PIONEER_EVAL_FIXTURES] fixtures/txt.harmless.kt");
+  });
+
+  it("strips terminal control sequences from the run directory it prints", () => {
+    const lines = formatEvalActorContract("/runs/eval-1/base\u001b[2Kline\u0007", {
+      stagedFiles: [],
+    });
+
+    expect(lines[0]).toContain("/runs/eval-1/base[2Kline");
+    expect(lines[0]).not.toContain("\u001b");
+    expect(lines).toHaveLength(1);
   });
 
   it("documents the contract even when no fixtures are staged", () => {

@@ -95,8 +95,12 @@ export function stagePromptFixtureReferences(
   if (fixtures.length === 0) return prompt;
   const replacements = new Map<string, string>();
   const ambiguous = new Set<string>();
+  // A staged path always identifies its own fixture, even when another fixture
+  // stages a file whose source spelling happens to match it.
+  const reserved = new Set(fixtures.map((fixture) => toPosix(fixture.stagedPath)));
+  for (const staged of reserved) replacements.set(staged, staged);
   const record = (needle: string, staged: string): void => {
-    if (needle.length === 0 || ambiguous.has(needle)) return;
+    if (needle.length === 0 || ambiguous.has(needle) || reserved.has(needle)) return;
     const existing = replacements.get(needle);
     if (existing !== undefined && existing !== staged) {
       replacements.delete(needle);
@@ -155,7 +159,12 @@ function isSafeStagedPath(value: unknown): value is string {
 async function readBoundedCaseFile(casePath: string): Promise<string | undefined> {
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    handle = await open(casePath, constants.O_RDONLY);
+    // A prior actor can replace the case file: opening it must not follow a link
+    // out of the run directory, and must not block on a FIFO with no writer.
+    handle = await open(
+      casePath,
+      constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0),
+    );
     const details = await handle.stat();
     if (!details.isFile() || details.size === 0 || details.size > MAX_CASE_FILE_BYTES) {
       return undefined;
@@ -204,7 +213,7 @@ export function formatEvalActorContract(
   preparedCase: PreparedEvalCase | undefined,
 ): string[] {
   const lines = [
-    `[PIONEER_EVAL_ACTOR_CONTRACT] actor working directory ${runDir}; staged fixtures are relative paths under ${EVAL_FIXTURES_DIR_NAME}/; the prepared prompt and staged file list are in ${EVAL_CASE_FILE_NAME}`,
+    `[PIONEER_EVAL_ACTOR_CONTRACT] actor working directory ${sanitizeDiagnostic(runDir)}; staged fixtures are relative paths under ${EVAL_FIXTURES_DIR_NAME}/; the prepared prompt and staged file list are in ${EVAL_CASE_FILE_NAME}`,
   ];
   const stagedFiles = preparedCase?.stagedFiles ?? [];
   for (const stagedFile of stagedFiles.slice(0, MAX_LISTED_FIXTURES)) {
