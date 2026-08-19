@@ -150,9 +150,12 @@ try {
     `#!${nodeExecutable}\nconst { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("timeout-before\\n"); process.stderr.write("timeout-error-before\\n"); setInterval(() => {}, 10000);\n`,
     { mode: 0o755 },
   );
+  // The descendant heartbeats into the writable run directory so the smoke can tell a
+  // reaped descendant from one that never started, and can prove it stopped after the run.
+  const containmentHeartbeat = path.join(evalContainmentRun, "descendant-heartbeat");
   await writeFile(
     evalContainmentActor,
-    `#!${nodeExecutable}\nconst { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", "setInterval(() => {}, 10000)"], { stdio: "inherit" }); process.stdout.write("containment-before\\n"); process.exit(0);\n`,
+    `#!${nodeExecutable}\nconst { spawn } = require("node:child_process");\nconst fs = require("node:fs");\nconst heartbeat = ${JSON.stringify(containmentHeartbeat)};\nspawn(process.execPath, ["-e", "const fs=require('node:fs');setInterval(()=>{try{fs.writeFileSync(process.argv[1],String(Date.now()));}catch{}},50);", heartbeat], { stdio: "inherit" });\nconst deadline = Date.now() + 5000;\nwhile (!fs.existsSync(heartbeat) && Date.now() < deadline) {}\nprocess.stdout.write("containment-before\\n");\nprocess.exit(0);\n`,
     { mode: 0o755 },
   );
   const previousPath = process.env.PATH;
@@ -304,21 +307,44 @@ try {
       { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
     );
     const containmentElapsed = performance.now() - containmentStarted;
-    const linuxContainmentHandled =
-      process.platform === "linux" &&
-      containmentResult.exitCode === 0 &&
-      containmentResult.containmentFailure !== true &&
-      containmentResult.stderr === "";
+    // Linux and macOS contain a leaked descendant by different mechanisms, so each platform
+    // asserts its own contract rather than accepting whichever outcome it happens to produce.
+    //
+    // Linux: Bubblewrap runs as PID 1 of a `--unshare-pid` namespace, so the kernel destroys
+    // every remaining process in that namespace as soon as the actor exits. The inherited
+    // pipes close immediately, the run completes cleanly, and the pipe-close grace never
+    // elapses. Containment is structural, so there is no diagnostic to report.
+    //
+    // macOS: Seatbelt has no PID namespace, so the descendant really does survive holding the
+    // inherited pipes. Pioneer detects it with the bounded pipe-close grace and fails the run
+    // with [EVAL_PROCESS_CONTAINMENT_FAILED].
+    const containmentExpectation =
+      process.platform === "linux"
+        ? containmentResult.exitCode === 0 &&
+          containmentResult.containmentFailure !== true &&
+          containmentResult.stderr === ""
+        : containmentResult.exitCode !== 0 &&
+          containmentResult.containmentFailure === true &&
+          containmentResult.stderr.includes("[EVAL_PROCESS_CONTAINMENT_FAILED]");
     if (
-      (!linuxContainmentHandled && containmentResult.exitCode === 0) ||
-      (!linuxContainmentHandled && containmentResult.containmentFailure !== true) ||
+      !containmentExpectation ||
       !containmentResult.stdout.includes("containment-before") ||
-      (!linuxContainmentHandled &&
-        !containmentResult.stderr.includes("[EVAL_PROCESS_CONTAINMENT_FAILED]")) ||
       containmentElapsed >= 3_000
     ) {
       throw new Error(
         `production eval containment path failed (${Math.round(containmentElapsed)}ms): ${JSON.stringify(containmentResult)}`,
+      );
+    }
+    // The descendant must have been running before the actor exited, and must not outlive it.
+    const heartbeatBefore = await readFile(containmentHeartbeat, "utf8").catch(() => undefined);
+    if (heartbeatBefore === undefined) {
+      throw new Error("eval containment descendant never started, so containment proved nothing");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const heartbeatAfter = await readFile(containmentHeartbeat, "utf8").catch(() => undefined);
+    if (heartbeatAfter !== heartbeatBefore) {
+      throw new Error(
+        `eval containment descendant outlived the actor (${String(heartbeatBefore)} -> ${String(heartbeatAfter)})`,
       );
     }
   } finally {

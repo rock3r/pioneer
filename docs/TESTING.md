@@ -18,6 +18,8 @@ Use test-driven development for behavior changes:
 - **End-to-end tests** in `test/e2e` drive the built CLI as a subprocess against a scripted Pi installation. The scripted actor is a deterministic local script, so no provider credential is ever required. Cases that launch an actor skip when the native sandbox is unavailable; `eval prepare` cases run everywhere. Run them with `npm run test:e2e`, which builds `dist/` first.
 - **Adapter tests** verify MCP schemas and Claude/Codex packaging without duplicating orchestration assertions.
 
+The unit suite's global setup compiles the Linux network supervisor beside its source, because `buildLinuxSandboxArgv` binds that compiled sibling exactly as a published install resolves it. Without it every proxied Bubblewrap launch from the TypeScript sources would fail, so Linux sandbox cases must never be skipped for a missing build artifact.
+
 ## Required cases
 
 Security-sensitive changes should include negative tests for malformed JSONL, unsupported thinking levels, invalid model IDs, path escapes, invalid refs, oversized output, subprocess failure, timeout, and cancellation isolation as applicable.

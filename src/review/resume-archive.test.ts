@@ -150,6 +150,29 @@ describe("recoverable review archive", () => {
     );
   });
 
+  it("creates a private default report directory regardless of the caller's umask", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
+    // A permissive umask is the default on several Linux distributions. Pioneer must still
+    // create its own application-data chain privately, because a group-writable ancestor is
+    // rejected as replaceable before any report is prepared.
+    const previousUmask = process.umask(0o002);
+    try {
+      const reportPath = await prepareDefaultReviewReportPath({}, process.platform, home);
+      if (process.platform === "win32") return;
+      const reportsDirectory = path.dirname(reportPath);
+      const applicationDirectory = path.dirname(reportsDirectory);
+      for (const directory of [
+        path.dirname(applicationDirectory),
+        applicationDirectory,
+        reportsDirectory,
+      ]) {
+        expect((await stat(directory)).mode & 0o077).toBe(0);
+      }
+    } finally {
+      process.umask(previousUmask);
+    }
+  });
+
   it("validates the default report target before creating or pruning its directory", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
@@ -170,7 +193,7 @@ describe("recoverable review archive", () => {
   it("prunes generated default reports using their timestamped names", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
-    await mkdir(reportDirectory, { recursive: true });
+    await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     for (let index = 0; index < 101; index += 1) {
       await writeFile(
         path.join(
@@ -189,7 +212,7 @@ describe("recoverable review archive", () => {
   it("does not prune an active default report reservation", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
-    await mkdir(reportDirectory, { recursive: true });
+    await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const activeReport = path.join(
       reportDirectory,
       "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
@@ -218,7 +241,7 @@ describe("recoverable review archive", () => {
   it("revalidates a report reservation immediately before retention unlinks it", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
-    await mkdir(reportDirectory, { recursive: true });
+    await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const lateReport = path.join(
       reportDirectory,
       "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
@@ -268,7 +291,7 @@ describe("recoverable review archive", () => {
   it("does not reclaim a live reservation before its target link is created", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
-    await mkdir(reportDirectory, { recursive: true });
+    await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const report = path.join(
       reportDirectory,
       "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
@@ -298,7 +321,7 @@ describe("recoverable review archive", () => {
   it("reclaims an orphaned published report reservation sibling", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
-    await mkdir(reportDirectory, { recursive: true });
+    await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const report = path.join(
       reportDirectory,
       "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
@@ -316,7 +339,7 @@ describe("recoverable review archive", () => {
   it("reclaims a crashed report-release quarantine after its setup grace", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
-    await mkdir(reportDirectory, { recursive: true });
+    await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const report = path.join(
       reportDirectory,
       "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",
@@ -338,7 +361,7 @@ describe("recoverable review archive", () => {
   it("prunes completed reports that contain reservation-shaped model text", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "pioneer-report-home-"));
     const reportDirectory = defaultReviewReportDirectory({}, process.platform, home);
-    await mkdir(reportDirectory, { recursive: true });
+    await mkdir(reportDirectory, { recursive: true, mode: 0o700 });
     const spoofedReport = path.join(
       reportDirectory,
       "review-20260815T000000000Z-550e8400-e29b-41d4-a716-446655440000.md",

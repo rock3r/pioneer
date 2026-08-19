@@ -4,13 +4,14 @@ Pioneer prepares separate baseline and with-skill actor directories and runs eac
 
 ## Platform status
 
-Verified on 2026-07-23:
+Verified on 2026-07-23 unless the row states otherwise:
 
 | Platform | Status | Evidence |
 | --- | --- | --- |
 | macOS 26 arm64 | Pass | Mandatory eval probes passed. `npm run sandbox:smoke` read `.idea` and `.vscode`, denied a source write plus outside content and leaf-metadata reads, wrote scratch, fetched `https://example.com` through the authenticated proxy, and denied a raw loopback bypass. A live `xai/grok-4.3` Pi review completed without changing the source digest. |
 | Linux, WSL2 kernel 6.6.87.2, Node 22.22.1, Bubblewrap 0.11.1 | Pass | Full `npm run check` and the same filesystem/network smoke battery passed. Source writes failed `EROFS`; outside paths were absent from the mount namespace. |
 | Ubuntu 26.04 Hyper-V VM, kernel 7.0.0-1007-azure, Node 22.22.1, Bubblewrap 0.11.1 | Pass | Connected as `seb` using the Windows host's SSH key. A clean install, all 79 tests, the packed-install/CLI smoke, release metadata verification, and the complete filesystem/network smoke battery passed. The smoke used the production-resolved narrow AppArmor-enabled Bubblewrap copy. |
+| Ubuntu 26.04 LTS, kernel 7.0.0-29-generic x86_64, Node 22.23.2, Bubblewrap 0.11.1 | Pass | Verified 2026-08-19 on bare metal with `apparmor_restrict_unprivileged_userns=1`, using the supported `eval install-linux` AppArmor profile. `npm run check` and the full filesystem/network smoke battery passed. Source writes failed `EROFS`; outside paths were absent from the mount namespace. A leaked descendant holding inherited pipes was destroyed with the PID namespace. |
 | Windows 11, Node 24.16.0, npm 12.0.1 | Eval runs fail closed | All 76 applicable tests passed, with three Unix-only tests skipped. The packed-install/CLI smoke, Windows fail-closed contract smoke, and .NET 8 AppContainer prototype build passed. No stable AppContainer launcher is available; Windows review mode remains explicitly unsandboxed and opt-in. |
 
 Run the repeatable native battery with:
@@ -28,6 +29,10 @@ Issue #17 live macOS acceptance on 2026-08-14 used Pi 0.84.1 with `openai-codex/
 macOS invokes `/usr/bin/sandbox-exec` directly with a generated Seatbelt profile. The profile starts at `deny default`, permits only the caller's canonical read/write grants and required runtime paths, and permits outbound TCP only to the per-run authenticated proxy port.
 
 Linux invokes Bubblewrap directly. It starts with an empty tmpfs root, bind-mounts runtime/source/reference paths read-only, bind-mounts scratch and explicit write grants read-write, creates fresh user/PID/network/IPC/UTS namespaces, drops all capabilities, and mounts private `/proc` and `/dev` views.
+
+Every Bubblewrap option Pioneer uses has been available since bubblewrap 0.2.0 (2017): `--cap-drop ALL` is the newest of them, `--die-with-parent` arrived in 0.1.8, and the tmpfs root, `--dir` ancestors, `--symlink` runtime-linker aliases, `--unshare-*` namespaces, and `--unshare-cgroup-try` all predate it. Pioneer therefore does not gate on a Bubblewrap version: every distribution that ships `bwrap` at all ships one far newer than the minimum, so a version probe would add a startup subprocess and a new failure mode without excluding any real configuration. The versions named in this document are the ones Pioneer has been verified against, not a floor.
+
+Process containment differs by platform, and each platform is asserted separately by `npm run sandbox:smoke`. On Linux, Bubblewrap runs as PID 1 of a `--unshare-pid` namespace, so the kernel destroys every surviving process in that namespace the moment the actor exits. A descendant cannot outlive the run, the inherited pipes close immediately, and the bounded pipe-close grace never elapses — so a leaked descendant produces a clean exit rather than a diagnostic. On macOS, Seatbelt provides no PID namespace: the descendant genuinely survives holding the inherited pipes, Pioneer detects it when the pipe-close grace expires, and the run fails with `[EVAL_PROCESS_CONTAINMENT_FAILED]`. Linux containment is therefore structural and macOS containment is detected; the absence of the Linux diagnostic is the stronger outcome, not an unhandled case.
 
 For Linux egress, the host proxy is exposed as one mode-0600 Unix socket. A small Pioneer Node supervisor inside the network namespace listens on loopback port 3128 and relays only to that socket. The reviewed/evaluated process receives the authenticated proxy URL. Raw host/LAN/loopback networking remains impossible because it has no host network interface. The parent proxy performs destination policy and pins the selected DNS result before connecting.
 
@@ -49,7 +54,7 @@ The actor does not start if a dependency, canonicalization step, model preflight
 
 The actor executable is resolved before the run directory receives launch artifacts. Bare names use the sanitized controller `PATH`; relative paths use the validated actor run directory; absolute paths are validated directly. Symlink launchers are canonicalized, with only the exact lexical launcher and canonical target added as read-only grants. A Pi package root that overlaps the writable run tree in either direction is rejected. `/usr/bin/env` shebang inspection reads a bounded prefix and rejects cyclic or excessively deep interpreter chains. Missing, non-executable, directory, broken-link, NUL-containing, and escaping relative paths fail closed.
 
-Eval output preserves partial stdout and stderr. The controller retains at most 4 MiB of stdout and 64 KiB of stderr; exceeding either limit returns nonzero with `[EVAL_OUTPUT_LIMIT]`. A timeout returns `[EVAL_TIMEOUT]`, interruption returns `[EVAL_INTERRUPTED]`, a failed launch returns `[EVAL_SPAWN_FAILED]`, cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` chains return `[EVAL_SHEBANG_RESOLUTION_FAILED]`, and retained inherited pipes return `[EVAL_PROCESS_CONTAINMENT_FAILED]`. These diagnostics never include the full environment, Pi configuration, or authenticated proxy URL.
+Eval output preserves partial stdout and stderr. The controller retains at most 4 MiB of stdout and 64 KiB of stderr; exceeding either limit returns nonzero with `[EVAL_OUTPUT_LIMIT]`. A timeout returns `[EVAL_TIMEOUT]`, interruption returns `[EVAL_INTERRUPTED]`, a failed launch returns `[EVAL_SPAWN_FAILED]`, cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` chains return `[EVAL_SHEBANG_RESOLUTION_FAILED]`, and retained inherited pipes return `[EVAL_PROCESS_CONTAINMENT_FAILED]` on platforms where a descendant can outlive the actor. Linux destroys such a descendant with the PID namespace instead, so that diagnostic is not reachable there. These diagnostics never include the full environment, Pi configuration, or authenticated proxy URL.
 
 ## Network policy
 
@@ -108,7 +113,7 @@ npm run pioneer -- doctor
 npm run sandbox:smoke
 ```
 
-On Linux, install Bubblewrap. Node is already a project requirement:
+On Linux, install Bubblewrap (any release from 0.2.0 onward provides every option Pioneer uses). Node is already a project requirement:
 
 ```bash
 sudo apt-get install bubblewrap
