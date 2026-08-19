@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   EVAL_CASE_FILE_NAME,
   EVAL_FIXTURES_DIR_NAME,
@@ -11,6 +11,8 @@ import {
   type StagedEvalFixture,
   stagePromptFixtureReferences,
 } from "./actor-contract.js";
+
+const { createTempDir } = registerManagedTempPaths();
 
 function fixture(sourcePath: string, stagedPath: string): StagedEvalFixture {
   return { sourcePath, stagedPath };
@@ -120,7 +122,7 @@ describe("stagePromptFixtureReferences", () => {
 
 describe("readPreparedEvalCase", () => {
   it("reports the staged fixtures of a prepared run directory", async () => {
-    const runDir = await mkdtemp(path.join(tmpdir(), "pioneer-case-"));
+    const runDir = await createTempDir("pioneer-case-");
     await writeFile(
       path.join(runDir, EVAL_CASE_FILE_NAME),
       JSON.stringify({
@@ -137,13 +139,13 @@ describe("readPreparedEvalCase", () => {
   });
 
   it("returns undefined for an unprepared run directory", async () => {
-    const runDir = await mkdtemp(path.join(tmpdir(), "pioneer-case-"));
+    const runDir = await createTempDir("pioneer-case-");
 
     await expect(readPreparedEvalCase(runDir)).resolves.toBeUndefined();
   });
 
   it("ignores malformed, escaping, absolute, and oversized entries written by an actor", async () => {
-    const runDir = await mkdtemp(path.join(tmpdir(), "pioneer-case-"));
+    const runDir = await createTempDir("pioneer-case-");
     await writeFile(
       path.join(runDir, EVAL_CASE_FILE_NAME),
       JSON.stringify({
@@ -167,7 +169,7 @@ describe("readPreparedEvalCase", () => {
   it.skipIf(process.platform === "win32")(
     "does not block on a case file an actor replaced with a FIFO",
     async () => {
-      const runDir = await mkdtemp(path.join(tmpdir(), "pioneer-case-"));
+      const runDir = await createTempDir("pioneer-case-");
       const created = spawnSync("mkfifo", [path.join(runDir, EVAL_CASE_FILE_NAME)]);
       if (created.status !== 0) return;
 
@@ -179,7 +181,7 @@ describe("readPreparedEvalCase", () => {
   it.skipIf(process.platform === "win32")(
     "does not follow a case file an actor replaced with a symbolic link",
     async () => {
-      const root = await mkdtemp(path.join(tmpdir(), "pioneer-case-"));
+      const root = await createTempDir("pioneer-case-");
       const runDir = path.join(root, "run");
       await mkdir(runDir);
       const outside = path.join(root, "outside.json");
@@ -191,7 +193,7 @@ describe("readPreparedEvalCase", () => {
   );
 
   it("returns undefined for an oversized or unparsable case file", async () => {
-    const runDir = await mkdtemp(path.join(tmpdir(), "pioneer-case-"));
+    const runDir = await createTempDir("pioneer-case-");
     await writeFile(path.join(runDir, EVAL_CASE_FILE_NAME), "x".repeat(300 * 1024));
 
     await expect(readPreparedEvalCase(runDir)).resolves.toBeUndefined();

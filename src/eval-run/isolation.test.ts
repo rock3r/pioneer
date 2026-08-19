@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   assertEvalWorkLogNotActorVisible,
   assertPiHomeSeparatedFromActorGrants,
@@ -17,13 +17,15 @@ import {
   validateEvalWorkLogPath,
 } from "./isolation.js";
 
+const { createTempDir } = registerManagedTempPaths();
+
 function uniquePaths(paths: readonly string[]): string[] {
   return [...new Set(paths)];
 }
 
 describe("validateEvalRunSpec", () => {
   it("resolves a bare executable through the selected PATH to a canonical file", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const temp = await createTempDir("pioneer-eval-executable-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -39,7 +41,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("resolves an absolute symlink to its executable target and grants both identities", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const temp = await createTempDir("pioneer-eval-executable-");
     const runDir = path.join(temp, "run");
     await mkdir(runDir);
     const target = path.join(temp, "actor.js");
@@ -54,7 +56,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("resolves a relative path against the validated actor run directory", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const temp = await createTempDir("pioneer-eval-executable-");
     const runDir = path.join(temp, "run");
     await mkdir(path.join(runDir, "bin"), { recursive: true });
     const executable = path.join(runDir, "bin", "actor");
@@ -68,7 +70,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("resolves a relative env interpreter from the actor run directory", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-relative-interpreter-"));
+    const temp = await createTempDir("pioneer-eval-relative-interpreter-");
     const runDir = path.join(temp, "run");
     const interpreter = path.join(runDir, "interpreter");
     const actor = path.join(temp, "actor");
@@ -88,7 +90,7 @@ describe("validateEvalRunSpec", () => {
   it.skipIf(process.platform !== "win32")(
     "expands a bare PATH executable through PATHEXT on Windows",
     async () => {
-      const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-windows-path-"));
+      const temp = await createTempDir("pioneer-eval-windows-path-");
       const runDir = path.join(temp, "run");
       const binDir = path.join(temp, "bin");
       await mkdir(runDir);
@@ -103,7 +105,7 @@ describe("validateEvalRunSpec", () => {
   );
 
   it("rewrites env shebang scripts to an explicit canonical interpreter", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const temp = await createTempDir("pioneer-eval-executable-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -120,7 +122,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("does not tokenize a non-`-S` env command name", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-env-plain-"));
+    const temp = await createTempDir("pioneer-eval-env-plain-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -132,7 +134,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("preserves the lexical script path for a symlinked env shebang actor", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-lexical-shebang-"));
+    const temp = await createTempDir("pioneer-eval-lexical-shebang-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -159,7 +161,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("preserves arguments from an env -S shebang in exec order", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-env-shebang-"));
+    const temp = await createTempDir("pioneer-eval-env-shebang-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -188,7 +190,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("fails closed for unsupported env -S escape sequences", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-env-escape-"));
+    const temp = await createTempDir("pioneer-eval-env-escape-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -220,7 +222,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("preserves a complete nested env shebang command and every exact read grant", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-nested-shebang-"));
+    const temp = await createTempDir("pioneer-eval-nested-shebang-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -252,7 +254,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("fails closed when the first PATH executable has an unresolvable interpreter", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const temp = await createTempDir("pioneer-eval-executable-");
     const runDir = path.join(temp, "run");
     const firstBin = path.join(temp, "first-bin");
     const secondBin = path.join(temp, "second-bin");
@@ -270,7 +272,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("fails closed with a stable diagnostic for a self-referential env shebang", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-shebang-cycle-"));
+    const temp = await createTempDir("pioneer-eval-shebang-cycle-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -283,7 +285,7 @@ describe("validateEvalRunSpec", () => {
   }, 1_000);
 
   it("fails closed with a stable diagnostic for a two-file env shebang cycle", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-shebang-cycle-"));
+    const temp = await createTempDir("pioneer-eval-shebang-cycle-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -297,7 +299,7 @@ describe("validateEvalRunSpec", () => {
   }, 1_000);
 
   it("fails closed when env shebang resolution exceeds its explicit depth bound", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-shebang-depth-"));
+    const temp = await createTempDir("pioneer-eval-shebang-depth-");
     const runDir = path.join(temp, "run");
     const binDir = path.join(temp, "bin");
     await mkdir(runDir);
@@ -321,14 +323,14 @@ describe("validateEvalRunSpec", () => {
     ["missing", "missing"],
     ["directory", "."],
   ])("fails closed for a %s executable", async (_label, executable) => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const temp = await createTempDir("pioneer-eval-executable-");
     const runDir = path.join(temp, "run");
     await mkdir(runDir);
     await expect(resolveEvalExecutable(executable, runDir, "")).rejects.toThrow(/executable/i);
   });
 
   it("fails closed for a non-executable and broken symlink", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const temp = await createTempDir("pioneer-eval-executable-");
     const runDir = path.join(temp, "run");
     await mkdir(runDir);
     const nonExecutable = path.join(temp, "not-executable.txt");
@@ -343,7 +345,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("does not parse an oversized Pi package manifest", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-package-"));
+    const temp = await createTempDir("pioneer-eval-package-");
     const packageRoot = path.join(temp, "package");
     const binDir = path.join(packageRoot, "bin");
     await mkdir(binDir, { recursive: true });
@@ -358,7 +360,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("rejects an actor-spoofed Pi package root that contains the run directory", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-package-"));
+    const temp = await createTempDir("pioneer-eval-package-");
     const packageRoot = path.join(temp, "package");
     const runDir = path.join(packageRoot, "run");
     const executable = path.join(runDir, "pi");
@@ -373,7 +375,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("rejects an actor-spoofed Pi package root inside the writable run directory", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-package-"));
+    const temp = await createTempDir("pioneer-eval-package-");
     const runDir = path.join(temp, "run");
     const packageRoot = path.join(runDir, "package");
     const binDir = path.join(packageRoot, "bin");
@@ -396,7 +398,7 @@ describe("validateEvalRunSpec", () => {
   });
 
   it("rejects NUL argv and relative paths that escape the run directory", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-executable-"));
+    const temp = await createTempDir("pioneer-eval-executable-");
     const runDir = path.join(temp, "run");
     await mkdir(runDir);
 
@@ -407,7 +409,7 @@ describe("validateEvalRunSpec", () => {
   it.skipIf(process.platform === "win32")(
     "canonicalizes the run directory and rejects broad runtime grants",
     async () => {
-      const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-"));
+      const temp = await createTempDir("pioneer-eval-");
       const runDir = path.join(temp, "run");
       await mkdir(runDir);
       await mkdir(path.join(runDir, "runtime"));
@@ -456,7 +458,7 @@ describe("validateEvalRunSpec", () => {
   it.skipIf(process.platform === "win32")(
     "rejects symlinks anywhere inside the actor-visible run directory",
     async () => {
-      const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-"));
+      const temp = await createTempDir("pioneer-eval-");
       const runDir = path.join(temp, "run");
       await mkdir(runDir);
       await writeFile(path.join(temp, "outside.txt"), "secret");
@@ -473,7 +475,7 @@ describe("validateEvalRunSpec", () => {
   it.skipIf(process.platform === "win32")(
     "rejects a Pi home that overlaps the actor run or runtime reads",
     async () => {
-      const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-pi-home-"));
+      const temp = await createTempDir("pioneer-eval-pi-home-");
       const runDir = path.join(temp, "run");
       const nestedPiHome = path.join(runDir, "pi-home");
       const separatePiHome = path.join(temp, "separate-pi-home");
@@ -740,7 +742,7 @@ describe("cross-platform sandbox config", () => {
 
 describe("validateEvalWorkLogPath", () => {
   it("accepts a create-only controller path outside actor grants", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-path-"));
+    const temp = await createTempDir("pioneer-eval-work-log-path-");
     const runDir = path.join(temp, "run");
     const logs = path.join(temp, "logs");
     await mkdir(runDir);
@@ -752,7 +754,7 @@ describe("validateEvalWorkLogPath", () => {
   });
 
   it("rejects an actor-visible work log", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-visible-"));
+    const temp = await createTempDir("pioneer-eval-work-log-visible-");
     const runDir = path.join(temp, "run");
     await mkdir(runDir);
     await expect(
@@ -765,7 +767,7 @@ describe("validateEvalWorkLogPath", () => {
   });
 
   it("rejects an already-created work log that later overlaps a derived executable grant", async () => {
-    const temp = await mkdtemp(path.join(tmpdir(), "pioneer-eval-work-log-package-"));
+    const temp = await createTempDir("pioneer-eval-work-log-package-");
     const runDir = path.join(temp, "run");
     const packageRoot = path.join(temp, "pi-package");
     await mkdir(runDir);

@@ -18,6 +18,16 @@ Use test-driven development for behavior changes:
 - **End-to-end tests** in `test/e2e` drive the built CLI as a subprocess against a scripted Pi installation. The scripted actor is a deterministic local script, so no provider credential is ever required. Cases that launch an actor skip when the native sandbox is unavailable; `eval prepare` cases run everywhere. Run them with `npm run test:e2e`, which builds `dist/` first.
 - **Adapter tests** verify MCP schemas and Claude/Codex packaging without duplicating orchestration assertions.
 
+## Temporary directories
+
+Unit tests must claim every temporary path through `registerManagedTempPaths()` in
+`test/support/temp-dir.ts`, which removes the claimed trees in an `afterEach` hook. Use
+`createTempDir(prefix)` for a directory the case creates itself and `reserveTempPath(name)`
+for a path the code under test creates. Never remove a temporary tree inline, because the
+case still depends on it while it runs. `test/temp-dir-hygiene.test.ts` fails the suite when
+a unit test calls `mkdtemp` directly, so a full `npm test` leaves the platform temporary
+directory as it found it.
+
 ## Required cases
 
 Security-sensitive changes should include negative tests for malformed JSONL, unsupported thinking levels, invalid model IDs, path escapes, invalid refs, oversized output, subprocess failure, timeout, and cancellation isolation as applicable.
