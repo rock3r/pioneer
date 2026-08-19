@@ -83,6 +83,22 @@ describe("stagePromptFixtureReferences", () => {
     ).toBe("Compare fixtures/a/panel.kt, fixtures/b/panel.kt, and panel.kt");
   });
 
+  it("treats non-ASCII filename characters as part of the surrounding path token", () => {
+    expect(
+      stagePromptFixtureReferences("Ignore éfixture.kt and fixture.kté", [
+        fixture("evals/files/fixture.kt", "fixtures/fixture.kt"),
+      ]),
+    ).toBe("Ignore éfixture.kt and fixture.kté");
+  });
+
+  it("still rewrites a staged fixture whose own name is non-ASCII", () => {
+    expect(
+      stagePromptFixtureReferences("Review café.kt now", [
+        fixture("evals/files/café.kt", "fixtures/café.kt"),
+      ]),
+    ).toBe("Review fixtures/café.kt now");
+  });
+
   it("keeps an already-staged reference pointing at its own fixture", () => {
     const fixtures = [
       fixture("evals/files/foo.kt", "fixtures/foo.kt"),

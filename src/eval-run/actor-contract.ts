@@ -67,8 +67,11 @@ function unambiguousBasenames(fixtures: readonly StagedEvalFixture[]): Map<strin
   return unambiguous;
 }
 
-const PATH_CHARACTER = /[A-Za-z0-9_./\\-]/;
-const PATH_CONTINUATION = /[A-Za-z0-9_/\\-]/;
+// Filenames are not ASCII-only, so boundary detection has to treat any letter,
+// digit, or combining mark as part of the surrounding path token.
+const PATH_CHARACTER = /[\p{L}\p{N}\p{M}_./\\-]/u;
+const PATH_CONTINUATION = /[\p{L}\p{N}\p{M}_/\\-]/u;
+const FILENAME_CHARACTER = /[\p{L}\p{N}\p{M}]/u;
 
 function startsPathToken(prompt: string, start: number): boolean {
   const previous = prompt[start - 1];
@@ -79,7 +82,7 @@ function endsPathToken(prompt: string, end: number): boolean {
   const next = prompt[end];
   if (next === undefined) return true;
   if (PATH_CONTINUATION.test(next)) return false;
-  if (next === ".") return !/[A-Za-z0-9]/.test(prompt[end + 1] ?? "");
+  if (next === ".") return !FILENAME_CHARACTER.test(prompt[end + 1] ?? "");
   return true;
 }
 
