@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.2.0 - 2026-08-19
+
 - Collect Git-target review context in the controller with allowlisted read-only Git, explicit `--git` targets, and prompt inference on every platform, including macOS and Windows.
 - Make the isolated eval Pi snapshot writable so current Pi can create `auth.json.lock` and `settings.json.lock`, while still leaving the real Pi home unmounted and deleting the snapshot after every run.
 - Add controller-owned eval work logs with default platform storage, `--work-log` custom targets, `[PIONEER_EVAL_WORK_LOG]` path discovery, and stage records for snapshot, probe, proxy, and actor launch.
