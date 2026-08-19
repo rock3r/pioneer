@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, lstat, realpath, stat } from "node:fs/promises";
+import { access, lstat, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { diagnosticMessage } from "../diagnostics.js";
 
@@ -51,6 +51,10 @@ const SAFE_GIT_CONFIG = [
   "core.fsmonitor=",
   "-c",
   "core.useBuiltinFSMonitor=false",
+  "-c",
+  "core.sshCommand=",
+  "-c",
+  "core.gitProxy=",
   "-c",
   `core.attributesFile=${nullDevice()}`,
   "-c",
@@ -285,6 +289,7 @@ export function gitInspectEnvironment(): NodeJS.ProcessEnv {
     GIT_ASKPASS: "",
     GIT_EDITOR: "true",
     GIT_ATTR_NOSYSTEM: "1",
+    GIT_NO_LAZY_FETCH: "1",
     LANG: "C",
     LC_ALL: "C",
   };
@@ -666,6 +671,44 @@ async function assertNoExternalObjectStores(
         }
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
+    }
+    const objects = path.join(root, "objects");
+    try {
+      const objectsStats = await lstat(objects);
+      if (objectsStats.isSymbolicLink()) {
+        const resolvedObjects = await realpath(objects);
+        const relative = path.relative(repo, resolvedObjects);
+        if (relative.startsWith("..") || path.isAbsolute(relative)) {
+          throw new Error(
+            diagnosticMessage(
+              "REVIEW_GIT_REPOSITORY_INVALID",
+              "Git-target reviews reject a Git object directory outside the source",
+            ),
+          );
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("[REVIEW_GIT_REPOSITORY_INVALID]")) {
+        throw error;
+      }
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    try {
+      const packDir = path.join(objects, "pack");
+      const entries = await readdir(packDir);
+      if (entries.some((entry) => entry.endsWith(".promisor"))) {
+        throw new Error(
+          diagnosticMessage(
+            "REVIEW_GIT_REPOSITORY_INVALID",
+            "Git-target reviews reject partial clones that can lazy-fetch objects",
+          ),
+        );
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("[REVIEW_GIT_REPOSITORY_INVALID]")) {
+        throw error;
+      }
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     const infoAttributes = path.join(root, "info", "attributes");
     try {

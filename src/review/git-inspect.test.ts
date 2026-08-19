@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -128,6 +128,7 @@ describe("controller Git collection", () => {
     expect(environment.GIT_ASKPASS).toBe("");
     expect(environment.GIT_PAGER).toBe("");
     expect(environment.GIT_ATTR_NOSYSTEM).toBe("1");
+    expect(environment.GIT_NO_LAZY_FETCH).toBe("1");
     expect(environment).not.toHaveProperty("SSH_AUTH_SOCK");
     expect(environment).not.toHaveProperty("GIT_DIR");
     expect(environment).not.toHaveProperty("GIT_SSH_COMMAND");
@@ -509,5 +510,45 @@ describe("real Git inspection", () => {
     expect((await runGit(["add", "first.txt"])).exitCode).toBe(0);
     const collected = await collectGitContext(root, [{ kind: "working-tree" }]);
     expect(collected?.text).toContain("initial");
+  });
+
+  it("rejects a Git object directory that escapes the source", async (ctx) => {
+    let git: string;
+    try {
+      git = await resolveGitExecutable();
+    } catch {
+      ctx.skip();
+      return;
+    }
+    const secretRoot = await mkdtemp(path.join(tmpdir(), "pioneer-git-obj-secret-"));
+    const decoyRoot = await mkdtemp(path.join(tmpdir(), "pioneer-git-obj-decoy-"));
+    const env = {
+      ...gitInspectEnvironment(),
+      GIT_AUTHOR_NAME: "Pioneer Test",
+      GIT_AUTHOR_EMAIL: "pioneer@example.test",
+      GIT_COMMITTER_NAME: "Pioneer Test",
+      GIT_COMMITTER_EMAIL: "pioneer@example.test",
+    };
+    const runGit = async (cwd: string, args: string[]) =>
+      await new Promise<{ exitCode: number }>((resolve, reject) => {
+        const child = spawn(git, ["-c", "commit.gpgsign=false", ...args], {
+          cwd,
+          env,
+          shell: false,
+        });
+        child.once("error", reject);
+        child.once("close", (code) => resolve({ exitCode: code ?? 1 }));
+      });
+    expect((await runGit(secretRoot, ["init"])).exitCode).toBe(0);
+    await writeFile(path.join(secretRoot, "secret.txt"), "private-object\n");
+    expect((await runGit(secretRoot, ["add", "secret.txt"])).exitCode).toBe(0);
+    expect((await runGit(secretRoot, ["commit", "-m", "secret"])).exitCode).toBe(0);
+    expect((await runGit(decoyRoot, ["init"])).exitCode).toBe(0);
+    const decoyObjects = path.join(decoyRoot, ".git", "objects");
+    await rm(decoyObjects, { recursive: true, force: true });
+    await symlink(path.join(secretRoot, ".git", "objects"), decoyObjects);
+    await expect(collectGitContext(decoyRoot, [{ kind: "working-tree" }])).rejects.toThrow(
+      "object directory outside the source",
+    );
   });
 });
