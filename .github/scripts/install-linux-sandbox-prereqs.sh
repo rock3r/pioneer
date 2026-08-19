@@ -13,10 +13,16 @@
 # bytes never trips them. Every invocation therefore gets a hard wall-clock bound
 # from timeout(1) plus retries: a stalled mirror costs one bounded attempt rather
 # than the 360-minute job default.
+#
+# The budgets separate "slow but progressing" from "stalled". Seven measured runs
+# on 2026-08-19 fetched the 11.4 MB index set in 3s, 39s, 41s, 48s and 71s against
+# a degraded mirror, and stalled outright once; the install fetches only ~50 kB now
+# that apparmor-utils is gone. 150s therefore clears the slowest real fetch twice
+# over while still killing a true stall in well under three minutes.
 set -euo pipefail
 
 readonly ATTEMPTS=3
-readonly UPDATE_BUDGET=90
+readonly UPDATE_BUDGET=150
 readonly INSTALL_BUDGET=150
 
 # Pioneer needs /usr/bin/bwrap and /sbin/apparmor_parser. apparmor_parser ships in

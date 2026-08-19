@@ -63,7 +63,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Install Linux sandbox prerequisites
         if: runner.os == 'Linux'
-        timeout-minutes: 15
+        timeout-minutes: 18
         run: .github/scripts/install-linux-sandbox-prereqs.sh
       - name: Install narrow Ubuntu AppArmor profile when required
         if: runner.os == 'Linux'
