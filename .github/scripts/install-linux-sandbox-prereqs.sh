@@ -40,7 +40,7 @@ run_apt() {
   for ((attempt = 1; attempt <= ATTEMPTS; attempt++)); do
     echo "::group::${label} (attempt ${attempt}/${ATTEMPTS}, ${budget}s budget)"
     status=0
-    sudo DEBIAN_FRONTEND=noninteractive \
+    sudo env DEBIAN_FRONTEND=noninteractive \
       timeout --signal=TERM --kill-after=10s "${budget}" \
       apt-get "${APT_OPTIONS[@]}" "$@" || status=$?
     echo "::endgroup::"
@@ -61,7 +61,7 @@ run_apt() {
     fi
 
     # A terminated transaction can leave dpkg half-configured; recover before retrying.
-    sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+    sudo env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
     sleep $((attempt * 5))
   done
 }
