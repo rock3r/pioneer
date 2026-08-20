@@ -21,6 +21,23 @@ describe("review setup", () => {
     mocks.reserveReviewReport.mockReset();
   });
 
+  // The controller scratch base is validated with the other request scalars, before any
+  // controller output exists, so a bad base cannot be discovered halfway through a run.
+  it("rejects an unusable controller scratch base before creating any output", async () => {
+    const root = await createTempDir("pioneer-review-scratch-base-");
+    const sourceDir = path.join(root, "source");
+    await mkdir(sourceDir);
+
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        controllerScratchBase: path.join(root, "absent"),
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.toThrow(/controller scratch base/i);
+  });
+
   it("announces the work log before report reservation can fail", async () => {
     const root = await createTempDir("pioneer-review-setup-");
     const sourceDir = path.join(root, "source");

@@ -4,6 +4,10 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import {
+  adoptCreatedScratchDirectory,
+  validateControllerScratchBase,
+} from "../controller-scratch.js";
 import { diagnosticMessage } from "../diagnostics.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
@@ -86,6 +90,13 @@ export interface ReviewRequest {
   readonly resumable?: boolean;
   readonly onReportReady?: (path: string) => void;
   readonly gitTargets?: readonly string[];
+  /**
+   * Directory holding this run's controller-only scratch. Defaults to the platform's short
+   * shared temporary directory, which keeps the Linux proxy bridge socket inside `sun_path`.
+   * A caller that supplies one owns its safety, so it is validated against the same ownership
+   * chain and broad-or-protected rules as the eval controller scratch base.
+   */
+  readonly controllerScratchBase?: string;
 }
 
 export interface ReviewResult {
@@ -454,7 +465,9 @@ export async function createReviewScratchDirectory(
 ): Promise<string> {
   const created = await mkdtemp(path.join(scratchBase, "pir-"));
   try {
-    const scratch = await realpath(created);
+    // Not a bare realpath: a caller-supplied base makes the window between creation and
+    // adoption exploitable, so a directory replaced by a symlink is refused here.
+    const scratch = await adoptCreatedScratchDirectory(created);
     await afterCreate(scratch);
     return scratch;
   } catch (error) {
@@ -1137,6 +1150,10 @@ async function runReviewInternal(
   ) {
     throw new Error("Review timeout must be a positive safe integer");
   }
+  const requestedScratchBase =
+    request.controllerScratchBase === undefined
+      ? undefined
+      : await validateControllerScratchBase(request.controllerScratchBase);
   const network = request.network ?? "full";
   const timeoutMs = request.timeoutMs ?? 900_000;
   const maxRpcOutputBytes = validateRpcOutputBytes(request.maxRpcOutputBytes);
@@ -1412,7 +1429,7 @@ async function runReviewInternal(
       }
     }
 
-    const scratchBase = windows ? os.tmpdir() : "/tmp";
+    const scratchBase = requestedScratchBase ?? (windows ? os.tmpdir() : "/tmp");
     let scratch: string | undefined;
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
