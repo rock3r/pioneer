@@ -1495,7 +1495,10 @@ async function runReviewInternal(
           throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");
         }
         if (process.platform === "linux" && proxy !== undefined) {
-          bridgeRoot = await mkdtemp("/tmp/pir-bridge-");
+          // Same base as the run's scratch, so the two cannot drift. On Linux, the only
+          // platform that launches the bridge, `scratchBase` is `/tmp`, so this allocates
+          // exactly where it always has.
+          bridgeRoot = await mkdtemp(path.join(scratchBase, "pir-bridge-"));
           bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
         }
         recordReviewWorkLog(workLog, "stage_started", { stage: "sandbox_launch" });

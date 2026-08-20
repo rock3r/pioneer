@@ -16,6 +16,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { assertStableDirectoryChain } from "../stable-directory.js";
 import type { ReviewNetworkMode } from "./isolation.js";
 import {
   isActiveReviewReportReservation,
@@ -106,73 +107,21 @@ export function defaultReviewReportDirectory(
   return platformPath(platform).join(appDataRoot(environment, platform, home), "reports");
 }
 
-export function isTrustedStickyApplicationDataParent(
-  parentUid: number,
-  childUid: number,
-  currentUid: number,
-): boolean {
-  return childUid === currentUid && isTrustedApplicationDataOwner(parentUid, currentUid);
-}
-
-export function isTrustedApplicationDataOwner(ownerUid: number, currentUid: number): boolean {
-  return ownerUid === currentUid || ownerUid === 0;
-}
-
+/**
+ * Kept as a named wrapper so the review call sites and their assertions keep speaking about the
+ * application-data parent, while the rules themselves live in one place.
+ */
 async function assertStableApplicationDataParent(
   directory: string,
   platform: NodeJS.Platform,
 ): Promise<void> {
-  if (platform === "win32") return;
-  const stats = await lstat(directory);
-  if (stats.isSymbolicLink() || !stats.isDirectory()) {
-    throw new Error(`Review application-data parent is not a stable directory: ${directory}`);
-  }
-  const currentUid = process.getuid?.();
-  if (currentUid === undefined) {
-    throw new Error("Review application-data owner identity is unavailable");
-  }
-  if (!isTrustedApplicationDataOwner(stats.uid, currentUid)) {
-    throw new Error(`Review application-data parent has an untrusted owner: ${directory}`);
-  }
-  if ((stats.mode & 0o022) !== 0) {
-    const sticky = (stats.mode & 0o1000) !== 0;
-    if (!sticky) {
-      throw new Error(`Review application-data parent is writable by another user: ${directory}`);
-    }
-  }
-  const roots = new Set([path.resolve(directory), await realpath(directory)]);
-  for (const root of roots) {
-    let child = root;
-    let childStats = await lstat(child);
-    for (;;) {
-      const parent = path.dirname(child);
-      if (parent === child) break;
-      const parentStats = await lstat(parent);
-      if (parentStats.isSymbolicLink()) {
-        child = parent;
-        childStats = parentStats;
-        continue;
-      }
-      if (!parentStats.isDirectory()) {
-        throw new Error(`Review application-data parent is not a stable directory: ${parent}`);
-      }
-      if (!isTrustedApplicationDataOwner(parentStats.uid, currentUid)) {
-        throw new Error(`Review application-data parent has an untrusted owner: ${parent}`);
-      }
-      if ((parentStats.mode & 0o022) !== 0) {
-        const sticky = (parentStats.mode & 0o1000) !== 0;
-        if (
-          !sticky ||
-          !isTrustedStickyApplicationDataParent(parentStats.uid, childStats.uid, currentUid)
-        ) {
-          throw new Error(`Review application-data parent is writable by another user: ${parent}`);
-        }
-      }
-      child = parent;
-      childStats = parentStats;
-    }
-  }
+  await assertStableDirectoryChain(directory, platform, "Review application-data parent");
 }
+
+export {
+  isTrustedApplicationDataOwner,
+  isTrustedStickyApplicationDataParent,
+} from "../stable-directory.js";
 
 export async function prepareDefaultReviewResumeDirectory(
   options: {

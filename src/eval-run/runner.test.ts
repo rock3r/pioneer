@@ -281,7 +281,9 @@ process.stdout.write("pi-credential-lock-ok\\n");
           command: ["lock-actor"],
           piHomeSource: piHome,
         },
-        { timeoutMs: 15_000, workLogPath },
+        // Keep the controller's scratch inside the managed root, so a cleanup regression is
+        // caught by the run-root teardown instead of escaping to the operator's /tmp.
+        { timeoutMs: 15_000, workLogPath, controllerScratchBase: root },
       );
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toBe("pi-credential-lock-ok\n");

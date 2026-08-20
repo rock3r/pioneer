@@ -13,6 +13,10 @@ import {
 } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import {
+  adoptCreatedScratchDirectory,
+  validateControllerScratchBase,
+} from "../controller-scratch.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
@@ -69,6 +73,13 @@ export interface RunEvalOptions {
   readonly timeoutMs?: number;
   readonly workLogPath?: string;
   readonly onWorkLogReady?: (path: string) => void;
+  /**
+   * Directory holding this run's controller-only scratch. Defaults to the platform's short
+   * shared temporary directory, which keeps the proxy bridge socket inside `sun_path`. A
+   * caller that supplies one owns its safety: the actor's write grants follow it, so it is
+   * validated against the same broad-and-protected rules as a writable run directory.
+   */
+  readonly controllerScratchBase?: string;
 }
 
 const OUTSIDE_SENTINEL_CONTENT = "outside-root sentinel";
@@ -642,16 +653,17 @@ async function runEvalCommandWithInterruption(
       });
     }
     throwIfEvalInterrupted(interruption);
-    const controllerTempRoot = await realpath(
-      process.platform === "darwin" ? "/private/tmp" : "/tmp",
-    );
+    const controllerTempRoot =
+      options.controllerScratchBase === undefined
+        ? await realpath(process.platform === "darwin" ? "/private/tmp" : "/tmp")
+        : await validateControllerScratchBase(options.controllerScratchBase);
     throwIfEvalInterrupted(interruption);
     const createdIsolationDir = await mkdtemp(
       path.join(controllerTempRoot, "pioneer-eval-control-"),
     );
     let isolationDir: string;
     try {
-      isolationDir = await realpath(createdIsolationDir);
+      isolationDir = await adoptCreatedScratchDirectory(createdIsolationDir);
     } catch (error) {
       await rm(createdIsolationDir, { recursive: true, force: true });
       throw error;
@@ -725,7 +737,7 @@ async function runEvalCommandWithInterruption(
         throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");
       }
       if (process.platform === "linux") {
-        bridgeRoot = await mkdtemp("/tmp/pir-bridge-");
+        bridgeRoot = await mkdtemp(path.join(controllerTempRoot, "pir-bridge-"));
         bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
         throwIfSetupInterrupted();
       }
