@@ -1181,21 +1181,23 @@ async function runReviewInternal(
         ...(await piRuntimePaths("node")),
         ...(await macosRuntimeReadPaths(process.execPath)),
       ];
-  const piHomeSource = await canonicalReviewPiHomeSource(
-    request.piHomeSource ?? defaultPiAgentDir(),
-  );
   if (requestedScratchBase !== undefined) {
-    // Runs once the Pi home is canonical, and still before this run creates a resume archive,
-    // a report reservation, or a work log. The Pi home matters as much as the other grants:
-    // scratch inside it would create and recursively remove `pir-*` in the real configuration
-    // tree, and put the supposedly isolated snapshot underneath its own source.
     assertScratchBaseOutsideGrants(requestedScratchBase, [
       validatedPaths.sourceDir,
       ...validatedPaths.allowReadPaths,
       ...validatedPaths.allowWritePaths,
       ...runtimeReadPaths,
-      piHomeSource,
     ]);
+  }
+  const piHomeSource = await canonicalReviewPiHomeSource(
+    request.piHomeSource ?? defaultPiAgentDir(),
+  );
+  if (requestedScratchBase !== undefined) {
+    // Scratch inside the selected Pi home would create and recursively remove `pir-*` in the
+    // real configuration tree, and put the supposedly isolated snapshot underneath its own
+    // source. Checked separately from the grants above because it needs the canonical home,
+    // and a request must not depend on a Pi home existing to have its base rejected.
+    assertScratchBaseOutsideGrants(requestedScratchBase, [piHomeSource]);
   }
   await validateProspectiveDefaultReviewOutputs(request, piHomeSource);
   let requestedReportPath = request.reportPath;
