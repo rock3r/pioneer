@@ -1438,6 +1438,18 @@ async function runReviewInternal(
     }
 
     const scratchBase = requestedScratchBase ?? (windows ? os.tmpdir() : "/tmp");
+    // Resolved before the scratch exists so the containment check below sees the same grant set
+    // `buildReviewSandboxConfig` will receive, rather than only the source and caller grants.
+    const runtimeReadPaths = windows
+      ? []
+      : [
+          ...(await piRuntimePaths("pi")),
+          ...(await piRuntimePaths("node")),
+          ...(await macosRuntimeReadPaths(process.execPath)),
+        ];
+    if (requestedScratchBase !== undefined) {
+      assertScratchBaseOutsideGrants(requestedScratchBase, runtimeReadPaths);
+    }
     let scratch: string | undefined;
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
@@ -1531,11 +1543,7 @@ async function runReviewInternal(
           platform: process.platform as "darwin" | "linux",
           ...paths,
           scratchDir: scratchDirectory,
-          runtimeReadPaths: [
-            ...(await piRuntimePaths("pi")),
-            ...(await piRuntimePaths("node")),
-            ...(await macosRuntimeReadPaths(process.execPath)),
-          ],
+          runtimeReadPaths,
           network,
           ...(resumeArchive === undefined ? {} : { sessionDir: resumeArchive.activeAttemptDir }),
           ...(proxy === undefined ? {} : { parentProxyUrl: proxy.url }),

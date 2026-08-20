@@ -666,6 +666,8 @@ async function runEvalCommandWithInterruption(
         validated.runDir,
         ...validated.runtimeReadPaths,
         ...(validated.piHomeSource === undefined ? [] : [validated.piHomeSource]),
+        sandboxRuntimeExecutable,
+        ...platformRuntimeReadPaths,
       ]);
     }
     const createdIsolationDir = await mkdtemp(
