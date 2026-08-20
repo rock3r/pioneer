@@ -123,6 +123,8 @@ export interface ResumeReviewRequest {
   readonly onWorkLogReady?: (path: string) => void;
   readonly onReportReady?: (path: string) => void;
   readonly allowUnsandboxedWindows?: boolean;
+  /** Carried across a resume so a caller keeps controller files where it put them. */
+  readonly controllerScratchBase?: string;
 }
 
 const WINDOWS_WARNING =
@@ -1169,11 +1171,22 @@ async function runReviewInternal(
     ...(request.reportPath === undefined ? {} : { reportPath: request.reportPath }),
     ...(request.workLogPath === undefined ? {} : { workLogPath: request.workLogPath }),
   });
+  // Resolved here, beside the other request validation, so the check sees the same grant set
+  // `buildReviewSandboxConfig` will receive and can refuse a base before this run creates a
+  // resume archive, a report reservation, or a work log that would then need unwinding.
+  const runtimeReadPaths = windows
+    ? []
+    : [
+        ...(await piRuntimePaths("pi")),
+        ...(await piRuntimePaths("node")),
+        ...(await macosRuntimeReadPaths(process.execPath)),
+      ];
   if (requestedScratchBase !== undefined) {
     assertScratchBaseOutsideGrants(requestedScratchBase, [
       validatedPaths.sourceDir,
       ...validatedPaths.allowReadPaths,
       ...validatedPaths.allowWritePaths,
+      ...runtimeReadPaths,
     ]);
   }
   const piHomeSource = await canonicalReviewPiHomeSource(
@@ -1438,18 +1451,6 @@ async function runReviewInternal(
     }
 
     const scratchBase = requestedScratchBase ?? (windows ? os.tmpdir() : "/tmp");
-    // Resolved before the scratch exists so the containment check below sees the same grant set
-    // `buildReviewSandboxConfig` will receive, rather than only the source and caller grants.
-    const runtimeReadPaths = windows
-      ? []
-      : [
-          ...(await piRuntimePaths("pi")),
-          ...(await piRuntimePaths("node")),
-          ...(await macosRuntimeReadPaths(process.execPath)),
-        ];
-    if (requestedScratchBase !== undefined) {
-      assertScratchBaseOutsideGrants(requestedScratchBase, runtimeReadPaths);
-    }
     let scratch: string | undefined;
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
@@ -1777,6 +1778,9 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
           : { allowUnsandboxedWindows: request.allowUnsandboxedWindows }),
         ...(request.onWorkLogReady === undefined ? {} : { onWorkLogReady: request.onWorkLogReady }),
         ...(request.onReportReady === undefined ? {} : { onReportReady: request.onReportReady }),
+        ...(request.controllerScratchBase === undefined
+          ? {}
+          : { controllerScratchBase: request.controllerScratchBase }),
       },
       { loaded },
     );

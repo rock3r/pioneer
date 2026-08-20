@@ -668,6 +668,10 @@ async function runEvalCommandWithInterruption(
         ...(validated.piHomeSource === undefined ? [] : [validated.piHomeSource]),
         sandboxRuntimeExecutable,
         ...platformRuntimeReadPaths,
+        // The executable grants include the validated Pi package root, which is mounted
+        // read-only later; omitting it here would let mkdtemp write inside that tree before
+        // the full overlap check rejects the request.
+        ...executableReadPaths,
       ]);
     }
     const createdIsolationDir = await mkdtemp(

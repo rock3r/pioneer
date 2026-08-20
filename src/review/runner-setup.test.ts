@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -73,6 +73,32 @@ describe("review setup", () => {
         ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
       }),
     ).rejects.not.toThrow(/scratch base/i);
+  });
+
+  // The rejection has to land before this run creates a resume archive, a report reservation,
+  // or a work log, because the outer failure handler does not unwind an archive it never knew
+  // about. Asserting the output directory stays empty is the observable form of that.
+  it("rejects a base inside a grant before creating any controller output", async () => {
+    const root = await createTempDir("pioneer-review-scratch-base-");
+    const sourceDir = path.join(root, "source");
+    const inside = path.join(sourceDir, "scratch");
+    const outputDir = path.join(root, "outputs");
+    await mkdir(sourceDir);
+    await mkdir(inside);
+    await mkdir(outputDir);
+
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        controllerScratchBase: inside,
+        workLogPath: path.join(outputDir, "review.jsonl"),
+        reportPath: path.join(outputDir, "report.md"),
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.toThrow(/scratch base.*inside/i);
+
+    expect(await readdir(outputDir)).toEqual([]);
   });
 
   it("announces the work log before report reservation can fail", async () => {
