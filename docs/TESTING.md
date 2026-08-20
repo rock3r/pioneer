@@ -30,6 +30,8 @@ directory exactly as it found it no matter how a path was created. Teardown fail
 names what survived, which is the guarantee; keep the root short, because a Unix socket bound
 below it must fit in `sun_path`.
 
+The root contains what a case allocates through the platform temporary directory. It does not automatically contain a controller allocation that picks its own base: `runEvalCommand` defaults its controller scratch to the platform's short shared temporary directory, so a case that drives it should pass `controllerScratchBase` pointing at its own managed directory. `runReview` has no such override and no unit case reaches its scratch creation, so its controller scratch stays outside the root.
+
 Within that root, claim every temporary path through `registerManagedTempPaths()` in
 `test/support/temp-dir.ts`, which removes the claimed trees in an `afterEach` hook. Use
 `createTempDir(prefix)` for a directory the case creates itself and `reserveTempPath(name)`

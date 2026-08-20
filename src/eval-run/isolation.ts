@@ -550,7 +550,7 @@ function isBroadRuntimePath(
   );
 }
 
-function isBroadWritablePath(
+export function isBroadWritablePath(
   candidate: string,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
