@@ -4,6 +4,11 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import {
+  adoptCreatedScratchDirectory,
+  assertScratchBaseOutsideGrants,
+  validateControllerScratchBase,
+} from "../controller-scratch.js";
 import { diagnosticMessage } from "../diagnostics.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
@@ -86,6 +91,13 @@ export interface ReviewRequest {
   readonly resumable?: boolean;
   readonly onReportReady?: (path: string) => void;
   readonly gitTargets?: readonly string[];
+  /**
+   * Directory holding this run's controller-only scratch. Defaults to the platform's short
+   * shared temporary directory, which keeps the Linux proxy bridge socket inside `sun_path`.
+   * A caller that supplies one owns its safety, so it is validated against the same ownership
+   * chain and broad-or-protected rules as the eval controller scratch base.
+   */
+  readonly controllerScratchBase?: string;
 }
 
 export interface ReviewResult {
@@ -111,6 +123,8 @@ export interface ResumeReviewRequest {
   readonly onWorkLogReady?: (path: string) => void;
   readonly onReportReady?: (path: string) => void;
   readonly allowUnsandboxedWindows?: boolean;
+  /** Carried across a resume so a caller keeps controller files where it put them. */
+  readonly controllerScratchBase?: string;
 }
 
 const WINDOWS_WARNING =
@@ -454,7 +468,9 @@ export async function createReviewScratchDirectory(
 ): Promise<string> {
   const created = await mkdtemp(path.join(scratchBase, "pir-"));
   try {
-    const scratch = await realpath(created);
+    // Not a bare realpath: a caller-supplied base makes the window between creation and
+    // adoption exploitable, so a directory replaced by a symlink is refused here.
+    const scratch = await adoptCreatedScratchDirectory(created);
     await afterCreate(scratch);
     return scratch;
   } catch (error) {
@@ -1137,6 +1153,10 @@ async function runReviewInternal(
   ) {
     throw new Error("Review timeout must be a positive safe integer");
   }
+  const requestedScratchBase =
+    request.controllerScratchBase === undefined
+      ? undefined
+      : await validateControllerScratchBase(request.controllerScratchBase);
   const network = request.network ?? "full";
   const timeoutMs = request.timeoutMs ?? 900_000;
   const maxRpcOutputBytes = validateRpcOutputBytes(request.maxRpcOutputBytes);
@@ -1144,16 +1164,41 @@ async function runReviewInternal(
   if (windows && request.allowUnsandboxedWindows !== true) {
     throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
   }
-  await validateReviewPaths({
+  const validatedPaths = await validateReviewPaths({
     sourceDir: request.sourceDir,
     ...(request.allowReadPaths === undefined ? {} : { allowReadPaths: request.allowReadPaths }),
     ...(request.allowWritePaths === undefined ? {} : { allowWritePaths: request.allowWritePaths }),
     ...(request.reportPath === undefined ? {} : { reportPath: request.reportPath }),
     ...(request.workLogPath === undefined ? {} : { workLogPath: request.workLogPath }),
   });
+  // Resolved here, beside the other request validation, so the check sees the same grant set
+  // `buildReviewSandboxConfig` will receive and can refuse a base before this run creates a
+  // resume archive, a report reservation, or a work log that would then need unwinding.
+  const runtimeReadPaths = windows
+    ? []
+    : [
+        ...(await piRuntimePaths("pi")),
+        ...(await piRuntimePaths("node")),
+        ...(await macosRuntimeReadPaths(process.execPath)),
+      ];
+  if (requestedScratchBase !== undefined) {
+    assertScratchBaseOutsideGrants(requestedScratchBase, [
+      validatedPaths.sourceDir,
+      ...validatedPaths.allowReadPaths,
+      ...validatedPaths.allowWritePaths,
+      ...runtimeReadPaths,
+    ]);
+  }
   const piHomeSource = await canonicalReviewPiHomeSource(
     request.piHomeSource ?? defaultPiAgentDir(),
   );
+  if (requestedScratchBase !== undefined) {
+    // Scratch inside the selected Pi home would create and recursively remove `pir-*` in the
+    // real configuration tree, and put the supposedly isolated snapshot underneath its own
+    // source. Checked separately from the grants above because it needs the canonical home,
+    // and a request must not depend on a Pi home existing to have its base rejected.
+    assertScratchBaseOutsideGrants(requestedScratchBase, [piHomeSource]);
+  }
   await validateProspectiveDefaultReviewOutputs(request, piHomeSource);
   let requestedReportPath = request.reportPath;
   if (requestedReportPath === undefined) {
@@ -1412,7 +1457,7 @@ async function runReviewInternal(
       }
     }
 
-    const scratchBase = windows ? os.tmpdir() : "/tmp";
+    const scratchBase = requestedScratchBase ?? (windows ? os.tmpdir() : "/tmp");
     let scratch: string | undefined;
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
@@ -1506,11 +1551,7 @@ async function runReviewInternal(
           platform: process.platform as "darwin" | "linux",
           ...paths,
           scratchDir: scratchDirectory,
-          runtimeReadPaths: [
-            ...(await piRuntimePaths("pi")),
-            ...(await piRuntimePaths("node")),
-            ...(await macosRuntimeReadPaths(process.execPath)),
-          ],
+          runtimeReadPaths,
           network,
           ...(resumeArchive === undefined ? {} : { sessionDir: resumeArchive.activeAttemptDir }),
           ...(proxy === undefined ? {} : { parentProxyUrl: proxy.url }),
@@ -1744,6 +1785,9 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
           : { allowUnsandboxedWindows: request.allowUnsandboxedWindows }),
         ...(request.onWorkLogReady === undefined ? {} : { onWorkLogReady: request.onWorkLogReady }),
         ...(request.onReportReady === undefined ? {} : { onReportReady: request.onReportReady }),
+        ...(request.controllerScratchBase === undefined
+          ? {}
+          : { controllerScratchBase: request.controllerScratchBase }),
       },
       { loaded },
     );

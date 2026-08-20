@@ -1,4 +1,4 @@
-import { mkdir, readFile, realpath } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -19,6 +19,86 @@ const { createTempDir } = registerManagedTempPaths();
 describe("review setup", () => {
   afterEach(async () => {
     mocks.reserveReviewReport.mockReset();
+  });
+
+  // The controller scratch base is validated with the other request scalars, before any
+  // controller output exists, so a bad base cannot be discovered halfway through a run.
+  it("rejects an unusable controller scratch base before creating any output", async () => {
+    const root = await createTempDir("pioneer-review-scratch-base-");
+    const sourceDir = path.join(root, "source");
+    await mkdir(sourceDir);
+
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        controllerScratchBase: path.join(root, "absent"),
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.toThrow(/controller scratch base/i);
+  });
+
+  // Creating and deleting `pir-*` inside a granted path would write through a mount the actor
+  // is promised read-only, and hand the sandbox overlapping read-only and writable paths.
+  it("rejects a controller scratch base inside a granted path", async () => {
+    const root = await createTempDir("pioneer-review-scratch-base-");
+    const sourceDir = path.join(root, "source");
+    const inside = path.join(sourceDir, "scratch");
+    await mkdir(sourceDir);
+    await mkdir(inside);
+
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        controllerScratchBase: inside,
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.toThrow(/scratch base.*(granted|inside)/i);
+  });
+
+  it("allows a controller scratch base that merely shares an ancestor with a grant", async () => {
+    const root = await createTempDir("pioneer-review-scratch-base-");
+    const sourceDir = path.join(root, "source");
+    const sibling = path.join(root, "scratch");
+    await mkdir(sourceDir);
+    await mkdir(sibling);
+
+    // Reaches Pi rather than being refused, which is the point: the base itself is accepted.
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        controllerScratchBase: sibling,
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.not.toThrow(/scratch base/i);
+  });
+
+  // The rejection has to land before this run creates a resume archive, a report reservation,
+  // or a work log, because the outer failure handler does not unwind an archive it never knew
+  // about. Asserting the output directory stays empty is the observable form of that.
+  it("rejects a base inside a grant before creating any controller output", async () => {
+    const root = await createTempDir("pioneer-review-scratch-base-");
+    const sourceDir = path.join(root, "source");
+    const inside = path.join(sourceDir, "scratch");
+    const outputDir = path.join(root, "outputs");
+    await mkdir(sourceDir);
+    await mkdir(inside);
+    await mkdir(outputDir);
+
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        controllerScratchBase: inside,
+        workLogPath: path.join(outputDir, "review.jsonl"),
+        reportPath: path.join(outputDir, "report.md"),
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.toThrow(/scratch base.*inside/i);
+
+    expect(await readdir(outputDir)).toEqual([]);
   });
 
   it("announces the work log before report reservation can fail", async () => {

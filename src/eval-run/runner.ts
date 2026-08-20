@@ -15,6 +15,7 @@ import net from "node:net";
 import path from "node:path";
 import {
   adoptCreatedScratchDirectory,
+  assertScratchBaseOutsideGrants,
   validateControllerScratchBase,
 } from "../controller-scratch.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
@@ -658,6 +659,21 @@ async function runEvalCommandWithInterruption(
         ? await realpath(process.platform === "darwin" ? "/private/tmp" : "/tmp")
         : await validateControllerScratchBase(options.controllerScratchBase);
     throwIfEvalInterrupted(interruption);
+    if (options.controllerScratchBase !== undefined) {
+      // Same rule as the review path: controller scratch inside an actor grant would write
+      // through a mount the actor is promised read-only and overlap the run tree.
+      assertScratchBaseOutsideGrants(controllerTempRoot, [
+        validated.runDir,
+        ...validated.runtimeReadPaths,
+        ...(validated.piHomeSource === undefined ? [] : [validated.piHomeSource]),
+        sandboxRuntimeExecutable,
+        ...platformRuntimeReadPaths,
+        // The executable grants include the validated Pi package root, which is mounted
+        // read-only later; omitting it here would let mkdtemp write inside that tree before
+        // the full overlap check rejects the request.
+        ...executableReadPaths,
+      ]);
+    }
     const createdIsolationDir = await mkdtemp(
       path.join(controllerTempRoot, "pioneer-eval-control-"),
     );
