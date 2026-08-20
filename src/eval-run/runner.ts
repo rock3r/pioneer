@@ -13,7 +13,10 @@ import {
 } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
-import { validateControllerScratchBase } from "../controller-scratch.js";
+import {
+  adoptCreatedScratchDirectory,
+  validateControllerScratchBase,
+} from "../controller-scratch.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
@@ -660,7 +663,7 @@ async function runEvalCommandWithInterruption(
     );
     let isolationDir: string;
     try {
-      isolationDir = await realpath(createdIsolationDir);
+      isolationDir = await adoptCreatedScratchDirectory(createdIsolationDir);
     } catch (error) {
       await rm(createdIsolationDir, { recursive: true, force: true });
       throw error;

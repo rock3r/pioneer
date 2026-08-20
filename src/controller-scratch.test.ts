@@ -1,8 +1,9 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
 import {
+  adoptCreatedScratchDirectory,
   controllerScratchSocketFailure,
   validateControllerScratchBase,
 } from "./controller-scratch.js";
@@ -59,5 +60,54 @@ describe("controller scratch base", () => {
     expect(controllerScratchSocketFailure("/tmp", "linux")).toBeUndefined();
     // Only Linux binds the bridge socket, so a long macOS base is not a length failure.
     expect(controllerScratchSocketFailure(`/tmp/${"d".repeat(90)}`, "darwin")).toBeUndefined();
+  });
+
+  // A base other local users can write to lets one of them swap the freshly created scratch
+  // directory for a symlink between mkdtemp and realpath, redirecting the Pi credential
+  // snapshot and the recursive cleanup that follows it. The sticky bit is what stops that,
+  // which is why the default /tmp is safe at mode 1777.
+  it.skipIf(process.platform === "win32")(
+    "rejects a base other users can write to without the sticky bit",
+    async () => {
+      const root = await createTempDir("pioneer-scratch-base-");
+      const shared = path.join(root, "shared");
+      await mkdir(shared);
+      await chmod(shared, 0o777);
+
+      await expect(validateControllerScratchBase(shared)).rejects.toThrow(/sticky|other users/i);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "accepts a world-writable base that carries the sticky bit",
+    async () => {
+      const root = await createTempDir("pioneer-scratch-base-");
+      const sticky = path.join(root, "sticky");
+      await mkdir(sticky);
+      await chmod(sticky, 0o1777);
+
+      await expect(validateControllerScratchBase(sticky)).resolves.toContain("sticky");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a scratch directory replaced by a symlink after creation",
+    async () => {
+      const base = await createTempDir("pioneer-scratch-adopt-");
+      const elsewhere = await createTempDir("pioneer-scratch-victim-");
+      const created = path.join(base, "pioneer-eval-control-fixture");
+      await symlink(elsewhere, created);
+
+      await expect(adoptCreatedScratchDirectory(created)).rejects.toThrow(/replaced/i);
+    },
+  );
+
+  it("adopts a genuine scratch directory unchanged", async () => {
+    const base = await createTempDir("pioneer-scratch-adopt-");
+    const created = path.join(base, "pioneer-eval-control-fixture");
+    await mkdir(created);
+
+    const { realpath } = await import("node:fs/promises");
+    await expect(adoptCreatedScratchDirectory(created)).resolves.toBe(await realpath(created));
   });
 });
