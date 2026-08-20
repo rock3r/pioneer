@@ -6,6 +6,7 @@ import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import {
   adoptCreatedScratchDirectory,
+  assertScratchBaseOutsideGrants,
   validateControllerScratchBase,
 } from "../controller-scratch.js";
 import { diagnosticMessage } from "../diagnostics.js";
@@ -1161,13 +1162,20 @@ async function runReviewInternal(
   if (windows && request.allowUnsandboxedWindows !== true) {
     throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
   }
-  await validateReviewPaths({
+  const validatedPaths = await validateReviewPaths({
     sourceDir: request.sourceDir,
     ...(request.allowReadPaths === undefined ? {} : { allowReadPaths: request.allowReadPaths }),
     ...(request.allowWritePaths === undefined ? {} : { allowWritePaths: request.allowWritePaths }),
     ...(request.reportPath === undefined ? {} : { reportPath: request.reportPath }),
     ...(request.workLogPath === undefined ? {} : { workLogPath: request.workLogPath }),
   });
+  if (requestedScratchBase !== undefined) {
+    assertScratchBaseOutsideGrants(requestedScratchBase, [
+      validatedPaths.sourceDir,
+      ...validatedPaths.allowReadPaths,
+      ...validatedPaths.allowWritePaths,
+    ]);
+  }
   const piHomeSource = await canonicalReviewPiHomeSource(
     request.piHomeSource ?? defaultPiAgentDir(),
   );

@@ -38,6 +38,43 @@ describe("review setup", () => {
     ).rejects.toThrow(/controller scratch base/i);
   });
 
+  // Creating and deleting `pir-*` inside a granted path would write through a mount the actor
+  // is promised read-only, and hand the sandbox overlapping read-only and writable paths.
+  it("rejects a controller scratch base inside a granted path", async () => {
+    const root = await createTempDir("pioneer-review-scratch-base-");
+    const sourceDir = path.join(root, "source");
+    const inside = path.join(sourceDir, "scratch");
+    await mkdir(sourceDir);
+    await mkdir(inside);
+
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        controllerScratchBase: inside,
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.toThrow(/scratch base.*(granted|inside)/i);
+  });
+
+  it("allows a controller scratch base that merely shares an ancestor with a grant", async () => {
+    const root = await createTempDir("pioneer-review-scratch-base-");
+    const sourceDir = path.join(root, "source");
+    const sibling = path.join(root, "scratch");
+    await mkdir(sourceDir);
+    await mkdir(sibling);
+
+    // Reaches Pi rather than being refused, which is the point: the base itself is accepted.
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        controllerScratchBase: sibling,
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.not.toThrow(/scratch base/i);
+  });
+
   it("announces the work log before report reservation can fail", async () => {
     const root = await createTempDir("pioneer-review-setup-");
     const sourceDir = path.join(root, "source");

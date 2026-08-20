@@ -159,7 +159,7 @@ function hasPathSeparator(value: string): boolean {
   return value.includes("/") || (process.platform === "win32" && value.includes("\\"));
 }
 
-function isWithin(root: string, candidate: string): boolean {
+export function isWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return (
     relative === "" ||

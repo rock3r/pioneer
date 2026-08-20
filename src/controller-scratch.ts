@@ -1,6 +1,6 @@
 import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { isBroadWritablePath } from "./eval-run/isolation.js";
+import { isBroadWritablePath, isWithin } from "./eval-run/isolation.js";
 import { assertStableDirectoryChain } from "./stable-directory.js";
 
 /**
@@ -97,4 +97,24 @@ export async function adoptCreatedScratchDirectory(created: string): Promise<str
     throw new Error(`Controller scratch directory was replaced after creation: ${created}`);
   }
   return canonical;
+}
+
+/**
+ * Refuses a scratch base that sits inside a path the actor is granted.
+ *
+ * The controller creates and removes its `pir-*` tree under this base, so a base beneath a
+ * source or read grant would write through a mount the actor is promised read-only, and would
+ * hand the sandbox overlapping read-only and writable paths. A base that merely shares an
+ * ancestor with a grant is fine: the scratch it generates is a sibling, not a child.
+ */
+export function assertScratchBaseOutsideGrants(
+  base: string,
+  actorVisiblePaths: readonly string[],
+): void {
+  const containing = actorVisiblePaths.find((granted) => isWithin(granted, base));
+  if (containing !== undefined) {
+    throw new Error(
+      `Controller scratch base must not sit inside a granted path: ${base} is inside ${containing}`,
+    );
+  }
 }
