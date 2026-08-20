@@ -40,11 +40,16 @@ describe("controller scratch base", () => {
     );
   });
 
-  it("rejects a broad or protected system location", async () => {
-    await expect(validateControllerScratchBase("/etc", "linux")).rejects.toThrow(
-      /broad|protected/i,
-    );
-  });
+  // The protected-root list is POSIX-only in `isBroadWritablePath`, and `/etc` is not a real
+  // path on Windows, where such a base is refused by the existence check above instead.
+  it.skipIf(process.platform === "win32")(
+    "rejects a broad or protected POSIX location",
+    async () => {
+      await expect(validateControllerScratchBase("/etc", "linux")).rejects.toThrow(
+        /broad|protected/i,
+      );
+    },
+  );
 
   it("rejects a Linux base with no room for the proxy bridge socket", () => {
     expect(controllerScratchSocketFailure(`/tmp/${"d".repeat(90)}`, "linux")).toMatch(/socket/i);
