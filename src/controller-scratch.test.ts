@@ -74,7 +74,24 @@ describe("controller scratch base", () => {
       await mkdir(shared);
       await chmod(shared, 0o777);
 
-      await expect(validateControllerScratchBase(shared)).rejects.toThrow(/sticky|other users/i);
+      await expect(validateControllerScratchBase(shared)).rejects.toThrow(/writable by another/i);
+    },
+  );
+
+  // A private base is only as trustworthy as the chain above it: a replaceable ancestor lets
+  // another local user rename the base away and substitute a directory they control.
+  it.skipIf(process.platform === "win32")(
+    "rejects a private base beneath a replaceable ancestor",
+    async () => {
+      const root = await createTempDir("pioneer-scratch-base-");
+      const shared = path.join(root, "shared");
+      const base = path.join(shared, "private");
+      await mkdir(shared);
+      await mkdir(base);
+      await chmod(base, 0o700);
+      await chmod(shared, 0o777);
+
+      await expect(validateControllerScratchBase(base)).rejects.toThrow(/writable by another/i);
     },
   );
 

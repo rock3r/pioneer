@@ -1,7 +1,7 @@
-import type { Stats } from "node:fs";
 import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { isBroadWritablePath } from "./eval-run/isolation.js";
+import { assertStableDirectoryChain } from "./stable-directory.js";
 
 /**
  * `sun_path` bounds a Unix socket path at 108 bytes on Linux. The proxy bridge binds
@@ -49,7 +49,7 @@ export async function validateControllerScratchBase(
     );
   }
 
-  assertScratchBaseNotReplaceable(canonical, details, platform);
+  await assertStableDirectoryChain(canonical, platform, "Controller scratch base");
 
   const socketFailure = controllerScratchSocketFailure(canonical, platform);
   if (socketFailure !== undefined) throw new Error(socketFailure);
@@ -73,37 +73,6 @@ export function controllerScratchSocketFailure(
     `Controller scratch base ${canonical} leaves ${String(headroom)} bytes for the proxy ` +
     `bridge socket, below the ${String(BRIDGE_SOCKET_RESERVE)} it needs.`
   );
-}
-
-/**
- * Refuses a base that another local principal could tamper with.
- *
- * A directory other users may write to lets one of them rename the freshly created scratch
- * directory away and leave a symlink in its place between creation and adoption. The runner
- * would then write the Pi configuration snapshot through that link and recursively remove the
- * link's target during cleanup, which turns an unprivileged local user into a credential
- * disclosure and arbitrary-deletion primitive. The sticky bit is what makes a shared temporary
- * directory safe, and is why Pioneer's own default of `/tmp` at mode 1777 is not affected.
- */
-function assertScratchBaseNotReplaceable(
-  canonical: string,
-  details: Stats,
-  platform: NodeJS.Platform,
-): void {
-  if (platform === "win32") return;
-
-  const currentUid = typeof process.getuid === "function" ? process.getuid() : undefined;
-  if (currentUid !== undefined && details.uid !== currentUid) {
-    throw new Error(`Controller scratch base must be owned by this user: ${canonical}`);
-  }
-
-  const writableByOthers = (details.mode & 0o022) !== 0;
-  const sticky = (details.mode & 0o1000) !== 0;
-  if (writableByOthers && !sticky) {
-    throw new Error(
-      `Controller scratch base is writable by other users without the sticky bit: ${canonical}`,
-    );
-  }
 }
 
 /**
