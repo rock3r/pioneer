@@ -4,7 +4,7 @@ These instructions apply to Cursor (including Cursor Cloud agents). Other agents
 
 ## GitHub: use `gh`, not Cursor tools
 
-Always use the GitHub CLI (`gh`) for GitHub operations: issues, pull requests, comments, reviews, CI, labels, and related mutations. Do not use Cursor's GitHub/PR MCP tools (`ManagePullRequest`, `EditPullRequestLabels`, and equivalents). This environment is authenticated as `rock3r`; the `gh` token is already set. Follow `.agents/skills/git-github-ops/SKILL.md` for the actual command shape (non-interactive flags, `--body-file` for multiline text, no credential printing).
+Always use the GitHub CLI (`gh`) for GitHub operations: issues, pull requests, comments, reviews, CI, labels, and related mutations. Do not use Cursor's GitHub/PR MCP tools (`ManagePullRequest`, `EditPullRequestLabels`, and equivalents). Authenticate as `rock3r` via `GH_TOKEN`; do not use the Cursor GitHub App login. Follow `.agents/skills/git-github-ops/SKILL.md` for the actual command shape (non-interactive flags, `--body-file` for multiline text). Never print the token.
 
 ## Cursor Cloud VM
 
