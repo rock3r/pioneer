@@ -110,16 +110,19 @@ describe("review work log", () => {
     expect(classifyStaleActiveLeaseOwner(ownerIdentity, undefined)).toBe("revalidate");
   });
 
-  it("passes a retention-owner PID to a fixed PowerShell program as data", () => {
+  it("passes a retention-owner PID to a fixed cscript program as data", () => {
     const lookup = buildWindowsProcessStartLookup(4242, {
       PATH: "C:\\untrusted",
       SystemRoot: "C:\\Windows",
     });
+    const script = lookup.arguments.at(-1) ?? "";
 
-    expect(lookup.command).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    expect(lookup.command).toBe("C:\\Windows\\System32\\cscript.exe");
+    expect(lookup.arguments.slice(0, 4)).toEqual(["//Nologo", "//B", "//E:JScript", "//T:5"]);
     expect(lookup.arguments.join(" ")).not.toContain("4242");
-    expect(lookup.arguments.at(-1)).toContain("$env:PIONEER_RETENTION_OWNER_PID");
-    expect(lookup.arguments.at(-1)).toContain("ToUnixTimeMilliseconds");
+    expect(script.replaceAll("\\", "/")).toMatch(/\/windows-process-start\.js$/);
+    expect(readFileSync(script, "utf8")).toContain("PIONEER_RETENTION_OWNER_PID");
+    expect(readFileSync(script, "utf8")).not.toContain("4242");
     expect(lookup.environment.PIONEER_RETENTION_OWNER_PID).toBe("4242");
     expect(() => buildWindowsProcessStartLookup(4242, { SystemRoot: "relative" })).toThrow(
       /system root/i,
@@ -133,12 +136,49 @@ describe("review work log", () => {
       { SystemRoot: "C:\\Windows" },
       (lookup) => {
         inspectedProcessId = lookup.environment.PIONEER_RETENTION_OWNER_PID;
-        return { status: 0, stdout: "1700000000123\n" };
+        return { status: 0, stdout: "20231114221320.123000+000\n" };
       },
     );
 
     expect(inspectedProcessId).toBe(String(process.pid));
+    expect(identities).toHaveLength(5);
     expect(identities).toContain(createHash("sha256").update("win32:1700000000123").digest("hex"));
+    expect(identities).toContain(createHash("sha256").update("win32:1700000000121").digest("hex"));
+    expect(identities).toContain(createHash("sha256").update("win32:1700000000125").digest("hex"));
+  });
+
+  it("applies a Windows creation-date UTC offset before hashing", () => {
+    const identities = windowsProcessInstanceIdentities(7, { SystemRoot: "C:\\Windows" }, () => ({
+      status: 0,
+      stdout: "20231114231320.123000+060",
+    }));
+
+    expect(identities).toContain(createHash("sha256").update("win32:1700000000123").digest("hex"));
+  });
+
+  it("fails closed when the Windows process-start timestamp cannot be read", () => {
+    const environment = { SystemRoot: "C:\\Windows" };
+    expect(
+      windowsProcessInstanceIdentities(1, environment, () => ({
+        status: 1,
+        stdout: "20231114221320.123000+000",
+      })),
+    ).toBeUndefined();
+    expect(
+      windowsProcessInstanceIdentities(1, environment, () => ({ status: 0, stdout: "" })),
+    ).toBeUndefined();
+    expect(
+      windowsProcessInstanceIdentities(1, environment, () => ({
+        status: 0,
+        stdout: "not-a-timestamp",
+      })),
+    ).toBeUndefined();
+    expect(
+      windowsProcessInstanceIdentities(1, environment, () => ({
+        status: 0,
+        stdout: "20231301221320.123000+000",
+      })),
+    ).toBeUndefined();
   });
 
   it("reuses the current-process identity cache for the live pid", () => {
