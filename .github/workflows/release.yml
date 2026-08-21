@@ -74,17 +74,6 @@ jobs:
           fi
       - run: npm run sandbox:smoke
 
-  windows-sandbox-prototype:
-    name: release Windows prototype
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 8.0.x
-      - run: dotnet restore native/windows-appcontainer/Pioneer.WindowsSandbox.csproj
-      - run: dotnet build native/windows-appcontainer/Pioneer.WindowsSandbox.csproj -c Release --no-restore
-
   pack:
     name: build release tarball
     needs: verify-source
@@ -126,7 +115,7 @@ jobs:
 
   publish:
     name: publish npm and GitHub release
-    needs: [verify-source, pi-compatibility, native-sandbox, windows-sandbox-prototype, verify-package]
+    needs: [verify-source, pi-compatibility, native-sandbox, verify-package]
     runs-on: ubuntu-latest
     environment: npm
     permissions:

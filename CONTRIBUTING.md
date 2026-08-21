@@ -12,7 +12,7 @@ npm run check
 npm run package:smoke
 ```
 
-Run `npm run sandbox:smoke` on macOS or Linux for sandbox changes. Windows changes must pass `npm run windows:smoke` on Windows and build the AppContainer prototype.
+Run `npm run sandbox:smoke` on macOS or Linux for sandbox changes. Windows changes must pass `npm run windows:smoke` on Windows.
 
 Add the narrowest failing test before changing behavior. Keep npm and both plugin manifest versions synchronized for release changes. Do not commit generated `dist/`, coverage output, credentials, Pi home snapshots, or eval run directories.
 

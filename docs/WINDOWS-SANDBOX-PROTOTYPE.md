@@ -1,6 +1,7 @@
 # Windows AppContainer prototype
 
-Status: implemented and compiled, but not enabled for eval actors.
+Status: research prototype in `native/windows-appcontainer`. It is not
+enabled for eval actors and is not a CI or release gate.
 
 ## Result
 

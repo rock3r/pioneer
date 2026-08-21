@@ -23,7 +23,7 @@ For every tag, `.github/workflows/release.yml` independently requires:
 - the checked-in Pi tested maximum to equal the official npm `latest`;
 - a real Seatbelt smoke battery on macOS;
 - a real Bubblewrap/AppArmor smoke battery on Linux;
-- Windows fail-closed CLI checks and an AppContainer prototype build;
+- Windows fail-closed CLI checks;
 - one npm tarball built once, installed, and invoked on all three operating systems.
 
 Only the tarball that passed the matrix is published. A GitHub release and attached tarball are created after npm accepts the package. GitHub generates the release page notes from commits and merged pull requests; [the changelog](../CHANGELOG.md) is the curated, versioned user-facing record.

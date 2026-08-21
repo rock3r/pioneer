@@ -127,7 +127,7 @@ npm run check
 npm run sandbox:smoke
 ```
 
-CI runs quality and packed-artifact checks on macOS, Linux, and Windows. macOS and Linux additionally run their real native sandbox battery; Windows proves fail-closed eval behavior and builds the experimental AppContainer launcher. Tagged releases must pass the same gates before the tested tarball is published. See [Releasing](docs/RELEASING.md).
+CI runs quality and packed-artifact checks on macOS, Linux, and Windows. macOS and Linux additionally run their real native sandbox battery; Windows proves fail-closed eval behavior. Tagged releases must pass the same gates before the tested tarball is published. See [Releasing](docs/RELEASING.md).
 
 Read [AGENTS.md](AGENTS.md) before changing production code. The smoke test is a live security boundary test, not just a unit test; release candidates should run it on both macOS and Linux.
 

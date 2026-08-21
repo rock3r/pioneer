@@ -77,14 +77,3 @@ jobs:
           fi
       - run: npm run sandbox:smoke
       - run: npm run test:e2e
-
-  windows-sandbox-prototype:
-    name: Windows AppContainer prototype
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 8.0.x
-      - run: dotnet restore native/windows-appcontainer/Pioneer.WindowsSandbox.csproj
-      - run: dotnet build native/windows-appcontainer/Pioneer.WindowsSandbox.csproj -c Release --no-restore
