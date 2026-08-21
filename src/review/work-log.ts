@@ -16,6 +16,7 @@ import {
 import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { sanitizeDiagnostic } from "../diagnostics.js";
 
@@ -185,6 +186,52 @@ function hashProcessInstanceIdentity(platform: NodeJS.Platform, rawIdentity: str
   return createHash("sha256").update(`${platform}:${rawIdentity}`).digest("hex");
 }
 
+const WINDOWS_PROCESS_CREATION_DATE =
+  /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{6})([+-])(\d{3})$/;
+
+function windowsCreationDateToUnixMilliseconds(value: string): number | undefined {
+  const match = WINDOWS_PROCESS_CREATION_DATE.exec(value.trim());
+  if (match === null) return undefined;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const microsecond = Number(match[7]);
+  const offsetMinutes = (match[8] === "-" ? -1 : 1) * Number(match[9]);
+  if (
+    ![year, month, day, hour, minute, second, microsecond, offsetMinutes].every((part) =>
+      Number.isSafeInteger(part),
+    )
+  ) {
+    return undefined;
+  }
+  const utcMilliseconds = Date.UTC(
+    year,
+    month - 1,
+    day,
+    hour,
+    minute,
+    second,
+    Math.trunc(microsecond / 1_000),
+  );
+  const utcDate = new Date(utcMilliseconds);
+  if (
+    utcDate.getUTCFullYear() !== year ||
+    utcDate.getUTCMonth() !== month - 1 ||
+    utcDate.getUTCDate() !== day ||
+    utcDate.getUTCHours() !== hour ||
+    utcDate.getUTCMinutes() !== minute ||
+    utcDate.getUTCSeconds() !== second
+  ) {
+    return undefined;
+  }
+  const unixMilliseconds = utcMilliseconds - offsetMinutes * 60 * 1_000;
+  if (!Number.isSafeInteger(unixMilliseconds) || unixMilliseconds <= 0) return undefined;
+  return unixMilliseconds;
+}
+
 export function buildWindowsProcessStartLookup(
   processId: number,
   environment: NodeJS.ProcessEnv = process.env,
@@ -201,12 +248,13 @@ export function buildWindowsProcessStartLookup(
     throw new Error("Windows system root must be an absolute path");
   }
   return {
-    command: path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    command: path.win32.join(systemRoot, "System32", "cscript.exe"),
     arguments: [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      "[DateTimeOffset]::new((Get-Process -Id ([int]$env:PIONEER_RETENTION_OWNER_PID) -ErrorAction Stop).StartTime).ToUnixTimeMilliseconds()",
+      "//Nologo",
+      "//B",
+      "//E:JScript",
+      "//T:5",
+      fileURLToPath(new URL("./windows-process-start.js", import.meta.url)),
     ],
     environment: { ...environment, PIONEER_RETENTION_OWNER_PID: String(processId) },
   };
@@ -230,8 +278,8 @@ export function windowsProcessInstanceIdentities(
   const lookup = buildWindowsProcessStartLookup(processId, environment);
   const result = runLookup(lookup);
   if (result.status !== 0) return undefined;
-  const startTimeMilliseconds = Number(result.stdout.trim());
-  if (!Number.isSafeInteger(startTimeMilliseconds) || startTimeMilliseconds <= 0) return undefined;
+  const startTimeMilliseconds = windowsCreationDateToUnixMilliseconds(result.stdout ?? "");
+  if (startTimeMilliseconds === undefined) return undefined;
   return [-2, -1, 0, 1, 2].map((offset) =>
     hashProcessInstanceIdentity("win32", String(startTimeMilliseconds + offset)),
   );

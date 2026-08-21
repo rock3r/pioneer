@@ -6,6 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
+    "includes": ["**", "!src/review/windows-process-start.js"],
     "ignoreUnknown": false
   },
   "formatter": {

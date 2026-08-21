@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import { copyFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,4 +12,11 @@ const result = spawnSync(process.execPath, [tsc, "-p", "tsconfig.build.json"], {
   stdio: "inherit",
 });
 if (result.error) throw result.error;
-process.exitCode = result.status ?? 1;
+if (result.status !== 0) {
+  process.exitCode = result.status ?? 1;
+} else {
+  copyFileSync(
+    path.join(root, "src", "review", "windows-process-start.js"),
+    path.join(root, "dist", "review", "windows-process-start.js"),
+  );
+}

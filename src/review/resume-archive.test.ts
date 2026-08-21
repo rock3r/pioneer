@@ -90,8 +90,8 @@ describe("recoverable review archive", () => {
   });
 
   // Two archive creates plus a live-owner lease inspection. On Windows the
-  // identity lookup is a PowerShell spawn, and this is the slowest unit case
-  // on windows-latest.
+  // identity lookup is a cscript/WMI spawn; this is still the slowest
+  // filesystem-heavy unit case on windows-latest.
   it("backs a publisher off when a displaced live owner could not be restored", async () => {
     const displacedRoot = await createTempDir("pioneer-resume-lease-");
     const contenderRoot = await createTempDir("pioneer-resume-lease-");
