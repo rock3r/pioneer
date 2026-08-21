@@ -27,6 +27,9 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
+      - if: runner.os == 'Windows'
+        name: Measure Windows process-start identity lookup
+        run: node --experimental-strip-types --no-warnings scripts/windows-process-identity-bench.mjs
       - run: npm run check
       - run: npm run package:smoke
       - if: runner.os == 'Windows'
