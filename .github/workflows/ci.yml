@@ -27,10 +27,6 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
-      - if: runner.os == 'Windows'
-        # Scratch timing for issue 45; remove after a second windows-latest sample.
-        name: Time displaced-lease resume-archive case
-        run: npx vitest run src/review/resume-archive.test.ts -t "backs a publisher off when a displaced live owner could not be restored" --reporter=verbose
       - run: npm run check
       - run: npm run package:smoke
       - if: runner.os == 'Windows'

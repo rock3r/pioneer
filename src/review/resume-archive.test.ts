@@ -89,9 +89,9 @@ describe("recoverable review archive", () => {
     expect(await readFile(displacedPath, "utf8")).toBe("displaced-owner\n");
   });
 
-  // Two archive creates plus a live-owner lease inspection. On Windows the
-  // identity lookup is a cscript/WMI spawn; this is still the slowest
-  // filesystem-heavy unit case on windows-latest.
+  // Two archive creates plus a live-owner lease inspection. Windows identity
+  // lookup is a cscript/WMI spawn; the suite's 15 s Windows budget is
+  // filesystem headroom, not a hang budget.
   it("backs a publisher off when a displaced live owner could not be restored", async () => {
     const displacedRoot = await createTempDir("pioneer-resume-lease-");
     const contenderRoot = await createTempDir("pioneer-resume-lease-");
@@ -125,7 +125,7 @@ describe("recoverable review archive", () => {
     ).rejects.toThrow("[REVIEW_RESUME_IN_USE]");
     expect(await readFile(leasePath, "utf8")).toBe("third-contender\n");
     expect(await readFile(displacedPath, "utf8")).toBe(displacedContents);
-  }, 15_000);
+  });
 
   it("counts directories toward the bounded session-entry limit", async () => {
     const root = await createTempDir("pioneer-resume-tree-");
