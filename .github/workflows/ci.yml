@@ -28,8 +28,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - if: runner.os == 'Windows'
-        name: Measure Windows process-start identity lookup
-        run: node scripts/windows-process-identity-bench.mjs
+        name: Time displaced-lease resume-archive case
+        run: npx vitest run src/review/resume-archive.test.ts -t "backs a publisher off when a displaced live owner could not be restored" --reporter=verbose
       - run: npm run check
       - run: npm run package:smoke
       - if: runner.os == 'Windows'
