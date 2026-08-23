@@ -68,8 +68,8 @@ describe("review setup", () => {
     const root = await createTempDir("pioneer-review-scratch-base-");
     const sourceDir = path.join(root, "source");
     const sibling = path.join(root, "scratch");
-    await mkdir(sourceDir);
-    await mkdir(sibling);
+    const piHomeSource = path.join(root, "pi-home");
+    await Promise.all([mkdir(sourceDir), mkdir(sibling), mkdir(piHomeSource)]);
 
     mocks.assertPiReady.mockRejectedValueOnce(new Error("readiness reached"));
 
@@ -79,6 +79,7 @@ describe("review setup", () => {
       runReview({
         sourceDir,
         prompt: "Review source",
+        piHomeSource,
         controllerScratchBase: sibling,
         ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
       }),
