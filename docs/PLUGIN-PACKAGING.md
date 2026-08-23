@@ -6,12 +6,17 @@ The publishable plugin lives at `plugins/pioneer/`:
 
 ```text
 plugins/pioneer/
-├── plugin.json
 ├── .claude-plugin/plugin.json
 ├── .codex-plugin/plugin.json
+├── assets/
+│   ├── pioneer-banner.jpg
+│   └── pioneer-mascot.png
 ├── LICENSE
 ├── README.md
-└── skills/pioneer/SKILL.md
+├── plugin.json
+└── skills/pioneer/
+    ├── evals/evals.json
+    └── SKILL.md
 ```
 
 Agent Plugins v1 clients, Codex, and Claude Code load the same skill. The skill delegates to the installed `pioneer` executable; it does not contain a second implementation, bundle Pi, or carry provider credentials.
@@ -84,5 +89,5 @@ Keep the stable identifier `pioneer`. Change display text rather than renaming t
 3. Validate the portable manifest and Agent Skill, the Codex plugin and repo marketplace, and the Claude marketplace and plugin.
 4. Run `npm run check` and `npm run sandbox:smoke` on macOS and Linux.
 5. Confirm `pioneer doctor` and `pioneer eval --help` against a configured Pi installation.
-6. Test a real review through each agent client.
+6. Run the two independent user-selected model/provider reviews through Pioneer required by the release process.
 7. Tag only after the plugin payload, CLI documentation, and UEL license are final.
