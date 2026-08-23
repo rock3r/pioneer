@@ -83,6 +83,7 @@ try {
   await access(path.join(packageRoot, "plugins", "pioneer", "README.md"));
   await access(path.join(packageRoot, "plugins", "pioneer", "LICENSE"));
   await access(path.join(packageRoot, "pi-compatibility.json"));
+  await access(path.join(packageRoot, "dist", "review", "windows-process-start.js"));
   const legacyEvalCliPresent = await access(path.join(packageRoot, "dist", "eval-run-cli.js")).then(
     () => true,
     () => false,

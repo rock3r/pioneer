@@ -3,7 +3,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  assertPiReady: vi.fn(),
   reserveReviewReport: vi.fn(),
+}));
+
+vi.mock("../pi-readiness.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../pi-readiness.js")>()),
+  assertPiReady: mocks.assertPiReady,
 }));
 
 vi.mock("./report-output.js", async (importOriginal) => ({
@@ -18,6 +24,7 @@ const { createTempDir } = registerManagedTempPaths();
 
 describe("review setup", () => {
   afterEach(async () => {
+    mocks.assertPiReady.mockReset();
     mocks.reserveReviewReport.mockReset();
   });
 
@@ -61,18 +68,31 @@ describe("review setup", () => {
     const root = await createTempDir("pioneer-review-scratch-base-");
     const sourceDir = path.join(root, "source");
     const sibling = path.join(root, "scratch");
-    await mkdir(sourceDir);
-    await mkdir(sibling);
+    const piHomeSource = path.join(root, "pi-home");
+    const outputDir = path.join(root, "outputs");
+    await Promise.all([mkdir(sourceDir), mkdir(sibling), mkdir(piHomeSource), mkdir(outputDir)]);
 
-    // Reaches Pi rather than being refused, which is the point: the base itself is accepted.
+    mocks.assertPiReady.mockRejectedValueOnce(new Error("readiness reached"));
+
+    // Continue past scratch-base validation, then stop at the mocked readiness boundary so
+    // this unit test never depends on the host Pi installation or contacts a provider.
     await expect(
       runReview({
         sourceDir,
         prompt: "Review source",
+        piHomeSource,
         controllerScratchBase: sibling,
+        reportPath: path.join(outputDir, "report.md"),
+        workLogPath: path.join(outputDir, "review.jsonl"),
         ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
       }),
-    ).rejects.not.toThrow(/scratch base/i);
+    ).rejects.toThrow("readiness reached");
+    expect(mocks.assertPiReady).toHaveBeenCalledOnce();
+    expect(mocks.assertPiReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environment: expect.objectContaining({ PI_CODING_AGENT_DIR: await realpath(piHomeSource) }),
+      }),
+    );
   });
 
   // The rejection has to land before this run creates a resume archive, a report reservation,

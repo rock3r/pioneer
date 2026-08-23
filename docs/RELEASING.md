@@ -57,11 +57,11 @@ Do not defer a newer Pi release to a later Pioneer release: review it, raise the
    npm run package:smoke
    npm run pi:compat:latest
    npm run sandbox:smoke
-   npm run release:verify -- v0.1.3
+   npm run release:verify -- v0.3.0
    ```
 
 6. Validate the portable Agent Plugins package and both native plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).
-7. Run a real review through Codex and Claude Code. For each client, preserve the nested terminal session until it returns an exit code, then record the exit code and stdout/stderr byte counts. An intermediate empty output with a session ID is not a completed review. Use `--report /absolute/path/report.md` when a durable final report artifact is needed.
+7. Run two independent real reviews through Pioneer. Use `pioneer models` to enumerate the configured choices, then ask the user which model and provider to use for each review before starting. For each Pioneer process, preserve the nested terminal session until it returns an exit code, then record the exit code and stdout/stderr byte counts. An intermediate empty output with a session ID is not a completed review. Use `--report /absolute/path/report.md` when a durable final report artifact is needed.
 8. Commit and push the reviewed release candidate.
 9. Create and push an annotated `v<version>` tag. Pushing the tag is the publication trigger.
 
