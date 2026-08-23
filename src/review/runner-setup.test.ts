@@ -3,7 +3,13 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  assertPiReady: vi.fn(),
   reserveReviewReport: vi.fn(),
+}));
+
+vi.mock("../pi-readiness.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../pi-readiness.js")>()),
+  assertPiReady: mocks.assertPiReady,
 }));
 
 vi.mock("./report-output.js", async (importOriginal) => ({
@@ -18,6 +24,7 @@ const { createTempDir } = registerManagedTempPaths();
 
 describe("review setup", () => {
   afterEach(async () => {
+    mocks.assertPiReady.mockReset();
     mocks.reserveReviewReport.mockReset();
   });
 
@@ -64,7 +71,10 @@ describe("review setup", () => {
     await mkdir(sourceDir);
     await mkdir(sibling);
 
-    // Reaches Pi rather than being refused, which is the point: the base itself is accepted.
+    mocks.assertPiReady.mockRejectedValueOnce(new Error("readiness reached"));
+
+    // Continue past scratch-base validation, then stop at the mocked readiness boundary so
+    // this unit test never depends on the host Pi installation or contacts a provider.
     await expect(
       runReview({
         sourceDir,
@@ -72,7 +82,8 @@ describe("review setup", () => {
         controllerScratchBase: sibling,
         ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
       }),
-    ).rejects.not.toThrow(/scratch base/i);
+    ).rejects.toThrow("readiness reached");
+    expect(mocks.assertPiReady).toHaveBeenCalledOnce();
   });
 
   // The rejection has to land before this run creates a resume archive, a report reservation,

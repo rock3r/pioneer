@@ -105,7 +105,7 @@ The process is killed on timeout, malformed output, protocol rejection, or outpu
 
 ## Path and network construction
 
-After validation, the controller creates a private `pir-*` directory beneath the platform's short shared temporary directory, containing the writable Pi snapshot, isolated home, temporary directory, and scratch space. API callers may instead select a validated `controllerScratchBase`; Pioneer rejects broad, protected, unstable, actor-granted, or overlong bases, and on Linux reserves enough socket-path space for the authenticated proxy bridge. Runtime files required by Node, Pi, TLS, and the operating system are added as read-only grants.
+After validation, the controller creates a private `pir-*` directory beneath `/tmp` on macOS and Linux or `os.tmpdir()` on Windows, containing the writable Pi snapshot, isolated home, temporary directory, and scratch space. API callers may instead select a validated `controllerScratchBase`; Pioneer rejects broad, protected, unstable, actor-granted, or overlong bases, and on Linux reserves enough socket-path space for the authenticated proxy bridge. Runtime files required by Node, Pi, TLS, and the operating system are added as read-only grants.
 
 Networking is one of `full`, `public`, or `none`; see [SECURITY.md](SECURITY.md). The sandbox receives proxy variables but no direct destination grant.
 

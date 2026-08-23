@@ -57,7 +57,7 @@ Do not defer a newer Pi release to a later Pioneer release: review it, raise the
    npm run package:smoke
    npm run pi:compat:latest
    npm run sandbox:smoke
-   npm run release:verify -- v0.1.3
+   npm run release:verify -- v0.3.0
    ```
 
 6. Validate the portable Agent Plugins package and both native plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).
