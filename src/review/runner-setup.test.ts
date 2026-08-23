@@ -69,7 +69,8 @@ describe("review setup", () => {
     const sourceDir = path.join(root, "source");
     const sibling = path.join(root, "scratch");
     const piHomeSource = path.join(root, "pi-home");
-    await Promise.all([mkdir(sourceDir), mkdir(sibling), mkdir(piHomeSource)]);
+    const outputDir = path.join(root, "outputs");
+    await Promise.all([mkdir(sourceDir), mkdir(sibling), mkdir(piHomeSource), mkdir(outputDir)]);
 
     mocks.assertPiReady.mockRejectedValueOnce(new Error("readiness reached"));
 
@@ -81,10 +82,17 @@ describe("review setup", () => {
         prompt: "Review source",
         piHomeSource,
         controllerScratchBase: sibling,
+        reportPath: path.join(outputDir, "report.md"),
+        workLogPath: path.join(outputDir, "review.jsonl"),
         ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
       }),
     ).rejects.toThrow("readiness reached");
     expect(mocks.assertPiReady).toHaveBeenCalledOnce();
+    expect(mocks.assertPiReady).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environment: expect.objectContaining({ PI_CODING_AGENT_DIR: await realpath(piHomeSource) }),
+      }),
+    );
   });
 
   // The rejection has to land before this run creates a resume archive, a report reservation,
