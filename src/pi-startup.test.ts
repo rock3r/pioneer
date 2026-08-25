@@ -99,4 +99,40 @@ describe("Pi startup optimization", () => {
       "rpc",
     ]);
   });
+
+  it("can load explicit extensions while discovery remains disabled", () => {
+    expect(
+      optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+        disableExtensions: true,
+        disableSkills: true,
+        extensions: ["/trusted/provider/extension.ts", "/trusted/pioneer/inspection.ts"],
+        tools: ["get_pr_metadata", "read_source_file"],
+      }).command,
+    ).toEqual([
+      "pi",
+      "--offline",
+      "--no-session",
+      "--no-approve",
+      "--no-prompt-templates",
+      "--no-themes",
+      "--no-extensions",
+      "--extension",
+      "/trusted/provider/extension.ts",
+      "--extension",
+      "/trusted/pioneer/inspection.ts",
+      "--tools",
+      "get_pr_metadata,read_source_file",
+      "--no-skills",
+      "--mode",
+      "rpc",
+    ]);
+  });
+
+  it("does not inject --no-session when the base command already includes --session-dir", () => {
+    expect(
+      optimizePiStartupCommand(["pi", "--mode", "rpc", "--session-dir", "/private/session"], {
+        disableSkills: true,
+      }).command,
+    ).not.toContain("--no-session");
+  });
 });

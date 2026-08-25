@@ -122,3 +122,11 @@ Proxy servers, Linux bridges, copied Pi state, and scratch data are removed on e
 Pi 0.84.1 has a hidden interactive `/debug` command that writes `pi-debug.log`, but it is an on-demand TUI snapshot containing rendered terminal state and complete LLM messages. Pioneer does not copy or invoke that unsafe dump; resumable RPC reviews use Pi's native session directory, while `--no-resume` retains the ephemeral no-session behavior. The documented RPC stream remains Pi's native real-time diagnostic source.
 
 Pioneer receives RPC events through the Pi child process's stdout pipe and synchronously flushes their sanitized metadata to its controller-owned work log. It does not use filesystem watchers, polling, or a `subagent-results` directory. Any `fs.watch` fallback reported by a calling agent runtime is outside Pioneer and cannot be the mechanism that delivers the report.
+
+## Deep review structured actors
+
+Deep review reuses the same RPC transport, containment, timeout, work-log, and native recovery contracts as `runReview`, but actors emit versioned JSON instead of Markdown reports. Each council member and the president launch through the shared Pi command builder with `--no-builtin-tools`, discovery disabled, an explicit bundled inspection extension, and optional pinned provider extensions from the capability profile.
+
+Before launch, the controller copies the packet and any president candidate store into the actor's private scratch directory and passes those actor-local paths through environment variables. Packet and candidate stores therefore remain readable inside the OS sandbox without granting write access to controller scratch or credentials.
+
+Structured actor prompts and raw model output are untrusted. Pioneer extracts JSON with the same bounded output limits as free-form reviews, validates worker and president schemas fail-closed, and never returns model prose or thinking in work logs. Deep-review work logs record controller lifecycle events (worker/president start and outcome); structured actor RPC metadata is not yet mirrored into those logs. Actor failures surface as deep-review diagnostics with the same process-containment guarantees as `[REVIEW_PROCESS_CONTAINMENT_FAILED]` and `[REVIEW_TIMEOUT]`.

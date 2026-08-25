@@ -17,6 +17,7 @@ Use test-driven development for behavior changes:
 - **Integration tests** may use the installed `pi` and a temporary Git repository. They must be opt-in or skip clearly when Pi/configured models are unavailable.
 - **End-to-end tests** in `test/e2e` drive the built CLI as a subprocess against a scripted Pi installation. The scripted actor is a deterministic local script, so no provider credential is ever required. Cases that launch an actor skip when the native sandbox is unavailable; `eval prepare` cases run everywhere. Run them with `npm run test:e2e`, which builds `dist/` first.
 - **Adapter tests** verify MCP schemas and Claude/Codex packaging without duplicating orchestration assertions.
+- **Deep review tests** cover versioned schemas, consensus gates, council scheduling, GitHub marker/idempotency contracts, and capability-profile validation. End-to-end CLI contract tests cover `pioneer deep-review` and `pioneer github deep-review` without provider credentials.
 
 The unit suite's global setup compiles the Linux network supervisor beside its source, because `buildLinuxSandboxArgv` binds that compiled sibling exactly as a published install resolves it. Without it every proxied Bubblewrap launch from the TypeScript sources would fail, so Linux sandbox cases must never be skipped for a missing build artifact.
 

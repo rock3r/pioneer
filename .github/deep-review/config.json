@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "pioneer-deep-review-config/v1",
+  "council": [
+    {
+      "id": "worker-primary",
+      "model": "REPLACE_WITH_PROVIDER/MODEL",
+      "independenceGroup": "group-primary"
+    },
+    {
+      "id": "worker-secondary",
+      "model": "REPLACE_WITH_PROVIDER/MODEL",
+      "independenceGroup": "group-secondary"
+    }
+  ],
+  "president": {
+    "id": "president",
+    "model": "REPLACE_WITH_PROVIDER/MODEL",
+    "independenceGroup": "group-president"
+  }
+}

@@ -285,6 +285,32 @@ export async function validateProspectiveReviewWorkLogPath(
   return paths.workLogPath;
 }
 
+export async function validateProspectiveDeepReviewOutputPaths(
+  spec: {
+    readonly sourceDir: string;
+    readonly resultPath?: string;
+    readonly workLogPath?: string;
+  },
+  prospectiveControllerDirectories: readonly string[] = [],
+  platform: NodeJS.Platform = process.platform,
+): Promise<{ readonly resultPath?: string; readonly workLogPath?: string }> {
+  const paths = await validateReviewPathsInternal(
+    {
+      sourceDir: spec.sourceDir,
+      ...(spec.resultPath === undefined ? {} : { reportPath: spec.resultPath }),
+      ...(spec.workLogPath === undefined ? {} : { workLogPath: spec.workLogPath }),
+    },
+    spec.resultPath !== undefined,
+    spec.workLogPath !== undefined,
+    platform,
+    prospectiveControllerDirectories,
+  );
+  return {
+    ...(paths.reportPath === undefined ? {} : { resultPath: paths.reportPath }),
+    ...(paths.workLogPath === undefined ? {} : { workLogPath: paths.workLogPath }),
+  };
+}
+
 export async function validateProspectiveReviewReportPath(
   spec: ReviewPathSpec & { readonly reportPath: string },
   prospectiveControllerDirectories: readonly string[] = [],

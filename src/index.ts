@@ -1,4 +1,32 @@
 export {
+  type CapabilityProfileV1,
+  parseCapabilityProfile,
+  resolveSelectedCapabilityExtensions,
+} from "./deep-review/capability-profile.js";
+export {
+  type CouncilMemberV1,
+  type DeepReviewConfigV1,
+  parseDeepReviewConfig,
+} from "./deep-review/config.js";
+export {
+  computePacketDigest,
+  type PullRequestPacketV1,
+  parsePullRequestPacket,
+} from "./deep-review/packet.js";
+export {
+  buildTerminalSummary,
+  type DeepReviewResultV1,
+  deepReviewExitCode,
+  persistDeepReviewResult,
+} from "./deep-review/result-output.js";
+export {
+  assertDeepReviewPlatform,
+  type DeepReviewActorExecutor,
+  type DeepReviewExecution,
+  type DeepReviewRequest,
+  runDeepReview,
+} from "./deep-review/runner.js";
+export {
   type Diagnostic,
   type DiagnosticSeverity,
   diagnosticMessage,

@@ -557,7 +557,7 @@ function executableOnPath(name: string): string {
   return name;
 }
 
-async function piRuntimePaths(executable: string): Promise<string[]> {
+export async function piRuntimePaths(executable: string): Promise<string[]> {
   const paths =
     process.platform === "darwin"
       ? ["/System", "/usr", "/bin", "/sbin", "/Library/Apple/System", "/private/etc/ssl"]

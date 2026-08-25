@@ -1,0 +1,179 @@
+name: Deep review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: deep-review-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  deep-review:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PIONEER_PR_HEAD_DIR: ${{ runner.temp }}/pioneer-pr-head
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+          lfs: false
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+          lfs: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: ${{ env.PIONEER_PR_HEAD_DIR }}
+
+      - name: Resolve trusted deep-review config
+        id: trusted_config
+        run: |
+          CONFIG_PATH="$RUNNER_TEMP/pioneer-deep-review-config.json"
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if ! git cat-file -e "${BASE_SHA}:.github/deep-review/config.json" 2>/dev/null; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Deep review config is missing on the pull request base ref; skipping." >&2
+            exit 0
+          fi
+          git show "${BASE_SHA}:.github/deep-review/config.json" > "$CONFIG_PATH"
+          if grep -q 'REPLACE_WITH' "$CONFIG_PATH"; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Deep review config on base ref still contains placeholder models; skipping until configured." >&2
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+          echo "path=${CONFIG_PATH}" >> "$GITHUB_OUTPUT"
+
+      - name: Deep review not configured on base ref
+        if: steps.trusted_config.outputs.configured != 'true'
+        run: echo "Skipping deep review until base-branch config and Pi secrets are configured."
+
+      - uses: actions/setup-node@v6
+        if: steps.trusted_config.outputs.configured == 'true'
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+        if: steps.trusted_config.outputs.configured == 'true'
+      - run: npm run build
+        if: steps.trusted_config.outputs.configured == 'true'
+
+      - name: Install Pi coding agent
+        if: steps.trusted_config.outputs.configured == 'true'
+        run: npm install --global @earendil-works/pi-coding-agent@0.84.2
+
+      - name: Install Linux sandbox prerequisites
+        if: steps.trusted_config.outputs.configured == 'true'
+        timeout-minutes: 18
+        run: .github/scripts/install-linux-sandbox-prereqs.sh
+
+      - name: Install narrow Ubuntu AppArmor profile when required
+        if: steps.trusted_config.outputs.configured == 'true'
+        run: |
+          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = "1" ]; then
+            sudo node dist/review-cli.js eval install-linux
+          fi
+
+      - name: Start deep-review check
+        if: steps.trusted_config.outputs.configured == 'true'
+        id: start
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          START_JSON=$(node dist/review-cli.js github deep-review start \
+            --owner "${{ github.repository_owner }}" \
+            --repo "${{ github.event.repository.name }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}")
+          CHECK_ID=$(node -e 'const input=require("fs").readFileSync(0,"utf8"); const parsed=JSON.parse(input); process.stdout.write(String(parsed.checkRunId ?? parsed.id ?? ""));' <<< "$START_JSON")
+          echo "check_run_id=${CHECK_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Collect PR packet
+        if: steps.trusted_config.outputs.configured == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node dist/review-cli.js github deep-review collect \
+            --source "$PIONEER_PR_HEAD_DIR" \
+            --owner "${{ github.repository_owner }}" \
+            --repo "${{ github.event.repository.name }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --head-sha "${{ github.event.pull_request.head.sha }}" \
+            --output "$RUNNER_TEMP/pioneer-packet.json"
+
+      - name: Prepare private Pi configuration
+        if: steps.trusted_config.outputs.configured == 'true'
+        env:
+          PIONEER_PI_AUTH_JSON: ${{ secrets.PIONEER_PI_AUTH_JSON }}
+          PIONEER_PI_MODELS_JSON: ${{ secrets.PIONEER_PI_MODELS_JSON }}
+          PIONEER_PI_SETTINGS_JSON: ${{ secrets.PIONEER_PI_SETTINGS_JSON }}
+        run: |
+          PI_HOME="$RUNNER_TEMP/pi-agent"
+          mkdir -p "$PI_HOME"
+          chmod 700 "$PI_HOME"
+          if [ -n "${PIONEER_PI_AUTH_JSON:-}" ]; then
+            printf '%s' "$PIONEER_PI_AUTH_JSON" > "$PI_HOME/auth.json"
+            chmod 600 "$PI_HOME/auth.json"
+          fi
+          if [ -n "${PIONEER_PI_MODELS_JSON:-}" ]; then
+            printf '%s' "$PIONEER_PI_MODELS_JSON" > "$PI_HOME/models.json"
+            chmod 600 "$PI_HOME/models.json"
+          fi
+          if [ -n "${PIONEER_PI_SETTINGS_JSON:-}" ]; then
+            printf '%s' "$PIONEER_PI_SETTINGS_JSON" > "$PI_HOME/settings.json"
+            chmod 600 "$PI_HOME/settings.json"
+          fi
+          echo "PI_CODING_AGENT_DIR=$PI_HOME" >> "$GITHUB_ENV"
+
+      - name: Run deep review
+        if: steps.trusted_config.outputs.configured == 'true'
+        env:
+          GITHUB_TOKEN: ""
+        run: |
+          node dist/review-cli.js deep-review \
+            --source "$PIONEER_PR_HEAD_DIR" \
+            --packet "$RUNNER_TEMP/pioneer-packet.json" \
+            --config "${{ steps.trusted_config.outputs.path }}" \
+            --output "$RUNNER_TEMP/pioneer-result.json" \
+            --work-log "$RUNNER_TEMP/pioneer-work-log.jsonl"
+
+      - name: Upload deep-review artifacts
+        if: always() && steps.trusted_config.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pioneer-deep-review-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pioneer-result.json
+            ${{ runner.temp }}/pioneer-work-log.jsonl
+          retention-days: 7
+
+      - name: Publish deep-review result
+        if: always() && steps.trusted_config.outputs.configured == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node dist/review-cli.js github deep-review publish \
+            --owner "${{ github.repository_owner }}" \
+            --repo "${{ github.event.repository.name }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --result "$RUNNER_TEMP/pioneer-result.json" \
+            --packet "$RUNNER_TEMP/pioneer-packet.json" \
+            --check-run-id "${{ steps.start.outputs.check_run_id }}" \
+            --workflow-run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Remove private Pi configuration
+        if: always() && steps.trusted_config.outputs.configured == 'true'
+        run: rm -rf "$RUNNER_TEMP/pi-agent"

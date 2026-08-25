@@ -113,13 +113,14 @@ Pioneer checks only the fixed `@rock3r/pioneer` npm package name and public npm 
 
 ## Residual risks
 
-- Review skills execute inside the sandbox and can still alter the review, exfiltrate any granted content through permitted networking, or write to explicit writable grants. Optional Pi extensions are not discovered by Pioneer actors.
+- Review skills execute inside the sandbox and can still alter the review, exfiltrate any granted content, or consume provider quota. Deep review actors disable skill discovery entirely.
+- Deep review actors disable skill discovery, generic built-in tools, and unrestricted `bash`. They load only Pioneer's bundled inspection extension plus explicitly pinned provider extensions selected from a trusted capability profile outside the reviewed source tree; each selected extension must declare a SHA-256 content digest verified before launch. Actors use `public` networking, never inherit `GITHUB_TOKEN`, and receive packet/candidate data only through typed extension tools bounded by the controller.
 - `full` review networking intentionally permits proxy access to LAN and loopback services.
 - A writable reference path is a real host write capability. Grant it sparingly.
 - Proxy-unaware tools cannot use Linux networking.
 - Windows reviews have no OS filesystem boundary.
 - On macOS and Windows, a descendant that deliberately escapes the expected process-group behavior may retain resources until the bounded containment grace expires; Pioneer reports containment failure and destroys its capture streams, but cannot retroactively revoke resources outside the native sandbox. Linux is not exposed to this because the actor's PID namespace is destroyed with it.
 - Controller-collected Git context is untrusted repository text. A malicious repo can still place misleading diffs or status lines in the review prompt.
-- The current result is free-form model output, not a schema-validated finding set.
+- The current free-form review result is model prose, not a schema-validated finding set. Deep review adds a separate versioned result contract for council workflows.
 
 Report suspected sandbox escapes or credential disclosure privately to the maintainers before publishing details.

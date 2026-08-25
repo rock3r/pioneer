@@ -238,3 +238,26 @@ The command must run as root. It installs a root-owned copy of `/usr/bin/bwrap` 
 | `PIONEER_DEBUG` | Enables limited proxy diagnostics; never enable in routine use |
 
 Run-local `HOME`, `TMPDIR`, proxy variables, `PI_OFFLINE`, and `PI_TELEMETRY` are set by the controller. Arbitrary host environment variables are not passed into sandboxed actors.
+
+## `pioneer deep-review`
+
+Runs a versioned council/president deep review against a validated PR packet and trusted configuration. Pioneer core has no GitHub credential on this path.
+
+```text
+pioneer deep-review --source DIR --packet FILE --config FILE
+  [--output FILE] [--work-log FILE] [--scratch-base DIR]
+```
+
+Stdout emits a small machine-readable terminal summary. `[PIONEER_DEEP_REVIEW_WORK_LOG]` and `[PIONEER_DEEP_REVIEW_RESULT]` go to stderr. Exit `0` for a complete clean review, `1` when publishable findings exist, and `2` for incomplete or unavailable runs. Windows fails closed before actor launch.
+
+## `pioneer github deep-review`
+
+Trusted GitHub adapter commands for same-repository workflows:
+
+```text
+pioneer github deep-review start --owner OWNER --repo REPO --head-sha SHA
+pioneer github deep-review collect --source DIR --owner OWNER --repo REPO --pr N --head-sha SHA --output FILE
+pioneer github deep-review publish --owner OWNER --repo REPO --pr N --result FILE --packet FILE --check-run-id ID
+```
+
+Collect and publish require `GITHUB_TOKEN`. The `pioneer deep-review` step must run without that token in its environment.
