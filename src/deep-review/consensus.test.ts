@@ -249,6 +249,19 @@ describe("diff location", () => {
     patch: "@@ -1,1 +1,2 @@\n line\n+added\n",
   };
 
+  it("treats added lines starting with ++ as hunks, not file headers", () => {
+    const file = {
+      path: "src/counter.ts",
+      status: "modified" as const,
+      contentKind: "text" as const,
+      additions: 1,
+      deletions: 0,
+      patch: "@@ -1,1 +1,2 @@\n context\n+++counter\n",
+    };
+    expect(changedHunksForFile(file)).toEqual([{ side: "RIGHT", startLine: 2, endLine: 2 }]);
+    expect(validateFindingLocation(file, "RIGHT", 2, 2)).toBe(true);
+  });
+
   it("validates RIGHT side on added line", () => {
     expect(validateFindingLocation(file, "RIGHT", 2, 2)).toBe(true);
   });

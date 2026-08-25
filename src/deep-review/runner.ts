@@ -6,6 +6,7 @@ import {
   validateControllerScratchBase,
 } from "../controller-scratch.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
+import { defaultGitRunnerCollect, resolveLocalHeadSha } from "../github/deep-review/collect.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import {
   validateProspectiveDeepReviewOutputPaths,
@@ -101,8 +102,20 @@ export function assertDeepReviewPlatform(config: DeepReviewConfigV1): void {
   }
 }
 
-export async function validateDeepReviewSource(sourceDir: string): Promise<string> {
+export async function validateDeepReviewSource(
+  sourceDir: string,
+  expectedHeadSha?: string,
+): Promise<string> {
   const validated = await validateReviewPaths({ sourceDir });
+  if (expectedHeadSha !== undefined) {
+    const headSha = await resolveLocalHeadSha(validated.sourceDir, "git", defaultGitRunnerCollect);
+    const normalizedExpected = expectedHeadSha.trim().toLowerCase();
+    if (headSha !== normalizedExpected) {
+      throw new Error(
+        `[DEEP_REVIEW_HEAD_CHANGED] source checkout HEAD ${headSha} does not match packet head ${normalizedExpected}`,
+      );
+    }
+  }
   return validated.sourceDir;
 }
 
@@ -120,7 +133,10 @@ export async function runDeepReview(request: DeepReviewRequest): Promise<DeepRev
     request.packet,
     request.config.limits?.maximumPacketBytes ?? DEFAULT_MAXIMUM_PACKET_BYTES,
   );
-  const sourceDir = await validateDeepReviewSource(request.sourceDir);
+  const sourceDir = await validateDeepReviewSource(
+    request.sourceDir,
+    request.packet.pullRequest.headSha,
+  );
   const runId = newRunId();
   const validatedOutputs = await validateProspectiveDeepReviewOutputPaths({
     sourceDir,

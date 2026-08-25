@@ -198,6 +198,27 @@ describe("github deep-review collect", () => {
     ).rejects.toThrow(/unrecognized git name-status/);
   });
 
+  it("does not force text diffs when collecting per-file patches", async () => {
+    let perFileDiffArgs: readonly string[] = [];
+    const gitRunner: GitRunner = async (_executable, args) => {
+      const key = gitArgsKey(args);
+      if (key === "rev-parse\0--show-object-format") {
+        return { stdout: "sha1\n", stderr: "", exitCode: 0 };
+      }
+      if (key === `diff\0--name-status\0-z\0${BASE_SHA}...${HEAD_SHA}`) {
+        return { stdout: "M\0src/main.ts\0", stderr: "", exitCode: 0 };
+      }
+      if (key === `diff\0${BASE_SHA}...${HEAD_SHA}\0--\0src/main.ts`) {
+        perFileDiffArgs = args;
+        return { stdout: "@@ -1,1 +1,2 @@\n line\n+added\n", stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: `unexpected git args: ${key}`, exitCode: 1 };
+    };
+
+    await collectGitChangedFiles("/tmp/repo", BASE_SHA, HEAD_SHA, "/usr/bin/git", gitRunner);
+    expect(perFileDiffArgs).not.toContain("--text");
+  });
+
   it("marks binary git diffs without patches", async () => {
     const gitRunner = createScriptedGitRunner({
       "rev-parse\0--show-object-format": { stdout: "sha1\n" },

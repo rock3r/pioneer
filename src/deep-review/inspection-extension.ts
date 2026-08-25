@@ -17,7 +17,9 @@ export function bundledDeepReviewInspectionRuntimeReadPaths(
   const deepReviewDist = path.join(packageRoot, "dist", "deep-review");
   return [
     bundledDeepReviewInspectionExtensionPath(packageRoot),
+    path.join(deepReviewDist, "bounded-response.js"),
     path.join(deepReviewDist, "source-access.js"),
+    path.join(deepReviewDist, "source-file-read.js"),
   ];
 }
 

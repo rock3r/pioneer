@@ -12,6 +12,10 @@ export interface ChangedHunkRange {
   readonly endLine: number;
 }
 
+function isUnifiedDiffFileHeader(line: string): boolean {
+  return line.startsWith("+++ ") || line.startsWith("--- ");
+}
+
 function parseUnifiedDiffHunks(patch: string): ChangedHunkRange[] {
   const ranges: ChangedHunkRange[] = [];
   const lines = patch.split("\n");
@@ -25,12 +29,12 @@ function parseUnifiedDiffHunks(patch: string): ChangedHunkRange[] {
       newLine = Number(hunkMatch[2]);
       continue;
     }
-    if (line.startsWith("-") && !line.startsWith("---")) {
+    if (line.startsWith("-") && !isUnifiedDiffFileHeader(line)) {
       ranges.push({ side: "LEFT", startLine: oldLine, endLine: oldLine });
       oldLine += 1;
       continue;
     }
-    if (line.startsWith("+") && !line.startsWith("+++")) {
+    if (line.startsWith("+") && !isUnifiedDiffFileHeader(line)) {
       ranges.push({ side: "RIGHT", startLine: newLine, endLine: newLine });
       newLine += 1;
       continue;

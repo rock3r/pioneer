@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { computePacketDigest, parsePullRequestPacket } from "./packet.js";
+import {
+  computePacketDigest,
+  parsePullRequestPacket,
+  validatePacketCompleteness,
+} from "./packet.js";
 
 function samplePacketBody() {
   return {
@@ -121,6 +125,26 @@ describe("deep-review packet", () => {
     };
     const packetDigest = computePacketDigest(body);
     expect(() => parsePullRequestPacket({ ...body, packetDigest })).toThrow(/invalid format/);
+  });
+
+  it("measures packet size limits in UTF-8 bytes", () => {
+    const body = {
+      ...samplePacketBody(),
+      pullRequest: {
+        ...samplePacketBody().pullRequest,
+        title: "é".repeat(2_000),
+      },
+    };
+    const packet = parsePullRequestPacket({
+      ...body,
+      packetDigest: computePacketDigest(body),
+    });
+    const serialized = JSON.stringify(packet);
+    const charLength = serialized.length;
+    const byteLength = Buffer.byteLength(serialized, "utf8");
+    expect(byteLength).toBeGreaterThan(charLength);
+    expect(() => validatePacketCompleteness(packet, charLength)).toThrow(/exceeds size limit/);
+    expect(() => validatePacketCompleteness(packet, byteLength)).not.toThrow();
   });
 });
 

@@ -186,7 +186,6 @@ async function runGitDiffCollect(
       "-c",
       `attr.tree=${emptyTree}`,
       "diff",
-      "--text",
       "--no-ext-diff",
       "--no-textconv",
       "--no-color",

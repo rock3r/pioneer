@@ -3,14 +3,15 @@
  * Loaded explicitly via `pi --extension` with discovery disabled.
  */
 
-import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { Type } from "typebox";
+import { boundedText } from "../bounded-response.js";
 import { resolveSourceDirectoryPath, resolveSourceFilePath } from "../source-access.js";
+import { readSourceFileLines } from "../source-file-read.js";
 
 const MAX_TOOL_RESPONSE_BYTES = 64 * 1024;
 const MAX_TOOL_CALLS = 200;
 const MAX_CANDIDATE_READ_BYTES = 16 * 1024;
-const MAX_SOURCE_FILE_READ_BYTES = 256 * 1024;
 
 let toolCallCount = 0;
 
@@ -20,95 +21,12 @@ function env(name: string): string {
   return value;
 }
 
-function boundedText(text: string, maxBytes: number): string {
-  const bytes = Buffer.byteLength(text, "utf8");
-  if (bytes <= maxBytes) return text;
-  return `${text.slice(0, maxBytes)}…[truncated]`;
-}
-
 function loadJson(pathValue: string): unknown {
   const raw = readFileSync(pathValue, "utf8");
   if (Buffer.byteLength(raw, "utf8") > 8 * 1024 * 1024) {
     throw new Error("Store file exceeds limit");
   }
   return JSON.parse(raw);
-}
-
-function readBoundedSourceText(absolute: string, maxBytes: number): string {
-  const fd = openSync(absolute, "r");
-  try {
-    const stats = fstatSync(fd);
-    if (!stats.isFile()) {
-      throw new Error("Source path is not a regular file");
-    }
-    const bytesToRead = Math.min(stats.size, maxBytes);
-    const buffer = Buffer.alloc(bytesToRead);
-    let offset = 0;
-    while (offset < bytesToRead) {
-      const bytesRead = readSync(fd, buffer, offset, bytesToRead - offset, offset);
-      if (bytesRead <= 0) break;
-      offset += bytesRead;
-    }
-    return buffer.subarray(0, offset).toString("utf8");
-  } finally {
-    closeSync(fd);
-  }
-}
-
-const MAX_SOURCE_FILE_SCAN_BYTES = 4 * 1024 * 1024;
-
-function readSourceFileLines(absolute: string, startLine: number, lineLimit: number): string[] {
-  const fd = openSync(absolute, "r");
-  try {
-    const stats = fstatSync(fd);
-    if (!stats.isFile()) {
-      throw new Error("Source path is not a regular file");
-    }
-    if (stats.size <= MAX_SOURCE_FILE_READ_BYTES && startLine === 1) {
-      return readBoundedSourceText(absolute, MAX_SOURCE_FILE_READ_BYTES)
-        .split("\n")
-        .slice(startLine - 1, startLine - 1 + lineLimit);
-    }
-
-    let lineNumber = 0;
-    let bytesScanned = 0;
-    const lines: string[] = [];
-    let carry = "";
-    const chunkSize = 64 * 1024;
-
-    while (bytesScanned < stats.size && lines.length < lineLimit) {
-      const toRead = Math.min(chunkSize, stats.size - bytesScanned);
-      const buffer = Buffer.alloc(toRead);
-      const read = readSync(fd, buffer, 0, toRead, bytesScanned);
-      if (read <= 0) break;
-      bytesScanned += read;
-      carry += buffer.subarray(0, read).toString("utf8");
-
-      while (lines.length < lineLimit) {
-        const newline = carry.indexOf("\n");
-        if (newline === -1) {
-          if (bytesScanned >= stats.size) {
-            lineNumber += 1;
-            if (lineNumber >= startLine) lines.push(carry);
-            carry = "";
-          }
-          break;
-        }
-        const line = carry.slice(0, newline);
-        carry = carry.slice(newline + 1);
-        lineNumber += 1;
-        if (lineNumber >= startLine) lines.push(line);
-      }
-
-      if (lineNumber < startLine - 1 && bytesScanned > MAX_SOURCE_FILE_SCAN_BYTES) {
-        throw new Error("Source read exceeded scan budget");
-      }
-    }
-
-    return lines;
-  } finally {
-    closeSync(fd);
-  }
 }
 
 function assertToolBudget(): void {

@@ -347,7 +347,7 @@ export function validatePacketCompleteness(
   maxBytes: number = DEFAULT_MAXIMUM_PACKET_BYTES,
 ): void {
   const serialized = JSON.stringify(packet);
-  if (serialized.length > maxBytes) {
+  if (Buffer.byteLength(serialized, "utf8") > maxBytes) {
     throw new Error(`[DEEP_REVIEW_PACKET_INCOMPLETE] packet exceeds size limit`);
   }
   const hasReviewableText = packet.files.some(

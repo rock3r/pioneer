@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -10,6 +11,55 @@ import { computePacketDigest } from "./packet.js";
 import { assertDeepReviewPlatform, type DeepReviewActorExecutor, runDeepReview } from "./runner.js";
 
 const temp = registerManagedTempPaths();
+
+async function initGitRepo(dir: string, content = "demo\n"): Promise<string> {
+  await writeFile(path.join(dir, "README.md"), content, "utf8");
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "Test User"], { cwd: dir });
+  execFileSync("git", ["add", "README.md"], { cwd: dir });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: dir });
+  return execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+}
+
+function packetWithHeadSha(headSha: string): PullRequestPacketV1 {
+  const body = {
+    schemaVersion: "pioneer-pr-review-packet/v1" as const,
+    repository: { owner: "acme", name: "repo" },
+    pullRequest: {
+      number: 1,
+      url: "https://github.com/acme/repo/pull/1",
+      title: "Fix",
+      body: "",
+      baseRef: "main",
+      baseSha: "a".repeat(40),
+      headSha,
+    },
+    commits: [],
+    files: [
+      {
+        path: "src/main.ts",
+        status: "modified" as const,
+        contentKind: "text" as const,
+        additions: 1,
+        deletions: 0,
+        patch: "@@ -1,1 +1,2 @@\n line\n+added\n",
+      },
+    ],
+    rules: [],
+    previousFindings: [],
+  };
+  return { ...body, packetDigest: computePacketDigest(body) };
+}
+
+async function createGitReviewSource(): Promise<{
+  readonly sourceDir: string;
+  readonly packet: PullRequestPacketV1;
+}> {
+  const sourceDir = await temp.createTempDir("deep-review-source-");
+  const headSha = await initGitRepo(sourceDir);
+  return { sourceDir, packet: packetWithHeadSha(headSha) };
+}
 
 async function managedRunOutputPaths(): Promise<{
   readonly resultPath: string;
@@ -37,36 +87,6 @@ const sampleFinding = (): WorkerFindingV1 => ({
   confidence: "high",
   dedupeKey: "null-deref-main",
 });
-
-function samplePacket(): PullRequestPacketV1 {
-  const body = {
-    schemaVersion: "pioneer-pr-review-packet/v1" as const,
-    repository: { owner: "acme", name: "repo" },
-    pullRequest: {
-      number: 1,
-      url: "https://github.com/acme/repo/pull/1",
-      title: "Fix",
-      body: "",
-      baseRef: "main",
-      baseSha: "a".repeat(40),
-      headSha: "b".repeat(40),
-    },
-    commits: [],
-    files: [
-      {
-        path: "src/main.ts",
-        status: "modified" as const,
-        contentKind: "text" as const,
-        additions: 1,
-        deletions: 0,
-        patch: "@@ -1,1 +1,2 @@\n line\n+added\n",
-      },
-    ],
-    rules: [],
-    previousFindings: [],
-  };
-  return { ...body, packetDigest: computePacketDigest(body) };
-}
 
 const baseConfig = parseDeepReviewConfig({
   schemaVersion: "pioneer-deep-review-config/v1",
@@ -161,13 +181,12 @@ describe("runDeepReview", () => {
 
   describe.skipIf(process.platform === "win32")("supported platforms", () => {
     it("assigns candidate IDs and publishes consensus findings with fake actors", async () => {
-      const sourceDir = await temp.createTempDir("deep-review-source-");
-      await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+      const { sourceDir, packet } = await createGitReviewSource();
       const { resultPath, workLogPath } = await managedRunOutputPaths();
 
       const execution = await runDeepReview({
         sourceDir,
-        packet: samplePacket(),
+        packet,
         config: baseConfig,
         resultPath,
         workLogPath,
@@ -196,13 +215,12 @@ describe("runDeepReview", () => {
     });
 
     it("skips president when quorum is unavailable", async () => {
-      const sourceDir = await temp.createTempDir("deep-review-source-");
-      await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+      const { sourceDir, packet } = await createGitReviewSource();
       const { resultPath, workLogPath } = await managedRunOutputPaths();
 
       const execution = await runDeepReview({
         sourceDir,
-        packet: samplePacket(),
+        packet,
         config: baseConfig,
         resultPath,
         workLogPath,
@@ -270,14 +288,12 @@ describe("runDeepReview", () => {
         },
       };
 
-      const sourceDir = await temp.createTempDir("deep-review-source-");
-      await mkdir(sourceDir, { recursive: true });
-      await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+      const { sourceDir, packet } = await createGitReviewSource();
       const { resultPath, workLogPath } = await managedRunOutputPaths();
 
       await runDeepReview({
         sourceDir,
-        packet: samplePacket(),
+        packet,
         config: threeMemberConfig,
         resultPath,
         workLogPath,
@@ -289,14 +305,13 @@ describe("runDeepReview", () => {
     });
 
     it("rejects a scratch base inside the reviewed source tree", async () => {
-      const sourceDir = await temp.createTempDir("deep-review-source-");
-      await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+      const { sourceDir, packet } = await createGitReviewSource();
       const { resultPath, workLogPath } = await managedRunOutputPaths();
 
       await expect(
         runDeepReview({
           sourceDir,
-          packet: samplePacket(),
+          packet,
           config: baseConfig,
           controllerScratchBase: sourceDir,
           resultPath,
@@ -307,21 +322,37 @@ describe("runDeepReview", () => {
     });
 
     it("rejects actor-visible result and work-log targets", async () => {
-      const sourceDir = await temp.createTempDir("deep-review-source-");
-      await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+      const { sourceDir, packet } = await createGitReviewSource();
       const resultPath = path.join(sourceDir, "result.json");
       const workLogPath = temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`);
 
       await expect(
         runDeepReview({
           sourceDir,
-          packet: samplePacket(),
+          packet,
           config: baseConfig,
           resultPath,
           workLogPath,
           actorExecutor: createFakeExecutor(),
         }),
       ).rejects.toThrow(/actor-visible/);
+    });
+
+    it("rejects source checkout that does not match packet head SHA", async () => {
+      const sourceDir = await temp.createTempDir("deep-review-source-");
+      await initGitRepo(sourceDir);
+      const { resultPath, workLogPath } = await managedRunOutputPaths();
+
+      await expect(
+        runDeepReview({
+          sourceDir,
+          packet: packetWithHeadSha("c".repeat(40)),
+          config: baseConfig,
+          resultPath,
+          workLogPath,
+          actorExecutor: createFakeExecutor(),
+        }),
+      ).rejects.toThrow(/DEEP_REVIEW_HEAD_CHANGED/);
     });
   });
 });

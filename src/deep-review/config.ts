@@ -1,3 +1,4 @@
+import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import type { ThinkingLevel } from "../thinking-level.js";
 import { isThinkingLevel } from "../thinking-level.js";
 import type { FindingCategoryV1 } from "./finding.js";
@@ -431,6 +432,14 @@ export function parseDeepReviewConfig(value: unknown): DeepReviewConfigV1 {
   return config;
 }
 
+function canonicalCouncilModelIdentity(model: string): string {
+  const trimmed = model.trim();
+  const thinking = thinkingFromModelShorthand(trimmed);
+  const withoutThinking =
+    thinking === undefined ? trimmed : trimmed.slice(0, trimmed.lastIndexOf(":"));
+  return withoutThinking.toLowerCase();
+}
+
 export function validateCouncilIndependence(config: DeepReviewConfigV1): void {
   const memberIds = new Set<string>();
   const models = new Set<string>();
@@ -444,12 +453,13 @@ export function validateCouncilIndependence(config: DeepReviewConfigV1): void {
   }
 
   for (const member of config.council) {
-    if (models.has(member.model)) {
+    const modelIdentity = canonicalCouncilModelIdentity(member.model);
+    if (models.has(modelIdentity)) {
       throw new Error(
         `[DEEP_REVIEW_INDEPENDENCE_INVALID] duplicate council model: ${member.model}`,
       );
     }
-    models.add(member.model);
+    models.add(modelIdentity);
     if (groups.has(member.independenceGroup)) {
       throw new Error(
         `[DEEP_REVIEW_INDEPENDENCE_INVALID] duplicate independence group: ${member.independenceGroup}`,

@@ -125,4 +125,17 @@ describe("validateCouncilIndependence", () => {
     });
     expect(() => validateCouncilIndependence(config)).not.toThrow();
   });
+
+  it("rejects duplicate council models after normalizing case and thinking suffix", () => {
+    expect(() =>
+      parseDeepReviewConfig({
+        schemaVersion: "pioneer-deep-review-config/v1",
+        council: [
+          baseMember("worker-a", "Provider/A:high", "group-a"),
+          baseMember("worker-b", "provider/a", "group-b"),
+        ],
+        president: baseMember("president", "provider/p", "group-p"),
+      }),
+    ).toThrow(/duplicate council model/);
+  });
 });
