@@ -148,6 +148,7 @@ describe("runDeepReview", () => {
     ).toThrow(/focusedCommands execution is disabled/);
   });
 
+  describe.skipIf(process.platform === "win32")("supported platforms", () => {
   it("assigns candidate IDs and publishes consensus findings with fake actors", async () => {
     const sourceDir = await temp.createTempDir("deep-review-source-");
     await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
@@ -306,5 +307,6 @@ describe("runDeepReview", () => {
         actorExecutor: createFakeExecutor(),
       }),
     ).rejects.toThrow(/actor-visible/);
+  });
   });
 });

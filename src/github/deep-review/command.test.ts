@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createFakeGitHubClient } from "../../../test/support/fake-github-client.js";
 import { type GitRunner, gitArgsKey } from "./collect.js";
@@ -50,7 +52,7 @@ describe("github deep-review command", () => {
       return { stdout: "", stderr: "unexpected", exitCode: 1 };
     };
 
-    const tempOutput = `/tmp/pioneer-packet-${Date.now()}.json`;
+    const tempOutput = path.join(os.tmpdir(), `pioneer-packet-${Date.now()}.json`);
     await runGitHubDeepReviewCli(
       [
         "collect",
