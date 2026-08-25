@@ -11,6 +11,17 @@ import { assertDeepReviewPlatform, type DeepReviewActorExecutor, runDeepReview }
 
 const temp = registerManagedTempPaths();
 
+async function managedRunOutputPaths(): Promise<{
+  readonly resultPath: string;
+  readonly workLogPath: string;
+}> {
+  const runDir = await temp.createTempDir("deep-review-run-");
+  return {
+    resultPath: path.join(runDir, "result.json"),
+    workLogPath: path.join(runDir, "work-log.jsonl"),
+  };
+}
+
 const sampleFinding = (): WorkerFindingV1 => ({
   file: "src/main.ts",
   line: 2,
@@ -152,8 +163,7 @@ describe("runDeepReview", () => {
     it("assigns candidate IDs and publishes consensus findings with fake actors", async () => {
       const sourceDir = await temp.createTempDir("deep-review-source-");
       await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
-      const resultPath = temp.reserveTempPath(`deep-review-result-${Date.now()}.json`);
-      const workLogPath = temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`);
+      const { resultPath, workLogPath } = await managedRunOutputPaths();
 
       const execution = await runDeepReview({
         sourceDir,
@@ -188,8 +198,7 @@ describe("runDeepReview", () => {
     it("skips president when quorum is unavailable", async () => {
       const sourceDir = await temp.createTempDir("deep-review-source-");
       await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
-      const resultPath = temp.reserveTempPath(`deep-review-result-${Date.now()}.json`);
-      const workLogPath = temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`);
+      const { resultPath, workLogPath } = await managedRunOutputPaths();
 
       const execution = await runDeepReview({
         sourceDir,
@@ -264,13 +273,14 @@ describe("runDeepReview", () => {
       const sourceDir = await temp.createTempDir("deep-review-source-");
       await mkdir(sourceDir, { recursive: true });
       await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+      const { resultPath, workLogPath } = await managedRunOutputPaths();
 
       await runDeepReview({
         sourceDir,
         packet: samplePacket(),
         config: threeMemberConfig,
-        resultPath: temp.reserveTempPath(`deep-review-result-${Date.now()}.json`),
-        workLogPath: temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`),
+        resultPath,
+        workLogPath,
         actorExecutor: executor,
       });
 
@@ -281,6 +291,7 @@ describe("runDeepReview", () => {
     it("rejects a scratch base inside the reviewed source tree", async () => {
       const sourceDir = await temp.createTempDir("deep-review-source-");
       await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+      const { resultPath, workLogPath } = await managedRunOutputPaths();
 
       await expect(
         runDeepReview({
@@ -288,8 +299,8 @@ describe("runDeepReview", () => {
           packet: samplePacket(),
           config: baseConfig,
           controllerScratchBase: sourceDir,
-          resultPath: temp.reserveTempPath(`deep-review-result-${Date.now()}.json`),
-          workLogPath: temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`),
+          resultPath,
+          workLogPath,
           actorExecutor: createFakeExecutor(),
         }),
       ).rejects.toThrow(/Controller scratch base must not sit inside a granted path/);
