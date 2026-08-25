@@ -1,13 +1,14 @@
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createFakeGitHubClient } from "../../../test/support/fake-github-client.js";
+import { registerManagedTempPaths } from "../../../test/support/temp-dir.js";
 import { type GitRunner, gitArgsKey } from "./collect.js";
 import { runGitHubDeepReviewCli } from "./command.js";
 
 const HEAD_SHA = "b".repeat(40);
 
 describe("github deep-review command", () => {
+  const { reserveTempPath } = registerManagedTempPaths();
+
   it("prints usage for --help", async () => {
     const stdout: string[] = [];
     await runGitHubDeepReviewCli(["--help"], "pioneer github deep-review", {
@@ -52,7 +53,7 @@ describe("github deep-review command", () => {
       return { stdout: "", stderr: "unexpected", exitCode: 1 };
     };
 
-    const tempOutput = path.join(os.tmpdir(), `pioneer-packet-${Date.now()}.json`);
+    const tempOutput = reserveTempPath(`pioneer-packet-${Date.now()}.json`);
     await runGitHubDeepReviewCli(
       [
         "collect",
