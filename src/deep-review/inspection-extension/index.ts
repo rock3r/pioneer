@@ -55,6 +55,62 @@ function readBoundedSourceText(absolute: string, maxBytes: number): string {
   }
 }
 
+const MAX_SOURCE_FILE_SCAN_BYTES = 4 * 1024 * 1024;
+
+function readSourceFileLines(absolute: string, startLine: number, lineLimit: number): string[] {
+  const fd = openSync(absolute, "r");
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile()) {
+      throw new Error("Source path is not a regular file");
+    }
+    if (stats.size <= MAX_SOURCE_FILE_READ_BYTES && startLine === 1) {
+      return readBoundedSourceText(absolute, MAX_SOURCE_FILE_READ_BYTES)
+        .split("\n")
+        .slice(startLine - 1, startLine - 1 + lineLimit);
+    }
+
+    let lineNumber = 0;
+    let bytesScanned = 0;
+    const lines: string[] = [];
+    let carry = "";
+    const chunkSize = 64 * 1024;
+
+    while (bytesScanned < stats.size && lines.length < lineLimit) {
+      const toRead = Math.min(chunkSize, stats.size - bytesScanned);
+      const buffer = Buffer.alloc(toRead);
+      const read = readSync(fd, buffer, 0, toRead, bytesScanned);
+      if (read <= 0) break;
+      bytesScanned += read;
+      carry += buffer.subarray(0, read).toString("utf8");
+
+      while (lines.length < lineLimit) {
+        const newline = carry.indexOf("\n");
+        if (newline === -1) {
+          if (bytesScanned >= stats.size) {
+            lineNumber += 1;
+            if (lineNumber >= startLine) lines.push(carry);
+            carry = "";
+          }
+          break;
+        }
+        const line = carry.slice(0, newline);
+        carry = carry.slice(newline + 1);
+        lineNumber += 1;
+        if (lineNumber >= startLine) lines.push(line);
+      }
+
+      if (lineNumber < startLine - 1 && bytesScanned > MAX_SOURCE_FILE_SCAN_BYTES) {
+        throw new Error("Source read exceeded scan budget");
+      }
+    }
+
+    return lines;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function assertToolBudget(): void {
   toolCallCount += 1;
   if (toolCallCount > MAX_TOOL_CALLS) {
@@ -206,11 +262,9 @@ export default function registerDeepReviewInspection(pi: {
     async execute(_id: string, params: { path: string; offset?: number; limit?: number }) {
       assertToolBudget();
       const absolute = resolveSourceFilePath(sourceRoot, params.path);
-      const raw = readBoundedSourceText(absolute, MAX_SOURCE_FILE_READ_BYTES);
-      const lines = raw.split("\n");
       const offset = params.offset ?? 1;
       const limit = Math.min(params.limit ?? 200, 500);
-      const slice = lines.slice(offset - 1, offset - 1 + limit);
+      const slice = readSourceFileLines(absolute, offset, limit);
       return textResult(JSON.stringify({ path: params.path, offset, limit, lines: slice }));
     },
   });

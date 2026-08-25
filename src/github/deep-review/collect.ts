@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import {
   computePacketDigest,
   type PreviousFindingV1,
@@ -119,6 +120,7 @@ export function gitArgsKey(args: readonly string[]): string {
     if (
       arg === "--no-pager" ||
       arg === "--literal-pathspecs" ||
+      arg === "--text" ||
       arg === "--no-ext-diff" ||
       arg === "--no-textconv" ||
       arg === "--no-color"
@@ -184,6 +186,7 @@ async function runGitDiffCollect(
       "-c",
       `attr.tree=${emptyTree}`,
       "diff",
+      "--text",
       "--no-ext-diff",
       "--no-textconv",
       "--no-color",
@@ -287,7 +290,7 @@ export async function collectGitChangedFiles(
       );
     }
     const patch = diff.stdout;
-    const binary = patch.includes("Binary files") || patch.trim().length === 0;
+    const binary = isGitBinaryPatch(patch);
     files.push({
       path: entry.path,
       ...(entry.previousPath ? { previousPath: entry.previousPath } : {}),
@@ -356,6 +359,30 @@ export function parseNameStatus(output: string): NameStatusEntry[] {
     index += 2;
   }
   return entries;
+}
+
+export function isGitBinaryPatch(patch: string): boolean {
+  const trimmed = patch.trim();
+  if (trimmed.length === 0) return false;
+  return /^Binary files .+ differ$/m.test(trimmed.split("\n")[0] ?? "");
+}
+
+export function discoverRepositoryRulePaths(changedPaths: readonly string[]): readonly string[] {
+  const discovered = new Set<string>(TRUSTED_REPOSITORY_RULE_PATHS);
+  for (const changedPath of changedPaths) {
+    let directory = path.posix.dirname(changedPath);
+    while (true) {
+      if (directory === "." || directory === "") {
+        discovered.add("AGENTS.md");
+        break;
+      }
+      discovered.add(`${directory}/AGENTS.md`);
+      const parent = path.posix.dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+  }
+  return [...discovered].sort();
 }
 
 function mergeGitAndApiFiles(
@@ -490,9 +517,10 @@ export async function collectRepositoryRules(
   headSha: string,
   gitExecutable: string,
   gitRunner: GitRunner,
+  changedPaths: readonly string[] = [],
 ): Promise<PullRequestPacketV1["rules"]> {
   const rules: PullRequestPacketV1["rules"][number][] = [];
-  for (const rulePath of TRUSTED_REPOSITORY_RULE_PATHS) {
+  for (const rulePath of discoverRepositoryRulePaths(changedPaths)) {
     const [headContent, baseContent] = await Promise.all([
       readGitBlobAtRevision(sourceDir, headSha, rulePath, gitExecutable, gitRunner),
       readGitBlobAtRevision(sourceDir, baseSha, rulePath, gitExecutable, gitRunner),
@@ -646,6 +674,7 @@ export async function collectPullRequestPacket(
     pullRequest.headSha,
     gitExecutable,
     gitRunner,
+    files.map((file) => file.path),
   );
 
   const trustedAuthorIds = new Set<string>([actor.id, ...(options.additionalBotAuthorIds ?? [])]);

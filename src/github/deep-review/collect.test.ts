@@ -7,8 +7,10 @@ import {
   collectGitChangedFiles,
   collectPullRequestPacket,
   collectRepositoryRules,
+  discoverRepositoryRulePaths,
   type GitRunner,
   gitArgsKey,
+  isGitBinaryPatch,
   parseNameStatus,
   runGitCollect,
   SAFE_GIT_CONFIG,
@@ -254,6 +256,27 @@ describe("github deep-review collect", () => {
         deletions: 0,
       },
     ]);
+  });
+
+  it("detects git binary patches without matching arbitrary source text", () => {
+    expect(isGitBinaryPatch("Binary files a/x and b/x differ\n")).toBe(true);
+    expect(isGitBinaryPatch('@@ -1,3 +1,3 @@\n+const text = "Binary files differ";\n')).toBe(false);
+  });
+
+  it("discovers nested AGENTS.md paths from changed files", () => {
+    expect([...discoverRepositoryRulePaths(["packages/api/src/handler.ts"])].sort()).toEqual(
+      [
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        "docs/ARCHITECTURE.md",
+        "docs/CONVENTIONS.md",
+        "docs/SECURITY.md",
+        "docs/TESTING.md",
+        "packages/AGENTS.md",
+        "packages/api/AGENTS.md",
+        "packages/api/src/AGENTS.md",
+      ].sort(),
+    );
   });
 
   it("collects base rules when head revision omits them", async () => {
