@@ -149,164 +149,168 @@ describe("runDeepReview", () => {
   });
 
   describe.skipIf(process.platform === "win32")("supported platforms", () => {
-  it("assigns candidate IDs and publishes consensus findings with fake actors", async () => {
-    const sourceDir = await temp.createTempDir("deep-review-source-");
-    await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
-    const resultPath = temp.reserveTempPath(`deep-review-result-${Date.now()}.json`);
-    const workLogPath = temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`);
+    it("assigns candidate IDs and publishes consensus findings with fake actors", async () => {
+      const sourceDir = await temp.createTempDir("deep-review-source-");
+      await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+      const resultPath = temp.reserveTempPath(`deep-review-result-${Date.now()}.json`);
+      const workLogPath = temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`);
 
-    const execution = await runDeepReview({
-      sourceDir,
-      packet: samplePacket(),
-      config: baseConfig,
-      resultPath,
-      workLogPath,
-      actorExecutor: createFakeExecutor(),
-    });
-
-    expect(execution.result.status).toBe("complete");
-    expect(execution.result.verdict).toBe("findings");
-    expect(execution.result.workers.every((worker) => worker.status === "success")).toBe(true);
-    expect(execution.result.president.status).toBe("success");
-    expect(execution.result.publishableFindings).toHaveLength(1);
-
-    const finding = sampleFinding();
-    const expectedIds = [
-      computeCandidateId("worker-a", finding),
-      computeCandidateId("worker-b", finding),
-    ];
-    expect(
-      execution.result.workers[0]?.status === "success" && execution.result.workers[0].candidateIds,
-    ).toEqual([expectedIds[0]]);
-    expect(
-      execution.result.workers[1]?.status === "success" && execution.result.workers[1].candidateIds,
-    ).toEqual([expectedIds[1]]);
-  });
-
-  it("skips president when quorum is unavailable", async () => {
-    const sourceDir = await temp.createTempDir("deep-review-source-");
-    await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
-    const resultPath = temp.reserveTempPath(`deep-review-result-${Date.now()}.json`);
-    const workLogPath = temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`);
-
-    const execution = await runDeepReview({
-      sourceDir,
-      packet: samplePacket(),
-      config: baseConfig,
-      resultPath,
-      workLogPath,
-      actorExecutor: createFakeExecutor({ failMemberId: "worker-b" }),
-    });
-
-    expect(execution.result.status).toBe("incomplete");
-    expect(execution.result.verdict).toBe("unavailable");
-    expect(execution.result.president.status).toBe("not-run");
-    expect(execution.result.publishableFindings).toHaveLength(0);
-    expect(
-      execution.result.diagnostics.some((entry) => entry.id === "deep-review-quorum-unavailable"),
-    ).toBe(true);
-    const failedWorker = execution.result.workers.find((worker) => worker.memberId === "worker-b");
-    expect(failedWorker?.status).toBe("failed");
-    if (failedWorker?.status !== "failed") throw new Error("expected failed worker");
-    expect(failedWorker.diagnosticId).toBeDefined();
-    expect(
-      execution.result.diagnostics.some((entry) => entry.id === failedWorker.diagnosticId),
-    ).toBe(true);
-
-    const workLogText = await readFile(workLogPath, "utf8");
-    const records = workLogText
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as { type: string; details: { memberId?: string } });
-    expect(
-      records.some(
-        (record) => record.type === "worker_failed" && record.details.memberId === "worker-b",
-      ),
-    ).toBe(true);
-  });
-
-  it("schedules council workers with bounded concurrency", async () => {
-    const threeMemberConfig = parseDeepReviewConfig({
-      schemaVersion: "pioneer-deep-review-config/v1",
-      council: [
-        { id: "worker-a", model: "provider/a", independenceGroup: "group-a" },
-        { id: "worker-b", model: "provider/b", independenceGroup: "group-b" },
-        { id: "worker-c", model: "provider/c", independenceGroup: "group-c" },
-      ],
-      president: { id: "president", model: "provider/p", independenceGroup: "group-p" },
-      limits: { maximumParallelWorkers: 2 },
-    });
-
-    let active = 0;
-    let maxActive = 0;
-    const executor: DeepReviewActorExecutor = {
-      async runWorker(_request) {
-        active += 1;
-        maxActive = Math.max(maxActive, active);
-        await new Promise((resolve) => setTimeout(resolve, 40));
-        active -= 1;
-        return workerOutput();
-      },
-      async runPresident(request) {
-        const { readFile } = await import("node:fs/promises");
-        const store = JSON.parse(await readFile(request.candidateStorePath, "utf8")) as {
-          candidates: Array<{ candidateId: string }>;
-        };
-        const firstTwo = store.candidates.slice(0, 2).map((candidate) => candidate.candidateId);
-        return presidentOutput(firstTwo);
-      },
-    };
-
-    const sourceDir = await temp.createTempDir("deep-review-source-");
-    await mkdir(sourceDir, { recursive: true });
-    await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
-
-    await runDeepReview({
-      sourceDir,
-      packet: samplePacket(),
-      config: threeMemberConfig,
-      resultPath: temp.reserveTempPath(`deep-review-result-${Date.now()}.json`),
-      workLogPath: temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`),
-      actorExecutor: executor,
-    });
-
-    expect(maxActive).toBeLessThanOrEqual(2);
-    expect(maxActive).toBeGreaterThan(1);
-  });
-
-  it("rejects a scratch base inside the reviewed source tree", async () => {
-    const sourceDir = await temp.createTempDir("deep-review-source-");
-    await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
-
-    await expect(
-      runDeepReview({
-        sourceDir,
-        packet: samplePacket(),
-        config: baseConfig,
-        controllerScratchBase: sourceDir,
-        resultPath: temp.reserveTempPath(`deep-review-result-${Date.now()}.json`),
-        workLogPath: temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`),
-        actorExecutor: createFakeExecutor(),
-      }),
-    ).rejects.toThrow(/Controller scratch base must not sit inside a granted path/);
-  });
-
-  it("rejects actor-visible result and work-log targets", async () => {
-    const sourceDir = await temp.createTempDir("deep-review-source-");
-    await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
-    const resultPath = path.join(sourceDir, "result.json");
-    const workLogPath = temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`);
-
-    await expect(
-      runDeepReview({
+      const execution = await runDeepReview({
         sourceDir,
         packet: samplePacket(),
         config: baseConfig,
         resultPath,
         workLogPath,
         actorExecutor: createFakeExecutor(),
-      }),
-    ).rejects.toThrow(/actor-visible/);
-  });
+      });
+
+      expect(execution.result.status).toBe("complete");
+      expect(execution.result.verdict).toBe("findings");
+      expect(execution.result.workers.every((worker) => worker.status === "success")).toBe(true);
+      expect(execution.result.president.status).toBe("success");
+      expect(execution.result.publishableFindings).toHaveLength(1);
+
+      const finding = sampleFinding();
+      const expectedIds = [
+        computeCandidateId("worker-a", finding),
+        computeCandidateId("worker-b", finding),
+      ];
+      expect(
+        execution.result.workers[0]?.status === "success" &&
+          execution.result.workers[0].candidateIds,
+      ).toEqual([expectedIds[0]]);
+      expect(
+        execution.result.workers[1]?.status === "success" &&
+          execution.result.workers[1].candidateIds,
+      ).toEqual([expectedIds[1]]);
+    });
+
+    it("skips president when quorum is unavailable", async () => {
+      const sourceDir = await temp.createTempDir("deep-review-source-");
+      await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+      const resultPath = temp.reserveTempPath(`deep-review-result-${Date.now()}.json`);
+      const workLogPath = temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`);
+
+      const execution = await runDeepReview({
+        sourceDir,
+        packet: samplePacket(),
+        config: baseConfig,
+        resultPath,
+        workLogPath,
+        actorExecutor: createFakeExecutor({ failMemberId: "worker-b" }),
+      });
+
+      expect(execution.result.status).toBe("incomplete");
+      expect(execution.result.verdict).toBe("unavailable");
+      expect(execution.result.president.status).toBe("not-run");
+      expect(execution.result.publishableFindings).toHaveLength(0);
+      expect(
+        execution.result.diagnostics.some((entry) => entry.id === "deep-review-quorum-unavailable"),
+      ).toBe(true);
+      const failedWorker = execution.result.workers.find(
+        (worker) => worker.memberId === "worker-b",
+      );
+      expect(failedWorker?.status).toBe("failed");
+      if (failedWorker?.status !== "failed") throw new Error("expected failed worker");
+      expect(failedWorker.diagnosticId).toBeDefined();
+      expect(
+        execution.result.diagnostics.some((entry) => entry.id === failedWorker.diagnosticId),
+      ).toBe(true);
+
+      const workLogText = await readFile(workLogPath, "utf8");
+      const records = workLogText
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { type: string; details: { memberId?: string } });
+      expect(
+        records.some(
+          (record) => record.type === "worker_failed" && record.details.memberId === "worker-b",
+        ),
+      ).toBe(true);
+    });
+
+    it("schedules council workers with bounded concurrency", async () => {
+      const threeMemberConfig = parseDeepReviewConfig({
+        schemaVersion: "pioneer-deep-review-config/v1",
+        council: [
+          { id: "worker-a", model: "provider/a", independenceGroup: "group-a" },
+          { id: "worker-b", model: "provider/b", independenceGroup: "group-b" },
+          { id: "worker-c", model: "provider/c", independenceGroup: "group-c" },
+        ],
+        president: { id: "president", model: "provider/p", independenceGroup: "group-p" },
+        limits: { maximumParallelWorkers: 2 },
+      });
+
+      let active = 0;
+      let maxActive = 0;
+      const executor: DeepReviewActorExecutor = {
+        async runWorker(_request) {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          active -= 1;
+          return workerOutput();
+        },
+        async runPresident(request) {
+          const { readFile } = await import("node:fs/promises");
+          const store = JSON.parse(await readFile(request.candidateStorePath, "utf8")) as {
+            candidates: Array<{ candidateId: string }>;
+          };
+          const firstTwo = store.candidates.slice(0, 2).map((candidate) => candidate.candidateId);
+          return presidentOutput(firstTwo);
+        },
+      };
+
+      const sourceDir = await temp.createTempDir("deep-review-source-");
+      await mkdir(sourceDir, { recursive: true });
+      await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+
+      await runDeepReview({
+        sourceDir,
+        packet: samplePacket(),
+        config: threeMemberConfig,
+        resultPath: temp.reserveTempPath(`deep-review-result-${Date.now()}.json`),
+        workLogPath: temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`),
+        actorExecutor: executor,
+      });
+
+      expect(maxActive).toBeLessThanOrEqual(2);
+      expect(maxActive).toBeGreaterThan(1);
+    });
+
+    it("rejects a scratch base inside the reviewed source tree", async () => {
+      const sourceDir = await temp.createTempDir("deep-review-source-");
+      await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+
+      await expect(
+        runDeepReview({
+          sourceDir,
+          packet: samplePacket(),
+          config: baseConfig,
+          controllerScratchBase: sourceDir,
+          resultPath: temp.reserveTempPath(`deep-review-result-${Date.now()}.json`),
+          workLogPath: temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`),
+          actorExecutor: createFakeExecutor(),
+        }),
+      ).rejects.toThrow(/Controller scratch base must not sit inside a granted path/);
+    });
+
+    it("rejects actor-visible result and work-log targets", async () => {
+      const sourceDir = await temp.createTempDir("deep-review-source-");
+      await writeFile(path.join(sourceDir, "README.md"), "demo\n", "utf8");
+      const resultPath = path.join(sourceDir, "result.json");
+      const workLogPath = temp.reserveTempPath(`deep-review-log-${Date.now()}.jsonl`);
+
+      await expect(
+        runDeepReview({
+          sourceDir,
+          packet: samplePacket(),
+          config: baseConfig,
+          resultPath,
+          workLogPath,
+          actorExecutor: createFakeExecutor(),
+        }),
+      ).rejects.toThrow(/actor-visible/);
+    });
   });
 });
