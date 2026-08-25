@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { chmod, writeFile } from "node:fs/promises";
+import {
+  publishReservedReviewReport,
+  type ReviewReportReservation,
+} from "../review/report-output.js";
 import type { DeepReviewConfigV1 } from "./config.js";
 import { resolvedConfigLimits } from "./config.js";
 import type { ArtifactFindingV1, PublishedFindingV1, SafeDiagnosticV1 } from "./consensus.js";
@@ -29,6 +33,7 @@ export interface DeepReviewResultV1 {
 export interface PersistDeepReviewResultOptions {
   readonly result: DeepReviewResultV1;
   readonly resultPath: string;
+  readonly reservation?: ReviewReportReservation;
 }
 
 export async function persistDeepReviewResult(
@@ -37,6 +42,10 @@ export async function persistDeepReviewResult(
   const serialized = `${JSON.stringify(options.result, null, 2)}\n`;
   if (Buffer.byteLength(serialized, "utf8") > 8 * 1024 * 1024) {
     throw new Error("[DEEP_REVIEW_OUTPUT_INVALID] result exceeds size limit");
+  }
+  if (options.reservation !== undefined) {
+    await publishReservedReviewReport(options.reservation, serialized.trimEnd());
+    return;
   }
   const tempPath = `${options.resultPath}.pending-${randomUUID()}`;
   await writeFile(tempPath, serialized, { encoding: "utf8", flag: "wx" });

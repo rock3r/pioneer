@@ -18,6 +18,8 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      PIONEER_PR_HEAD_DIR: ${{ runner.temp }}/pioneer-pr-head
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,7 +27,16 @@ jobs:
           persist-credentials: false
           submodules: false
           lfs: false
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: false
+          lfs: false
           ref: ${{ github.event.pull_request.head.sha }}
+          path: ${{ env.PIONEER_PR_HEAD_DIR }}
 
       - name: Resolve trusted deep-review config
         id: trusted_config
@@ -96,7 +107,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           node dist/review-cli.js github deep-review collect \
-            --source "$GITHUB_WORKSPACE" \
+            --source "$PIONEER_PR_HEAD_DIR" \
             --owner "${{ github.repository_owner }}" \
             --repo "${{ github.event.repository.name }}" \
             --pr "${{ github.event.pull_request.number }}" \
@@ -133,7 +144,7 @@ jobs:
           GITHUB_TOKEN: ""
         run: |
           node dist/review-cli.js deep-review \
-            --source "$GITHUB_WORKSPACE" \
+            --source "$PIONEER_PR_HEAD_DIR" \
             --packet "$RUNNER_TEMP/pioneer-packet.json" \
             --config "${{ steps.trusted_config.outputs.path }}" \
             --output "$RUNNER_TEMP/pioneer-result.json" \

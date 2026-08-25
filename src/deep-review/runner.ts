@@ -12,6 +12,11 @@ import {
   validateReviewPaths,
 } from "../review/isolation.js";
 import {
+  type ReviewReportReservation,
+  releaseReviewReportReservation,
+  reserveReviewReport,
+} from "../review/report-output.js";
+import {
   canonicalReviewPiHomeSource,
   createReviewScratchDirectory,
   piRuntimePaths,
@@ -127,6 +132,11 @@ export async function runDeepReview(request: DeepReviewRequest): Promise<DeepRev
   const workLogPath =
     validatedOutputs.workLogPath ?? path.join(os.tmpdir(), `pioneer-deep-review-${runId}.jsonl`);
   const workLog = await openDeepReviewWorkLog(workLogPath);
+
+  let resultReservation: ReviewReportReservation | undefined;
+  if (request.resultPath !== undefined) {
+    resultReservation = await reserveReviewReport(resultPath);
+  }
 
   const scratchBase =
     request.controllerScratchBase === undefined
@@ -313,7 +323,12 @@ export async function runDeepReview(request: DeepReviewRequest): Promise<DeepRev
       diagnostics,
     };
 
-    await persistDeepReviewResult({ result, resultPath });
+    await persistDeepReviewResult({
+      result,
+      resultPath,
+      ...(resultReservation === undefined ? {} : { reservation: resultReservation }),
+    });
+    resultReservation = undefined;
     workLog.record("result_persisted", {
       resultPath,
       status: result.status,
@@ -321,6 +336,9 @@ export async function runDeepReview(request: DeepReviewRequest): Promise<DeepRev
     });
     return { result, resultPath, workLogPath };
   } finally {
+    if (resultReservation !== undefined) {
+      await releaseReviewReportReservation(resultReservation).catch(() => {});
+    }
     if (controllerScratch !== undefined) {
       await rm(controllerScratch, { recursive: true, force: true });
     }

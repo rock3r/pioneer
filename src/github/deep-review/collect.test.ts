@@ -6,8 +6,10 @@ import { registerManagedTempPaths } from "../../../test/support/temp-dir.js";
 import {
   collectGitChangedFiles,
   collectPullRequestPacket,
+  collectRepositoryRules,
   type GitRunner,
   gitArgsKey,
+  parseNameStatus,
   runGitCollect,
   SAFE_GIT_CONFIG,
 } from "./collect.js";
@@ -50,12 +52,25 @@ describe("github deep-review collect", () => {
   it("collects a packet from fake GitHub and Git runners", async () => {
     const gitRunner = createScriptedGitRunner({
       "rev-parse\0HEAD": { stdout: `${HEAD_SHA}\n` },
+      "rev-parse\0--show-object-format": { stdout: "sha1\n" },
       [`cat-file\0-e\0${BASE_SHA}^{commit}`]: { stdout: "" },
       [`cat-file\0-e\0${HEAD_SHA}^{commit}`]: { stdout: "" },
       [`merge-base\0${BASE_SHA}\0${HEAD_SHA}`]: { stdout: `${BASE_SHA}\n` },
-      [`diff\0--name-status\0${BASE_SHA}...${HEAD_SHA}`]: {
-        stdout: "M\tsrc/main.ts\n",
+      [`diff\0--name-status\0-z\0${BASE_SHA}...${HEAD_SHA}`]: {
+        stdout: "M\0src/main.ts\0",
       },
+      [`show\0${HEAD_SHA}:AGENTS.md`]: { stdout: "# Agent rules\n" },
+      [`show\0${BASE_SHA}:AGENTS.md`]: { stdout: "# Agent rules\n" },
+      [`show\0${HEAD_SHA}:CONTRIBUTING.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:CONTRIBUTING.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${HEAD_SHA}:docs/ARCHITECTURE.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:docs/ARCHITECTURE.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${HEAD_SHA}:docs/CONVENTIONS.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:docs/CONVENTIONS.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${HEAD_SHA}:docs/SECURITY.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:docs/SECURITY.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${HEAD_SHA}:docs/TESTING.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:docs/TESTING.md`]: { stdout: "", exitCode: 1 },
       [`diff\0${BASE_SHA}...${HEAD_SHA}\0--\0src/main.ts`]: {
         stdout: "@@ -1,1 +1,2 @@\n line\n+added\n",
       },
@@ -122,6 +137,9 @@ describe("github deep-review collect", () => {
 
     expect(result.packet.pullRequest.headSha).toBe(HEAD_SHA);
     expect(result.packet.files[0]?.patch).toContain("+added");
+    expect(result.packet.rules).toEqual([
+      { path: "AGENTS.md", content: "# Agent rules\n", source: "head" },
+    ]);
     expect(
       result.packet.previousFindings.some(
         (finding) => finding.marker?.findingId === `pdr_${"d".repeat(24)}`,
@@ -168,8 +186,9 @@ describe("github deep-review collect", () => {
 
   it("fails closed on unrecognized git name-status codes", async () => {
     const gitRunner = createScriptedGitRunner({
-      [`diff\0--name-status\0${BASE_SHA}...${HEAD_SHA}`]: {
-        stdout: "T\tsrc/typechanged.ts\n",
+      "rev-parse\0--show-object-format": { stdout: "sha1\n" },
+      [`diff\0--name-status\0-z\0${BASE_SHA}...${HEAD_SHA}`]: {
+        stdout: "X\0src/unknown.ts\0",
       },
     });
     await expect(
@@ -179,8 +198,9 @@ describe("github deep-review collect", () => {
 
   it("marks binary git diffs without patches", async () => {
     const gitRunner = createScriptedGitRunner({
-      [`diff\0--name-status\0${BASE_SHA}...${HEAD_SHA}`]: {
-        stdout: "M\tassets/logo.png\n",
+      "rev-parse\0--show-object-format": { stdout: "sha1\n" },
+      [`diff\0--name-status\0-z\0${BASE_SHA}...${HEAD_SHA}`]: {
+        stdout: "M\0assets/logo.png\0",
       },
       [`diff\0${BASE_SHA}...${HEAD_SHA}\0--\0assets/logo.png`]: {
         stdout: "Binary files a/assets/logo.png and b/assets/logo.png differ\n",
@@ -198,5 +218,66 @@ describe("github deep-review collect", () => {
       contentKind: "binary",
     });
     expect(files[0]?.patch).toBeUndefined();
+  });
+
+  it("treats type-changed name-status entries as modified", async () => {
+    const gitRunner = createScriptedGitRunner({
+      "rev-parse\0--show-object-format": { stdout: "sha1\n" },
+      [`diff\0--name-status\0-z\0${BASE_SHA}...${HEAD_SHA}`]: {
+        stdout: "T\0src/link-target\0",
+      },
+      [`diff\0${BASE_SHA}...${HEAD_SHA}\0--\0src/link-target`]: {
+        stdout: "@@ -1,1 +1,1 @@\n-old\n+new\n",
+      },
+    });
+    const files = await collectGitChangedFiles(
+      "/tmp/repo",
+      BASE_SHA,
+      HEAD_SHA,
+      "/usr/bin/git",
+      gitRunner,
+    );
+    expect(files[0]).toMatchObject({
+      path: "src/link-target",
+      status: "modified",
+      contentKind: "text",
+    });
+  });
+
+  it("parses NUL-delimited name-status paths with special characters", () => {
+    const entries = parseNameStatus("M\0src/weird\tname.ts\0");
+    expect(entries).toEqual([
+      {
+        path: "src/weird\tname.ts",
+        status: "modified",
+        additions: 0,
+        deletions: 0,
+      },
+    ]);
+  });
+
+  it("collects base rules when head revision omits them", async () => {
+    const gitRunner = createScriptedGitRunner({
+      [`show\0${HEAD_SHA}:AGENTS.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:AGENTS.md`]: { stdout: "# Base rules\n" },
+      [`show\0${HEAD_SHA}:CONTRIBUTING.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:CONTRIBUTING.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${HEAD_SHA}:docs/ARCHITECTURE.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:docs/ARCHITECTURE.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${HEAD_SHA}:docs/CONVENTIONS.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:docs/CONVENTIONS.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${HEAD_SHA}:docs/SECURITY.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:docs/SECURITY.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${HEAD_SHA}:docs/TESTING.md`]: { stdout: "", exitCode: 1 },
+      [`show\0${BASE_SHA}:docs/TESTING.md`]: { stdout: "", exitCode: 1 },
+    });
+    const rules = await collectRepositoryRules(
+      "/tmp/repo",
+      BASE_SHA,
+      HEAD_SHA,
+      "/usr/bin/git",
+      gitRunner,
+    );
+    expect(rules).toEqual([{ path: "AGENTS.md", content: "# Base rules\n", source: "base" }]);
   });
 });

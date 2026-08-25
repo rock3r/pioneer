@@ -3,13 +3,14 @@
  * Loaded explicitly via `pi --extension` with discovery disabled.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
 import { Type } from "typebox";
 import { resolveSourceDirectoryPath, resolveSourceFilePath } from "../source-access.js";
 
 const MAX_TOOL_RESPONSE_BYTES = 64 * 1024;
 const MAX_TOOL_CALLS = 200;
 const MAX_CANDIDATE_READ_BYTES = 16 * 1024;
+const MAX_SOURCE_FILE_READ_BYTES = 256 * 1024;
 
 let toolCallCount = 0;
 
@@ -31,6 +32,27 @@ function loadJson(pathValue: string): unknown {
     throw new Error("Store file exceeds limit");
   }
   return JSON.parse(raw);
+}
+
+function readBoundedSourceText(absolute: string, maxBytes: number): string {
+  const fd = openSync(absolute, "r");
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile()) {
+      throw new Error("Source path is not a regular file");
+    }
+    const bytesToRead = Math.min(stats.size, maxBytes);
+    const buffer = Buffer.alloc(bytesToRead);
+    let offset = 0;
+    while (offset < bytesToRead) {
+      const bytesRead = readSync(fd, buffer, offset, bytesToRead - offset, offset);
+      if (bytesRead <= 0) break;
+      offset += bytesRead;
+    }
+    return buffer.subarray(0, offset).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function assertToolBudget(): void {
@@ -184,7 +206,7 @@ export default function registerDeepReviewInspection(pi: {
     async execute(_id: string, params: { path: string; offset?: number; limit?: number }) {
       assertToolBudget();
       const absolute = resolveSourceFilePath(sourceRoot, params.path);
-      const raw = readFileSync(absolute, "utf8");
+      const raw = readBoundedSourceText(absolute, MAX_SOURCE_FILE_READ_BYTES);
       const lines = raw.split("\n");
       const offset = params.offset ?? 1;
       const limit = Math.min(params.limit ?? 200, 500);

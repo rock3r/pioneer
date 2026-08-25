@@ -42,11 +42,14 @@ describe("github deep-review command", () => {
     const gitRunner: GitRunner = async (_executable, args) => {
       const key = gitArgsKey(args);
       if (key === "rev-parse\0HEAD") return { stdout: `${HEAD_SHA}\n`, stderr: "", exitCode: 0 };
+      if (key === "rev-parse\0--show-object-format")
+        return { stdout: "sha1\n", stderr: "", exitCode: 0 };
       if (key.startsWith("cat-file")) return { stdout: "", stderr: "", exitCode: 0 };
       if (key.startsWith("merge-base"))
         return { stdout: `${"a".repeat(40)}\n`, stderr: "", exitCode: 0 };
       if (key.includes("--name-status"))
-        return { stdout: "M\tsrc/main.ts\n", stderr: "", exitCode: 0 };
+        return { stdout: "M\0src/main.ts\0", stderr: "", exitCode: 0 };
+      if (key.startsWith("show\0")) return { stdout: "", stderr: "", exitCode: 1 };
       if (key.includes("src/main.ts")) {
         return { stdout: "@@ -1,1 +1,2 @@\n line\n+added\n", stderr: "", exitCode: 0 };
       }

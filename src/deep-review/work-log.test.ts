@@ -18,16 +18,28 @@ describe("deep review work log", () => {
     expect(contents).toContain('"type":"worker_completed"');
   });
 
-  it("surfaces append failures at close instead of silently dropping records", async () => {
-    const logPath = reserveTempPath(`deep-review-work-log-fail-${Date.now()}.jsonl`);
-    const workLog = await openDeepReviewWorkLog(logPath);
-    workLog.record("worker_started", { memberId: "worker-a" });
-    await new Promise((resolve) => setImmediate(resolve));
-    await chmod(logPath, 0o000);
-    workLog.record("worker_completed", { memberId: "worker-a" });
-    await new Promise((resolve) => setImmediate(resolve));
-    await expect(workLog.close()).rejects.toThrow(/DEEP_REVIEW_WORK_LOG_WRITE_FAILED/);
-    await chmod(logPath, 0o600);
-    await unlink(logPath);
-  });
+  it.skipIf(process.platform === "win32")(
+    "surfaces append failures at close instead of silently dropping records",
+    async () => {
+      const logPath = reserveTempPath(`deep-review-work-log-fail-${Date.now()}.jsonl`);
+      const workLog = await openDeepReviewWorkLog(logPath);
+      workLog.record("worker_started", { memberId: "worker-a" });
+      await new Promise((resolve) => setImmediate(resolve));
+      await chmod(logPath, 0o000);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      let failure: unknown;
+      try {
+        workLog.record("worker_completed", { memberId: "worker-a" });
+        await new Promise((resolve) => setImmediate(resolve));
+        await workLog.close();
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(String(failure)).toMatch(/DEEP_REVIEW_WORK_LOG_WRITE_FAILED/);
+      await chmod(logPath, 0o600);
+      await unlink(logPath);
+    },
+  );
 });

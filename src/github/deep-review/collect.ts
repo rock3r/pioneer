@@ -19,6 +19,16 @@ export type GitRunner = (
 ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
 
 const MAX_GIT_OUTPUT_BYTES = 2 * 1024 * 1024;
+const MAX_RULE_CONTENT_BYTES = 64 * 1024;
+
+export const TRUSTED_REPOSITORY_RULE_PATHS = [
+  "AGENTS.md",
+  "CONTRIBUTING.md",
+  "docs/ARCHITECTURE.md",
+  "docs/CONVENTIONS.md",
+  "docs/SECURITY.md",
+  "docs/TESTING.md",
+] as const;
 
 function nullDevice(): string {
   return process.platform === "win32" ? "NUL" : "/dev/null";
@@ -63,6 +73,9 @@ export const SAFE_GIT_CONFIG = [
   "protocol.ext.allow=never",
 ] as const;
 
+const SHA1_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const SHA256_EMPTY_TREE = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
+
 export function gitCollectEnvironment(): NodeJS.ProcessEnv {
   const emptyConfig = nullDevice();
   return {
@@ -82,9 +95,12 @@ export function gitCollectEnvironment(): NodeJS.ProcessEnv {
   };
 }
 
-function truncateGitOutput(stdout: string): string {
-  if (Buffer.byteLength(stdout, "utf8") <= MAX_GIT_OUTPUT_BYTES) return stdout;
-  return Buffer.from(stdout, "utf8").subarray(0, MAX_GIT_OUTPUT_BYTES).toString("utf8");
+function assertGitOutputWithinLimit(bytes: number, stream: "stdout" | "stderr"): void {
+  if (bytes > MAX_GIT_OUTPUT_BYTES) {
+    throw new Error(
+      `[DEEP_REVIEW_PACKET_INCOMPLETE] git ${stream} exceeds ${MAX_GIT_OUTPUT_BYTES} byte limit`,
+    );
+  }
 }
 
 export function gitArgsKey(args: readonly string[]): string {
@@ -94,6 +110,19 @@ export function gitArgsKey(args: readonly string[]): string {
     if (arg === undefined) continue;
     if (arg === "-c") {
       index += 1;
+      continue;
+    }
+    if (arg === "--attr-source") {
+      index += 1;
+      continue;
+    }
+    if (
+      arg === "--no-pager" ||
+      arg === "--literal-pathspecs" ||
+      arg === "--no-ext-diff" ||
+      arg === "--no-textconv" ||
+      arg === "--no-color"
+    ) {
       continue;
     }
     normalized.push(arg);
@@ -113,11 +142,59 @@ export async function runGitCollect(
     cwd,
     gitCollectEnvironment(),
   );
-  return {
-    ...result,
-    stdout: truncateGitOutput(result.stdout),
-    stderr: truncateGitOutput(result.stderr),
-  };
+  assertGitOutputWithinLimit(Buffer.byteLength(result.stdout, "utf8"), "stdout");
+  assertGitOutputWithinLimit(Buffer.byteLength(result.stderr, "utf8"), "stderr");
+  return result;
+}
+
+async function resolveEmptyTree(
+  sourceDir: string,
+  gitExecutable: string,
+  gitRunner: GitRunner,
+): Promise<string> {
+  const result = await runGitCollect(
+    gitExecutable,
+    ["rev-parse", "--show-object-format"],
+    sourceDir,
+    gitRunner,
+  );
+  if (result.exitCode !== 0) return SHA1_EMPTY_TREE;
+  const format = result.stdout.trim();
+  return format === "sha256" ? SHA256_EMPTY_TREE : SHA1_EMPTY_TREE;
+}
+
+async function runGitDiffCollect(
+  gitExecutable: string,
+  args: readonly string[],
+  cwd: string,
+  emptyTree: string,
+  gitRunner: GitRunner,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  if (args[0] !== "diff") {
+    throw new Error("[DEEP_REVIEW_PACKET_INCOMPLETE] internal git diff invocation is invalid");
+  }
+  const result = await gitRunner(
+    gitExecutable,
+    [
+      "--no-pager",
+      "--literal-pathspecs",
+      "--attr-source",
+      emptyTree,
+      ...SAFE_GIT_CONFIG,
+      "-c",
+      `attr.tree=${emptyTree}`,
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-color",
+      ...args.slice(1),
+    ],
+    cwd,
+    gitCollectEnvironment(),
+  );
+  assertGitOutputWithinLimit(Buffer.byteLength(result.stdout, "utf8"), "stdout");
+  assertGitOutputWithinLimit(Buffer.byteLength(result.stderr, "utf8"), "stderr");
+  return result;
 }
 
 export async function resolveLocalHeadSha(
@@ -180,10 +257,12 @@ export async function collectGitChangedFiles(
   gitExecutable: string,
   gitRunner: GitRunner,
 ): Promise<readonly GitChangedFile[]> {
-  const nameStatus = await runGitCollect(
+  const emptyTree = await resolveEmptyTree(sourceDir, gitExecutable, gitRunner);
+  const nameStatus = await runGitDiffCollect(
     gitExecutable,
-    ["diff", "--name-status", `${baseSha}...${headSha}`],
+    ["diff", "--name-status", "-z", `${baseSha}...${headSha}`],
     sourceDir,
+    emptyTree,
     gitRunner,
   );
   if (nameStatus.exitCode !== 0) {
@@ -195,10 +274,11 @@ export async function collectGitChangedFiles(
   const entries = parseNameStatus(nameStatus.stdout);
   const files: GitChangedFile[] = [];
   for (const entry of entries) {
-    const diff = await runGitCollect(
+    const diff = await runGitDiffCollect(
       gitExecutable,
       ["diff", `${baseSha}...${headSha}`, "--", entry.path],
       sourceDir,
+      emptyTree,
       gitRunner,
     );
     if (diff.exitCode !== 0) {
@@ -229,18 +309,22 @@ interface NameStatusEntry {
   readonly deletions: number;
 }
 
-function parseNameStatus(output: string): NameStatusEntry[] {
+export function parseNameStatus(output: string): NameStatusEntry[] {
   const entries: NameStatusEntry[] = [];
-  for (const line of output.split("\n")) {
-    if (line.trim().length === 0) continue;
-    const parts = line.split("\t");
-    const statusToken = parts[0];
-    if (!statusToken) continue;
+  if (output.length === 0) return entries;
+  const fields = output.split("\0").filter((field) => field.length > 0);
+  for (let index = 0; index < fields.length; ) {
+    const statusToken = fields[index];
+    if (statusToken === undefined) break;
     const statusCode = statusToken.charAt(0);
     if (statusCode === "R" || statusCode === "C") {
-      const previousPath = parts[1];
-      const currentPath = parts[2];
-      if (!previousPath || !currentPath) continue;
+      const previousPath = fields[index + 1];
+      const currentPath = fields[index + 2];
+      if (!previousPath || !currentPath) {
+        throw new Error(
+          `[DEEP_REVIEW_PACKET_INCOMPLETE] incomplete git rename/copy name-status entry`,
+        );
+      }
       entries.push({
         status: statusCode === "R" ? "renamed" : "copied",
         previousPath,
@@ -248,24 +332,28 @@ function parseNameStatus(output: string): NameStatusEntry[] {
         additions: 0,
         deletions: 0,
       });
+      index += 3;
       continue;
     }
-    const filePath = parts[1];
-    if (!filePath) continue;
+    const filePath = fields[index + 1];
+    if (!filePath) {
+      throw new Error(`[DEEP_REVIEW_PACKET_INCOMPLETE] incomplete git name-status entry`);
+    }
     const status =
       statusCode === "A"
         ? "added"
-        : statusCode === "M"
+        : statusCode === "M" || statusCode === "T"
           ? "modified"
           : statusCode === "D"
             ? "deleted"
             : undefined;
     if (!status) {
       throw new Error(
-        `[DEEP_REVIEW_PACKET_INCOMPLETE] unrecognized git name-status entry: ${line.trim()}`,
+        `[DEEP_REVIEW_PACKET_INCOMPLETE] unrecognized git name-status entry: ${statusToken}`,
       );
     }
     entries.push({ status, path: filePath, additions: 0, deletions: 0 });
+    index += 2;
   }
   return entries;
 }
@@ -373,6 +461,51 @@ function collectPreviousFindings(
   return findings;
 }
 
+async function readGitBlobAtRevision(
+  sourceDir: string,
+  sha: string,
+  rulePath: string,
+  gitExecutable: string,
+  gitRunner: GitRunner,
+): Promise<string | undefined> {
+  const result = await runGitCollect(
+    gitExecutable,
+    ["show", `${sha}:${rulePath}`],
+    sourceDir,
+    gitRunner,
+  );
+  if (result.exitCode !== 0) return undefined;
+  const content = result.stdout;
+  if (Buffer.byteLength(content, "utf8") > MAX_RULE_CONTENT_BYTES) {
+    throw new Error(
+      `[DEEP_REVIEW_PACKET_INCOMPLETE] repository rule ${rulePath} exceeds size limit`,
+    );
+  }
+  return content;
+}
+
+export async function collectRepositoryRules(
+  sourceDir: string,
+  baseSha: string,
+  headSha: string,
+  gitExecutable: string,
+  gitRunner: GitRunner,
+): Promise<PullRequestPacketV1["rules"]> {
+  const rules: PullRequestPacketV1["rules"][number][] = [];
+  for (const rulePath of TRUSTED_REPOSITORY_RULE_PATHS) {
+    const [headContent, baseContent] = await Promise.all([
+      readGitBlobAtRevision(sourceDir, headSha, rulePath, gitExecutable, gitRunner),
+      readGitBlobAtRevision(sourceDir, baseSha, rulePath, gitExecutable, gitRunner),
+    ]);
+    if (headContent !== undefined) {
+      rules.push({ path: rulePath, content: headContent, source: "head" });
+    } else if (baseContent !== undefined) {
+      rules.push({ path: rulePath, content: baseContent, source: "base" });
+    }
+  }
+  return rules;
+}
+
 const MAX_GIT_COMMAND_MS = 30_000;
 
 export async function defaultGitRunnerCollect(
@@ -392,16 +525,26 @@ export async function defaultGitRunnerCollect(
     const stderr: Buffer[] = [];
     let stdoutBytes = 0;
     let stderrBytes = 0;
+    let stdoutOverflow = false;
+    let stderrOverflow = false;
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
     }, MAX_GIT_COMMAND_MS);
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutBytes += chunk.length;
-      if (stdoutBytes <= MAX_GIT_OUTPUT_BYTES) stdout.push(chunk);
+      if (stdoutBytes > MAX_GIT_OUTPUT_BYTES) {
+        stdoutOverflow = true;
+        return;
+      }
+      stdout.push(chunk);
     });
     child.stderr?.on("data", (chunk: Buffer) => {
       stderrBytes += chunk.length;
-      if (stderrBytes <= MAX_GIT_OUTPUT_BYTES) stderr.push(chunk);
+      if (stderrBytes > MAX_GIT_OUTPUT_BYTES) {
+        stderrOverflow = true;
+        return;
+      }
+      stderr.push(chunk);
     });
     child.on("error", (error) => {
       clearTimeout(timer);
@@ -409,6 +552,14 @@ export async function defaultGitRunnerCollect(
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (stdoutOverflow || stderrOverflow) {
+        reject(
+          new Error(
+            `[DEEP_REVIEW_PACKET_INCOMPLETE] git output exceeds ${MAX_GIT_OUTPUT_BYTES} byte limit`,
+          ),
+        );
+        return;
+      }
       resolve({
         stdout: Buffer.concat(stdout).toString("utf8"),
         stderr: Buffer.concat(stderr).toString("utf8"),
@@ -489,6 +640,13 @@ export async function collectPullRequestPacket(
     gitRunner,
   );
   const files = mergeGitAndApiFiles(gitFiles, apiFiles);
+  const rules = await collectRepositoryRules(
+    sourceDir,
+    pullRequest.baseSha,
+    pullRequest.headSha,
+    gitExecutable,
+    gitRunner,
+  );
 
   const trustedAuthorIds = new Set<string>([actor.id, ...(options.additionalBotAuthorIds ?? [])]);
   const previousFindings = collectPreviousFindings(reviewComments, trustedAuthorIds);
@@ -511,7 +669,7 @@ export async function collectPullRequestPacket(
     },
     commits,
     files,
-    rules: [] as PullRequestPacketV1["rules"],
+    rules,
     previousFindings,
   };
 
