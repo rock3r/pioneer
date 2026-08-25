@@ -16,5 +16,6 @@
     "target": "ES2024",
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "vitest.e2e.config.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "vitest.e2e.config.ts"],
+  "exclude": ["src/deep-review/inspection-extension/**"]
 }

@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { cliErrorMessage } from "./cli-error.js";
+import { runDeepReviewCli } from "./deep-review-command.js";
 import { CliUsageError } from "./diagnostics.js";
 import { runDoctor } from "./doctor.js";
 import { runEvalCli } from "./eval-command.js";
+import { runGitHubDeepReviewCli } from "./github/deep-review/command.js";
 import { formatModelCatalog, modelCatalogJson } from "./model-catalog-output.js";
 import { PIONEER_VERSION } from "./package-metadata.js";
 import { checkPiReadiness } from "./pi-readiness.js";
@@ -64,13 +66,28 @@ async function main(): Promise<void> {
       process.stdout.write(`${PIONEER_VERSION}\n`);
       return;
     }
-    if (cliArgs[0] !== "eval" && (cliArgs.includes("--help") || cliArgs.includes("-h"))) {
+    if (
+      cliArgs[0] !== "eval" &&
+      cliArgs[0] !== "deep-review" &&
+      cliArgs[0] !== "github" &&
+      (cliArgs.includes("--help") || cliArgs.includes("-h"))
+    ) {
       process.stdout.write(`${REVIEW_USAGE}\n`);
       return;
     }
     const [subcommand, ...rawArgs] = cliArgs;
     if (subcommand === "eval") {
       await runEvalCli(rawArgs, "pioneer eval");
+      return;
+    }
+    if (subcommand === "deep-review") {
+      await runDeepReviewCli(rawArgs, "pioneer deep-review");
+      return;
+    }
+    if (subcommand === "github") {
+      const [githubSubcommand, ...githubArgs] = rawArgs;
+      if (githubSubcommand !== "deep-review") usage();
+      await runGitHubDeepReviewCli(githubArgs, "pioneer github deep-review");
       return;
     }
     if (subcommand === "check-update") {

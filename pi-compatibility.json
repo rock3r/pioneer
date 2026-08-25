@@ -16,6 +16,8 @@
     "--no-themes",
     "--no-skills",
     "--offline",
-    "--list-models"
+    "--list-models",
+    "--extension",
+    "--no-builtin-tools"
   ]
 }

@@ -13,6 +13,8 @@ The current product surface is:
 
 Background jobs, cancellation APIs, structured finding schemas, MCP transport, and automated eval grading are not implemented. They are extension points, not current behavior.
 
+Deep review adds a versioned council/president workflow with strict JSON boundaries, a bundled path-scoped inspection extension, and a separate GitHub adapter for packet collection and inline publication. Slice 10 focused command execution remains disabled.
+
 ## System view
 
 ```mermaid
@@ -56,6 +58,7 @@ The plugin contains instructions only. A portable Agent Plugins v1 manifest and 
 | Native sandbox | `src/sandbox/launcher.ts` | Compile one policy into Seatbelt or Bubblewrap argv |
 | Network mediation | `src/eval-run/public-egress-proxy.ts`, `src/sandbox/linux-proxy-bridge.ts` | Authenticate proxy use, resolve and pin destinations, bridge Linux namespaces |
 | Public API | `src/index.ts` | Export the supported TypeScript surface |
+| Deep review | `src/deep-review/*`, `src/github/deep-review/*` | Versioned council/president orchestration, schemas, bundled inspection extension, and GitHub adapter |
 
 Dependencies flow from adapters and orchestration toward validation and transport helpers. Plugin files do not duplicate policy.
 

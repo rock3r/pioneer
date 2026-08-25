@@ -7,6 +7,7 @@ export interface PiStartupOptions {
   readonly disableExtensions?: boolean;
   readonly disableSkills?: boolean;
   readonly tools?: readonly string[];
+  readonly extensions?: readonly string[];
   readonly noSession?: boolean;
   readonly sessionDir?: string;
   readonly resumeSession?: string;
@@ -56,13 +57,26 @@ export function optimizePiStartupCommand(
   if (!hasAny(args, ["--offline"])) additions.push("--offline");
   if (options.resumeSession !== undefined) {
     additions.push("--session", options.resumeSession);
-  } else if (options.sessionDir !== undefined) {
+  } else if (
+    options.sessionDir !== undefined &&
+    !hasAny(args, [
+      "--session-dir",
+      "--session",
+      "--session-id",
+      "--continue",
+      "-c",
+      "--resume",
+      "-r",
+      "--fork",
+    ])
+  ) {
     additions.push("--session-dir", options.sessionDir);
   } else if (
     options.noSession === true &&
     !hasAny(args, [
       "--no-session",
       "--session",
+      "--session-dir",
       "--session-id",
       "--continue",
       "-c",
@@ -77,6 +91,7 @@ export function optimizePiStartupCommand(
     !hasAny(args, [
       "--no-session",
       "--session",
+      "--session-dir",
       "--session-id",
       "--continue",
       "-c",
@@ -94,6 +109,11 @@ export function optimizePiStartupCommand(
   if (!hasAny(args, ["--no-themes", "--theme"])) additions.push("--no-themes");
   if (options.disableExtensions && !hasAny(args, ["--no-extensions", "-ne"])) {
     additions.push("--no-extensions");
+  }
+  if (options.extensions !== undefined) {
+    for (const extensionPath of options.extensions) {
+      additions.push("--extension", extensionPath);
+    }
   }
   if (
     options.tools !== undefined &&

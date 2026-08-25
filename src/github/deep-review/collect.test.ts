@@ -1,0 +1,202 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { createFakeGitHubClient } from "../../../test/support/fake-github-client.js";
+import { registerManagedTempPaths } from "../../../test/support/temp-dir.js";
+import {
+  collectGitChangedFiles,
+  collectPullRequestPacket,
+  type GitRunner,
+  gitArgsKey,
+  runGitCollect,
+  SAFE_GIT_CONFIG,
+} from "./collect.js";
+import { buildMarkerPayload, formatMarkerComment } from "./marker.js";
+
+const BASE_SHA = "a".repeat(40);
+const HEAD_SHA = "b".repeat(40);
+
+function createScriptedGitRunner(
+  responses: Record<string, { stdout?: string; exitCode?: number }>,
+): GitRunner {
+  return async (_executable, args, _cwd, _env) => {
+    const key = gitArgsKey(args);
+    const response = responses[key];
+    if (!response) {
+      return { stdout: "", stderr: `unexpected git args: ${key}`, exitCode: 1 };
+    }
+    return {
+      stdout: response.stdout ?? "",
+      stderr: "",
+      exitCode: response.exitCode ?? 0,
+    };
+  };
+}
+
+describe("github deep-review collect", () => {
+  const { createTempDir } = registerManagedTempPaths();
+  it("uses discrete argv with shell disabled safe git config", async () => {
+    let capturedArgs: readonly string[] = [];
+    const gitRunner: GitRunner = async (_executable, args) => {
+      capturedArgs = args;
+      return { stdout: HEAD_SHA, stderr: "", exitCode: 0 };
+    };
+    await runGitCollect("/usr/bin/git", ["rev-parse", "HEAD"], "/tmp/repo", gitRunner);
+    expect(capturedArgs.slice(0, 2)).toEqual(SAFE_GIT_CONFIG.slice(0, 2));
+    expect(capturedArgs.at(-2)).toBe("rev-parse");
+    expect(capturedArgs.at(-1)).toBe("HEAD");
+  });
+
+  it("collects a packet from fake GitHub and Git runners", async () => {
+    const gitRunner = createScriptedGitRunner({
+      "rev-parse\0HEAD": { stdout: `${HEAD_SHA}\n` },
+      [`cat-file\0-e\0${BASE_SHA}^{commit}`]: { stdout: "" },
+      [`cat-file\0-e\0${HEAD_SHA}^{commit}`]: { stdout: "" },
+      [`merge-base\0${BASE_SHA}\0${HEAD_SHA}`]: { stdout: `${BASE_SHA}\n` },
+      [`diff\0--name-status\0${BASE_SHA}...${HEAD_SHA}`]: {
+        stdout: "M\tsrc/main.ts\n",
+      },
+      [`diff\0${BASE_SHA}...${HEAD_SHA}\0--\0src/main.ts`]: {
+        stdout: "@@ -1,1 +1,2 @@\n line\n+added\n",
+      },
+    });
+
+    const marker = formatMarkerComment(
+      buildMarkerPayload({
+        repositoryOwner: "acme",
+        repositoryName: "repo",
+        pullRequestNumber: 1,
+        findingId: `pdr_${"d".repeat(24)}`,
+        headSha: HEAD_SHA,
+        path: "src/main.ts",
+        side: "RIGHT",
+        line: 2,
+        endLine: 2,
+        category: "correctness",
+      }),
+    );
+
+    const github = createFakeGitHubClient({
+      getPullRequest: async () => ({
+        number: 1,
+        title: "Fix",
+        body: "",
+        htmlUrl: "https://github.com/acme/repo/pull/1",
+        baseRef: "main",
+        baseSha: BASE_SHA,
+        headSha: HEAD_SHA,
+      }),
+      listReviewComments: async () => [
+        {
+          id: "10",
+          authorId: "99",
+          authorLogin: "pioneer-bot",
+          body: `Prior finding\n\n${marker}`,
+          path: "src/main.ts",
+          line: 2,
+          side: "RIGHT",
+        },
+        {
+          id: "11",
+          authorId: "500",
+          authorLogin: "human",
+          body: "Human review note",
+        },
+      ],
+    });
+
+    const tempDir = await createTempDir("pioneer-collect-");
+    const outputPath = path.join(tempDir, "packet.json");
+
+    const result = await collectPullRequestPacket({
+      sourceDir: tempDir,
+      owner: "acme",
+      repo: "repo",
+      pullNumber: 1,
+      expectedHeadSha: HEAD_SHA,
+      outputPath,
+      github,
+      gitExecutable: "/usr/bin/git",
+      gitRunner,
+    });
+
+    expect(result.packet.pullRequest.headSha).toBe(HEAD_SHA);
+    expect(result.packet.files[0]?.patch).toContain("+added");
+    expect(
+      result.packet.previousFindings.some(
+        (finding) => finding.marker?.findingId === `pdr_${"d".repeat(24)}`,
+      ),
+    ).toBe(true);
+    expect(result.packet.previousFindings.some((finding) => finding.authorLogin === "human")).toBe(
+      true,
+    );
+
+    const persisted = JSON.parse(await readFile(outputPath, "utf8")) as { packetDigest: string };
+    expect(persisted.packetDigest).toBe(result.packet.packetDigest);
+  });
+
+  it("fails closed on stale event head SHA", async () => {
+    const gitRunner = createScriptedGitRunner({
+      "rev-parse\0HEAD": { stdout: `${HEAD_SHA}\n` },
+    });
+    const github = createFakeGitHubClient({
+      getPullRequest: async () => ({
+        number: 1,
+        title: "Fix",
+        body: "",
+        htmlUrl: "https://github.com/acme/repo/pull/1",
+        baseRef: "main",
+        baseSha: BASE_SHA,
+        headSha: "c".repeat(40),
+      }),
+    });
+    const tempDir = await createTempDir("pioneer-collect-stale-");
+    await expect(
+      collectPullRequestPacket({
+        sourceDir: tempDir,
+        owner: "acme",
+        repo: "repo",
+        pullNumber: 1,
+        expectedHeadSha: HEAD_SHA,
+        outputPath: path.join(tempDir, "packet.json"),
+        github,
+        gitExecutable: "/usr/bin/git",
+        gitRunner,
+      }),
+    ).rejects.toThrow(/DEEP_REVIEW_HEAD_CHANGED/);
+  });
+
+  it("fails closed on unrecognized git name-status codes", async () => {
+    const gitRunner = createScriptedGitRunner({
+      [`diff\0--name-status\0${BASE_SHA}...${HEAD_SHA}`]: {
+        stdout: "T\tsrc/typechanged.ts\n",
+      },
+    });
+    await expect(
+      collectGitChangedFiles("/tmp/repo", BASE_SHA, HEAD_SHA, "/usr/bin/git", gitRunner),
+    ).rejects.toThrow(/unrecognized git name-status/);
+  });
+
+  it("marks binary git diffs without patches", async () => {
+    const gitRunner = createScriptedGitRunner({
+      [`diff\0--name-status\0${BASE_SHA}...${HEAD_SHA}`]: {
+        stdout: "M\tassets/logo.png\n",
+      },
+      [`diff\0${BASE_SHA}...${HEAD_SHA}\0--\0assets/logo.png`]: {
+        stdout: "Binary files a/assets/logo.png and b/assets/logo.png differ\n",
+      },
+    });
+    const files = await collectGitChangedFiles(
+      "/tmp/repo",
+      BASE_SHA,
+      HEAD_SHA,
+      "/usr/bin/git",
+      gitRunner,
+    );
+    expect(files[0]).toMatchObject({
+      path: "assets/logo.png",
+      contentKind: "binary",
+    });
+    expect(files[0]?.patch).toBeUndefined();
+  });
+});

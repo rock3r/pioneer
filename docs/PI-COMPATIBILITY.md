@@ -48,4 +48,6 @@ Pioneer parses the first line of `pi --version` as SemVer before model discovery
 
 Resume is stricter than a new review: the stored exact Pi version must match the current readiness version. A newer or older binary therefore receives `[REVIEW_RESUME_PI_VERSION_MISMATCH]` until a fresh review creates a new archive under the reviewed compatibility contract.
 
+Deep review loads Pioneer's bundled inspection extension with `--extension PATH` while `--no-extensions` disables discovery. Explicit `--extension` paths remain honored under disabled discovery. Deep review actors also pass `--no-builtin-tools` and a tool allowlist containing only inspection-extension tool names.
+
 A binary claiming an in-range version but missing `--no-approve` fails with `PI_CLI_INCOMPATIBLE`. The compatibility smoke catches official-package regressions; users should reinstall an official Pi release if a custom or stale standalone binary diverges from its reported version.

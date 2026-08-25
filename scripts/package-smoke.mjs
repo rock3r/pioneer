@@ -84,6 +84,7 @@ try {
   await access(path.join(packageRoot, "plugins", "pioneer", "LICENSE"));
   await access(path.join(packageRoot, "pi-compatibility.json"));
   await access(path.join(packageRoot, "dist", "review", "windows-process-start.js"));
+  await access(path.join(packageRoot, "dist", "deep-review", "inspection-extension", "index.ts"));
   const legacyEvalCliPresent = await access(path.join(packageRoot, "dist", "eval-run-cli.js")).then(
     () => true,
     () => false,
@@ -150,6 +151,7 @@ try {
     primaryHelp.status !== 0 ||
     !primaryHelp.stdout.includes("pioneer eval prepare") ||
     !primaryHelp.stdout.includes("pioneer doctor") ||
+    !primaryHelp.stdout.includes("pioneer deep-review") ||
     !primaryHelp.stdout.includes("--report FILE")
   ) {
     throw new Error(`primary CLI did not advertise unified review/eval commands`);
