@@ -24,7 +24,8 @@ For every tag, `.github/workflows/release.yml` independently requires:
 - a real Seatbelt smoke battery on macOS;
 - a real Bubblewrap/AppArmor smoke battery on Linux;
 - Windows fail-closed CLI checks;
-- one npm tarball built once, installed, and invoked on all three operating systems.
+- one npm tarball built once, installed, and invoked on all three operating systems;
+- a native Windows installed-artifact smoke that places only an npm-style `pi.cmd` on `PATH`, invokes the installed `pioneer.cmd doctor`, verifies the Pi version and configured model count, retains `WINDOWS_STRICT_ISOLATION_UNAVAILABLE`, and rejects any `PI_NOT_FOUND` regression.
 
 Only the tarball that passed the matrix is published. A GitHub release and attached tarball are created after npm accepts the package. GitHub generates the release page notes from commits and merged pull requests; [the changelog](../CHANGELOG.md) is the curated, versioned user-facing record.
 

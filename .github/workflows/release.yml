@@ -111,7 +111,8 @@ jobs:
         with:
           name: npm-package
           path: release
-      - run: npm run package:smoke -- release
+      - name: Verify installed release tarball
+        run: npm run package:smoke -- release
 
   publish:
     name: publish npm and GitHub release

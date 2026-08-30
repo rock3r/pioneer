@@ -19,10 +19,11 @@ import {
   type startPublicEgressProxy,
 } from "../eval-run/public-egress-proxy.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
+import { resolvePiCommand } from "../pi-command.js";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import { assertPiReady } from "../pi-readiness.js";
-import { optimizePiStartupCommand } from "../pi-startup.js";
+import { applyResolvedPiLaunch, optimizePiStartupCommand } from "../pi-startup.js";
 import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../sandbox/launcher.js";
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
@@ -1348,8 +1349,18 @@ async function runReviewInternal(
     }
 
     recordReviewWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
+    const piEnvironment = { ...process.env, PI_CODING_AGENT_DIR: piHomeSource };
+    let piCommand: Awaited<ReturnType<typeof resolvePiCommand>>;
+    try {
+      piCommand = await resolvePiCommand("pi", piEnvironment);
+    } catch {
+      // Preserve readiness's stable, sanitized diagnostic for missing or unsafe launchers.
+      await assertPiReady({ environment: piEnvironment });
+      throw new Error("Pi launcher resolution failed without a readiness diagnostic");
+    }
     const readiness = await assertPiReady({
-      environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
+      command: piCommand,
+      environment: piEnvironment,
       ...(request.model === undefined ? {} : { requestedModel: request.model }),
     });
     recordReviewWorkLog(workLog, "stage_completed", {
@@ -1499,15 +1510,18 @@ async function runReviewInternal(
       const command: [string, ...string[]] = ["pi", "--mode", "rpc"];
       if (model !== undefined) command.push("--model", model);
       if (thinking !== undefined) command.push("--thinking", thinking);
-      const optimized = optimizePiStartupCommand(command, {
-        disableExtensions: true,
-        tools: reviewTools(),
-        ...(resumeContext !== undefined && resumeArchive !== undefined
-          ? { resumeSession: await findReviewResumeSessionFile(resumeArchive.activeAttemptDir) }
-          : resumeArchive === undefined
-            ? { noSession: true }
-            : { sessionDir: resumeArchive.activeAttemptDir }),
-      });
+      const optimized = applyResolvedPiLaunch(
+        optimizePiStartupCommand(command, {
+          disableExtensions: true,
+          tools: reviewTools(),
+          ...(resumeContext !== undefined && resumeArchive !== undefined
+            ? { resumeSession: await findReviewResumeSessionFile(resumeArchive.activeAttemptDir) }
+            : resumeArchive === undefined
+              ? { noSession: true }
+              : { sessionDir: resumeArchive.activeAttemptDir }),
+        }),
+        piCommand,
+      );
       const environment = {
         ...optimized.environment,
         ...piHome.environment,

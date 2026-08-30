@@ -26,6 +26,44 @@ function environmentWithPath(value) {
   };
 }
 
+function npmPiCmdShim(relativeTarget) {
+  return [
+    "@ECHO off",
+    "GOTO start",
+    ":find_dp0",
+    "SET dp0=%~dp0",
+    "EXIT /b",
+    ":start",
+    "SETLOCAL",
+    "CALL :find_dp0",
+    "",
+    'IF EXIST "%dp0%\\node.exe" (',
+    '  SET "_prog=%dp0%\\node.exe"',
+    ") ELSE (",
+    '  SET "_prog=node"',
+    "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+    ")",
+    "",
+    `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${relativeTarget}" %*`,
+    "",
+  ].join("\r\n");
+}
+
+function runWindowsCmdShim(shim, args, options = {}) {
+  if (/["\r\n&|<>^%!]/.test(shim) || args.some((argument) => !/^[a-z-]+$/.test(argument))) {
+    throw new Error("Windows smoke command contains unsupported cmd.exe metacharacters");
+  }
+  const comspec = process.env.ComSpec ?? process.env.COMSPEC;
+  if (!comspec) throw new Error("Windows smoke requires ComSpec");
+  const result = spawnSync(`"${shim}" ${args.join(" ")}`, {
+    encoding: "utf8",
+    shell: comspec,
+    ...options,
+  });
+  if (result.error) throw result.error;
+  return result;
+}
+
 async function findTarball(candidate) {
   const absolute = path.resolve(candidate);
   const entries = await readdir(absolute).catch(() => undefined);
@@ -285,16 +323,58 @@ try {
   await mkdir(fakeBin);
   const modelCommand = [path.join(packageRoot, "dist", "review-cli.js"), "models", "--json"];
   if (process.platform === "win32") {
-    const unavailable = run(process.execPath, modelCommand, {
-      env: environmentWithPath(fakeBin),
+    const piPackageRoot = path.join(fakeBin, "node_modules", "@earendil-works", "pi-coding-agent");
+    const fakePiScript = path.join(piPackageRoot, "dist", "cli.js");
+    await mkdir(path.dirname(fakePiScript), { recursive: true });
+    await writeFile(
+      path.join(piPackageRoot, "package.json"),
+      JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli.js" } }),
+    );
+    await writeFile(
+      fakePiScript,
+      `const args = process.argv.slice(2);
+if (args.includes("--version")) {
+  process.stdout.write("0.81.1\\n");
+} else if (args.includes("--list-models")) {
+  process.stdout.write("provider  model          context  max-out  thinking  images\\nopenrouter x-ai/grok-4.5 500K     4.1K     yes       yes\\nxai        grok-4.5      500K     500K     yes       yes\\n");
+} else {
+  process.exitCode = 2;
+}
+`,
+    );
+    await writeFile(
+      path.join(fakeBin, "pi.cmd"),
+      npmPiCmdShim("node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js"),
+    );
+
+    const doctor = runWindowsCmdShim(path.join(shimRoot, "pioneer.cmd"), ["doctor"], {
+      env: environmentWithPath(
+        `${fakeBin}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}`,
+      ),
     });
+    if (doctor.stdout.trim().length === 0) {
+      throw new Error(
+        `packaged Windows doctor produced no report (${JSON.stringify({
+          status: doctor.status,
+          signal: doctor.signal,
+          error: doctor.error?.code,
+          stderr: doctor.stderr,
+        })})`,
+      );
+    }
+    const report = JSON.parse(doctor.stdout);
     if (
-      unavailable.status !== 1 ||
-      !unavailable.stderr.includes("[PI_NOT_FOUND]") ||
-      unavailable.stdout.length > 0
+      doctor.status !== 1 ||
+      report.pi?.version !== "0.81.1" ||
+      report.pi?.modelCount !== 2 ||
+      !report.diagnostics?.some(
+        (diagnostic) => diagnostic.id === "WINDOWS_STRICT_ISOLATION_UNAVAILABLE",
+      ) ||
+      report.diagnostics?.some((diagnostic) => diagnostic.id === "PI_NOT_FOUND") ||
+      doctor.stderr.includes("[PI_NOT_FOUND]")
     ) {
       throw new Error(
-        `packaged Windows model listing did not expose PI_NOT_FOUND: ${unavailable.stderr}`,
+        `packaged Windows doctor did not recognize npm pi.cmd safely: ${doctor.stderr || doctor.stdout}`,
       );
     }
   } else {

@@ -1,3 +1,5 @@
+import type { PiLaunchCommand } from "./pi-command.js";
+
 export interface OptimizedPiStartup {
   readonly command: readonly [string, ...string[]];
   readonly environment: Readonly<Record<string, string>>;
@@ -11,6 +13,19 @@ export interface PiStartupOptions {
   readonly noSession?: boolean;
   readonly sessionDir?: string;
   readonly resumeSession?: string;
+}
+
+export function applyResolvedPiLaunch(
+  optimized: OptimizedPiStartup,
+  launcher: PiLaunchCommand,
+): OptimizedPiStartup {
+  if (!isPiExecutable(optimized.command[0])) {
+    throw new Error("Resolved Pi launch can only wrap a hardened Pi command");
+  }
+  return {
+    command: [...launcher, ...optimized.command.slice(1)],
+    environment: optimized.environment,
+  };
 }
 
 const PI_STARTUP_ENVIRONMENT = {

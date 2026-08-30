@@ -1,5 +1,7 @@
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { registerManagedTempPaths } from "../test/support/temp-dir.js";
 import {
   checkPiReadiness,
   PI_NO_MODELS_ERROR,
@@ -9,6 +11,8 @@ import {
   piConfigSandboxError,
   piReadinessEnvironment,
 } from "./pi-readiness.js";
+
+const { createTempDir } = registerManagedTempPaths();
 
 function runnerWith(results: readonly Awaited<ReturnType<PiProbeRunner>>[]): PiProbeRunner {
   const remaining = [...results];
@@ -58,6 +62,62 @@ describe("Pi readiness", () => {
     });
     expect(runner).toHaveBeenCalledOnce();
   });
+
+  it.skipIf(process.platform !== "win32")(
+    "probes an npm-installed Pi when PATH exposes only pi.cmd",
+    async () => {
+      const root = await createTempDir("pioneer-pi-readiness-cmd-");
+      const bin = path.join(root, "bin");
+      const packageRoot = path.join(bin, "node_modules", "@earendil-works", "pi-coding-agent");
+      const target = path.join(packageRoot, "dist", "cli.js");
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli.js" } }),
+      );
+      await writeFile(
+        target,
+        `const args = process.argv.slice(2);
+if (args.includes("--version")) process.stdout.write("0.81.1\\n");
+else if (args.includes("--list-models")) process.stdout.write("provider  model       context  max-out  thinking  images\\nopenai    gpt-5.5     400K     128K     yes       yes\\n");
+else process.exitCode = 2;
+`,
+      );
+      await writeFile(
+        path.join(bin, "pi.cmd"),
+        [
+          "@ECHO off",
+          "GOTO start",
+          ":find_dp0",
+          "SET dp0=%~dp0",
+          "EXIT /b",
+          ":start",
+          "SETLOCAL",
+          "CALL :find_dp0",
+          "",
+          'IF EXIST "%dp0%\\node.exe" (',
+          '  SET "_prog=%dp0%\\node.exe"',
+          ") ELSE (",
+          '  SET "_prog=node"',
+          "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+          ")",
+          "",
+          'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js" %*',
+          "",
+        ].join("\r\n"),
+      );
+
+      await expect(
+        checkPiReadiness({ environment: { PATH: bin, PATHEXT: ".CMD" } }),
+      ).resolves.toEqual({
+        ready: true,
+        version: "0.81.1",
+        modelCount: 1,
+        models: [{ provider: "openai", id: "gpt-5.5" }],
+        errors: [],
+      });
+    },
+  );
 
   it("fails with login instructions when Pi has no configured models", async () => {
     const runner = runnerWith([
