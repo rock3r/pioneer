@@ -102,9 +102,10 @@ describe("Pioneer distribution identity", () => {
     expect(workflow).toMatch(
       /verify-package:[\s\S]*os: \[ubuntu-latest, macos-latest, windows-latest\][\s\S]*npm run package:smoke -- release/,
     );
-    expect(releasing).toContain("only an npm-style `pi.cmd` on `PATH`");
+    expect(releasing).toContain("installs the tested-maximum real Pi npm package");
+    expect(releasing).toContain("npm's generated `pi.cmd`");
     expect(releasing).toContain("invokes the installed `pioneer.cmd doctor`");
     expect(releasing).toContain("retains `WINDOWS_STRICT_ISOLATION_UNAVAILABLE`");
-    expect(releasing).toContain("rejects any `PI_NOT_FOUND` regression");
+    expect(releasing).toContain("rejects `PI_NOT_FOUND` or `PI_LAUNCHER_UNSAFE` regressions");
   });
 });

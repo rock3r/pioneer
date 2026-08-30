@@ -4,6 +4,10 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.3.2 - 2026-08-30
+
+- Recognize native Windows npm installations of Pi without executing `pi.cmd`: Pioneer validates the bounded generated shim and its declared package entry point, launches the canonical target through its own Node executable with discrete arguments, skips incompatible POSIX and PowerShell sibling shims, and keeps the expected strict-Windows-eval diagnostic in `pioneer doctor`.
+
 ## 0.3.1 - 2026-08-30
 
 - Reject `pioneer review --network none` before launch with `[REVIEW_NETWORK_DISABLED]`: a sandboxed Pi review still needs its configured model provider. Use `--network public`, or start a new `--network full` review only when LAN or loopback access is required.

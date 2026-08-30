@@ -6,7 +6,10 @@ import { resolveNpmPiCmdShim, resolvePiCommand } from "./pi-command.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
-async function npmPiFixture(root: string): Promise<{
+async function npmPiFixture(
+  root: string,
+  pathextOnLaunch = false,
+): Promise<{
   readonly shim: string;
   readonly target: string;
 }> {
@@ -36,10 +39,10 @@ async function npmPiFixture(root: string): Promise<{
       '  SET "_prog=%dp0%\\node.exe"',
       ") ELSE (",
       '  SET "_prog=node"',
-      "  SET PATHEXT=%PATHEXT:;.JS;=;%",
+      ...(pathextOnLaunch ? [] : ["  SET PATHEXT=%PATHEXT:;.JS;=;%"]),
       ")",
       "",
-      'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js" %*',
+      `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & ${pathextOnLaunch ? "set PATHEXT=%PATHEXT:;.JS;=;% & " : ""}"%_prog%"  "%dp0%\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js" %*`,
       "",
     ].join("\r\n"),
   );
@@ -56,6 +59,15 @@ describe("Windows Pi command resolution", () => {
     ]);
   });
 
+  it("unwraps npm's current Windows shim with PATHEXT set on the launch line", async () => {
+    const fixture = await npmPiFixture(await createTempDir("pioneer-pi-cmd-current-"), true);
+
+    await expect(resolveNpmPiCmdShim(fixture.shim, process.execPath)).resolves.toEqual([
+      process.execPath,
+      await realpath(fixture.target),
+    ]);
+  });
+
   it("prefers the npm cmd shim over its POSIX and PowerShell siblings", async () => {
     const fixture = await npmPiFixture(await createTempDir("pioneer-pi-cmd-siblings-"));
     const bin = path.dirname(fixture.shim);
@@ -65,6 +77,34 @@ describe("Windows Pi command resolution", () => {
     await expect(
       resolvePiCommand("pi", { PATH: bin, PATHEXT: ".PS1;.COM;.EXE;.BAT;.CMD" }, "win32"),
     ).resolves.toEqual([process.execPath, await realpath(fixture.target)]);
+  });
+
+  it("honors a quoted Windows PATH entry", async () => {
+    const fixture = await npmPiFixture(await createTempDir("pioneer-pi-cmd-quoted-path-"));
+    const bin = path.dirname(fixture.shim);
+
+    await expect(
+      resolvePiCommand("pi", { PATH: `"${bin}"`, PATHEXT: ".CMD" }, "win32"),
+    ).resolves.toEqual([process.execPath, await realpath(fixture.target)]);
+  });
+
+  it("does not split a semicolon inside a quoted Windows PATH entry", async () => {
+    const root = path.join(await createTempDir("pioneer-pi-cmd-semicolon-path-"), "tools;a");
+    const fixture = await npmPiFixture(root);
+    const bin = path.dirname(fixture.shim);
+
+    await expect(
+      resolvePiCommand("pi", { PATH: `"${bin}"`, PATHEXT: ".CMD" }, "win32"),
+    ).resolves.toEqual([process.execPath, await realpath(fixture.target)]);
+  });
+
+  it("rejects a batch launcher discovered through PATHEXT", async () => {
+    const root = await createTempDir("pioneer-pi-bat-");
+    await writeFile(path.join(root, "pi.bat"), "@echo off\r\nnode pi.js %*\r\n");
+
+    await expect(
+      resolvePiCommand("pi", { PATH: root, PATHEXT: ".BAT;.CMD" }, "win32"),
+    ).rejects.toThrow("Pi batch launchers are unsupported; install the npm pi.cmd shim");
   });
 
   it("rejects a cmd file that is not an npm-generated Pi shim", async () => {

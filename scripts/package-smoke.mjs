@@ -26,29 +26,6 @@ function environmentWithPath(value) {
   };
 }
 
-function npmPiCmdShim(relativeTarget) {
-  return [
-    "@ECHO off",
-    "GOTO start",
-    ":find_dp0",
-    "SET dp0=%~dp0",
-    "EXIT /b",
-    ":start",
-    "SETLOCAL",
-    "CALL :find_dp0",
-    "",
-    'IF EXIST "%dp0%\\node.exe" (',
-    '  SET "_prog=%dp0%\\node.exe"',
-    ") ELSE (",
-    '  SET "_prog=node"',
-    "  SET PATHEXT=%PATHEXT:;.JS;=;%",
-    ")",
-    "",
-    `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${relativeTarget}" %*`,
-    "",
-  ].join("\r\n");
-}
-
 function runWindowsCmdShim(shim, args, options = {}) {
   if (/["\r\n&|<>^%!]/.test(shim) || args.some((argument) => !/^[a-z-]+$/.test(argument))) {
     throw new Error("Windows smoke command contains unsupported cmd.exe metacharacters");
@@ -106,6 +83,9 @@ try {
       ? path.join(prefix, "node_modules", "@rock3r", "pioneer")
       : path.join(prefix, "lib", "node_modules", "@rock3r", "pioneer");
   const manifest = JSON.parse(await readFile(path.join(packageRoot, "package.json"), "utf8"));
+  const piCompatibility = JSON.parse(
+    await readFile(path.join(packageRoot, "pi-compatibility.json"), "utf8"),
+  );
   const sourceManifest = JSON.parse(
     await readFile(path.join(process.cwd(), "package.json"), "utf8"),
   );
@@ -323,33 +303,25 @@ try {
   await mkdir(fakeBin);
   const modelCommand = [path.join(packageRoot, "dist", "review-cli.js"), "models", "--json"];
   if (process.platform === "win32") {
-    const piPackageRoot = path.join(fakeBin, "node_modules", "@earendil-works", "pi-coding-agent");
-    const fakePiScript = path.join(piPackageRoot, "dist", "cli.js");
-    await mkdir(path.dirname(fakePiScript), { recursive: true });
-    await writeFile(
-      path.join(piPackageRoot, "package.json"),
-      JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli.js" } }),
-    );
-    await writeFile(
-      fakePiScript,
-      `const args = process.argv.slice(2);
-if (args.includes("--version")) {
-  process.stdout.write("0.81.1\\n");
-} else if (args.includes("--list-models")) {
-  process.stdout.write("provider  model          context  max-out  thinking  images\\nopenrouter x-ai/grok-4.5 500K     4.1K     yes       yes\\nxai        grok-4.5      500K     500K     yes       yes\\n");
-} else {
-  process.exitCode = 2;
-}
-`,
-    );
-    await writeFile(
-      path.join(fakeBin, "pi.cmd"),
-      npmPiCmdShim("node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js"),
-    );
+    const piSpecifier = `${piCompatibility.package}@${piCompatibility.testedMaximum}`;
+    const piInstalled = runNpm([
+      "install",
+      "--global",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--prefix",
+      prefix,
+      piSpecifier,
+    ]);
+    if (piInstalled.status !== 0) {
+      throw new Error(`tested Pi install failed: ${piInstalled.stderr}`);
+    }
+    await access(path.join(shimRoot, "pi.cmd"));
 
     const doctor = runWindowsCmdShim(path.join(shimRoot, "pioneer.cmd"), ["doctor"], {
       env: environmentWithPath(
-        `${fakeBin}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}`,
+        `${shimRoot}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}`,
       ),
     });
     if (doctor.stdout.trim().length === 0) {
@@ -365,16 +337,19 @@ if (args.includes("--version")) {
     const report = JSON.parse(doctor.stdout);
     if (
       doctor.status !== 1 ||
-      report.pi?.version !== "0.81.1" ||
-      report.pi?.modelCount !== 2 ||
+      report.pi?.version !== piCompatibility.testedMaximum ||
+      !Number.isInteger(report.pi?.modelCount) ||
       !report.diagnostics?.some(
         (diagnostic) => diagnostic.id === "WINDOWS_STRICT_ISOLATION_UNAVAILABLE",
       ) ||
-      report.diagnostics?.some((diagnostic) => diagnostic.id === "PI_NOT_FOUND") ||
-      doctor.stderr.includes("[PI_NOT_FOUND]")
+      report.diagnostics?.some((diagnostic) =>
+        ["PI_NOT_FOUND", "PI_LAUNCHER_UNSAFE"].includes(diagnostic.id),
+      ) ||
+      doctor.stderr.includes("[PI_NOT_FOUND]") ||
+      doctor.stderr.includes("[PI_LAUNCHER_UNSAFE]")
     ) {
       throw new Error(
-        `packaged Windows doctor did not recognize npm pi.cmd safely: ${doctor.stderr || doctor.stdout}`,
+        `packaged Windows doctor did not recognize the installed ${piSpecifier} npm pi.cmd safely: ${doctor.stderr || doctor.stdout}`,
       );
     }
   } else {

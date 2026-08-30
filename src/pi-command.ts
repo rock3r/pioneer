@@ -7,7 +7,7 @@ const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const MAX_SHIM_BYTES = 64 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_PACKAGE_ASCENT = 8;
-const DIRECT_WINDOWS_PATH_EXTENSIONS = new Set([".com", ".exe", ".cmd"]);
+const DIRECT_WINDOWS_PATH_EXTENSIONS = new Set([".com", ".exe", ".bat", ".cmd"]);
 const NPM_SHIM_PREFIX = [
   "@ECHO off",
   "GOTO start",
@@ -19,7 +19,7 @@ const NPM_SHIM_PREFIX = [
   "CALL :find_dp0",
 ].join("\r\n");
 const NPM_SHIM_TARGET =
-  /^endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & "%_prog%"[ \t]+"%dp0%\\([^"\r\n]+)" %\*\r?$/m;
+  /^endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & (?:set PATHEXT=%PATHEXT:;.JS;=;% & )?"%_prog%"[ \t]+"%dp0%\\([^"\r\n]+)" %\*\r?$/m;
 const BATCH_META_CHARACTER = /[%!^&|<>"\0]/;
 
 function environmentValue(
@@ -36,6 +36,23 @@ function windowsPathExtensions(environment: Readonly<NodeJS.ProcessEnv>): string
     .split(";")
     .map((extension) => extension.trim().toLowerCase())
     .filter((extension) => DIRECT_WINDOWS_PATH_EXTENSIONS.has(extension));
+}
+
+function windowsPathEntries(value: string): string[] {
+  const entries: string[] = [];
+  let entry = "";
+  let quoted = false;
+  for (const character of value) {
+    if (character === '"') quoted = !quoted;
+    if (character === ";" && !quoted) {
+      entries.push(entry);
+      entry = "";
+    } else {
+      entry += character;
+    }
+  }
+  entries.push(entry);
+  return entries;
 }
 
 async function regularFileOrUndefined(candidate: string): Promise<string | undefined> {
@@ -160,8 +177,10 @@ async function windowsExecutableCandidate(
     ? [executable]
     : hasSeparator
       ? [path.resolve(executable)]
-      : (environmentValue(environment, "PATH") ?? "")
-          .split(";")
+      : windowsPathEntries(environmentValue(environment, "PATH") ?? "")
+          .map((entry) =>
+            entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry,
+          )
           .filter((entry) => entry.length > 0)
           .map((entry) => path.join(entry, executable));
   const hasExtension = path.win32.extname(executable).length > 0;
