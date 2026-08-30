@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { optimizePiStartupCommand } from "./pi-startup.js";
+import { applyResolvedPiLaunch, optimizePiStartupCommand } from "./pi-startup.js";
 
 describe("Pi startup optimization", () => {
   it("adds safe fast-start flags to Pi RPC commands", () => {
@@ -98,6 +98,31 @@ describe("Pi startup optimization", () => {
       "--mode",
       "rpc",
     ]);
+  });
+
+  it("preserves hardened Pi arguments when applying a resolved Node launcher", () => {
+    const optimized = optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+      disableExtensions: true,
+      tools: ["read", "ls"],
+    });
+
+    expect(applyResolvedPiLaunch(optimized, ["C:\\node.exe", "C:\\pi\\dist\\cli.js"])).toEqual({
+      command: [
+        "C:\\node.exe",
+        "C:\\pi\\dist\\cli.js",
+        "--offline",
+        "--no-session",
+        "--no-approve",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-extensions",
+        "--tools",
+        "read,ls",
+        "--mode",
+        "rpc",
+      ],
+      environment: { PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+    });
   });
 
   it("can load explicit extensions while discovery remains disabled", () => {

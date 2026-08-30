@@ -23,7 +23,7 @@ import { resolvePiCommand } from "../pi-command.js";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import { assertPiReady } from "../pi-readiness.js";
-import { optimizePiStartupCommand } from "../pi-startup.js";
+import { applyResolvedPiLaunch, optimizePiStartupCommand } from "../pi-startup.js";
 import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../sandbox/launcher.js";
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
@@ -1507,18 +1507,21 @@ async function runReviewInternal(
         ...(request.piHomeIncludes === undefined ? {} : { piHomeIncludes: request.piHomeIncludes }),
       });
       recordReviewWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
-      const command: [string, ...string[]] = [...piCommand, "--mode", "rpc"];
+      const command: [string, ...string[]] = ["pi", "--mode", "rpc"];
       if (model !== undefined) command.push("--model", model);
       if (thinking !== undefined) command.push("--thinking", thinking);
-      const optimized = optimizePiStartupCommand(command, {
-        disableExtensions: true,
-        tools: reviewTools(),
-        ...(resumeContext !== undefined && resumeArchive !== undefined
-          ? { resumeSession: await findReviewResumeSessionFile(resumeArchive.activeAttemptDir) }
-          : resumeArchive === undefined
-            ? { noSession: true }
-            : { sessionDir: resumeArchive.activeAttemptDir }),
-      });
+      const optimized = applyResolvedPiLaunch(
+        optimizePiStartupCommand(command, {
+          disableExtensions: true,
+          tools: reviewTools(),
+          ...(resumeContext !== undefined && resumeArchive !== undefined
+            ? { resumeSession: await findReviewResumeSessionFile(resumeArchive.activeAttemptDir) }
+            : resumeArchive === undefined
+              ? { noSession: true }
+              : { sessionDir: resumeArchive.activeAttemptDir }),
+        }),
+        piCommand,
+      );
       const environment = {
         ...optimized.environment,
         ...piHome.environment,
