@@ -92,4 +92,19 @@ describe("Pioneer distribution identity", () => {
       expect(source).not.toContain("dist/eval-run-cli.js");
     }
   });
+
+  it("keeps the installed-artifact smoke in the cross-platform release matrix", async () => {
+    const [workflow, releasing] = await Promise.all([
+      readFile(".github/workflows/release.yml", "utf8"),
+      readFile("docs/RELEASING.md", "utf8"),
+    ]);
+
+    expect(workflow).toMatch(
+      /verify-package:[\s\S]*os: \[ubuntu-latest, macos-latest, windows-latest\][\s\S]*npm run package:smoke -- release/,
+    );
+    expect(releasing).toContain("only an npm-style `pi.cmd` on `PATH`");
+    expect(releasing).toContain("invokes the installed `pioneer.cmd doctor`");
+    expect(releasing).toContain("retains `WINDOWS_STRICT_ISOLATION_UNAVAILABLE`");
+    expect(releasing).toContain("rejects any `PI_NOT_FOUND` regression");
+  });
 });
