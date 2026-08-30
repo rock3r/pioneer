@@ -119,9 +119,8 @@ Resume keeps the original source, grants, model, thinking, Pi-home, and network 
 
 - `--network full` is the default and permits public, LAN, and loopback destinations through the proxy.
 - `--network public` blocks local and reserved destinations.
-- `--network none` disables the proxy.
 
-Use `full` when Pi needs to probe a local deployment. Prefer `public` or `none` when local services are irrelevant.
+Use `full` when Pi needs to probe a local deployment. Prefer `public` when local services are irrelevant. Pioneer rejects `--network none`: its sandboxed Pi actor must still reach the configured model provider, and review extension discovery is disabled.
 
 ## Set a timeout
 

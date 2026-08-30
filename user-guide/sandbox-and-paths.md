@@ -36,13 +36,12 @@ Use `--pi-home /absolute/path` to select a prepared source directory. Pioneer st
 | --- | --- | --- | --- | --- |
 | `full` | Yes | Yes | Yes | Default reviews; local deployments may be probed |
 | `public` | Yes | No | No | Reviews that only need providers or public references |
-| `none` | No | No | No | Fully offline reviews |
 
 Traffic is mediated by a per-run authenticated HTTP(S) proxy. In `public` mode, the proxy resolves destinations, rejects non-global results, pins the accepted address, and therefore also closes the DNS-rebinding window.
 
 On Linux, the actor has a fresh network namespace and can reach only a loopback proxy bridge connected to the parent proxy through a private Unix socket. Tools that ignore standard proxy variables cannot use the network. On macOS, Seatbelt limits the actor to the per-run proxy endpoint.
 
-`--offline`-style Pi startup flags skip optional startup checks. They do not prevent the selected provider call; use `--network none` when the entire review must be offline.
+`--offline`-style Pi startup flags skip optional startup checks. They do not prevent the selected provider call. Pioneer reviews require an egress path to their configured model provider, so `--network none` is rejected before the actor starts.
 
 ## Platform enforcement
 

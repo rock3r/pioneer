@@ -17,7 +17,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { assertStableDirectoryChain } from "../stable-directory.js";
-import type { ReviewNetworkMode } from "./isolation.js";
+import type { StoredReviewNetworkMode } from "./isolation.js";
 import {
   isActiveReviewReportReservation,
   shouldProtectReviewReportSidecar,
@@ -33,7 +33,7 @@ export interface ImmutableReviewScope {
   readonly piHomeIncludes?: readonly string[];
   readonly allowReadPaths?: readonly string[];
   readonly allowWritePaths?: readonly string[];
-  readonly network: ReviewNetworkMode;
+  readonly network: StoredReviewNetworkMode;
   readonly piVersion: string;
   readonly gitTargets?: readonly string[];
 }
@@ -1277,7 +1277,7 @@ async function readReviewResumeArchiveContents(
     ...(Array.isArray(rawScope.allowWritePaths)
       ? { allowWritePaths: rawScope.allowWritePaths as string[] }
       : {}),
-    network: rawScope.network as ReviewNetworkMode,
+    network: rawScope.network as StoredReviewNetworkMode,
     piVersion: rawScope.piVersion,
     ...(Array.isArray(rawScope.gitTargets) ? { gitTargets: rawScope.gitTargets as string[] } : {}),
   };

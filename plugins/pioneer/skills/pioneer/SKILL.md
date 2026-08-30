@@ -10,13 +10,14 @@ Use the `pioneer` CLI to run an independent review through the operator's existi
 
 ## Preconditions
 
-1. Confirm `pioneer` and `pi` are available on `PATH`.
-2. On macOS or Linux, run `pioneer doctor` before the first review in a session.
+1. Run the `pioneer` controller outside any enclosing agent sandbox. It must reach the operator's Pi configuration and configured model provider. This does **not** weaken Pioneer: it still launches the Pi review actor in its own native sandbox.
+2. Confirm `pioneer` and `pi` are available on `PATH`.
+3. On macOS or Linux, run `pioneer doctor` before the first review in a session.
    - For an ordinary readiness failure, stop and present its instructions.
-   - If diagnostic `PI_CONFIG_HIDDEN_BY_SANDBOX` is present, explain that the calling agent's outer sandbox is hiding Pi's configuration or made the metadata check inconclusive. Request explicit approval to rerun `doctor` and the review in an escalated or unsandboxed terminal. Do not read any Pi configuration file. Pioneer still applies its own native sandbox to the Pi review actor.
+   - If `PIONEER_OUTER_SANDBOX_REQUIRED`, `PI_CONFIG_HIDDEN_BY_SANDBOX`, or `PI_MODELS_CONFIG_INVALID` is present, explain that the outer sandbox may be preventing Pi configuration access or Pi's required lock-file creation. Request explicit approval to rerun `doctor` and the review in an escalated or unsandboxed terminal before changing Pi configuration. Do not read any Pi configuration file. Pioneer still applies its own native sandbox to the Pi review actor.
    - For other diagnostic IDs, stop and present their actionable prose. Do not infer a different failure from wording.
-3. On Windows, do not use `doctor` as a review readiness check because strict eval isolation is unsupported. Run `pi --version` and `pi --offline --no-approve --no-extensions --list-models` instead.
-4. If the user requested a model, preserve the exact name. Let Pioneer reject unavailable or ambiguous names and show the configured qualified model list.
+4. On Windows, do not use `doctor` as a review readiness check because strict eval isolation is unsupported. Run `pi --version` and `pi --offline --no-approve --no-extensions --list-models` instead.
+5. If the user requested a model, preserve the exact name. Let Pioneer reject unavailable or ambiguous names and show the configured qualified model list.
 
 ## Review command
 
@@ -48,7 +49,7 @@ The source and `--allow-read` directories remain read-only. `--allow-write` is e
 
 Pioneer always creates a real-time JSONL work log and immediately prints its exact path to stderr as `[PIONEER_WORK_LOG] ABSOLUTE_PATH`. Preserve that line. Use `--work-log /absolute/new-file.jsonl` only when the caller requests a particular create-only target; the path must not contain control characters. Otherwise use the platform default. Default logs are private to the current user. Windows custom targets inherit their parent directory ACL, which Pioneer cannot validate, so use the default unless the caller identifies a parent already private to the current user. While a terminal session remains nonterminal, tail or inspect that file when status is needed. Five-second heartbeats and the last sanitized Pi event distinguish active, silent, retrying, tool-running, settled, and terminated states without exposing prompt or model/tool content.
 
-Networking defaults to `full`, which permits public, LAN, and loopback destinations through the authenticated proxy. Use `--network public` when LAN access is unnecessary, or `--network none` for an offline review.
+Networking defaults to `full`, which permits public, LAN, and loopback destinations through the authenticated proxy. Use `--network public` when LAN access is unnecessary. Do not use `--network none`: a Pioneer review requires Pi to reach its configured model provider, so Pioneer rejects it before launch. Start a new review with `--network public` instead.
 
 Use `--pi-home /absolute/path` only when the caller provides a prepared Pi agent directory. The directory is copied into the isolated run; it is not mounted in place.
 

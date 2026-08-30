@@ -10,6 +10,8 @@ pioneer doctor
 
 The command prints JSON and exits nonzero when Pi, configured models, or the native sandbox shared by reviews and evals is unavailable.
 
+Pioneer itself must run outside an enclosing agent sandbox. The controller needs the operator's Pi configuration and provider connection; it then starts the Pi actor inside Pioneer's own native sandbox. This is not an instruction to run the review actor unsandboxed.
+
 ## Pi version is unsupported
 
 Run `pioneer --version` to identify Pioneer and `pi --version` to identify Pi. Pioneer requires Pi `0.80.6` or newer. Versions above the tested maximum continue with `PI_VERSION_UNTESTED`; use `pioneer doctor` to see the warning in machine output. A non-semantic or in-range binary that lacks documented Pi flags should be replaced with an official Pi release.
@@ -55,6 +57,8 @@ If the wrong configuration is being inspected, set `PI_CODING_AGENT_DIR` or pass
 
 `PI_MODELS_CONFIG_INVALID` means Pi reported a load error even if it also printed built-in or cached models. Pioneer rejects that partial catalog so a broken custom provider cannot be mistaken for a missing model.
 
+First check whether Pioneer was launched inside an outer agent sandbox. Such a sandbox can prevent Pi from creating a lock directory next to its configuration and make a healthy catalog appear invalid. Rerun `pioneer doctor` from an unsandboxed or approved escalated terminal before editing `models.json`.
+
 Run Pi directly to see its detailed validation message:
 
 ```bash
@@ -87,7 +91,7 @@ Do not disable the global user-namespace restriction. See [Linux sandbox setup](
 
 ## Provider cannot reach the network
 
-Check the selected mode. `none` intentionally blocks egress; `public` blocks LAN and loopback; `full` permits all three through the proxy.
+Pioneer rejects `--network none` for reviews before Pi starts: a configured model provider needs an egress path, and custom Pi extensions are disabled for reviews. Start a new review with `public`, or use `full` only when the review also needs LAN or loopback access. `public` blocks LAN and loopback; `full` permits all three through the proxy.
 
 On Linux, programs must honor standard HTTP(S) proxy variables. Raw TCP clients cannot escape the isolated network namespace. Enable `PIONEER_DEBUG=1` only for limited proxy diagnostics and never publish its output without inspecting it.
 

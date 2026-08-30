@@ -24,7 +24,7 @@ export const PI_NO_MODELS_ERROR = diagnosticMessage(
 
 export const PI_MODELS_CONFIG_INVALID_ERROR = diagnosticMessage(
   "PI_MODELS_CONFIG_INVALID",
-  "Pi reported that models.json could not be loaded. Run `pi --offline --no-approve --no-extensions --list-models`, fix every reported models.json error, then retry. Pioneer will not use a partial model catalog.",
+  "Pi reported that models.json could not be loaded. If Pioneer is running inside an outer agent sandbox, rerun it from an unsandboxed or escalated terminal before changing Pi configuration. Otherwise run `pi --offline --no-approve --no-extensions --list-models`, fix every reported models.json error, then retry. Pioneer will not use a partial model catalog.",
 );
 
 export function piConfigSandboxError(agentDir: string, evidence: string): string {

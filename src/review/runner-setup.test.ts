@@ -18,7 +18,7 @@ vi.mock("./report-output.js", async (importOriginal) => ({
 }));
 
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
-import { runReview } from "./runner.js";
+import { type ReviewRequest, runReview } from "./runner.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
@@ -26,6 +26,33 @@ describe("review setup", () => {
   afterEach(async () => {
     mocks.assertPiReady.mockReset();
     mocks.reserveReviewReport.mockReset();
+  });
+
+  it("rejects disabled networking before launching a review", async () => {
+    const root = await createTempDir("pioneer-review-network-");
+    const sourceDir = path.join(root, "source");
+    await mkdir(sourceDir);
+
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        // JavaScript consumers can still supply a retired CLI value at runtime.
+        network: "none" as unknown as Exclude<ReviewRequest["network"], undefined>,
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.toThrow("[REVIEW_NETWORK_DISABLED]");
+    expect(mocks.assertPiReady).not.toHaveBeenCalled();
+  });
+
+  it("does not expose disabled networking in the review API", () => {
+    const request: ReviewRequest = {
+      sourceDir: "/repo",
+      prompt: "Review source",
+      // @ts-expect-error Reviews require model-provider egress.
+      network: "none",
+    };
+    expect(request.network).toBe("none");
   });
 
   // The controller scratch base is validated with the other request scalars, before any

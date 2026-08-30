@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createDoctorReport } from "./doctor-report.js";
+import { createDoctorReport, PIONEER_OUTER_SANDBOX_REQUIRED_WARNING } from "./doctor-report.js";
 
 describe("doctor report", () => {
   it("preserves prose errors and exposes schema-versioned machine diagnostics", () => {
@@ -45,5 +45,26 @@ describe("doctor report", () => {
       severity: "warning",
       message: "Pi is newer than tested.",
     });
+  });
+
+  it("limits the outer-sandbox hint to catalog and configuration failures", () => {
+    const nativeSandboxFailure = createDoctorReport(
+      "linux",
+      { ready: true, version: "0.84.3", modelCount: 1, errors: [] },
+      ["[BUBBLEWRAP_NOT_FOUND] Install Bubblewrap."],
+    );
+    expect(nativeSandboxFailure.warnings).toEqual([]);
+
+    const configFailure = createDoctorReport(
+      "darwin",
+      {
+        ready: false,
+        version: "0.84.3",
+        modelCount: 0,
+        errors: ["[PI_CONFIG_HIDDEN_BY_SANDBOX] Pi configuration is not visible."],
+      },
+      [],
+    );
+    expect(configFailure.warnings).toContain(PIONEER_OUTER_SANDBOX_REQUIRED_WARNING);
   });
 });

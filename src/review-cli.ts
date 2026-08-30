@@ -227,7 +227,9 @@ async function main(): Promise<void> {
       ...(reportPath === undefined ? {} : { reportPath }),
       ...(workLogPath === undefined ? {} : { workLogPath }),
       onWorkLogReady: (logPath) => process.stderr.write(`[PIONEER_WORK_LOG] ${logPath}\n`),
-      network: networkText as "full" | "public" | "none",
+      // Preserve the actionable diagnostic for the retired CLI spelling.
+      // The public TypeScript API intentionally accepts only full or public.
+      network: networkText as "full" | "public",
       allowUnsandboxedWindows,
       ...(model === undefined ? {} : { model }),
       ...(thinkingText === undefined ? {} : { thinking: thinkingText }),

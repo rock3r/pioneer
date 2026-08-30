@@ -1,6 +1,14 @@
 import { type Diagnostic, parseDiagnostic } from "./diagnostics.js";
 import type { PiReadiness } from "./pi-readiness.js";
 
+export const PIONEER_OUTER_SANDBOX_REQUIRED_WARNING =
+  "[PIONEER_OUTER_SANDBOX_REQUIRED] Pioneer must run outside any enclosing agent sandbox so the controller can access Pi configuration and the configured provider. This does not weaken Pioneer's native sandbox for review and eval actors.";
+
+const OUTER_SANDBOX_RELATED_DIAGNOSTICS = new Set([
+  "PI_MODELS_CONFIG_INVALID",
+  "PI_CONFIG_HIDDEN_BY_SANDBOX",
+]);
+
 export interface DoctorReport {
   readonly schemaVersion: 1;
   readonly platform: NodeJS.Platform;
@@ -17,7 +25,13 @@ export function createDoctorReport(
   strictErrors: readonly string[],
 ): DoctorReport {
   const errors = [...pi.errors, ...strictErrors];
-  const warnings = pi.warning === undefined ? [] : [pi.warning];
+  const outerSandboxHintRequired = errors.some((error) =>
+    OUTER_SANDBOX_RELATED_DIAGNOSTICS.has(parseDiagnostic(error).id),
+  );
+  const warnings = [
+    ...(pi.warning === undefined ? [] : [pi.warning]),
+    ...(outerSandboxHintRequired ? [PIONEER_OUTER_SANDBOX_REQUIRED_WARNING] : []),
+  ];
   return {
     schemaVersion: 1,
     platform,

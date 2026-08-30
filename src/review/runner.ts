@@ -32,6 +32,7 @@ import {
   assertDistinctExistingReviewOutputs,
   buildReviewSandboxConfig,
   type ReviewNetworkMode,
+  type StoredReviewNetworkMode,
   validateProspectiveReviewReportPath,
   validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
@@ -411,6 +412,16 @@ export interface RunReviewRpcOptions {
   readonly escalateProcess?: (child: ReturnType<typeof spawn>) => void;
   readonly startupFailureGraceMs?: number;
   readonly maxRpcOutputBytes?: number;
+}
+
+const REVIEW_NETWORK_DISABLED_MESSAGE =
+  "`--network none` is unsupported for Pioneer reviews because it blocks the Pi actor from reaching its configured model provider. Start a new review with `--network public`, or use `--network full` only when the review needs LAN or loopback access.";
+
+function assertReviewNetworkCanReachModel(
+  network: StoredReviewNetworkMode,
+): asserts network is ReviewNetworkMode {
+  if (network !== "none") return;
+  throw new Error(diagnosticMessage("REVIEW_NETWORK_DISABLED", REVIEW_NETWORK_DISABLED_MESSAGE));
 }
 
 interface ReviewPromptWriter {
@@ -1139,11 +1150,15 @@ async function runReviewInternal(
   if (!request.prompt.trim()) throw new Error("Review prompt must not be empty");
   if (request.thinking !== undefined && !isThinkingLevel(request.thinking))
     throw new Error(`Unsupported thinking level: ${String(request.thinking)}`);
+  // TypeScript callers cannot select `none`; keep a runtime boundary for
+  // JavaScript callers and historical CLI input so they receive its dedicated
+  // diagnostic rather than a generic validation failure.
+  const requestedNetwork = request.network as StoredReviewNetworkMode | undefined;
   if (
-    request.network !== undefined &&
-    request.network !== "full" &&
-    request.network !== "public" &&
-    request.network !== "none"
+    requestedNetwork !== undefined &&
+    requestedNetwork !== "full" &&
+    requestedNetwork !== "public" &&
+    requestedNetwork !== "none"
   ) {
     throw new Error("Unsupported review network mode");
   }
@@ -1157,7 +1172,8 @@ async function runReviewInternal(
     request.controllerScratchBase === undefined
       ? undefined
       : await validateControllerScratchBase(request.controllerScratchBase);
-  const network = request.network ?? "full";
+  const network = requestedNetwork ?? "full";
+  assertReviewNetworkCanReachModel(network);
   const timeoutMs = request.timeoutMs ?? 900_000;
   const maxRpcOutputBytes = validateRpcOutputBytes(request.maxRpcOutputBytes);
   const windows = process.platform === "win32";
@@ -1520,21 +1536,23 @@ async function runReviewInternal(
           reviewProcessEnvironment({}, environment),
           prompt,
           timeoutMs,
-          { workLog, sensitiveValues: [request.prompt], maxRpcOutputBytes },
+          {
+            workLog,
+            sensitiveValues: [request.prompt],
+            maxRpcOutputBytes,
+          },
         );
         sandboxed = false;
       } else {
         recordReviewWorkLog(workLog, "stage_started", { stage: "sandbox_readiness" });
         await assertNativeSandboxReady();
         recordReviewWorkLog(workLog, "stage_completed", { stage: "sandbox_readiness" });
-        if (network !== "none") {
-          recordReviewWorkLog(workLog, "stage_started", { stage: "network_proxy" });
-          proxy = await startEgressProxy(
-            crypto.randomUUID(),
-            network === "public" ? resolvePublicTarget : resolveAnyTarget,
-          );
-          recordReviewWorkLog(workLog, "stage_completed", { stage: "network_proxy" });
-        }
+        recordReviewWorkLog(workLog, "stage_started", { stage: "network_proxy" });
+        proxy = await startEgressProxy(
+          crypto.randomUUID(),
+          network === "public" ? resolvePublicTarget : resolveAnyTarget,
+        );
+        recordReviewWorkLog(workLog, "stage_completed", { stage: "network_proxy" });
         const bwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
         if (process.platform === "linux" && bwrapPath === undefined) {
           throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");
@@ -1567,7 +1585,11 @@ async function runReviewInternal(
           reviewProcessEnvironment(launch.environment, environment),
           prompt,
           timeoutMs,
-          { workLog, sensitiveValues: [request.prompt], maxRpcOutputBytes },
+          {
+            workLog,
+            sensitiveValues: [request.prompt],
+            maxRpcOutputBytes,
+          },
         );
         sandboxed = true;
       }
@@ -1752,6 +1774,8 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
     if (thinking !== undefined && !isThinkingLevel(thinking)) {
       throw new Error("[REVIEW_RESUME_UNAVAILABLE] Stored thinking level is invalid");
     }
+    const network = loaded.scope.network;
+    assertReviewNetworkCanReachModel(network);
     const result = await runReviewInternal(
       {
         sourceDir: loaded.scope.sourceDir,
@@ -1771,7 +1795,7 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
         ...(loaded.scope.allowWritePaths === undefined
           ? {}
           : { allowWritePaths: loaded.scope.allowWritePaths }),
-        network: loaded.scope.network,
+        network,
         ...(loaded.scope.gitTargets === undefined ? {} : { gitTargets: loaded.scope.gitTargets }),
         ...(request.reportPath === undefined ? {} : { reportPath: request.reportPath }),
         ...(request.workLogPath === undefined ? {} : { workLogPath: request.workLogPath }),
