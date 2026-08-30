@@ -7,9 +7,9 @@ enabled for eval actors and is not a CI or release gate.
 
 The prototype in `native/windows-appcontainer` calls Windows'
 `Experimental_CreateProcessInSandbox` API directly. It compiles without
-administrator privileges on Mattone and its `doctor` command fails closed.
+administrator privileges on the tested Windows host and its `doctor` command fails closed.
 
-Mattone's Windows 11 build `10.0.26200` exports
+The tested Windows 11 build `10.0.26200` exports
 `Experimental_CreateProcessInSandbox`, but the feature is disabled. A real
 create call returns Win32 error 120 (`ERROR_CALL_NOT_IMPLEMENTED`):
 
@@ -74,7 +74,7 @@ host ACL changes, and persistent firewall rules are deliberately not copied.
 
 ## Why Brokered File System was not tried
 
-Mattone has `C:\Windows\System32\bfscfg.exe`, so classic AppContainer plus
+The tested Windows host has `C:\Windows\System32\bfscfg.exe`, so classic AppContainer plus
 Brokered File System appears superficially possible. Microsoft MXC commit
 `a101c5ef671fc8e4cb4ceaf1ebb59f5d3b286849` explicitly compiles that tier out
 of shipping builds because invoking `bfscfg.exe` can deadlock Windows 25H2.
@@ -88,7 +88,7 @@ to avoid, so it was not implemented or run.
 
 - The API is experimental and its feature enablement is independent of whether
   the DLL export exists.
-- Filesystem enforcement could not be exercised on Mattone because process
+- Filesystem enforcement could not be exercised on the tested host because process
   creation stops at the OS feature gate.
 - The OS proxy field is not yet proven to provide public-internet access while
   denying loopback, LAN, link-local, and raw-socket bypasses.

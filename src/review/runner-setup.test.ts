@@ -1,15 +1,21 @@
 import { mkdir, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   assertPiReady: vi.fn(),
+  resolvePiCommand: vi.fn(),
   reserveReviewReport: vi.fn(),
 }));
 
 vi.mock("../pi-readiness.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../pi-readiness.js")>()),
   assertPiReady: mocks.assertPiReady,
+}));
+
+vi.mock("../pi-command.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../pi-command.js")>()),
+  resolvePiCommand: mocks.resolvePiCommand,
 }));
 
 vi.mock("./report-output.js", async (importOriginal) => ({
@@ -23,8 +29,13 @@ import { type ReviewRequest, runReview } from "./runner.js";
 const { createTempDir } = registerManagedTempPaths();
 
 describe("review setup", () => {
+  beforeEach(() => {
+    mocks.resolvePiCommand.mockResolvedValue(["pi"]);
+  });
+
   afterEach(async () => {
     mocks.assertPiReady.mockReset();
+    mocks.resolvePiCommand.mockReset();
     mocks.reserveReviewReport.mockReset();
   });
 
@@ -119,6 +130,48 @@ describe("review setup", () => {
       expect.objectContaining({
         environment: expect.objectContaining({ PI_CODING_AGENT_DIR: await realpath(piHomeSource) }),
       }),
+    );
+  });
+
+  it("recovers when Pi appears during the readiness diagnostic fallback", async () => {
+    const root = await createTempDir("pioneer-review-pi-resolution-race-");
+    const sourceDir = path.join(root, "source");
+    const piHomeSource = path.join(root, "pi-home");
+    const outputDir = path.join(root, "outputs");
+    await Promise.all([mkdir(sourceDir), mkdir(piHomeSource), mkdir(outputDir)]);
+    const resolvedCommand = [process.execPath, path.join(root, "pi.js")] as const;
+    mocks.resolvePiCommand
+      .mockRejectedValueOnce(new Error("launcher was changing"))
+      .mockResolvedValueOnce(resolvedCommand);
+    mocks.assertPiReady
+      .mockResolvedValueOnce({
+        ready: true,
+        version: "0.84.4",
+        modelCount: 1,
+        models: [{ provider: "xai", id: "grok-4.6" }],
+        errors: [],
+      })
+      .mockRejectedValueOnce(new Error("second readiness reached"));
+
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        model: "xai/grok-4.6",
+        piHomeSource,
+        reportPath: path.join(outputDir, "report.md"),
+        workLogPath: path.join(outputDir, "review.jsonl"),
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.toThrow("second readiness reached");
+    expect(mocks.resolvePiCommand).toHaveBeenCalledTimes(2);
+    expect(mocks.assertPiReady).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ requestedModel: "xai/grok-4.6" }),
+    );
+    expect(mocks.assertPiReady).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ command: resolvedCommand, requestedModel: "xai/grok-4.6" }),
     );
   });
 

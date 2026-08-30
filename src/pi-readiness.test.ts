@@ -119,6 +119,24 @@ else process.exitCode = 2;
     },
   );
 
+  it.skipIf(process.platform !== "win32")(
+    "reports an unsafe npm Pi launcher distinctly from a missing installation",
+    async () => {
+      const root = await createTempDir("pioneer-pi-readiness-unsafe-cmd-");
+      await writeFile(path.join(root, "pi.cmd"), "@echo off\r\nnode attacker.js %*\r\n");
+
+      await expect(
+        checkPiReadiness({ environment: { PATH: root, PATHEXT: ".CMD" } }),
+      ).resolves.toEqual({
+        ready: false,
+        modelCount: 0,
+        errors: [
+          "[PI_LAUNCHER_UNSAFE] Pioneer found Pi but could not resolve it to a safe direct launcher. Reinstall the official Pi npm package and retry.",
+        ],
+      });
+    },
+  );
+
   it("fails with login instructions when Pi has no configured models", async () => {
     const runner = runnerWith([
       { exitCode: 0, stdout: "0.81.1\n", stderr: "" },

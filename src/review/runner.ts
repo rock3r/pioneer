@@ -1355,8 +1355,13 @@ async function runReviewInternal(
       piCommand = await resolvePiCommand("pi", piEnvironment);
     } catch {
       // Preserve readiness's stable, sanitized diagnostic for missing or unsafe launchers.
-      await assertPiReady({ environment: piEnvironment });
-      throw new Error("Pi launcher resolution failed without a readiness diagnostic");
+      await assertPiReady({
+        environment: piEnvironment,
+        ...(request.model === undefined ? {} : { requestedModel: request.model }),
+      });
+      // If readiness succeeded, the launcher changed during the adjacent probes. Resolve it
+      // again and continue with the same command/readiness binding used on the normal path.
+      piCommand = await resolvePiCommand("pi", piEnvironment);
     }
     const readiness = await assertPiReady({
       command: piCommand,

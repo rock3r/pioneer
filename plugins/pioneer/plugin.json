@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "pioneer",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Delegate Pi code reviews with native sandboxing on macOS and Linux.",
   "author": {
     "name": "Pioneer contributors"
