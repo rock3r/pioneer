@@ -4,7 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import type { SandboxPolicy } from "../sandbox/launcher.js";
 
-export type ReviewNetworkMode = "full" | "public" | "none";
+/** Network modes accepted for a newly-started review. */
+export type ReviewNetworkMode = "full" | "public";
+
+/**
+ * Network modes retained in an immutable resume archive. `none` is kept only
+ * so pre-0.3.1 archives can be diagnosed clearly rather than misparsed.
+ */
+export type StoredReviewNetworkMode = ReviewNetworkMode | "none";
 export type ReviewPlatform = "darwin" | "linux" | "win32";
 
 export interface ReviewPathSpec {
@@ -312,7 +319,7 @@ export function buildReviewSandboxConfig(options: ReviewSandboxConfigOptions): S
   if (options.platform === "win32") {
     throw new Error("Review filesystem isolation is unavailable on Windows");
   }
-  if (options.network !== "none" && options.parentProxyUrl === undefined) {
+  if (options.parentProxyUrl === undefined) {
     throw new Error("Review networking requires an authenticated parent proxy");
   }
   return {
@@ -322,7 +329,7 @@ export function buildReviewSandboxConfig(options: ReviewSandboxConfigOptions): S
       ...(options.sessionDir === undefined ? [] : [options.sessionDir]),
       ...options.allowWritePaths,
     ],
-    network: options.network === "none" ? "none" : "proxy",
+    network: "proxy",
     ...(options.parentProxyUrl === undefined ? {} : { proxyUrl: options.parentProxyUrl }),
   };
 }

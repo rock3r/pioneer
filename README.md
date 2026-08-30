@@ -12,7 +12,7 @@ Pioneer is a convenient, safety-conscious bridge for coding agents to delegate t
 | Linux | Enforced with Bubblewrap | Enforced with Bubblewrap |
 | Windows | Explicit opt-in, instruction-only | Unsupported; fails closed |
 
-On macOS and Linux, source and reference directories are read-only. Pi receives a private writable scratch directory and only the extra capabilities you grant. Review networking defaults to `full`, including loopback and LAN, and can be restricted to `public` or `none`.
+On macOS and Linux, source and reference directories are read-only. Pi receives a private writable scratch directory and only the extra capabilities you grant. Review networking defaults to `full`, including loopback and LAN; use `public` to block loopback and LAN while retaining model-provider access.
 
 Pioneer invokes the native sandbox mechanisms directly. It does not depend on Anthropic Sandbox Runtime and does not impose special bans on `.idea`, `.vscode`, or other source-tree names.
 
