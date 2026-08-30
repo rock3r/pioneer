@@ -74,6 +74,8 @@ describe("Pioneer distribution identity", () => {
     expect(skill).toContain("license: UEL-1.0");
     expect(skill).not.toContain("from Codex or Claude Code");
     expect(skill).toContain("run `pioneer doctor` before the first review");
+    expect(skill).toContain("outside any enclosing agent sandbox");
+    expect(skill).toContain("Do not use `--network none`");
     expect(skill).toContain("exit status is zero");
     expect(skill).toContain("stdout contains a non-empty report");
     expect(skill).toContain("Preserve the command's exit status, stdout, and stderr");

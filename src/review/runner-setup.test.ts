@@ -28,6 +28,22 @@ describe("review setup", () => {
     mocks.reserveReviewReport.mockReset();
   });
 
+  it("rejects disabled networking before launching a review", async () => {
+    const root = await createTempDir("pioneer-review-network-");
+    const sourceDir = path.join(root, "source");
+    await mkdir(sourceDir);
+
+    await expect(
+      runReview({
+        sourceDir,
+        prompt: "Review source",
+        network: "none",
+        ...(process.platform === "win32" ? { allowUnsandboxedWindows: true } : {}),
+      }),
+    ).rejects.toThrow("[REVIEW_NETWORK_DISABLED]");
+    expect(mocks.assertPiReady).not.toHaveBeenCalled();
+  });
+
   // The controller scratch base is validated with the other request scalars, before any
   // controller output exists, so a bad base cannot be discovered halfway through a run.
   it("rejects an unusable controller scratch base before creating any output", async () => {

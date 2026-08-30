@@ -110,7 +110,7 @@ describe("Pi readiness", () => {
 
   it("warns but remains ready for a newer untested Pi", async () => {
     const runner = runnerWith([
-      { exitCode: 0, stdout: "0.84.3\n", stderr: "" },
+      { exitCode: 0, stdout: "0.84.5\n", stderr: "" },
       {
         exitCode: 0,
         stdout:
@@ -128,7 +128,7 @@ describe("Pi readiness", () => {
 
   it("remains ready for the tested maximum without a warning", async () => {
     const runner = runnerWith([
-      { exitCode: 0, stdout: "0.84.2\n", stderr: "" },
+      { exitCode: 0, stdout: "0.84.4\n", stderr: "" },
       {
         exitCode: 0,
         stdout:
@@ -140,7 +140,7 @@ describe("Pi readiness", () => {
     const result = await checkPiReadiness({ runner });
 
     expect(result.ready).toBe(true);
-    expect(result.version).toBe("0.84.2");
+    expect(result.version).toBe("0.84.4");
     expect(result.warning).toBeUndefined();
     expect(result.errors).toEqual([]);
   });
@@ -312,6 +312,7 @@ describe("Pi readiness", () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toContain("[PI_MODELS_CONFIG_INVALID]");
     expect(result.errors[0]).toContain("models.json");
+    expect(result.errors[0]).toContain("outer agent sandbox");
     expect(result.errors[0]).not.toContain("apiKey");
   });
 

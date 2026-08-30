@@ -52,7 +52,7 @@ pioneer review --source DIR --prompt TEXT
   [--allow-write DIR]...
   [--report FILE]
   [--work-log FILE]
-  [--network full|public|none]
+  [--network full|public]
   [--git TARGET]...
   [--timeout-ms N]
   [--max-rpc-output-mb N]
@@ -85,9 +85,11 @@ pioneer review --resume TOKEN
 
 Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout and persisted to a private default report directory unless `--report` selects another target. Pioneer exclusively creates a private file containing a random ownership marker bound to the controller's OS process-start identity and a randomly named controller-owned sibling reservation link before emitting `[PIONEER_REPORT] ABSOLUTE_PATH` on stderr, then writes the verified report through that owned inode while a separate random publication lease keeps retention from pruning it. It restores the marker after a failed write and fails without overwriting or deleting another file if the target identity changes. An unsuccessful run removes only the reservation it still owns; later retention reclaims abandoned reservation and publication siblings after controller exit, plus inactive post-publication hard links left by transient cleanup failures. Immediate cleanup of now-unneeded siblings after durable publication is best effort and cannot turn a delivered report into failure. If persistence fails, stdout still contains the verified report, the recoverable session is retained when available, and Pioneer exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`; diagnostics and warnings use stderr.
 
+`--network none` is rejected before Pi starts with `[REVIEW_NETWORK_DISABLED]`, because the sandboxed actor must reach its configured model provider. Start a new review with `--network public`, or use `--network full` only when the review needs LAN or loopback access.
+
 The default cumulative RPC stdout bound is 20 MiB; `--max-rpc-output-mb` accepts only integral values from 1 through 64. Overflow terminates the process tree and reports `[REVIEW_RPC_OUTPUT_LIMIT]` with byte metadata in the work log. High-volume delta metadata is batched after the first 1,000 events in five-second type/subtype windows, so the 16 MiB work-log cap remains an independent fail-closed bound.
 
-New reviews retain a private native Pi session after a strict non-success only when process-tree containment is proven and the opaque session tree is a regular candidate within the 32 MiB/5,000-entry committed-attempt cap. This leaves room for the next crash-safe copy inside the aggregate 64 MiB/10,000-entry archive cap. Pioneer emits `[PIONEER_REVIEW_RESUME] TOKEN`; resume accepts only the immutable stored source, grants, prompt scope, model, thinking, Pi-home, Git targets, and network policy. It may change only timeout, bounded RPC output, and controller-owned output paths. A resume always requires a fresh Windows acknowledgement. If both `[REVIEW_RPC_OUTPUT_LIMIT]` and a resume token appear, clients must run exactly `pioneer review --resume TOKEN`; a tokenless failure is not resumable. `--no-resume` runs neither create nor prune the private resume store.
+New reviews retain a private native Pi session after a strict non-success only when process-tree containment is proven and the opaque session tree is a regular candidate within the 32 MiB/5,000-entry committed-attempt cap. This leaves room for the next crash-safe copy inside the aggregate 64 MiB/10,000-entry archive cap. Pioneer emits `[PIONEER_REVIEW_RESUME] TOKEN`; resume accepts only the immutable stored source, grants, prompt scope, model, thinking, Pi-home, Git targets, and network policy. It may change only timeout, bounded RPC output, and controller-owned output paths. A resume always requires a fresh Windows acknowledgement. Archives created by an earlier Pioneer with `--network none` are rejected with `[REVIEW_NETWORK_DISABLED]`; start a new review with `--network public` or `--network full` instead. If both `[REVIEW_RPC_OUTPUT_LIMIT]` and a resume token appear, clients must run exactly `pioneer review --resume TOKEN`; a tokenless failure is not resumable. `--no-resume` runs neither create nor prune the private resume store.
 
 Immediately after opening the controller-owned work log, Pioneer prints `[PIONEER_WORK_LOG] ABSOLUTE_PATH` to stderr. Without `--work-log`, it creates a unique `review-*.jsonl` file in:
 
@@ -141,13 +143,20 @@ Checks Pi, configured models, and strict platform sandbox dependencies. It print
   "platform": "darwin",
   "supported": false,
   "pi": { "version": "0.81.1", "modelCount": 0 },
-  "warnings": [],
-  "errors": ["[PI_NO_MODELS] Pi is installed but has no available configured models. ..."],
+  "warnings": [
+    "[PIONEER_OUTER_SANDBOX_REQUIRED] Pioneer must run outside any enclosing agent sandbox so the controller can access Pi configuration and the configured provider. This does not weaken Pioneer's native sandbox for review and eval actors."
+  ],
+  "errors": ["[PI_CONFIG_HIDDEN_BY_SANDBOX] Pi reported no configured models, but this terminal appears unable to expose Pi configuration. ..."],
   "diagnostics": [
     {
-      "id": "PI_NO_MODELS",
+      "id": "PI_CONFIG_HIDDEN_BY_SANDBOX",
       "severity": "error",
-      "message": "Pi is installed but has no available configured models. ..."
+      "message": "Pi reported no configured models, but this terminal appears unable to expose Pi configuration. ..."
+    },
+    {
+      "id": "PIONEER_OUTER_SANDBOX_REQUIRED",
+      "severity": "warning",
+      "message": "Pioneer must run outside any enclosing agent sandbox so the controller can access Pi configuration and the configured provider. This does not weaken Pioneer's native sandbox for review and eval actors."
     }
   ]
 }
@@ -164,8 +173,9 @@ The v1 diagnostic IDs are listed below. Warning diagnostics use `severity: "warn
 | `PI_NOT_FOUND` | Pi is absent from `PATH` |
 | `PI_PROBE_FAILED` | Pi failed or timed out during readiness probing |
 | `PI_NO_MODELS` | Pi is visible but has no configured models |
-| `PI_MODELS_CONFIG_INVALID` | Pi reported that `models.json` could not be loaded; partial catalogs are rejected |
+| `PI_MODELS_CONFIG_INVALID` | Pi reported that `models.json` could not be loaded; partial catalogs are rejected and callers are told to rule out outer-sandbox interference first |
 | `PI_CONFIG_HIDDEN_BY_SANDBOX` | An outer agent sandbox hides Pi configuration or makes access metadata inconclusive |
+| `PIONEER_OUTER_SANDBOX_REQUIRED` | Doctor saw a Pi catalog or configuration failure and tells callers to launch the Pioneer controller outside an enclosing agent sandbox |
 | `PI_MODEL_LIST_UNRECOGNIZED` | Pi returned an unsupported model-list format |
 | `EVAL_PLATFORM_UNSUPPORTED` | Strict eval isolation has no backend for the platform |
 | `WINDOWS_STRICT_ISOLATION_UNAVAILABLE` | Windows strict eval execution is intentionally unavailable |

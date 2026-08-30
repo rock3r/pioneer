@@ -52,7 +52,7 @@ The copy is bounded to 500,000 entries and 1 GiB after exclusions. Provider auth
 
 When Pi reports no configured models, readiness checks only filesystem access permissions on the agent directory and the known configuration filenames `auth.json`, `models-store.json`, and `settings.json`. It never opens or reads those files. A permission denial is reported as an outer-terminal sandbox problem rather than misleading the user to reconfigure Pi.
 
-When Pi reports that `models.json` could not be loaded, Pioneer rejects the entire catalog even if Pi also prints cached or built-in models. The stable diagnostic does not repeat Pi's raw provider-specific error text.
+When Pi reports that `models.json` could not be loaded, Pioneer rejects the entire catalog even if Pi also prints cached or built-in models. The stable diagnostic does not repeat Pi's raw provider-specific error text and directs callers to rerun Pioneer outside an outer sandbox before editing configuration, because a sandbox can prevent Pi from creating required configuration lock files.
 
 Some policy sandboxes, including macOS Seatbelt configurations, allow metadata checks while withholding file contents. When Pi reports no models in such an environment, a recognized outer-agent sandbox indicator triggers the same conservative diagnosis. Only the indicator's variable name is reported, never its value. Callers can set `PIONEER_OUTER_SANDBOX=1` when their sandbox is not recognized automatically.
 
@@ -72,7 +72,7 @@ All sandboxed network access is proxy-mediated and authenticated with a per-run 
 | --- | --- | --- |
 | `full` | Public internet, LAN, and loopback through the proxy | Default review mode; allows probing a local deployment |
 | `public` | Globally routable destinations only | Reviews that do not need local services; all evals |
-| `none` | No proxy and no outbound grant | Offline reviews |
+| `none` | No proxy and no outbound grant | Rejected for reviews because Pi cannot reach its configured model provider |
 
 Public-only resolution rejects local suffixes and non-global IPv4/IPv6 ranges. It requires every DNS answer to be public, then connects to a selected validated address rather than resolving again. This closes the normal DNS-rebinding window.
 

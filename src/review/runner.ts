@@ -413,6 +413,14 @@ export interface RunReviewRpcOptions {
   readonly maxRpcOutputBytes?: number;
 }
 
+const REVIEW_NETWORK_DISABLED_MESSAGE =
+  "`--network none` is unsupported for Pioneer reviews because it blocks the Pi actor from reaching its configured model provider. Start a new review with `--network public`, or use `--network full` only when the review needs LAN or loopback access.";
+
+function assertReviewNetworkCanReachModel(network: ReviewNetworkMode): void {
+  if (network !== "none") return;
+  throw new Error(diagnosticMessage("REVIEW_NETWORK_DISABLED", REVIEW_NETWORK_DISABLED_MESSAGE));
+}
+
 interface ReviewPromptWriter {
   write(chunk: string): unknown;
 }
@@ -1158,6 +1166,7 @@ async function runReviewInternal(
       ? undefined
       : await validateControllerScratchBase(request.controllerScratchBase);
   const network = request.network ?? "full";
+  assertReviewNetworkCanReachModel(network);
   const timeoutMs = request.timeoutMs ?? 900_000;
   const maxRpcOutputBytes = validateRpcOutputBytes(request.maxRpcOutputBytes);
   const windows = process.platform === "win32";
@@ -1520,7 +1529,11 @@ async function runReviewInternal(
           reviewProcessEnvironment({}, environment),
           prompt,
           timeoutMs,
-          { workLog, sensitiveValues: [request.prompt], maxRpcOutputBytes },
+          {
+            workLog,
+            sensitiveValues: [request.prompt],
+            maxRpcOutputBytes,
+          },
         );
         sandboxed = false;
       } else {
@@ -1567,7 +1580,11 @@ async function runReviewInternal(
           reviewProcessEnvironment(launch.environment, environment),
           prompt,
           timeoutMs,
-          { workLog, sensitiveValues: [request.prompt], maxRpcOutputBytes },
+          {
+            workLog,
+            sensitiveValues: [request.prompt],
+            maxRpcOutputBytes,
+          },
         );
         sandboxed = true;
       }

@@ -67,7 +67,7 @@ The authenticated parent proxy:
 - requires every returned address to be globally routable; and
 - connects to the selected validated address, preventing a DNS-rebinding race.
 
-Review `full` mode uses the same mediation but permits public, LAN, and loopback destinations. Review `public` uses eval-style public-only resolution. `none` provides no proxy.
+Review `full` mode uses the same mediation but permits public, LAN, and loopback destinations. Review `public` uses eval-style public-only resolution. Pioneer rejects review `none` before actor launch because the configured model provider needs proxy-mediated egress.
 
 ## Prepare and run a battery
 

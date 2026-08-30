@@ -16,9 +16,11 @@ On macOS and Linux, source and reference directories are read-only. Pi receives 
 
 Pioneer invokes the native sandbox mechanisms directly. It does not depend on Anthropic Sandbox Runtime and does not impose special bans on `.idea`, `.vscode`, or other source-tree names.
 
+The Pioneer controller must run outside any enclosing agent sandbox. It needs access to the operator's Pi configuration and configured model provider; Pioneer then creates the native sandbox around the Pi review or eval actor. Running Pioneer itself unsandboxed does not make the actor unsandboxed.
+
 ## Quick start
 
-Pioneer requires Node.js 22.19.0 or newer, npm, and a configured Pi installation. Pi `0.80.6` is the minimum; this release is tested through Pi `0.84.2` and warns rather than blocks on newer versions. Install the CLI with:
+Pioneer requires Node.js 22.19.0 or newer, npm, and a configured Pi installation. Pi `0.80.6` is the minimum; this release is tested through Pi `0.84.4` and warns rather than blocks on newer versions. Install the CLI with:
 
 ```bash
 npm install -g @rock3r/pioneer
@@ -46,7 +48,7 @@ pioneer doctor
 pioneer models
 ```
 
-If an agent terminal hides Pi configuration, `doctor` reports that access denial separately from a genuinely unconfigured Pi installation. Its diagnosis never reads configuration contents; approve outer-terminal escalation when prompted, while Pioneer continues to sandbox the Pi actor.
+If `doctor` reports a Pi catalog or configuration error from an agent terminal, rerun Pioneer in an unsandboxed or escalated terminal before changing Pi configuration. An outer sandbox can hide configuration or prevent Pi from creating its required lock files, which may look like an invalid catalog. Pioneer never reads configuration contents for this diagnosis and continues to sandbox the Pi actor.
 
 On any supported platform, run a review from the repository root to inspect the current Git changes:
 

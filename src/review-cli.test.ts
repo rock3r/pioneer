@@ -5,6 +5,8 @@ describe("review CLI help", () => {
   it("documents the resumable review form and its allowed overrides", () => {
     expect(REVIEW_USAGE).toContain("pioneer review --resume TOKEN");
     expect(REVIEW_USAGE).toContain("[--git TARGET]...");
+    expect(REVIEW_USAGE).toContain("[--network full|public]");
+    expect(REVIEW_USAGE).not.toContain("full|public|none");
     expect(REVIEW_USAGE).toContain("[--timeout-ms N]");
     expect(REVIEW_USAGE).toContain("[--max-rpc-output-mb N]");
     expect(REVIEW_USAGE).toContain("[--allow-unsandboxed-windows]");

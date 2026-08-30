@@ -4,6 +4,13 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.3.1 - 2026-08-30
+
+- Reject `pioneer review --network none` before launch with `[REVIEW_NETWORK_DISABLED]`: a sandboxed Pi review still needs its configured model provider. Use `--network public`, or start a new `--network full` review only when LAN or loopback access is required.
+- Make `pioneer doctor` explain that Pi catalog/configuration failures can be caused by an enclosing agent sandbox blocking Pi configuration or lock-file access, while keeping Pioneer's native review/eval actor sandbox intact. The hint is limited to relevant Pi catalog/configuration diagnostics.
+- Document that the Pioneer controller always runs outside any enclosing agent sandbox, while its Pi review actor remains sandboxed; synchronize the installed Pioneer skill and troubleshooting guidance.
+- Certify Pi `0.84.4` as the newest tested compatibility endpoint after auditing its bundled-RPC runtime and provider-proxy fix, and run the endpoint smoke against the retained minimum and new maximum.
+
 ## 0.3.0 - 2026-08-23
 
 - Let API callers place review and eval controller scratch beneath a validated `controllerScratchBase`, while rejecting broad, protected, actor-granted, unstable, or overlong locations and refusing a scratch directory replaced by a symlink after creation.
