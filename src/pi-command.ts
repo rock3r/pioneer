@@ -164,7 +164,11 @@ async function windowsExecutableCandidate(
           .filter((entry) => entry.length > 0)
           .map((entry) => path.join(entry, executable));
   const hasExtension = path.win32.extname(executable).length > 0;
-  const extensions = hasExtension ? [""] : ["", ...windowsPathExtensions(environment)];
+  const extensions = hasExtension
+    ? [""]
+    : hasSeparator
+      ? ["", ...windowsPathExtensions(environment)]
+      : windowsPathExtensions(environment);
   for (const base of bases) {
     for (const extension of extensions) {
       const candidate = await regularFileOrUndefined(`${base}${extension}`);

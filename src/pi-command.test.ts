@@ -2,7 +2,7 @@ import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
-import { resolveNpmPiCmdShim } from "./pi-command.js";
+import { resolveNpmPiCmdShim, resolvePiCommand } from "./pi-command.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
@@ -54,6 +54,16 @@ describe("Windows Pi command resolution", () => {
       process.execPath,
       await realpath(fixture.target),
     ]);
+  });
+
+  it("prefers the npm cmd shim over its extensionless POSIX sibling", async () => {
+    const fixture = await npmPiFixture(await createTempDir("pioneer-pi-cmd-siblings-"));
+    const bin = path.dirname(fixture.shim);
+    await writeFile(path.join(bin, "pi"), "#!/bin/sh\n");
+
+    await expect(
+      resolvePiCommand("pi", { PATH: bin, PATHEXT: ".COM;.EXE;.BAT;.CMD" }, "win32"),
+    ).resolves.toEqual([process.execPath, await realpath(fixture.target)]);
   });
 
   it("rejects a cmd file that is not an npm-generated Pi shim", async () => {
