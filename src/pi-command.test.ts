@@ -56,13 +56,14 @@ describe("Windows Pi command resolution", () => {
     ]);
   });
 
-  it("prefers the npm cmd shim over its extensionless POSIX sibling", async () => {
+  it("prefers the npm cmd shim over its POSIX and PowerShell siblings", async () => {
     const fixture = await npmPiFixture(await createTempDir("pioneer-pi-cmd-siblings-"));
     const bin = path.dirname(fixture.shim);
     await writeFile(path.join(bin, "pi"), "#!/bin/sh\n");
+    await writeFile(path.join(bin, "pi.ps1"), "#!/usr/bin/env pwsh\n");
 
     await expect(
-      resolvePiCommand("pi", { PATH: bin, PATHEXT: ".COM;.EXE;.BAT;.CMD" }, "win32"),
+      resolvePiCommand("pi", { PATH: bin, PATHEXT: ".PS1;.COM;.EXE;.BAT;.CMD" }, "win32"),
     ).resolves.toEqual([process.execPath, await realpath(fixture.target)]);
   });
 

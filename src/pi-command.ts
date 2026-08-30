@@ -7,6 +7,7 @@ const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const MAX_SHIM_BYTES = 64 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_PACKAGE_ASCENT = 8;
+const DIRECT_WINDOWS_PATH_EXTENSIONS = new Set([".com", ".exe", ".cmd"]);
 const NPM_SHIM_PREFIX = [
   "@ECHO off",
   "GOTO start",
@@ -34,7 +35,7 @@ function windowsPathExtensions(environment: Readonly<NodeJS.ProcessEnv>): string
   return (environmentValue(environment, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
     .split(";")
     .map((extension) => extension.trim().toLowerCase())
-    .filter((extension) => extension.startsWith(".") && extension.length > 1);
+    .filter((extension) => DIRECT_WINDOWS_PATH_EXTENSIONS.has(extension));
 }
 
 async function regularFileOrUndefined(candidate: string): Promise<string | undefined> {
