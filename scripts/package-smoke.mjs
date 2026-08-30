@@ -55,7 +55,7 @@ function runWindowsCmdShim(shim, args, options = {}) {
   }
   const comspec = process.env.ComSpec ?? process.env.COMSPEC;
   if (!comspec) throw new Error("Windows smoke requires ComSpec");
-  return run(comspec, ["/d", "/s", "/c", `call "${shim}" ${args.join(" ")}`], options);
+  return run(comspec, ["/d", "/s", "/c", `""${shim}" ${args.join(" ")}"`], options);
 }
 
 async function findTarball(candidate) {
@@ -346,6 +346,16 @@ if (args.includes("--version")) {
         `${fakeBin}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}`,
       ),
     });
+    if (doctor.stdout.trim().length === 0) {
+      throw new Error(
+        `packaged Windows doctor produced no report (${JSON.stringify({
+          status: doctor.status,
+          signal: doctor.signal,
+          error: doctor.error?.code,
+          stderr: doctor.stderr,
+        })})`,
+      );
+    }
     const report = JSON.parse(doctor.stdout);
     if (
       doctor.status !== 1 ||
