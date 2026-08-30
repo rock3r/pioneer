@@ -50,12 +50,18 @@ function npmPiCmdShim(relativeTarget) {
 }
 
 function runWindowsCmdShim(shim, args, options = {}) {
-  if (/[&|<>^%!]/.test(shim) || args.some((argument) => !/^[a-z-]+$/.test(argument))) {
+  if (/["\r\n&|<>^%!]/.test(shim) || args.some((argument) => !/^[a-z-]+$/.test(argument))) {
     throw new Error("Windows smoke command contains unsupported cmd.exe metacharacters");
   }
   const comspec = process.env.ComSpec ?? process.env.COMSPEC;
   if (!comspec) throw new Error("Windows smoke requires ComSpec");
-  return run(comspec, ["/d", "/s", "/c", `""${shim}" ${args.join(" ")}"`], options);
+  const result = spawnSync(`"${shim}" ${args.join(" ")}`, {
+    encoding: "utf8",
+    shell: comspec,
+    ...options,
+  });
+  if (result.error) throw result.error;
+  return result;
 }
 
 async function findTarball(candidate) {
