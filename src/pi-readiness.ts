@@ -8,6 +8,7 @@ import {
   diagnosticMessage,
   sanitizeDiagnostic,
 } from "./diagnostics.js";
+import { type PiLaunchCommand, resolvePiCommand } from "./pi-command.js";
 import { defaultPiAgentDir } from "./pi-home.js";
 import { type PiConfiguredModel, resolvePiModel } from "./pi-model-selection.js";
 import { validatePiVersion } from "./pi-version-policy.js";
@@ -64,6 +65,7 @@ export interface PiReadiness {
 }
 
 export interface PiReadinessOptions {
+  readonly command?: PiLaunchCommand;
   readonly configAccessProbe?: PiConfigAccessProbe;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly executable?: string;
@@ -190,13 +192,13 @@ function hasInvalidModelsConfig(result: PiProbeResult): boolean {
 }
 
 function createRunner(
-  executable: string,
+  command: PiLaunchCommand,
   timeoutMs: number,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): PiProbeRunner {
   return async (args, signal) =>
     await new Promise((resolve) => {
-      const child = spawn(executable, args, {
+      const child = spawn(command[0], [...command.slice(1), ...args], {
         env: {
           ...piReadinessEnvironment(environment),
           NO_COLOR: "1",
@@ -275,13 +277,30 @@ function createRunner(
 }
 
 export async function checkPiReadiness(options: PiReadinessOptions = {}): Promise<PiReadiness> {
-  const runner =
-    options.runner ??
-    createRunner(
-      options.executable ?? "pi",
-      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-      options.environment ?? process.env,
-    );
+  const environment = options.environment ?? process.env;
+  let runner = options.runner;
+  if (runner === undefined) {
+    let command: PiLaunchCommand;
+    try {
+      command =
+        options.command ?? (await resolvePiCommand(options.executable ?? "pi", environment));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { ready: false, modelCount: 0, errors: [PI_NOT_FOUND_ERROR] };
+      }
+      return {
+        ready: false,
+        modelCount: 0,
+        errors: [
+          diagnosticMessage(
+            "PI_LAUNCHER_UNSAFE",
+            "Pioneer found Pi but could not resolve it to a safe direct launcher. Reinstall the official Pi npm package and retry.",
+          ),
+        ],
+      };
+    }
+    runner = createRunner(command, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, environment);
+  }
   const runProbe = async (args: readonly string[]): Promise<PiProbeResult> =>
     options.signal === undefined ? await runner(args) : await runner(args, options.signal);
   const versionResult = await runProbe(["--version"]);

@@ -19,6 +19,7 @@ import {
   type startPublicEgressProxy,
 } from "../eval-run/public-egress-proxy.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
+import { resolvePiCommand } from "../pi-command.js";
 import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import { assertPiReady } from "../pi-readiness.js";
@@ -1348,8 +1349,18 @@ async function runReviewInternal(
     }
 
     recordReviewWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
+    const piEnvironment = { ...process.env, PI_CODING_AGENT_DIR: piHomeSource };
+    let piCommand: Awaited<ReturnType<typeof resolvePiCommand>>;
+    try {
+      piCommand = await resolvePiCommand("pi", piEnvironment);
+    } catch {
+      // Preserve readiness's stable, sanitized diagnostic for missing or unsafe launchers.
+      await assertPiReady({ environment: piEnvironment });
+      throw new Error("Pi launcher resolution failed without a readiness diagnostic");
+    }
     const readiness = await assertPiReady({
-      environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
+      command: piCommand,
+      environment: piEnvironment,
       ...(request.model === undefined ? {} : { requestedModel: request.model }),
     });
     recordReviewWorkLog(workLog, "stage_completed", {
@@ -1496,7 +1507,7 @@ async function runReviewInternal(
         ...(request.piHomeIncludes === undefined ? {} : { piHomeIncludes: request.piHomeIncludes }),
       });
       recordReviewWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
-      const command: [string, ...string[]] = ["pi", "--mode", "rpc"];
+      const command: [string, ...string[]] = [...piCommand, "--mode", "rpc"];
       if (model !== undefined) command.push("--model", model);
       if (thinking !== undefined) command.push("--thinking", thinking);
       const optimized = optimizePiStartupCommand(command, {
