@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Certify Pi `0.85.1` as the newest tested compatibility endpoint after reviewing 0.85.0 and 0.85.1 CLI, RPC, thinking-level, and session/startup contracts, and keep the minimum at `0.80.6`.
+
 ## 0.3.2 - 2026-08-30
 
 - Recognize native Windows npm installations of Pi without executing `pi.cmd`: Pioneer validates the bounded generated shim and its declared package entry point, launches the canonical target through its own Node executable with discrete arguments, skips incompatible POSIX and PowerShell sibling shims, and keeps the expected strict-Windows-eval diagnostic in `pioneer doctor`.

@@ -2,7 +2,7 @@
 
 Pioneer treats Pi's command-line interface as a versioned external contract. The authoritative range and required capabilities live in [`pi-compatibility.json`](../pi-compatibility.json).
 
-The current supported range is Pi `0.80.6` through `0.84.4`, inclusive. Older versions fail with `PI_VERSION_TOO_OLD`. A newer semantic version is allowed with `PI_VERSION_UNTESTED` on stderr and in doctor machine output so users are not blocked merely because Pi published first. Resumable reviews additionally require the stored exact Pi version to match on resume.
+The current supported range is Pi `0.80.6` through `0.85.1`, inclusive. Older versions fail with `PI_VERSION_TOO_OLD`. A newer semantic version is allowed with `PI_VERSION_UNTESTED` on stderr and in doctor machine output so users are not blocked merely because Pi published first. Resumable reviews additionally require the stored exact Pi version to match on resume.
 
 ## Why the minimum is 0.80.6
 
