@@ -64,6 +64,8 @@ Before commits, pushes, PR operations, or other GitHub mutations, read `.agents/
 
 Opening, merging, closing, or deleting a PR requires explicit user approval. Destructive Git operations also require explicit approval.
 
+The required automated review gate is the Codex review bot on the current PR head, with all actionable findings resolved. Bugbot has been dismissed; do not request it or block merges on its absence. Follow `.agents/skills/babysit-pr/SKILL.md` for the gate and CI checks.
+
 ## Working style
 
 - Inspect before editing; do not guess at local Pi or Git behavior.

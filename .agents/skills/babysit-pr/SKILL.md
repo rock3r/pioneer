@@ -14,4 +14,4 @@ fails. It still fails closed when neither source can provide review state.
 python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr auto --once
 ```
 
-The script emits JSON with an `actions` list. Do not merge until it reports `stop_ready_to_merge`; Bugbot must be `SUCCESS`, and all actionable review items must be addressed. Use `--watch` only when the caller can stream long-running command output; otherwise rerun `--once` after completing required fixes.
+The script emits JSON with an `actions` list. Do not merge until it reports `stop_ready_to_merge`: required CI must pass, the Codex review bot must have completed a review of the current head commit, and all actionable review items must be addressed. Missing, stale, running, or unavailable Codex review state blocks merging. Request `@codex review` if the current head has not been reviewed. Bugbot has been dismissed and is not a merge gate; do not request or wait for it. Use `--watch` only when the caller can stream long-running command output; otherwise rerun `--once` after completing required fixes.
