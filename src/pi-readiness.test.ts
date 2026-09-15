@@ -108,7 +108,7 @@ else process.exitCode = 2;
       );
 
       await expect(
-        checkPiReadiness({ environment: { PATH: bin, PATHEXT: ".CMD" } }),
+        checkPiReadiness({ environment: { PATH: bin, PATHEXT: ".CMD" }, extensions: false }),
       ).resolves.toEqual({
         ready: true,
         version: "0.81.1",

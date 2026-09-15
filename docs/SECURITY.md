@@ -18,7 +18,7 @@ Trusted controller responsibilities:
 - parse bounded Pi RPC output;
 - remove run-local state.
 
-Untrusted actor inputs include the source tree, reference directories, Git refs and command output, eval fixtures, Pi skills copied into a review snapshot, commands invoked by Pi, provider responses, and the final report. Pi package content may be present in the copied home, but Pioneer disables extension discovery for review and eval actors.
+Untrusted actor inputs include the source tree, reference directories, Git refs and command output, eval fixtures, Pi skills copied into a review snapshot, commands invoked by Pi, provider responses, and the final report. Reviews load enabled user extensions from a separate read-only snapshot; evals continue to disable extensions. See [Pi extensions](PI-EXTENSIONS.md) for resolution, tool policy and arbitrary-code limits.
 
 ## Filesystem policy
 
@@ -114,7 +114,7 @@ Pioneer checks only the fixed `@rock3r/pioneer` npm package name and public npm 
 ## Residual risks
 
 - Review skills execute inside the sandbox and can still alter the review, exfiltrate any granted content, or consume provider quota. Deep review actors disable skill discovery entirely.
-- Deep review actors disable skill discovery, generic built-in tools, and unrestricted `bash`. They load only Pioneer's bundled inspection extension plus explicitly pinned provider extensions selected from a trusted capability profile outside the reviewed source tree; each selected extension must declare a SHA-256 content digest verified before launch. Actors use `public` networking, never inherit `GITHUB_TOKEN`, and receive packet/candidate data only through typed extension tools bounded by the controller.
+- Deep review actors disable skill discovery, generic built-in tools, and unrestricted `bash`. They load the enabled user extension snapshot, Pioneer's bundled inspection extension, and explicitly pinned provider extensions selected from a trusted capability profile outside the reviewed source tree; each selected extension must declare a SHA-256 content digest verified before launch. Actors use `public` networking, never inherit `GITHUB_TOKEN`, and receive packet/candidate data only through typed extension tools bounded by the controller.
 - `full` review networking intentionally permits proxy access to LAN and loopback services.
 - A writable reference path is a real host write capability. Grant it sparingly.
 - Proxy-unaware tools cannot use Linux networking.

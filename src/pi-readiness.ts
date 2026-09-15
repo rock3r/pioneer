@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import {
   containsCredentialAssignment,
@@ -9,6 +10,12 @@ import {
   sanitizeDiagnostic,
 } from "./diagnostics.js";
 import { type PiLaunchCommand, resolvePiCommand } from "./pi-command.js";
+import {
+  cleanupReviewRuntime,
+  discoverPreparedExtensions,
+  type PreparedReviewRuntime,
+  prepareReviewRuntime,
+} from "./pi-extension-discovery.js";
 import { defaultPiAgentDir } from "./pi-home.js";
 import { type PiConfiguredModel, resolvePiModel } from "./pi-model-selection.js";
 import { validatePiVersion } from "./pi-version-policy.js";
@@ -20,12 +27,12 @@ export const PI_NOT_FOUND_ERROR = diagnosticMessage(
 
 export const PI_NO_MODELS_ERROR = diagnosticMessage(
   "PI_NO_MODELS",
-  "Pi is installed but has no available configured models without extensions. Run `pi`, use `/login` to configure a built-in provider, then verify the result with `pi --offline --no-approve --no-extensions --list-models`.",
+  "Pi has no available configured models. Run `pi`, configure the intended provider with `/login`, and verify it with `pi --offline --no-approve --list-models`. Pioneer includes enabled user extensions by default.",
 );
 
 export const PI_MODELS_CONFIG_INVALID_ERROR = diagnosticMessage(
   "PI_MODELS_CONFIG_INVALID",
-  "Pi reported that models.json could not be loaded. If Pioneer is running inside an outer agent sandbox, rerun it from an unsandboxed or escalated terminal before changing Pi configuration. Otherwise run `pi --offline --no-approve --no-extensions --list-models`, fix every reported models.json error, then retry. Pioneer will not use a partial model catalog.",
+  "Pi reported that models.json could not be loaded. If Pioneer is running inside an outer agent sandbox, rerun it from an unsandboxed or escalated terminal before changing Pi configuration. Otherwise run `pi --offline --no-approve --list-models`, fix every reported models.json error, then retry. Pioneer will not use a partial model catalog.",
 );
 
 export function piConfigSandboxError(agentDir: string, evidence: string): string {
@@ -65,6 +72,8 @@ export interface PiReadiness {
 }
 
 export interface PiReadinessOptions {
+  readonly extensions?: boolean;
+  readonly preparedRuntime?: PreparedReviewRuntime;
   readonly command?: PiLaunchCommand;
   readonly configAccessProbe?: PiConfigAccessProbe;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
@@ -299,7 +308,40 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
         ],
       };
     }
-    runner = createRunner(command, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, environment);
+    const baseRunner = createRunner(command, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, environment);
+    runner = async (args, signal) => {
+      if (!args.includes("--list-models") || options.extensions === false)
+        return await baseRunner(args, signal);
+      let runtime = options.preparedRuntime;
+      try {
+        runtime ??= await prepareReviewRuntime(
+          command,
+          environment.PI_CODING_AGENT_DIR ?? defaultPiAgentDir(environment),
+          piReadinessEnvironment(environment),
+          process.platform === "win32" ? os.tmpdir() : "/tmp",
+          undefined,
+          true,
+          "full",
+          signal,
+        );
+        return await discoverPreparedExtensions(runtime, options.timeoutMs, signal);
+      } catch (error) {
+        const code =
+          error instanceof Error
+            ? /^\[(PI_EXTENSION_[A-Z_]+)\]/.exec(error.message)?.[1]
+            : undefined;
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: `[${code ?? "PI_EXTENSION_DISCOVERY_FAILED"}]`,
+          errorCode: code ?? "PI_EXTENSION_DISCOVERY_FAILED",
+        };
+      } finally {
+        if (runtime !== undefined && options.preparedRuntime === undefined) {
+          await cleanupReviewRuntime(runtime);
+        }
+      }
+    };
   }
   const runProbe = async (args: readonly string[]): Promise<PiProbeResult> =>
     options.signal === undefined ? await runner(args) : await runner(args, options.signal);
@@ -336,6 +378,21 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     "--no-extensions",
     "--list-models",
   ]);
+  const extensionFailure = /\[(PI_EXTENSION_[A-Z_]+)\]/.exec(modelsResult.stderr)?.[1];
+  if (extensionFailure !== undefined) {
+    const detail =
+      /Error: \[PI_EXTENSION_LOAD_FAILED\] Enabled extension failures: ([^\n]*?)\. Check/.exec(
+        modelsResult.stderr,
+      )?.[1];
+    return {
+      ready: false,
+      version,
+      modelCount: 0,
+      errors: [
+        `[${extensionFailure}] Pi extension preparation or startup failed.${detail === undefined ? "" : ` ${sanitizeDiagnostic(detail)}.`} Check the enabled extensions with normal Pi. Review extensions must work with private configuration, restricted tools and proxy networking; raw diagnostics are suppressed to protect credentials.`,
+      ],
+    };
+  }
   if (hasInvalidModelsConfig(modelsResult)) {
     return {
       ready: false,
@@ -402,7 +459,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       errors: [
         diagnosticMessage(
           "PI_MODEL_LIST_UNRECOGNIZED",
-          "Pi returned an unrecognized model listing. Run `pi --offline --no-approve --no-extensions --list-models` and resolve any startup warnings before retrying.",
+          "Pi returned an unrecognized model listing. Run `pi --offline --no-approve --list-models` and resolve any startup warnings before retrying.",
         ),
       ],
     };

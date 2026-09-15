@@ -52,6 +52,22 @@ import {
 const { createTempDir } = registerManagedTempPaths();
 
 describe("recoverable review archive", () => {
+  it("retains the extension snapshot digest across session recovery", async () => {
+    const root = await createTempDir("extension-resume-");
+    const digest = "a".repeat(64);
+    const archive = await createReviewResumeArchive(root, {
+      sourceDir: "/repo",
+      prompt: "test",
+      network: "public",
+      piVersion: "0.85.1",
+      extensionDigest: digest,
+    });
+    await writeFile(path.join(archive.activeAttemptDir, "session.jsonl"), "native-session");
+    await retainReviewResumeArchive(archive, "REVIEW_RPC_INCOMPLETE");
+    const loaded = await loadReviewResumeArchive(root, archive.token);
+    expect(loaded.scope.extensionDigest).toBe(digest);
+    await releaseLeasedReviewResumeArchive(loaded.archive);
+  });
   it("trusts sticky ancestry only when its owner can protect the caller-owned entry", () => {
     expect(isTrustedApplicationDataOwner(0, 501)).toBe(true);
     expect(isTrustedApplicationDataOwner(501, 501)).toBe(true);

@@ -4,6 +4,7 @@
 - [SECURITY.md](SECURITY.md) — threat model, trust boundaries, platform guarantees, and residual risks
 - [REVIEW-TRANSPORT.md](REVIEW-TRANSPORT.md) — review CLI/API lifecycle and Pi RPC behavior
 - [PI-COMPATIBILITY.md](PI-COMPATIBILITY.md) — supported Pi range, capability contract, and release maintenance
+- [PI-EXTENSIONS.md](PI-EXTENSIONS.md) — extension snapshots, provider hooks, tool restrictions and discovery isolation
 - [CLI-REFERENCE.md](CLI-REFERENCE.md) — complete command and option reference
 - [EVALS.md](EVALS.md) — isolated eval preparation, execution, platform evidence, and setup
 - [PLUGIN-PACKAGING.md](PLUGIN-PACKAGING.md) — portable Agent Plugins plus native Codex/Claude packaging and release rules

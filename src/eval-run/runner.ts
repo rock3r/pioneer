@@ -283,7 +283,16 @@ export async function captureEvalProcess(
   cwd: string,
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
+  abortSignal?: AbortSignal,
 ): Promise<EvalRunResult> {
+  if (abortSignal?.aborted)
+    return {
+      exitCode: 1,
+      signal: null,
+      stdout: "",
+      stderr: "[EVAL_INTERRUPTED] Process was cancelled before launch",
+      interrupted: "SIGTERM",
+    };
   return await new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
       cwd,
@@ -313,6 +322,7 @@ export async function captureEvalProcess(
     let graceTimer: NodeJS.Timeout | undefined;
     let onSigint: (() => void) | undefined;
     let onSigterm: (() => void) | undefined;
+    let onAbort: (() => void) | undefined;
 
     const output = (): { readonly stdout: string; readonly stderr: string } => ({
       stdout: decodeBoundedUtf8(stdout, EVAL_MAX_STDOUT_BYTES),
@@ -323,6 +333,7 @@ export async function captureEvalProcess(
       if (graceTimer !== undefined) clearTimeout(graceTimer);
       if (onSigint !== undefined) process.off("SIGINT", onSigint);
       if (onSigterm !== undefined) process.off("SIGTERM", onSigterm);
+      if (onAbort !== undefined) abortSignal?.removeEventListener("abort", onAbort);
     };
     const settle = (): void => {
       if (settled) return;
@@ -435,6 +446,9 @@ export async function captureEvalProcess(
     process.once("SIGINT", onSigint);
     process.once("SIGTERM", onSigterm);
     timeoutTimer = setTimeout(() => terminate("timeout"), timeoutMs);
+    onAbort = () => terminate("SIGTERM");
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+    if (abortSignal?.aborted) onAbort();
     void childExited;
   });
 }
@@ -526,6 +540,7 @@ async function runEvalCommandWithInterruption(
   const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
   const initialReadinessOptions = {
+    extensions: false,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
     ...(requestedModel === undefined ? {} : { requestedModel }),
     signal: interruption.abortSignal,
@@ -641,6 +656,7 @@ async function runEvalCommandWithInterruption(
       throw evalWorkLogCreateError(workLog.path, error);
     }
     const readinessOptions = {
+      extensions: false,
       environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
       ...(requestedModel === undefined ? {} : { requestedModel }),
       signal: interruption.abortSignal,

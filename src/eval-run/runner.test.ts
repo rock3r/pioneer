@@ -25,6 +25,19 @@ const TIMEOUT_CAPTURE_TIMEOUT_MS = 2_000;
 const TIMEOUT_CAPTURE_BUDGET_MS = 6_000;
 
 describe("eval process capture", () => {
+  it("does not launch discovery work after its abort signal is cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await captureEvalProcess(
+      actor("process.stdout.write('launched')"),
+      process.cwd(),
+      process.env,
+      1000,
+      controller.signal,
+    );
+    expect(result.stdout).toBe("");
+    expect(result.interrupted).toBe("SIGTERM");
+  });
   it("launches a symlinked executable through its lexical path", () => {
     expect(
       buildEvalLaunchCommand(

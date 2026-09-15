@@ -12,6 +12,11 @@ interface ReviewRpcOutcome {
 }
 
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
+  if (outcome.diagnostics.includes("extension_error")) {
+    throw new Error(
+      "[REVIEW_EXTENSION_FAILED] An enabled Pi extension hook failed inside the review sandbox. Check its private-configuration, subprocess and proxy requirements before retrying; raw extension errors are suppressed to protect credentials.",
+    );
+  }
   const report = outcome.report.trim();
   const context = `events: ${outcome.eventTypes.length}; diagnostics: ${outcome.diagnostics.length}; stderr: ${outcome.stderr.trim() ? "present" : "none"}`;
   const assistantFailed = outcome.diagnostics.some(

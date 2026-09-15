@@ -1,0 +1,181 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { chmod, copyFile, lstat, mkdir, readdir, realpath, symlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+export interface ExtensionResource {
+  readonly path: string;
+  readonly enabled: boolean;
+  readonly metadata: {
+    readonly scope: string;
+    readonly origin?: string;
+    readonly baseDir?: string;
+  };
+}
+
+export interface ExtensionSnapshot {
+  readonly paths: readonly string[];
+  readonly digest: string;
+}
+
+export function assertSameExtensionSnapshot(stored: string | undefined, current: string): void {
+  if ((stored ?? "0".repeat(64)) !== current) {
+    throw new Error(
+      "[REVIEW_RESUME_EXTENSIONS_CHANGED] The enabled extension snapshot differs from the retained review. Restore the same extension code and dependencies or start a new review.",
+    );
+  }
+}
+
+function within(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
+  );
+}
+
+/** Copies code as data. No extension is imported in the controller. */
+export async function snapshotExtensionResources(
+  resources: readonly ExtensionResource[],
+  destination: string,
+  signal?: AbortSignal,
+): Promise<ExtensionSnapshot> {
+  const enabled = resources.filter(
+    (resource) => resource.enabled && resource.metadata.scope === "user",
+  );
+  const roots = new Set<string>();
+  for (const resource of enabled) {
+    signal?.throwIfAborted();
+    let root = path.dirname(resource.path);
+    const base = resource.metadata.baseDir;
+    if (resource.metadata.origin === "package" && base !== undefined) root = base;
+    else if (base !== undefined && within(path.join(base, "extensions"), resource.path))
+      root = path.join(base, "extensions");
+    root = await realpath(root);
+    const canonicalEntry = await realpath(resource.path);
+    if (!within(root, canonicalEntry)) root = path.dirname(canonicalEntry);
+    const modulesSegment = `${path.sep}node_modules${path.sep}`;
+    const modulesIndex = root.indexOf(modulesSegment);
+    if (modulesIndex >= 0) root = root.slice(0, modulesIndex + modulesSegment.length - 1);
+    if (root === path.parse(root).root || within(root, await realpath(os.homedir()))) {
+      throw new Error(
+        "[PI_EXTENSION_RUNTIME_UNSUPPORTED] Put local extensions in a dedicated directory with their dependencies and assets; a home or filesystem root cannot be staged.",
+      );
+    }
+    roots.add(root);
+    for (
+      let ancestor = root;
+      ancestor !== path.dirname(ancestor);
+      ancestor = path.dirname(ancestor)
+    ) {
+      const modules = path.join(ancestor, "node_modules");
+      try {
+        if ((await lstat(modules)).isDirectory()) roots.add(await realpath(modules));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+  }
+  const selectedRoots = [...roots]
+    .sort()
+    .filter((root) => ![...roots].some((other) => other !== root && within(other, root)));
+  await mkdir(destination, { recursive: true, mode: 0o700 });
+  let entries = 0;
+  let bytes = 0;
+  const digest = createHash("sha256");
+  const mapped = new Map<string, string>();
+  const stagedPath = (source: string): string =>
+    path.join(destination, "tree", source.replaceAll(":", "").replace(/^[/\\]+/, ""));
+  async function copy(
+    source: string,
+    target: string,
+    ancestors: ReadonlySet<string>,
+  ): Promise<void> {
+    signal?.throwIfAborted();
+    const canonical = await realpath(source);
+    if (!selectedRoots.some((root) => within(root, canonical))) {
+      throw new Error(
+        "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency link escapes the selected code directories. Install its dependencies inside the package before retrying.",
+      );
+    }
+    if (ancestors.has(canonical))
+      throw new Error(
+        "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency contains a symlink cycle.",
+      );
+    const lexical = await lstat(source);
+    if (lexical.isSymbolicLink()) {
+      entries += 1;
+      if (entries > 500_000)
+        throw new Error("[PI_EXTENSION_SNAPSHOT_LIMIT] Too many extension dependency links.");
+      const relative = path.relative(path.dirname(target), stagedPath(canonical));
+      digest.update(JSON.stringify([path.relative(destination, target), "symlink", relative]));
+      digest.update("\0");
+      await symlink(relative, target);
+      return;
+    }
+    const details = await lstat(canonical);
+    entries += 1;
+    bytes += details.isFile() ? details.size : 0;
+    if (entries > 500_000 || bytes > 1024 ** 3) {
+      throw new Error(
+        "[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the 1 GiB or 500000-entry snapshot limit.",
+      );
+    }
+    digest.update(
+      JSON.stringify([
+        path.relative(destination, target),
+        details.isDirectory() ? "directory" : "file",
+        details.isFile() ? details.size : 0,
+        details.mode & 0o100,
+      ]),
+    );
+    digest.update("\0");
+    if (details.isDirectory()) {
+      await mkdir(target, { recursive: true, mode: 0o700 });
+      const next = new Set([...ancestors, canonical]);
+      for (const name of (await readdir(canonical)).sort()) {
+        if ([".git", ".cache", ".npm", "sessions", "logs"].includes(name)) continue;
+        await copy(path.join(canonical, name), path.join(target, name), next);
+      }
+    } else if (details.isFile()) {
+      await copyFile(canonical, target);
+      const copied = await lstat(target);
+      const after = await lstat(canonical);
+      if (
+        after.ino !== details.ino ||
+        after.dev !== details.dev ||
+        after.size !== details.size ||
+        copied.size !== details.size ||
+        after.mtimeMs !== details.mtimeMs
+      ) {
+        throw new Error(
+          "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
+        );
+      }
+      await chmod(target, details.mode & 0o100 ? 0o700 : 0o600);
+      for await (const chunk of createReadStream(target)) digest.update(chunk as Buffer);
+    } else
+      throw new Error(
+        "[PI_EXTENSION_RUNTIME_UNSUPPORTED] Extension resources must be regular files or directories.",
+      );
+  }
+  for (const root of selectedRoots) {
+    const target = stagedPath(root);
+    mapped.set(root, target);
+    await copy(root, target, new Set());
+  }
+  const paths: string[] = [];
+  for (const resource of enabled) {
+    const canonical = await realpath(resource.path);
+    const root = selectedRoots.find((candidate) => within(candidate, canonical));
+    if (root === undefined)
+      throw new Error(
+        "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension entry escapes its staged package directory.",
+      );
+    const staged = path.join(mapped.get(root) ?? "", path.relative(root, canonical));
+    if (!paths.includes(staged)) paths.push(staged);
+  }
+  digest.update(JSON.stringify(paths.map((entry) => path.relative(destination, entry))));
+  return { paths, digest: digest.digest("hex") };
+}

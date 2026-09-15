@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { completeReviewRpc } from "./rpc-outcome.js";
 
 describe("review RPC completion", () => {
+  it("rejects an apparently complete report when an enabled extension hook failed", () => {
+    expect(() =>
+      completeReviewRpc({
+        completed: true,
+        report: "No findings",
+        exitCode: 0,
+        signal: null,
+        eventTypes: ["extension_error", "agent_settled"],
+        diagnostics: ["extension_error"],
+        stderr: "private provider detail",
+      }),
+    ).toThrow("[REVIEW_EXTENSION_FAILED]");
+  });
   it("returns a non-empty report only after Pi settles", () => {
     expect(
       completeReviewRpc({

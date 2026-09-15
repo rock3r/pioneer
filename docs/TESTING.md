@@ -63,6 +63,8 @@ End-to-end tests keep their own 120 s serial budget in `vitest.e2e.config.ts`.
 
 ## Commands
 
+The extension contract integration uses installed Pi with disposable configuration and a local fake provider, never operator credentials. Build first, then run `PIONEER_PI_EXTENSION_INTEGRATION=1 npx vitest run test/pi-extension-integration.test.ts` outside an outer sandbox. It verifies extension-only discovery/execution, disabled and untrusted resources, package/local dependencies, initialization, tool restrictions, and source/report/credential/code isolation. Normal `npm test` skips this opt-in test. A real provider smoke review is separate and must use the specifically requested model and existing credentials without printing them.
+
 ```bash
 npm test
 npm run test:e2e

@@ -51,10 +51,10 @@ Pi uses its allowlisted built-in inspection tools inside the granted source tree
 
 ## Readiness and model resolution
 
-Readiness runs before scratch creation. Pioneer requires:
+Readiness prepares private configuration and enabled-extension snapshots before model discovery. Pioneer requires:
 
 1. `pi --version` to be semantic and at least `0.80.6`; versions newer than the tested maximum continue with a warning;
-2. `pi --offline --no-approve --no-extensions --list-models` to return at least one configured model;
+2. sandboxed model discovery with staged enabled user extensions to return at least one configured model;
 3. an explicitly requested model to resolve unambiguously.
 
 A qualified `provider/model` name is matched case-insensitively as a whole. An unqualified model ID is accepted only if exactly one configured provider exposes it. Missing or ambiguous requests fail with the sorted qualified model list.
@@ -74,14 +74,14 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 - `--offline`;
 - a private `--session-dir` for new resumable reviews, or `--no-session` only for `resumable: false` / `--no-resume`;
 - `--no-approve`;
-- `--no-extensions`;
+- `--no-extensions` plus explicit paths from the enabled user snapshot, preventing ambient or project-local discovery;
 - Linux: `--tools read,bash,grep,find,ls`; macOS and opt-in Windows: `--tools read,ls`;
 - `--no-prompt-templates`;
 - `--no-themes`;
 - `PI_OFFLINE=1`;
 - `PI_TELEMETRY=0`.
 
-Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion depends only on Pi's built-in RPC mode and built-in inspection tools. `write` and `edit` are excluded. macOS and opt-in Windows reviews use `read` and `ls`, so source discovery remains available without allowing Pi to request a child process; macOS also denies process creation in Seatbelt. Git-target inspection on those platforms is controller-collected, not executed by Pi. Linux reviews retain `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace in addition to the same controller Git collection. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
+Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion uses Pi's RPC mode, enabled provider/auth hooks and a separate inspection-tool policy. See [Pi extensions](PI-EXTENSIONS.md). `write` and `edit` are excluded. macOS and opt-in Windows reviews use `read` and `ls`, so source discovery remains available without allowing Pi to request a child process; macOS also denies process creation in Seatbelt. Git-target inspection on those platforms is controller-collected, not executed by Pi. Linux reviews retain `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace in addition to the same controller Git collection. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
 
 ## RPC framing and completion
 
@@ -125,7 +125,7 @@ Pioneer receives RPC events through the Pi child process's stdout pipe and synch
 
 ## Deep review structured actors
 
-Deep review reuses the same RPC transport, containment, timeout, work-log, and native recovery contracts as `runReview`, but actors emit versioned JSON instead of Markdown reports. Each council member and the president launch through the shared Pi command builder with `--no-builtin-tools`, discovery disabled, an explicit bundled inspection extension, and optional pinned provider extensions from the capability profile.
+Deep review reuses the same RPC transport, containment, timeout, work-log, and native recovery contracts as `runReview`, but actors emit versioned JSON instead of Markdown reports. Each council member and the president launch through the shared Pi command builder with `--no-builtin-tools`, discovery disabled, an explicit bundled inspection extension, the enabled user extension snapshot, and optional pinned provider extensions from the capability profile.
 
 Before launch, the controller copies the packet and any president candidate store into the actor's private scratch directory and passes those actor-local paths through environment variables. Packet and candidate stores therefore remain readable inside the OS sandbox without granting write access to controller scratch or credentials.
 

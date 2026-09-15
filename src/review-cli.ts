@@ -105,8 +105,10 @@ async function main(): Promise<void> {
       return;
     }
     if (subcommand === "doctor") {
-      if (rawArgs.length > 0) usage();
-      const result = await runDoctor();
+      const args = [...rawArgs];
+      const noExtensions = takeFlag(args, "--no-extensions");
+      if (args.length > 0) usage();
+      const result = await runDoctor(!noExtensions);
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       if (!result.supported) process.exitCode = 1;
       return;
@@ -115,12 +117,13 @@ async function main(): Promise<void> {
       const args = [...rawArgs];
       const piHomeSource = takeOption(args, "--pi-home");
       const json = takeFlag(args, "--json");
+      const noExtensions = takeFlag(args, "--no-extensions");
       if (args.length > 0) usage();
       const environment =
         piHomeSource === undefined
           ? process.env
           : { ...process.env, PI_CODING_AGENT_DIR: path.resolve(piHomeSource) };
-      const readiness = await checkPiReadiness({ environment });
+      const readiness = await checkPiReadiness({ environment, extensions: !noExtensions });
       if (!readiness.ready) throw new Error(readiness.errors.join("\n"));
       if (readiness.warning !== undefined) {
         process.stderr.write(`WARNING: ${readiness.warning}\n`);
@@ -173,6 +176,7 @@ async function main(): Promise<void> {
         gitTargets.length > 0 ||
         networkText !== "full" ||
         noResume ||
+        parsed.noExtensions ||
         networkSpecified ||
         parsed.remaining.length > 0 ||
         (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1))
@@ -219,6 +223,7 @@ async function main(): Promise<void> {
     )
       usage();
     const result = await runReview({
+      ...(parsed.noExtensions ? { extensions: false } : {}),
       sourceDir: path.resolve(sourceDir),
       prompt,
       allowReadPaths,

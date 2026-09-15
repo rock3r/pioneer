@@ -35,6 +35,7 @@ export interface ImmutableReviewScope {
   readonly allowWritePaths?: readonly string[];
   readonly network: StoredReviewNetworkMode;
   readonly piVersion: string;
+  readonly extensionDigest?: string;
   readonly gitTargets?: readonly string[];
 }
 
@@ -179,6 +180,7 @@ export function immutableReviewScope(
     allowWritePaths: scope.allowWritePaths,
     network: scope.network,
     piVersion: scope.piVersion,
+    ...(scope.extensionDigest === undefined ? {} : { extensionDigest: scope.extensionDigest }),
     ...(scope.gitTargets === undefined ? {} : { gitTargets: scope.gitTargets }),
   };
 }
@@ -1205,6 +1207,9 @@ async function readReviewResumeArchiveContents(
     !optionalString(rawScope.model) ||
     !optionalString(rawScope.thinking) ||
     !optionalString(rawScope.piHomeSource) ||
+    (rawScope.extensionDigest !== undefined &&
+      (typeof rawScope.extensionDigest !== "string" ||
+        !/^[a-f0-9]{64}$/.test(rawScope.extensionDigest))) ||
     !optionalStringList(rawScope.piHomeIncludes) ||
     !optionalStringList(rawScope.allowReadPaths) ||
     !optionalStringList(rawScope.allowWritePaths) ||
@@ -1279,6 +1284,9 @@ async function readReviewResumeArchiveContents(
       : {}),
     network: rawScope.network as StoredReviewNetworkMode,
     piVersion: rawScope.piVersion,
+    ...(typeof rawScope.extensionDigest === "string"
+      ? { extensionDigest: rawScope.extensionDigest }
+      : {}),
     ...(Array.isArray(rawScope.gitTargets) ? { gitTargets: rawScope.gitTargets as string[] } : {}),
   };
   return {
