@@ -17,6 +17,7 @@ export interface ParsedReviewCliArgs {
   readonly maxRpcOutputMbText: string | undefined;
   readonly allowUnsandboxedWindows: boolean;
   readonly noResume: boolean;
+  readonly noExtensions: boolean;
   readonly resumeToken: string | undefined;
   readonly gitTargets: readonly string[];
   readonly remaining: readonly string[];
@@ -57,6 +58,8 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
   if (unsafeIndex >= 0) args.splice(unsafeIndex, 1);
   const noResume = args.includes("--no-resume");
   if (noResume) args.splice(args.indexOf("--no-resume"), 1);
+  const noExtensions = args.includes("--no-extensions");
+  if (noExtensions) args.splice(args.indexOf("--no-extensions"), 1);
   const networkSpecified = args.some(
     (argument) => argument === "--network" || argument.startsWith("--network="),
   );
@@ -77,6 +80,7 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
     maxRpcOutputMbText: takeOption(args, "--max-rpc-output-mb"),
     allowUnsandboxedWindows,
     noResume,
+    noExtensions,
     resumeToken: takeOption(args, "--resume"),
     gitTargets: takeRepeated(args, "--git", false),
     remaining: args,

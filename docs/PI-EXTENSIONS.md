@@ -1,0 +1,25 @@
+# Pi extensions in reviews
+
+Reviews, deep reviews, `models`, and `doctor` load the operator's enabled user extensions by default. Provider registration and authentication hooks are available without a provider allowlist. Strict evals continue to disable extensions. `review`, `models`, and `doctor` accept `--no-extensions` as an explicit built-in-only opt-out; the review API accepts `extensions: false`.
+
+## Resolution and staging
+
+The controller uses the installed official Pi package's `DefaultPackageManager` with global settings and project trust disabled. This is resource resolution only: the controller does not import extension code. Pi determines package, local-file and auto-discovered extension enablement, including disabled-resource filters. Offline resolution does not install missing packages. Reviewed-project settings and extensions are excluded, consistent with `--no-approve`; Pioneer never silently trusts the source tree.
+
+Enabled extension entry points, package assets, and dependencies are copied as data into a private directory. Npm layouts retain their `node_modules` directory and hoisted dependencies. Local extensions must live in a dedicated directory with their dependencies and assets. Copies are bounded to 1 GiB and 500,000 entries. Dependency links must resolve inside selected code directories; filesystem/home roots, special files and cycles are refused. Git metadata, package caches, sessions and logs are excluded. Unsupported external runtime dependencies require adapting the extension's installation; Pioneer does not grant ambient access to the operator's home.
+
+The staged code is a separate read-only sandbox grant. Pi authentication and configuration remain in a writable, private run-local copy so authentication refresh and lock files work. Discovery and execution reuse that same configuration and extension snapshot. Both temporary directories are removed after the run. Retained sessions store a SHA-256 digest of the extension snapshot; resume re-stages and verifies the same code, dependency bytes and entry-point order before loading the session. A changed snapshot fails with `REVIEW_RESUME_EXTENSIONS_CHANGED`. Older archives without a digest retain their original built-in-only policy.
+
+## Execution and capabilities
+
+Discovery executes extensions inside the native sandbox, with private HOME/configuration, no reviewed source grant, and authenticated proxy networking. It follows the review's public/full network policy; standalone models/doctor use the ordinary review default of full proxy access. It uses the same installed Pi CLI and resource loader as execution. A small adapter wraps the resource loader's public `getExtensions` boundary, rejects any extension-load errors, and removes user extension tool registrations before Pi builds its tool registry. The real CLI is imported once, preserving its dispatcher and startup behavior; extensions are not preloaded and then initialized a second time within that process. Discovery and the review are separate Pi processes, so each performs its own normal initialization.
+
+Ordinary reviews retain their existing built-in inspection-tool allowlist. Extension tools cannot override `read` or add write, shell or subagent tools outside that policy. Deep review retains only its controller-selected bundled inspection extension's tools and its configured tool-name allowlist. Provider/auth and other lifecycle hooks remain loaded.
+
+Tool filtering is not a JavaScript security boundary. Arbitrary enabled extension code runs in the Pi process and can use any capability the OS sandbox grants that process, including reading staged credentials, modifying private scratch and sending allowed network requests. The native filesystem, process and network boundary remains authoritative. On macOS subprocess creation remains denied; Linux retains its existing contained process policy. Extensions requiring subprocesses, external files, local daemons or proxy-unaware networking can fail and must be adapted explicitly.
+
+## Diagnostics and compatibility
+
+`PI_EXTENSION_RESOLUTION_FAILED`, `PI_EXTENSION_RUNTIME_UNSUPPORTED`, `PI_EXTENSION_SNAPSHOT_LIMIT`, `PI_EXTENSION_DISCOVERY_FAILED`, and `PI_EXTENSION_LOAD_FAILED` distinguish extension failures from an absent model. Raw extension diagnostics are suppressed because initialization errors may contain credentials. Compare the enabled installation with normal Pi, then address the reported dependency or sandbox requirement; do not substitute another model or disable the sandbox.
+
+The extension adapter has been exercised with Pi 0.85.1. It requires the official Node package and its resource-loader/package-manager contracts; unsupported installations fail closed. Native extension discovery currently requires macOS or Linux. Windows users can explicitly choose `--no-extensions` with the existing unsandboxed-review acknowledgement.

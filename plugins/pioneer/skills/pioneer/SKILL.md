@@ -55,7 +55,11 @@ Use `--pi-home /absolute/path` only when the caller provides a prepared Pi agent
 
 ## Windows
 
-Windows review execution is not enforceably sandboxed. Never add `--allow-unsandboxed-windows` silently. Explain that source immutability is instruction-only and obtain the user's explicit approval before proceeding. Strict eval runs are unsupported on Windows.
+Windows review execution is not enforceably sandboxed. Never add `--allow-unsandboxed-windows` silently. Explain that source immutability is instruction-only and obtain the user's explicit approval before proceeding. Strict eval runs are unsupported on Windows. Native extension discovery is also unsupported there; an explicitly approved built-in-only review requires `--no-extensions`.
+
+## Extension failures
+
+`PI_EXTENSION_*` diagnostics describe extension resolution, staging or runtime failure, not an absent provider. Preserve the exact requested model. Do not patch installed dist files, substitute a provider, disable extensions or widen the native sandbox to hide the error. Resume rejects changed extension snapshots with `REVIEW_RESUME_EXTENSIONS_CHANGED`; restore the same code/dependencies or ask the user to start a new review.
 
 ## Presenting results
 
@@ -64,7 +68,7 @@ Windows review execution is not enforceably sandboxed. Never add `--allow-unsand
 - Treat `[PIONEER_WORK_LOG] ABSOLUTE_PATH` as an informational stderr marker, not a failure. Preserve the path so the caller can inspect live progress and diagnose a hang.
 - Treat `[PIONEER_REPORT] ABSOLUTE_PATH` as an informational stderr marker, not a failure. Preserve the path, but do not read it as a completed report until the command reaches a terminal result; Pioneer may still be publishing through its protected reservation. On transport success the path contains the private durable report.
 - If a terminal tool returns a session ID without an exit code, the review is still running. Preserve that session ID and poll it until a terminal result includes an exit code; do not report the outer orchestration cell as the review result.
-- Pioneer disables Pi extension discovery for reviews and enables only Pi's built-in inspection tools; `write` and `edit` are excluded, while the native sandbox keeps the source read-only. Do not assume subagents, MCP, or any other optional extension is installed.
+- Pioneer loads enabled user extensions from a private snapshot for provider/auth hooks and separately restricts extension tools; `write` and `edit` are excluded, while the native sandbox keeps the source read-only. Loading an extension does not authorize its subagent, write or MCP tools. Only add `--no-extensions` when the user explicitly requests the built-in-only opt-out.
 - Pioneer receives Pi events over process pipes. It does not use `fs.watch`, polling, or a `subagent-results` directory, so watcher fallback messages come from the calling agent runtime and cannot persist or deliver a Pioneer report.
 - Preserve concrete findings, file paths, line references, and severity from Pi's report.
 - If Pioneer exits with `[REVIEW_REPORT_WRITE_FAILED]`, preserve and present the non-empty stdout Markdown report together with the persistence diagnostic; Pi's review completed, but the requested durable copy did not.

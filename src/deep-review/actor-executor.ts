@@ -4,9 +4,12 @@ import { validateControllerScratchBase } from "../controller-scratch.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import { resolvePublicTarget, startEgressProxy } from "../eval-run/public-egress-proxy.js";
-import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
-import { assertPiReady } from "../pi-readiness.js";
-import { optimizePiStartupCommand } from "../pi-startup.js";
+import { resolvePiCommand } from "../pi-command.js";
+import { cleanupReviewRuntime, prepareReviewRuntime } from "../pi-extension-discovery.js";
+import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
+import { defaultPiAgentDir } from "../pi-home.js";
+import { assertPiReady, piReadinessEnvironment } from "../pi-readiness.js";
+import { applyResolvedPiLaunch, optimizePiStartupCommand } from "../pi-startup.js";
 import { buildReviewSandboxConfig, validateReviewPaths } from "../review/isolation.js";
 import {
   createReviewScratchDirectory,
@@ -88,124 +91,157 @@ async function launchStructuredActor(
     ...bundledDeepReviewInspectionRuntimeReadPaths(options.packageRoot),
   ];
 
-  await assertPiReady({
-    environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
-    requestedModel: request.member.model,
-    ...(request.signal === undefined ? {} : { signal: request.signal }),
-  });
-  await assertNativeSandboxReady();
-
-  const runtimeReadPaths = [
-    ...(await piRuntimePaths("pi")),
-    ...(await piRuntimePaths("node")),
-    ...(await macosRuntimeReadPaths(process.execPath)),
-    ...extensionPaths,
-  ];
-
-  const scratchDir = request.actorScratchDir;
-  const actorPacketPath = await stageActorStoreFile(request.packetPath, scratchDir, "packet.json");
-  const actorCandidateStorePath =
-    request.candidateStorePath === undefined
-      ? undefined
-      : await stageActorStoreFile(request.candidateStorePath, scratchDir, "candidates.json");
-  const piHome = await prepareIsolatedPiHome({
-    sourceDir: piHomeSource,
-    destination: path.join(scratchDir, "pi-home"),
-    mode: "eval",
-  });
-  const sessionDir = await mkdtemp(path.join(scratchDir, "session-"));
-
-  const baseCommand = buildStructuredActorPiCommand("pi", {
-    model: request.member.model,
-    ...(request.member.thinking === undefined ? {} : { thinking: request.member.thinking }),
-    tools: deepReviewActorTools(request.includePresidentTools),
-    extensionPath: inspectionExtension,
-    piHomeDir: piHome.agentDir,
-    sessionDir,
-    actorEnvironment: {},
-  });
-
-  const optimized = optimizePiStartupCommand(baseCommand, {
-    disableExtensions: true,
-    disableSkills: true,
-    extensions: capabilityExtensions,
-    noSession: false,
-    sessionDir,
-    tools: deepReviewActorTools(request.includePresidentTools),
-  });
-
-  const actorEnvironment = deepReviewActorEnvironment(
-    { ...optimized.environment, ...piHome.environment },
-    {
-      piHomeDir: piHome.agentDir,
-      homeDir: piHome.homeDir,
-      tmpDir: piHome.tmpDir,
-      packetPath: actorPacketPath,
-      sourceDir: validatedPaths.sourceDir,
-      ...(actorCandidateStorePath === undefined
-        ? {}
-        : { candidateStorePath: actorCandidateStorePath }),
-    },
+  const piEnvironment = { ...process.env, PI_CODING_AGENT_DIR: piHomeSource };
+  const command = await resolvePiCommand("pi", piEnvironment);
+  const runtime = await prepareReviewRuntime(
+    command,
+    piHomeSource,
+    piReadinessEnvironment(piEnvironment),
+    "/tmp",
+    undefined,
+    true,
+    "public",
+    request.signal,
   );
-
-  const environment = {
-    ...actorEnvironment,
-    ...(process.platform === "darwin"
-      ? {
-          OPENSSL_CONF: "/private/etc/ssl/openssl.cnf",
-          SSL_CERT_FILE: "/private/etc/ssl/cert.pem",
-        }
-      : {}),
-  };
-
-  let proxy: Awaited<ReturnType<typeof startEgressProxy>> | undefined;
-  let bridge: LinuxProxyBridge | undefined;
-  let bridgeRoot: string | undefined;
-
   try {
-    proxy = await startEgressProxy(crypto.randomUUID(), resolvePublicTarget);
-    const bwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
-    if (process.platform === "linux" && bwrapPath === undefined) {
-      throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");
-    }
-    if (process.platform === "linux" && proxy !== undefined) {
-      const scratchBase = "/tmp";
-      bridgeRoot = await mkdtemp(path.join(scratchBase, "pdr-bridge-"));
-      bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
-    }
-
-    const sandboxConfig = buildReviewSandboxConfig({
-      platform: process.platform as "darwin" | "linux",
-      ...validatedPaths,
-      scratchDir,
-      runtimeReadPaths,
-      network: "public",
-      parentProxyUrl: proxy.url,
-      sessionDir,
+    await assertPiReady({
+      command,
+      preparedRuntime: runtime,
+      environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
+      requestedModel: request.member.model,
+      ...(request.signal === undefined ? {} : { signal: request.signal }),
     });
-    const launch =
-      process.platform === "darwin"
-        ? buildMacosSandboxArgv({ ...sandboxConfig, allowProcessFork: false }, optimized.command)
-        : buildLinuxSandboxArgv(
-            sandboxConfig,
-            optimized.command,
-            bwrapPath ?? "",
-            bridge?.socketPath,
-          );
+    await assertNativeSandboxReady();
 
-    return await runReviewRpc(
-      launch.argv,
-      validatedPaths.sourceDir,
-      reviewProcessEnvironment(launch.environment, environment),
-      request.prompt,
-      request.timeoutMs,
+    const runtimeReadPaths = [
+      runtime.extensionRoot,
+      ...(runtime.extensions.runtimeRoot === undefined ? [] : [runtime.extensions.runtimeRoot]),
+      ...(await piRuntimePaths("pi")),
+      ...(await piRuntimePaths("node")),
+      ...(await macosRuntimeReadPaths(process.execPath)),
+      ...extensionPaths,
+    ];
+
+    const scratchDir = request.actorScratchDir;
+    const actorPacketPath = await stageActorStoreFile(
+      request.packetPath,
+      scratchDir,
+      "packet.json",
     );
-  } finally {
-    await bridge?.close();
-    if (bridgeRoot !== undefined) {
-      await rm(bridgeRoot, { recursive: true, force: true });
+    const actorCandidateStorePath =
+      request.candidateStorePath === undefined
+        ? undefined
+        : await stageActorStoreFile(request.candidateStorePath, scratchDir, "candidates.json");
+    const piHome = runtime.home;
+    const sessionDir = await mkdtemp(path.join(scratchDir, "session-"));
+
+    const baseCommand = buildStructuredActorPiCommand("pi", {
+      model: request.member.model,
+      ...(request.member.thinking === undefined ? {} : { thinking: request.member.thinking }),
+      tools: deepReviewActorTools(request.includePresidentTools),
+      extensionPath: inspectionExtension,
+      piHomeDir: piHome.agentDir,
+      sessionDir,
+      actorEnvironment: {},
+    });
+
+    const optimized = applyResolvedPiLaunch(
+      optimizePiStartupCommand(baseCommand, {
+        disableExtensions: true,
+        disableSkills: true,
+        extensions: extensionPathsWithCapabilities(runtime.extensions, capabilityExtensions),
+        noSession: false,
+        sessionDir,
+        tools: deepReviewActorTools(request.includePresidentTools),
+      }),
+      [...runtime.extensions.command, "--pioneer-inspection-extension", inspectionExtension],
+    );
+
+    const actorEnvironment = deepReviewActorEnvironment(
+      { ...optimized.environment, ...piHome.environment },
+      {
+        piHomeDir: piHome.agentDir,
+        homeDir: piHome.homeDir,
+        tmpDir: piHome.tmpDir,
+        packetPath: actorPacketPath,
+        sourceDir: validatedPaths.sourceDir,
+        ...(actorCandidateStorePath === undefined
+          ? {}
+          : { candidateStorePath: actorCandidateStorePath }),
+      },
+    );
+
+    const environment = {
+      ...actorEnvironment,
+      ...(process.platform === "darwin"
+        ? {
+            OPENSSL_CONF: "/private/etc/ssl/openssl.cnf",
+            SSL_CERT_FILE: "/private/etc/ssl/cert.pem",
+          }
+        : {}),
+    };
+
+    let proxy: Awaited<ReturnType<typeof startEgressProxy>> | undefined;
+    let bridge: LinuxProxyBridge | undefined;
+    let bridgeRoot: string | undefined;
+
+    try {
+      proxy = await startEgressProxy(crypto.randomUUID(), resolvePublicTarget);
+      const bwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
+      if (process.platform === "linux" && bwrapPath === undefined) {
+        throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");
+      }
+      if (process.platform === "linux" && proxy !== undefined) {
+        const scratchBase = "/tmp";
+        bridgeRoot = await mkdtemp(path.join(scratchBase, "pdr-bridge-"));
+        bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
+      }
+
+      const sandboxConfig = buildReviewSandboxConfig({
+        platform: process.platform as "darwin" | "linux",
+        ...validatedPaths,
+        scratchDir,
+        runtimeReadPaths,
+        network: "public",
+        parentProxyUrl: proxy.url,
+        sessionDir,
+      });
+      const launch =
+        process.platform === "darwin"
+          ? buildMacosSandboxArgv(
+              {
+                ...sandboxConfig,
+                writablePaths: [...sandboxConfig.writablePaths, runtime.scratch],
+                allowProcessFork: false,
+              },
+              optimized.command,
+            )
+          : buildLinuxSandboxArgv(
+              {
+                ...sandboxConfig,
+                writablePaths: [...sandboxConfig.writablePaths, runtime.scratch],
+              },
+              optimized.command,
+              bwrapPath ?? "",
+              bridge?.socketPath,
+            );
+
+      return await runReviewRpc(
+        launch.argv,
+        validatedPaths.sourceDir,
+        reviewProcessEnvironment(launch.environment, environment),
+        request.prompt,
+        request.timeoutMs,
+      );
+    } finally {
+      await bridge?.close();
+      if (bridgeRoot !== undefined) {
+        await rm(bridgeRoot, { recursive: true, force: true });
+      }
+      await proxy?.close();
     }
-    await proxy?.close();
+  } finally {
+    await cleanupReviewRuntime(runtime);
   }
 }
 

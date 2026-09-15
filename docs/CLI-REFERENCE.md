@@ -57,6 +57,7 @@ pioneer review --source DIR --prompt TEXT
   [--timeout-ms N]
   [--max-rpc-output-mb N]
   [--no-resume]
+  [--no-extensions]
   [--allow-unsandboxed-windows]
 
 pioneer review --resume TOKEN
@@ -80,6 +81,7 @@ pioneer review --resume TOKEN
 | `--network MODE` | `full` | Proxy destination policy |
 | `--timeout-ms N` | `900000` | Positive integer review timeout |
 | `--max-rpc-output-mb N` | `20` | Integral cumulative Pi RPC stdout bound from 1 through 64 MiB |
+| `--no-extensions` | false | Explicitly use built-in providers only; also available for models and doctor |
 | `--no-resume` | false | Explicitly disables private native-session retention for this new review |
 | `--allow-unsandboxed-windows` | false | Required acknowledgement for instruction-only Windows reviews |
 
@@ -110,7 +112,7 @@ Transport success is not a semantic review verdict. A no-findings review still r
 Lists the configured models visible to the same offline Pi readiness probe used by reviews:
 
 ```text
-pioneer models [--pi-home DIR] [--json]
+pioneer models [--pi-home DIR] [--json] [--no-extensions]
 ```
 
 Human output contains one sorted, qualified `provider/model` name per line. `--json` emits a schema-versioned catalog:
@@ -129,13 +131,13 @@ Human output contains one sorted, qualified `provider/model` name per line. `--j
 }
 ```
 
-`--pi-home` selects an alternative Pi agent directory without copying it. The command fails nonzero with the same readiness diagnostic used by reviews. In particular, Pioneer refuses to return a partial catalog when Pi reports that `models.json` is invalid.
+`--pi-home` selects the source for private configuration and enabled-extension snapshots. Discovery executes extensions inside the native sandbox; see [Pi extensions](PI-EXTENSIONS.md). The command fails nonzero with the same readiness diagnostic used by reviews. In particular, Pioneer refuses to return a partial catalog when Pi reports that `models.json` is invalid.
 
 Review Pi-home snapshots copy only the known root configuration files and `skills/`; unknown root paths and dependency/runtime fluff are skipped. `--pi-home-include` names one existing relative file or directory exactly; use `--pi-home-include=--NAME` for an exact path beginning with `--`. It accepts no glob, negation, or persistent configuration syntax, and paths cannot be absolute, traverse with `..`, or escape the source home. Sessions, logs, `.npm`, `.cache`, `tmp`, `.tmp`, `temp`, and `*.log` paths are hard exclusions, matched case-insensitively on macOS and Windows. Internal symlinks are retained only when their targets are also selected. Review includes are not accepted by eval commands.
 
 ## `pioneer doctor`
 
-Checks Pi, configured models, and strict platform sandbox dependencies. It prints schema-versioned JSON and exits nonzero when unsupported or unready. Human-readable entries in `errors` start with a stable diagnostic ID. Machine consumers should branch on `diagnostics[].id`, not prose.
+Checks Pi, configured models, enabled user extensions and strict platform sandbox dependencies. `pioneer doctor --no-extensions` explicitly checks built-in providers only. It prints schema-versioned JSON and exits nonzero when unsupported or unready. Human-readable entries in `errors` start with a stable diagnostic ID. Machine consumers should branch on `diagnostics[].id`, not prose.
 
 ```json
 {

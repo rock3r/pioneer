@@ -20,9 +20,15 @@ import {
 } from "../eval-run/public-egress-proxy.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
 import { resolvePiCommand } from "../pi-command.js";
-import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
+import {
+  cleanupReviewRuntime,
+  type PreparedReviewRuntime,
+  prepareReviewRuntime,
+} from "../pi-extension-discovery.js";
+import { assertSameExtensionSnapshot } from "../pi-extension-snapshot.js";
+import { defaultPiAgentDir } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
-import { assertPiReady } from "../pi-readiness.js";
+import { assertPiReady, piReadinessEnvironment } from "../pi-readiness.js";
 import { applyResolvedPiLaunch, optimizePiStartupCommand } from "../pi-startup.js";
 import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../sandbox/launcher.js";
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
@@ -75,6 +81,7 @@ import {
 } from "./work-log.js";
 
 export interface ReviewRequest {
+  readonly extensions?: boolean;
   readonly sourceDir: string;
   readonly prompt: string;
   readonly model?: string;
@@ -1301,6 +1308,7 @@ async function runReviewInternal(
   let resumeFailureHandled = false;
   let resumeStorageValidated = resumeContext !== undefined;
   let reportReservation: ReviewReportReservation | undefined;
+  let preparedRuntime: PreparedReviewRuntime | undefined;
   try {
     request.onWorkLogReady?.(workLog.path);
     if (paths.reportPath !== undefined) {
@@ -1357,15 +1365,32 @@ async function runReviewInternal(
       // Preserve readiness's stable, sanitized diagnostic for missing or unsafe launchers.
       await assertPiReady({
         environment: piEnvironment,
+        ...(request.extensions === false ? { extensions: false } : {}),
         ...(request.model === undefined ? {} : { requestedModel: request.model }),
       });
       // If readiness succeeded, the launcher changed during the adjacent probes. Resolve it
       // again and continue with the same command/readiness binding used on the normal path.
       piCommand = await resolvePiCommand("pi", piEnvironment);
     }
+    preparedRuntime = await prepareReviewRuntime(
+      piCommand,
+      piHomeSource,
+      piReadinessEnvironment(piEnvironment),
+      requestedScratchBase ?? (windows ? os.tmpdir() : "/tmp"),
+      request.piHomeIncludes,
+      request.extensions !== false,
+      network,
+    );
+    if (resumeContext !== undefined)
+      assertSameExtensionSnapshot(
+        resumeContext.loaded.scope.extensionDigest,
+        preparedRuntime.extensions.digest,
+      );
     const readiness = await assertPiReady({
       command: piCommand,
       environment: piEnvironment,
+      preparedRuntime,
+      ...(request.extensions === false ? { extensions: false } : {}),
       ...(request.model === undefined ? {} : { requestedModel: request.model }),
     });
     recordReviewWorkLog(workLog, "stage_completed", {
@@ -1462,6 +1487,7 @@ async function runReviewInternal(
               : { allowWritePaths: paths.allowWritePaths }),
             network,
             piVersion: readiness.version ?? "unknown",
+            extensionDigest: preparedRuntime.extensions.digest,
             ...(gitTargets.length === 0 ? {} : { gitTargets: gitTargets.map(serializeGitTarget) }),
           },
           undefined,
@@ -1500,17 +1526,11 @@ async function runReviewInternal(
     let reportBytes = 0;
     try {
       recordReviewWorkLog(workLog, "stage_started", { stage: "scratch_creation" });
-      scratch = await createReviewScratchDirectory(scratchBase, () => {
-        recordReviewWorkLog(workLog, "stage_completed", { stage: "scratch_creation" });
-      });
+      scratch = preparedRuntime.scratch;
+      recordReviewWorkLog(workLog, "stage_completed", { stage: "scratch_creation" });
       const scratchDirectory = scratch;
       recordReviewWorkLog(workLog, "stage_started", { stage: "pi_home_snapshot" });
-      const piHome = await prepareIsolatedPiHome({
-        sourceDir: piHomeSource,
-        destination: path.join(scratchDirectory, "pi-home"),
-        mode: "review",
-        ...(request.piHomeIncludes === undefined ? {} : { piHomeIncludes: request.piHomeIncludes }),
-      });
+      const piHome = preparedRuntime.home;
       recordReviewWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
       const command: [string, ...string[]] = ["pi", "--mode", "rpc"];
       if (model !== undefined) command.push("--model", model);
@@ -1518,6 +1538,7 @@ async function runReviewInternal(
       const optimized = applyResolvedPiLaunch(
         optimizePiStartupCommand(command, {
           disableExtensions: true,
+          extensions: preparedRuntime.extensions.paths,
           tools: reviewTools(),
           ...(resumeContext !== undefined && resumeArchive !== undefined
             ? { resumeSession: await findReviewResumeSessionFile(resumeArchive.activeAttemptDir) }
@@ -1525,7 +1546,7 @@ async function runReviewInternal(
               ? { noSession: true }
               : { sessionDir: resumeArchive.activeAttemptDir }),
         }),
-        piCommand,
+        preparedRuntime.extensions.command,
       );
       const environment = {
         ...optimized.environment,
@@ -1587,7 +1608,13 @@ async function runReviewInternal(
           platform: process.platform as "darwin" | "linux",
           ...paths,
           scratchDir: scratchDirectory,
-          runtimeReadPaths,
+          runtimeReadPaths: [
+            ...runtimeReadPaths,
+            preparedRuntime.extensionRoot,
+            ...(preparedRuntime.extensions.runtimeRoot === undefined
+              ? []
+              : [preparedRuntime.extensions.runtimeRoot]),
+          ],
           network,
           ...(resumeArchive === undefined ? {} : { sessionDir: resumeArchive.activeAttemptDir }),
           ...(proxy === undefined ? {} : { parentProxyUrl: proxy.url }),
@@ -1765,6 +1792,21 @@ async function runReviewInternal(
     }
     outcome = { failure };
   }
+  if (preparedRuntime !== undefined) {
+    try {
+      await cleanupReviewRuntime(preparedRuntime);
+    } catch (error) {
+      outcome =
+        "result" in outcome
+          ? { result: markReviewCleanupFailure(outcome.result) }
+          : {
+              failure: combineReviewFailures(
+                outcome.failure,
+                error instanceof Error ? error : new Error(String(error)),
+              ),
+            };
+    }
+  }
   return finalizeReviewWorkLog(workLog, outcome);
 }
 
@@ -1798,6 +1840,10 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
     const result = await runReviewInternal(
       {
         sourceDir: loaded.scope.sourceDir,
+        ...(loaded.scope.extensionDigest === undefined ||
+        loaded.scope.extensionDigest === "0".repeat(64)
+          ? { extensions: false }
+          : {}),
         prompt:
           "Continue the interrupted independent review. Any earlier run-local scratch path is retired; use only this run's execution environment. Reinspect the current source where necessary, complete unfinished analysis, and emit only the final Markdown review report.",
         ...(loaded.scope.model === undefined ? {} : { model: loaded.scope.model }),
