@@ -16,7 +16,17 @@ export interface ExtensionResource {
 
 export interface ExtensionSnapshot {
   readonly paths: readonly string[];
+  readonly sourcePaths: readonly string[];
   readonly digest: string;
+}
+
+/** Capability paths have already been canonicalized and validated by their profile. */
+export function extensionPathsWithCapabilities(
+  snapshot: ExtensionSnapshot,
+  capabilityPaths: readonly string[],
+): readonly string[] {
+  const sources = new Set(snapshot.sourcePaths);
+  return [...snapshot.paths, ...new Set(capabilityPaths.filter((entry) => !sources.has(entry)))];
 }
 
 export function assertSameExtensionSnapshot(stored: string | undefined, current: string): void {
@@ -86,7 +96,12 @@ export async function snapshotExtensionResources(
   const digest = createHash("sha256");
   const mapped = new Map<string, string>();
   const stagedPath = (source: string): string =>
-    path.join(destination, "tree", source.replaceAll(":", "").replace(/^[/\\]+/, ""));
+    path.join(
+      destination,
+      "tree",
+      encodeURIComponent(path.parse(source).root),
+      path.relative(path.parse(source).root, source),
+    );
   async function copy(
     source: string,
     target: string,
@@ -166,6 +181,7 @@ export async function snapshotExtensionResources(
     await copy(root, target, new Set());
   }
   const paths: string[] = [];
+  const sourcePaths: string[] = [];
   for (const resource of enabled) {
     const canonical = await realpath(resource.path);
     const root = selectedRoots.find((candidate) => within(candidate, canonical));
@@ -174,8 +190,11 @@ export async function snapshotExtensionResources(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension entry escapes its staged package directory.",
       );
     const staged = path.join(mapped.get(root) ?? "", path.relative(root, canonical));
-    if (!paths.includes(staged)) paths.push(staged);
+    if (!paths.includes(staged)) {
+      paths.push(staged);
+      sourcePaths.push(canonical);
+    }
   }
   digest.update(JSON.stringify(paths.map((entry) => path.relative(destination, entry))));
-  return { paths, digest: digest.digest("hex") };
+  return { paths, sourcePaths, digest: digest.digest("hex") };
 }

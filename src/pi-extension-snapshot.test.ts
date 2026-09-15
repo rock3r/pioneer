@@ -4,12 +4,48 @@ import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
 import {
   assertSameExtensionSnapshot,
+  extensionPathsWithCapabilities,
   snapshotExtensionResources,
 } from "./pi-extension-snapshot.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
 describe("extension snapshots", () => {
+  it("loads capability extensions already present in a snapshot only once", async () => {
+    const root = await createTempDir("extension-capability-duplicate-");
+    const pkg = path.join(root, "package");
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    await writeFile(entry, "extension");
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+    );
+    const canonical = await (await import("node:fs/promises")).realpath(entry);
+    expect(extensionPathsWithCapabilities(snapshot, [canonical, canonical])).toEqual(
+      snapshot.paths,
+    );
+    expect(extensionPathsWithCapabilities(snapshot, [path.join(root, "other.ts")])).toEqual([
+      ...snapshot.paths,
+      path.join(root, "other.ts"),
+    ]);
+  });
+  it.skipIf(process.platform === "win32")("keeps colon-containing roots distinct", async () => {
+    const root = await createTempDir("extension-root-collision-");
+    const resources = [];
+    for (const name of ["a:b", "ab"]) {
+      const pkg = path.join(root, name);
+      await mkdir(pkg);
+      const entry = path.join(pkg, "index.ts");
+      await writeFile(entry, name);
+      resources.push({ path: entry, enabled: true, metadata: { scope: "user" } });
+    }
+    const snapshot = await snapshotExtensionResources(resources, path.join(root, "snapshot"));
+    expect(await Promise.all(snapshot.paths.map((entry) => readFile(entry, "utf8")))).toEqual([
+      "a:b",
+      "ab",
+    ]);
+  });
   it.skipIf(process.platform === "win32")(
     "preserves internal dependency links in the staged layout",
     async () => {

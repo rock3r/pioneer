@@ -14,15 +14,7 @@ export function restrictExtensionTools<
         : /EPERM|EACCES|not permitted/.test(text)
           ? "sandbox access denied"
           : "initialization failed";
-      const filename =
-        typeof value === "object" && value !== null && "path" in value
-          ? String(value.path).split(/[\\/]/).slice(-2).join("/")
-          : "unknown";
-      const safeName =
-        /^[a-z0-9_.\-/]{1,100}$/i.test(filename) && !/token|secret|key|password/i.test(filename)
-          ? filename
-          : `entry ${index + 1}`;
-      return `${safeName}: ${category}`;
+      return `entry ${index + 1}: ${category}`;
     });
     throw new Error(
       `[PI_EXTENSION_LOAD_FAILED] Enabled extension failures: ${categories.join(", ")}. Check the installed extension set with normal Pi; unsupported filesystem, subprocess or network requirements must be adapted to the review sandbox. Raw extension diagnostics are suppressed to protect credentials.`,

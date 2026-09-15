@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { restrictExtensionTools } from "./pi-extension-policy.js";
 
 describe("extension capability policy", () => {
+  it("never echoes credential-shaped extension filenames", () => {
+    expect(() =>
+      restrictExtensionTools({
+        extensions: [],
+        errors: [
+          {
+            path: "/extensions/sk-abcdefghijklmnopqrstuvwxyz/index.ts",
+            error: "EACCES",
+          },
+        ],
+      }),
+    ).toThrow("entry 1: sandbox access denied");
+  });
   it("preserves provider hooks while removing write tools and builtin overrides", () => {
     const handlers = new Map([["session_start", [() => {}]]]);
     const extension = {

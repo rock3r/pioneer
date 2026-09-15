@@ -77,7 +77,7 @@ export async function prepareReviewRuntime(
           signal,
           path.join(home.agentDir, "settings.json"),
         )
-      : { command, paths: [], digest: "0".repeat(64) };
+      : { command, paths: [], sourcePaths: [], digest: "0".repeat(64) };
     return { scratch, extensionRoot, home, extensions, network };
   } catch (error) {
     await rm(scratch, { recursive: true, force: true });

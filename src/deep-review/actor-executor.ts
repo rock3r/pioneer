@@ -6,6 +6,7 @@ import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import { resolvePublicTarget, startEgressProxy } from "../eval-run/public-egress-proxy.js";
 import { resolvePiCommand } from "../pi-command.js";
 import { cleanupReviewRuntime, prepareReviewRuntime } from "../pi-extension-discovery.js";
+import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { assertPiReady, piReadinessEnvironment } from "../pi-readiness.js";
 import { applyResolvedPiLaunch, optimizePiStartupCommand } from "../pi-startup.js";
@@ -148,7 +149,7 @@ async function launchStructuredActor(
       optimizePiStartupCommand(baseCommand, {
         disableExtensions: true,
         disableSkills: true,
-        extensions: [...runtime.extensions.paths, ...capabilityExtensions],
+        extensions: extensionPathsWithCapabilities(runtime.extensions, capabilityExtensions),
         noSession: false,
         sessionDir,
         tools: deepReviewActorTools(request.includePresidentTools),
