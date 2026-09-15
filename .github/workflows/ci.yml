@@ -77,3 +77,8 @@ jobs:
           fi
       - run: npm run sandbox:smoke
       - run: npm run test:e2e
+      - run: npm install --global @earendil-works/pi-coding-agent@0.85.1
+      - name: Test installed Pi extension isolation
+        run: npx vitest run test/pi-extension-integration.test.ts
+        env:
+          PIONEER_PI_EXTENSION_INTEGRATION: "1"

@@ -301,7 +301,12 @@ try {
 
   const fakeBin = path.join(root, "fake-bin");
   await mkdir(fakeBin);
-  const modelCommand = [path.join(packageRoot, "dist", "review-cli.js"), "models", "--json"];
+  const modelCommand = [
+    path.join(packageRoot, "dist", "review-cli.js"),
+    "models",
+    "--json",
+    "--no-extensions",
+  ];
   if (process.platform === "win32") {
     const piSpecifier = `${piCompatibility.package}@${piCompatibility.testedMaximum}`;
     const piInstalled = runNpm([
@@ -319,11 +324,15 @@ try {
     }
     await access(path.join(shimRoot, "pi.cmd"));
 
-    const doctor = runWindowsCmdShim(path.join(shimRoot, "pioneer.cmd"), ["doctor"], {
-      env: environmentWithPath(
-        `${shimRoot}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}`,
-      ),
-    });
+    const doctor = runWindowsCmdShim(
+      path.join(shimRoot, "pioneer.cmd"),
+      ["doctor", "--no-extensions"],
+      {
+        env: environmentWithPath(
+          `${shimRoot}${path.delimiter}${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}`,
+        ),
+      },
+    );
     if (doctor.stdout.trim().length === 0) {
       throw new Error(
         `packaged Windows doctor produced no report (${JSON.stringify({

@@ -54,7 +54,8 @@ try {
   if (models.status !== 0 || /unknown option/i.test(`${models.stdout}\n${models.stderr}`)) {
     throw new Error(`Pi model-list contract failed: ${models.stderr || models.stdout}`);
   }
-  const pioneer = run(process.execPath, ["dist/review-cli.js", "models"], {
+  // This CLI endpoint contract has no extensions or native sandbox installation.
+  const pioneer = run(process.execPath, ["dist/review-cli.js", "models", "--no-extensions"], {
     env: environment,
   });
   if (
