@@ -10,6 +10,8 @@ Use `scripts/gh_pr_watch.py` to monitor a pull request created from this reposit
 The watcher falls back to GitHub GraphQL when the REST review-list endpoint
 fails. It still fails closed when neither source can provide review state.
 
+`request_codex_review` means the current head needs `@codex review`; `diagnose_codex_review` means review state could not be verified. Both return control to the caller. Only an actively running review emits the passive `wait_codex` action.
+
 ```bash
 python3 .agents/skills/babysit-pr/scripts/gh_pr_watch.py --pr auto --once
 ```

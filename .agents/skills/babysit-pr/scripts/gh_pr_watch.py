@@ -1535,7 +1535,10 @@ def recommend_actions(
         actions.append("process_review_comment")
 
     if not codex_gate or not bool(codex_gate.get("is_success")):
-        actions.append("wait_codex")
+        status = (codex_gate or {}).get("status", "missing")
+        actions.append("wait_codex" if status == "in_progress" else
+                       "request_codex_review" if status in {"missing", "stale"} else
+                       "diagnose_codex_review")
 
     if coderabbit_gate and bool(coderabbit_gate.get("reviewing")):
         actions.append("wait_coderabbit")

@@ -108,6 +108,16 @@ class CodexGateTests(unittest.TestCase):
         self.assertTrue(gh_pr_watch.is_pr_ready_to_merge(pr, checks, [], checks_terminal_elapsed=999,
             codex_gate={"is_success": True}, bugbot_gate={"required": False}))
 
+    def test_non_running_codex_states_return_control(self):
+        pr = {"closed": False, "merged": False, "mergeable": "MERGEABLE"}
+        checks = {"all_terminal": True, "failed_count": 0, "pending_count": 0}
+        for status, expected in [("missing", "request_codex_review"), ("stale", "request_codex_review"),
+                                 ("unknown", "diagnose_codex_review"), ("in_progress", "wait_codex")]:
+            actions = gh_pr_watch.recommend_actions(pr, checks, [], [], [], 0, 3,
+                checks_terminal_elapsed=999, codex_gate={"status": status, "is_success": False})
+            self.assertIn(expected, actions)
+            self.assertEqual(gh_pr_watch.needs_agent_attention(actions), status != "in_progress")
+
 
 if __name__ == "__main__":
     unittest.main()
