@@ -107,14 +107,6 @@ HUNG_CHECK_THRESHOLDS_SECONDS = {
 RETRY_ELIGIBLE_WORKFLOW_KEYWORDS = {
     "e2e",
 }
-# Login keyword fragments for Codex bot, used for emoji reaction gate detection.
-# Codex signals it is reviewing a PR by adding a 👀 reaction; it either posts a
-# review with comments (issues found) or removes the reaction silently (clean).
-CODEX_BOT_LOGIN_KEYWORDS = {
-    "codex",
-    "chatgpt-codex",
-}
-
 MAX_SESSION_MINUTES_DEFAULT = 90
 STATE_STALENESS_RESET_SECONDS = 2 * 60 * 60
 
@@ -753,8 +745,9 @@ def summarize_codex_gate(reactions, comments, head_sha):
         current = commit is not None and bool(head_sha) and head_sha.startswith(commit.group(1))
         completed = "✅ **Completed**" in columns[2]
         success = current and completed
-        return {"reviewing": current and not completed,
-                "status": "completed" if success else "in_progress" if current else "stale",
+        running = current and "🔄 **Running**" in columns[2]
+        return {"reviewing": running,
+                "status": "completed" if success else "in_progress" if running else "unknown" if current else "stale",
                 "is_success": success}
     return {"reviewing": False, "status": "unknown", "is_success": False}
 

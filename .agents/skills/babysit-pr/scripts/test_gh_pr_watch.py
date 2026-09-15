@@ -118,6 +118,19 @@ class CodexGateTests(unittest.TestCase):
             self.assertIn(expected, actions)
             self.assertEqual(gh_pr_watch.needs_agent_attention(actions), status != "in_progress")
 
+    def test_terminal_failure_summaries_return_diagnostic(self):
+        pr = {"closed": False, "merged": False, "mergeable": "MERGEABLE"}
+        checks = {"all_terminal": True, "failed_count": 0, "pending_count": 0}
+        for marker in ["❌ **Failed**", "**Cancelled**", "unexpected status"]:
+            gate = gh_pr_watch.summarize_codex_gate([], self.summary(status=marker), self.head)
+            self.assertFalse(gate["reviewing"])
+            self.assertFalse(gate["is_success"])
+            actions = gh_pr_watch.recommend_actions(pr, checks, [], [], [], 0, 3,
+                checks_terminal_elapsed=999, codex_gate=gate)
+            self.assertIn("diagnose_codex_review", actions)
+        running = gh_pr_watch.summarize_codex_gate([], self.summary(status="🔄 **Running**"), self.head)
+        self.assertEqual(running["status"], "in_progress")
+
 
 if __name__ == "__main__":
     unittest.main()
