@@ -97,7 +97,7 @@ async function launchStructuredActor(
     command,
     piHomeSource,
     piReadinessEnvironment(piEnvironment),
-    "/tmp",
+    path.dirname(request.actorScratchDir),
     undefined,
     true,
     "public",

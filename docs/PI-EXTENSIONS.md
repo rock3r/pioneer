@@ -24,6 +24,8 @@ Tool filtering is not a JavaScript security boundary. Arbitrary enabled extensio
 
 ## Diagnostics and compatibility
 
+Deep-review actors retain separate configuration and extension snapshots. Their runtime directories use the selected controller scratch base alongside actor scratch, so a custom base also controls extension-copy disk usage. Large extension trees multiply disk and startup costs across concurrent council members; a shared immutable snapshot is a future optimization, not a shared writable actor home.
+
 `PI_EXTENSION_RESOLUTION_FAILED`, `PI_EXTENSION_RUNTIME_UNSUPPORTED`, `PI_EXTENSION_SNAPSHOT_LIMIT`, `PI_EXTENSION_DISCOVERY_FAILED`, and `PI_EXTENSION_LOAD_FAILED` distinguish extension failures from an absent model. Raw extension diagnostics are suppressed because initialization errors may contain credentials. Compare the enabled installation with normal Pi, then address the reported dependency or sandbox requirement; do not substitute another model or disable the sandbox.
 
 The extension adapter has been exercised with Pi 0.80.6 and 0.85.1. It requires the official Node package and its resource-loader/package-manager contracts; unsupported installations fail closed. Native extension discovery currently requires macOS or Linux. Windows users can explicitly choose `--no-extensions` with the existing unsandboxed-review acknowledgement.

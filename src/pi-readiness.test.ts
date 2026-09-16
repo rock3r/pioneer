@@ -24,6 +24,20 @@ function runnerWith(results: readonly Awaited<ReturnType<PiProbeRunner>>[]): PiP
 }
 
 describe("Pi readiness", () => {
+  it("gives sandbox setup guidance without forwarding raw extension diagnostics", async () => {
+    const result = await checkPiReadiness({
+      runner: runnerWith([
+        { exitCode: 0, stdout: "0.85.1", stderr: "" },
+        {
+          exitCode: 1,
+          stdout: "",
+          stderr: "[PI_EXTENSION_DISCOVERY_UNSUPPORTED] private diagnostic",
+        },
+      ]),
+    });
+    expect(result.errors.join(" ")).toContain("pioneer doctor");
+    expect(result.errors.join(" ")).not.toContain("private diagnostic");
+  });
   const configuredAgentDir = path.resolve("/configured/pi-agent");
   it("passes cancellation to an in-flight Pi probe", async () => {
     const controller = new AbortController();

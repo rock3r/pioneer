@@ -3,6 +3,31 @@ import { describe, expect, it, vi } from "vitest";
 import { startPiAuthBroker } from "./pi-auth-broker.js";
 
 describe("Pi authentication broker", () => {
+  it("serializes concurrent refreshes instead of rejecting the second provider", async () => {
+    let active = 0;
+    let maximum = 0;
+    const broker = await startPiAuthBroker(new Set(["first", "second"]), async (provider) => {
+      maximum = Math.max(maximum, ++active);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      active--;
+      return { provider };
+    });
+    try {
+      const url = new URL(broker.environment.PIONEER_AUTH_BROKER_URL ?? "");
+      url.hostname = "127.0.0.1";
+      const responses = await Promise.all(
+        ["first", "second"].map((provider) =>
+          fetch(`${url.origin}/oauth/${provider}`, {
+            headers: { authorization: `Bearer ${broker.environment.PIONEER_AUTH_BROKER_TOKEN}` },
+          }),
+        ),
+      );
+      expect(responses.map((response) => response.status)).toEqual([200, 200]);
+      expect(maximum).toBe(1);
+    } finally {
+      await broker.close();
+    }
+  });
   it("accepts only an authenticated configured provider and pins the proxy destination port", async () => {
     const refresh = vi.fn(async () => ({ type: "oauth", access: "fixture-access" }));
     const broker = await startPiAuthBroker(new Set(["fixture"]), refresh);

@@ -380,6 +380,12 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
   ]);
   const extensionFailure = /\[(PI_EXTENSION_[A-Z_]+)\]/.exec(modelsResult.stderr)?.[1];
   if (extensionFailure !== undefined) {
+    const guidance =
+      extensionFailure === "PI_EXTENSION_DISCOVERY_UNSUPPORTED"
+        ? "Run pioneer doctor and install the native sandbox prerequisites (Bubblewrap on Linux); extension discovery requires native sandbox support."
+        : extensionFailure === "PI_EXTENSION_RESOLUTION_FAILED"
+          ? "Verify the selected Pi settings and installed packages with normal Pi."
+          : "Check the enabled extensions with normal Pi. Review extensions must work with private configuration, restricted tools and proxy networking; raw diagnostics are suppressed to protect credentials.";
     const detail =
       /Error: \[PI_EXTENSION_LOAD_FAILED\] Enabled extension failures: ([^\n]*?)\. Check/.exec(
         modelsResult.stderr,
@@ -389,7 +395,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       version,
       modelCount: 0,
       errors: [
-        `[${extensionFailure}] Pi extension preparation or startup failed.${detail === undefined ? "" : ` ${sanitizeDiagnostic(detail)}.`} Check the enabled extensions with normal Pi. Review extensions must work with private configuration, restricted tools and proxy networking; raw diagnostics are suppressed to protect credentials.`,
+        `[${extensionFailure}] Pi extension preparation or startup failed.${detail === undefined ? "" : ` ${sanitizeDiagnostic(detail)}.`} ${guidance}`,
       ],
     };
   }

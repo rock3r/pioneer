@@ -5,6 +5,10 @@ export async function installAuthBrokerClient(root: string): Promise<void> {
   const url = process.env.PIONEER_AUTH_BROKER_URL;
   const token = process.env.PIONEER_AUTH_BROKER_TOKEN;
   if (url === undefined || token === undefined) return;
+  const providerNames: unknown = JSON.parse(process.env.PIONEER_AUTH_BROKER_PROVIDERS ?? "[]");
+  if (!Array.isArray(providerNames) || providerNames.some((name) => typeof name !== "string"))
+    throw new Error("[PI_OAUTH_REFRESH_FAILED] Invalid broker provider list");
+  const providers = new Set<string>(providerNames);
   const module = (await import(
     pathToFileURL(path.join(root, "dist/core/auth-storage.js")).href
   )) as {
@@ -38,7 +42,8 @@ export async function installAuthBrokerClient(root: string): Promise<void> {
   const modify = prototype.modify;
   const refresh = prototype.refreshOAuthTokenWithLock;
   if (modify !== undefined) {
-    prototype.modify = async function (provider, _update, options) {
+    prototype.modify = async function (provider, update, options) {
+      if (!providers.has(provider)) return await modify.call(this, provider, update, options);
       const refreshed = await credential(provider);
       return await modify.call(this, provider, async () => refreshed, options);
     };

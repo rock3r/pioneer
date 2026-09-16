@@ -1,4 +1,4 @@
-import { open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { type PiAuthBroker, startPiAuthBroker } from "./pi-auth-broker.js";
@@ -53,6 +53,10 @@ export async function prepareAuthBroker(
   if (root === undefined || process.platform === "win32") return undefined;
   const providers = await snapshotOAuthProviders(runtime.home.agentDir);
   if (providers.size === 0) return undefined;
+  if (!(await lstat(path.join(runtime.home.sourceDir, "auth.json"))).isFile())
+    throw new Error(
+      "[PI_OAUTH_REFRESH_FAILED] Source auth.json must be a regular file, not a symlink, so Pioneer and Pi share the same credential lock.",
+    );
   const authPath = await realpath(path.join(runtime.home.sourceDir, "auth.json"));
   const relative = path.relative(runtime.home.sourceDir, authPath);
   if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative))

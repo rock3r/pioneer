@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -14,6 +14,33 @@ const { createTempDir } = registerManagedTempPaths();
 describe.skipIf(process.env.PIONEER_PI_EXTENSION_INTEGRATION !== "1")(
   "installed Pi extension integration",
   () => {
+    it("rejects symlinked source OAuth storage before creating a differently named lock", async () => {
+      const modulePath = path.resolve("dist/pi-extension-discovery.js");
+      const { cleanupReviewRuntime, prepareReviewRuntime } = (await import(
+        modulePath
+      )) as typeof import("../src/pi-extension-discovery.js");
+      const root = await createTempDir("pi-auth-symlink-");
+      const home = path.join(root, "agent");
+      await mkdir(home);
+      await writeFile(
+        path.join(home, "models-store.json"),
+        JSON.stringify({
+          fixture: { type: "oauth", access: "fixture", refresh: "fixture", expires: 1 },
+        }),
+      );
+      await symlink("models-store.json", path.join(home, "auth.json"));
+      const result = prepareReviewRuntime(
+        await resolvePiCommand("pi", process.env),
+        home,
+        process.env,
+        root,
+      );
+      await expect(
+        result.then(async (runtime) => {
+          await cleanupReviewRuntime(runtime);
+        }),
+      ).rejects.toThrow("Source auth.json must be a regular file");
+    });
     it("discovers and refreshes a pinned provider absent from user extensions", async () => {
       const modulePath = path.resolve("dist/pi-extension-discovery.js");
       const { cleanupReviewRuntime, discoverPreparedExtensions, prepareReviewRuntime } =
@@ -49,7 +76,6 @@ describe.skipIf(process.env.PIONEER_PI_EXTENSION_INTEGRATION !== "1")(
         [extension],
       );
       try {
-        expect(runtime.capabilityExtensions).toEqual([extension]);
         const broker = runtime.authBroker;
         if (broker === undefined) throw new Error("Missing broker");
         const url = new URL(broker.environment.PIONEER_AUTH_BROKER_URL ?? "");

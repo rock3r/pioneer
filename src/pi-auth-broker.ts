@@ -17,6 +17,7 @@ export async function startPiAuthBroker(
   const token = randomUUID();
   let closing = false;
   let active: Promise<unknown> | undefined;
+  let pending = 0;
   const server = createServer({ maxHeaderSize: 4096 }, async (request, response) => {
     const supplied = Buffer.from(request.headers.authorization ?? "");
     const expected = Buffer.from(`Bearer ${token}`);
@@ -33,11 +34,12 @@ export async function startPiAuthBroker(
       response.writeHead(400).end();
       return;
     }
-    if (active !== undefined) {
+    if (pending >= 8) {
       response.writeHead(429).end();
       return;
     }
-    const operation = Promise.resolve().then(() => refresh(provider));
+    pending++;
+    const operation = (active ?? Promise.resolve()).catch(() => {}).then(() => refresh(provider));
     active = operation;
     try {
       const credential = await operation;
@@ -46,7 +48,8 @@ export async function startPiAuthBroker(
     } catch {
       response.writeHead(502).end("PI_OAUTH_REFRESH_FAILED");
     } finally {
-      active = undefined;
+      pending--;
+      if (active === operation) active = undefined;
     }
   });
   server.maxConnections = 8;
@@ -62,6 +65,7 @@ export async function startPiAuthBroker(
     environment: {
       PIONEER_AUTH_BROKER_URL: `http://${hostname}:${port}`,
       PIONEER_AUTH_BROKER_TOKEN: token,
+      PIONEER_AUTH_BROKER_PROVIDERS: JSON.stringify([...providers]),
     },
     resolveWith: (fallback) => async (requestedHost, requestedPort) => {
       if (requestedHost !== hostname) return fallback(requestedHost, requestedPort);
