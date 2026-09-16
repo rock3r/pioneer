@@ -106,6 +106,28 @@ describe("review report output", () => {
     expect(await readFile(target, "utf8")).toBe("replacement\n");
   });
 
+  it("preserves a replaced target with reused identity after publication fails", async () => {
+    const root = await createTempDir("pioneer-review-report-");
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    const { rm, lstat } =
+      await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    await rm(target);
+    await writeFile(target, "replacement\n");
+    lstatFile.mockImplementation(async (...args) =>
+      Object.assign(await lstat(...args), { dev: reservation.device, ino: reservation.inode }),
+    );
+    try {
+      await expect(publishReservedReviewReport(reservation, "No findings.")).rejects.toThrow(
+        /reservation/i,
+      );
+      await releaseReviewReportReservation(reservation);
+      expect(await readFile(target, "utf8")).toBe("replacement\n");
+    } finally {
+      lstatFile.mockImplementation(async (...args) => lstat(...args));
+    }
+  });
+
   it("does not remove a report target replaced after release ownership validation", async () => {
     const root = await createTempDir("pioneer-review-report-");
     const target = path.join(root, "report.md");

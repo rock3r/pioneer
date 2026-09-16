@@ -226,25 +226,6 @@ async function reservedSidecarStats(
   return await reservedFileStats(reservation.reservationPath, reservation);
 }
 
-async function ownedPublishingFileStats(
-  file: string,
-  reservation: ReviewReportReservation,
-): Promise<Stats | undefined> {
-  try {
-    const stats = await lstat(file);
-    if (!stats.isFile()) return undefined;
-    const identity = sameKnownFileIdentity(stats, reservation);
-    if (identity === true) return stats;
-    if (identity === false || stats.size !== Buffer.byteLength(reservation.marker)) {
-      return undefined;
-    }
-    return (await readFile(file, "utf8")) === reservation.marker ? stats : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
 async function ownsPublishedReviewReportFile(
   file: string,
   reservation: ReviewReportReservation,
@@ -527,7 +508,8 @@ export async function publishReservedReviewReport(
           await handle.sync();
         }
       } catch {
-        // Preserve the publication failure; release uses the owned inode when available.
+        // Preserve the publication failure. Cleanup retains files whose marker could
+        // not be restored: an inode alone cannot prove ownership after replacement.
       }
     }
   }
@@ -551,24 +533,14 @@ export async function releaseReviewReportReservation(
   afterOwnershipValidation: () => Promise<void> = async () => {},
 ): Promise<void> {
   if (reservation.state === "published" || reservation.state === "released") return;
-  const targetStatsPromise =
-    reservation.state === "publishing"
-      ? ownedPublishingFileStats(reservation.target, reservation)
-      : reservedTargetStats(reservation);
-  const sidecarStatsPromise =
-    reservation.state === "publishing"
-      ? ownedPublishingFileStats(reservation.reservationPath, reservation)
-      : reservedSidecarStats(reservation);
   const [targetStats, sidecarStats, publicationMarker] = await Promise.all([
-    targetStatsPromise,
-    sidecarStatsPromise,
+    reservedTargetStats(reservation),
+    reservedSidecarStats(reservation),
     readPublicationMarker(reservation),
   ]);
   await afterOwnershipValidation();
   const ownsReservationFile = async (candidate: string): Promise<boolean> =>
-    reservation.state === "publishing"
-      ? (await ownedPublishingFileStats(candidate, reservation)) !== undefined
-      : (await reservedFileStats(candidate, reservation)) !== undefined;
+    (await reservedFileStats(candidate, reservation)) !== undefined;
   if (targetStats !== undefined) {
     await removeOwnedReviewReportPath(reservation.target, ownsReservationFile);
   }
