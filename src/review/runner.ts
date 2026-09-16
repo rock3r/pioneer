@@ -1590,7 +1590,9 @@ async function runReviewInternal(
         recordReviewWorkLog(workLog, "stage_started", { stage: "network_proxy" });
         proxy = await startEgressProxy(
           crypto.randomUUID(),
-          network === "public" ? resolvePublicTarget : resolveAnyTarget,
+          preparedRuntime.authBroker?.resolveWith(
+            network === "public" ? resolvePublicTarget : resolveAnyTarget,
+          ) ?? (network === "public" ? resolvePublicTarget : resolveAnyTarget),
         );
         recordReviewWorkLog(workLog, "stage_completed", { stage: "network_proxy" });
         const bwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;

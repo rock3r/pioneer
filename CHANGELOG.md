@@ -4,11 +4,13 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
-## 0.3.3 - 2026-09-15
+## 0.3.3 - 2026-09-16
 
 - Load enabled installed Pi extensions consistently for model discovery and sandboxed reviews, including extension-provided models such as `kimi-code/k3-256k`. Preserve package dependencies, assets, disabled resources, and provider/authentication hooks without trusting the reviewed project's extensions.
 - Keep staged extension code read-only, restrict extension tools separately, suppress sensitive initialization diagnostics, and verify extension snapshot identity when resuming. Use `--no-extensions` for explicit built-in-only discovery and reviews.
 - Deduplicate capability extensions by source identity and preserve distinct extension paths when staging dependencies.
+- Preserve OAuth token rotations during native reviews through a separate sandboxed authentication worker and Pi's shared credential lock. Concurrent reviews reuse fresh credentials; review-agent changes to private credential files are never copied back.
+- Preserve replacement report files and sidecars when Windows reuses a deleted file's identity during publication cleanup.
 - Certify Pi `0.85.1` as the newest tested compatibility endpoint after reviewing 0.85.0 and 0.85.1 CLI, RPC, thinking-level, and session/startup contracts, and keep the minimum at `0.80.6`.
 
 ## 0.3.2 - 2026-08-30

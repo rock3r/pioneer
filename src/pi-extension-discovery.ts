@@ -8,6 +8,8 @@ import {
   startEgressProxy,
 } from "./eval-run/public-egress-proxy.js";
 import { captureEvalProcess } from "./eval-run/runner.js";
+import type { PiAuthBroker } from "./pi-auth-broker.js";
+import { prepareAuthBroker, snapshotOAuthProviders } from "./pi-auth-runtime.js";
 import type { PiLaunchCommand } from "./pi-command.js";
 import { type PreparedExtensions, preparePiExtensions } from "./pi-extension-runtime.js";
 import { type PreparedPiHome, prepareIsolatedPiHome } from "./pi-home.js";
@@ -31,11 +33,13 @@ export interface PreparedReviewRuntime {
   readonly home: PreparedPiHome;
   readonly extensions: PreparedExtensions;
   readonly network: "full" | "public";
+  readonly authBroker?: PiAuthBroker;
 }
 
 export async function cleanupReviewRuntime(
-  runtime: Pick<PreparedReviewRuntime, "scratch" | "extensionRoot">,
+  runtime: Pick<PreparedReviewRuntime, "scratch" | "extensionRoot" | "authBroker">,
 ): Promise<void> {
+  await runtime.authBroker?.close();
   const results = await Promise.allSettled([
     rm(runtime.scratch, { recursive: true, force: true }),
     rm(runtime.extensionRoot, { recursive: true, force: true }),
@@ -68,17 +72,29 @@ export async function prepareReviewRuntime(
       checkAborted: () => signal?.throwIfAborted(),
       ...(includes === undefined ? {} : { piHomeIncludes: includes }),
     });
-    const extensions = extensionsEnabled
-      ? await preparePiExtensions(
-          command,
-          agentDir,
-          path.join(extensionRoot, "extensions"),
-          environment,
-          signal,
-          path.join(home.agentDir, "settings.json"),
-        )
-      : { command, paths: [], sourcePaths: [], digest: "0".repeat(64) };
-    return { scratch, extensionRoot, home, extensions, network };
+    const needsAuthAdapter =
+      process.platform !== "win32" && (await snapshotOAuthProviders(home.agentDir)).size > 0;
+    const extensions =
+      extensionsEnabled || needsAuthAdapter
+        ? await preparePiExtensions(
+            command,
+            agentDir,
+            path.join(extensionRoot, "extensions"),
+            environment,
+            signal,
+            path.join(home.agentDir, "settings.json"),
+            extensionsEnabled,
+          )
+        : { command, paths: [], sourcePaths: [], digest: "0".repeat(64) };
+    const runtime = { scratch, extensionRoot, home, extensions, network };
+    const authBroker = await prepareAuthBroker(runtime);
+    return authBroker === undefined
+      ? runtime
+      : {
+          ...runtime,
+          authBroker,
+          home: { ...home, environment: { ...home.environment, ...authBroker.environment } },
+        };
   } catch (error) {
     await rm(scratch, { recursive: true, force: true });
     if (extensionRoot !== undefined) await rm(extensionRoot, { recursive: true, force: true });
@@ -91,20 +107,9 @@ export async function discoverPreparedExtensions(
   timeoutMs = 30_000,
   signal?: AbortSignal,
 ): Promise<PiProbeResult> {
-  signal?.throwIfAborted();
-  if (process.platform === "win32")
-    throw new Error(
-      "[PI_EXTENSION_DISCOVERY_UNSUPPORTED] Extension discovery requires native sandbox support on macOS or Linux.",
-    );
-  await assertNativeSandboxReady();
-  const proxy = await startEgressProxy(
-    crypto.randomUUID(),
-    runtime.network === "public" ? resolvePublicTarget : resolveAnyTarget,
-  );
-  let bridge: LinuxProxyBridge | undefined;
-  let bridgeRoot: string | undefined;
-  try {
-    const command: PiLaunchCommand = [
+  return await runPreparedPiCommand(
+    runtime,
+    [
       ...runtime.extensions.command,
       "--offline",
       "--no-approve",
@@ -115,7 +120,32 @@ export async function discoverPreparedExtensions(
       "--no-prompt-templates",
       "--no-themes",
       "--list-models",
-    ];
+    ],
+    timeoutMs,
+    signal,
+  );
+}
+
+export async function runPreparedPiCommand(
+  runtime: PreparedReviewRuntime,
+  command: PiLaunchCommand,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<PiProbeResult> {
+  signal?.throwIfAborted();
+  if (process.platform === "win32")
+    throw new Error(
+      "[PI_EXTENSION_DISCOVERY_UNSUPPORTED] Extension discovery requires native sandbox support on macOS or Linux.",
+    );
+  await assertNativeSandboxReady();
+  const resolve = runtime.network === "public" ? resolvePublicTarget : resolveAnyTarget;
+  const proxy = await startEgressProxy(
+    crypto.randomUUID(),
+    runtime.authBroker?.resolveWith(resolve) ?? resolve,
+  );
+  let bridge: LinuxProxyBridge | undefined;
+  let bridgeRoot: string | undefined;
+  try {
     const config: SandboxPolicy = {
       readOnlyPaths: [
         runtime.extensionRoot,

@@ -186,7 +186,10 @@ async function launchStructuredActor(
     let bridgeRoot: string | undefined;
 
     try {
-      proxy = await startEgressProxy(crypto.randomUUID(), resolvePublicTarget);
+      proxy = await startEgressProxy(
+        crypto.randomUUID(),
+        runtime.authBroker?.resolveWith(resolvePublicTarget) ?? resolvePublicTarget,
+      );
       const bwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
       if (process.platform === "linux" && bwrapPath === undefined) {
         throw new Error("Linux sandboxing requires Bubblewrap (`bwrap`) to be installed");

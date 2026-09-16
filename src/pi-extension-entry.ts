@@ -1,5 +1,6 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { installAuthBrokerClient } from "./pi-auth-client.js";
 import { restrictExtensionTools } from "./pi-extension-policy.js";
 
 // The controller selects and validates the installed Pi root. This adapter runs only
@@ -8,6 +9,7 @@ const root = process.argv[2];
 const hasInspection = process.argv[3] === "--pioneer-inspection-extension";
 const trustedInspectionPath = hasInspection ? process.argv[4] : undefined;
 if (root === undefined) throw new Error("[PI_EXTENSION_RUNTIME_UNSUPPORTED] Missing Pi runtime");
+await installAuthBrokerClient(root);
 const loader = (await import(
   pathToFileURL(path.join(root, "dist/core/resource-loader.js")).href
 )) as {

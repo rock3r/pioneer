@@ -16,7 +16,7 @@ export interface ResolvedTarget {
   readonly family: 4 | 6;
 }
 
-export type EgressTargetResolver = (hostname: string) => Promise<ResolvedTarget>;
+export type EgressTargetResolver = (hostname: string, port?: number) => Promise<ResolvedTarget>;
 
 const LOCAL_HOST_SUFFIXES = [
   "localhost",
@@ -144,7 +144,10 @@ async function forwardHttp(
   }
 
   try {
-    const resolved = await resolveTarget(target.hostname);
+    const resolved = await resolveTarget(
+      target.hostname,
+      target.port === "" ? 80 : Number(target.port),
+    );
     if (lifecycle.closing) {
       request.destroy();
       response.destroy();
@@ -219,7 +222,7 @@ async function forwardConnect(
   }
 
   try {
-    const resolved = await resolveTarget(hostname);
+    const resolved = await resolveTarget(hostname, port);
     if (lifecycle.closing) {
       client.destroy();
       return;
