@@ -100,7 +100,7 @@ try {
   process.stderr.write("[PI_OAUTH_REFRESH_FAILED] Provider authentication failed.\n");
 } finally {
   const result = JSON.stringify({ credential: await readCredential(provider), authenticated });
-  await outputHandle.write(result, 0, "utf8");
+  await outputHandle.writeFile(result, "utf8");
   await outputHandle.truncate(Buffer.byteLength(result));
   await outputHandle.sync();
   await outputHandle.close();
