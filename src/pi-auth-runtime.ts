@@ -3,6 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { type PiAuthBroker, startPiAuthBroker } from "./pi-auth-broker.js";
 import { type PreparedReviewRuntime, runPreparedPiCommand } from "./pi-extension-discovery.js";
+import { extensionPathsWithCapabilities } from "./pi-extension-snapshot.js";
 import { prepareIsolatedPiHome } from "./pi-home.js";
 import { createReviewScratchDirectory } from "./review/runner.js";
 
@@ -116,6 +117,9 @@ async function startRuntimeAuthBroker(
             home,
             extensions: runtime.extensions,
             network: runtime.network,
+            ...(runtime.capabilityExtensions === undefined
+              ? {}
+              : { capabilityExtensions: runtime.capabilityExtensions }),
           };
           const result = await runPreparedPiCommand(
             workerRuntime,
@@ -125,7 +129,10 @@ async function startRuntimeAuthBroker(
               root,
               provider,
               workerResult,
-              ...runtime.extensions.paths,
+              ...extensionPathsWithCapabilities(
+                runtime.extensions,
+                runtime.capabilityExtensions ?? [],
+              ),
             ],
             30_000,
           );

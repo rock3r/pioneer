@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { resolvePiCommand } from "../src/pi-command.js";
 import { registerManagedTempPaths } from "./support/temp-dir.js";
 
 const execute = promisify(execFile);
@@ -13,6 +14,60 @@ const { createTempDir } = registerManagedTempPaths();
 describe.skipIf(process.env.PIONEER_PI_EXTENSION_INTEGRATION !== "1")(
   "installed Pi extension integration",
   () => {
+    it("discovers and refreshes a pinned provider absent from user extensions", async () => {
+      const modulePath = path.resolve("dist/pi-extension-discovery.js");
+      const { cleanupReviewRuntime, discoverPreparedExtensions, prepareReviewRuntime } =
+        (await import(modulePath)) as typeof import("../src/pi-extension-discovery.js");
+      const root = await realpath(await createTempDir("pi-pinned-oauth-"));
+      const home = path.join(root, "agent");
+      await mkdir(home);
+      await writeFile(path.join(home, "settings.json"), "{}");
+      await writeFile(
+        path.join(home, "auth.json"),
+        JSON.stringify({
+          pinned: { type: "oauth", access: "expired", refresh: "fixture", expires: 1 },
+        }),
+      );
+      const extension = path.join(root, "provider.ts");
+      await writeFile(
+        extension,
+        `export default function(pi) { pi.registerProvider('pinned', {
+        baseUrl:'https://example.invalid',api:'openai-completions',streamSimple(){throw Error('unused')},
+        oauth:{name:'Pinned',login:async()=>{throw Error('unused')},getApiKey:c=>c.access,refreshToken:async()=>({access:'refreshed',refresh:'rotated',expires:Date.now()+3600000})},
+        models:[{id:'model',name:'Pinned',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:32000,maxTokens:1024}]
+      }); }`,
+      );
+      const runtime = await prepareReviewRuntime(
+        await resolvePiCommand("pi", process.env),
+        home,
+        process.env,
+        root,
+        undefined,
+        true,
+        "public",
+        undefined,
+        [extension],
+      );
+      try {
+        expect(runtime.capabilityExtensions).toEqual([extension]);
+        const broker = runtime.authBroker;
+        if (broker === undefined) throw new Error("Missing broker");
+        const url = new URL(broker.environment.PIONEER_AUTH_BROKER_URL ?? "");
+        url.hostname = "127.0.0.1";
+        url.pathname = "/oauth/pinned";
+        const response = await fetch(url, {
+          headers: { authorization: `Bearer ${broker.environment.PIONEER_AUTH_BROKER_TOKEN}` },
+        });
+        expect(response.status).toBe(200);
+        const saved = JSON.parse(await readFile(path.join(home, "auth.json"), "utf8"));
+        expect(saved.pinned.refresh).toBe("rotated");
+        const catalog = await discoverPreparedExtensions(runtime);
+        expect(catalog.stdout, catalog.stderr).toContain("pinned");
+      } finally {
+        await cleanupReviewRuntime(runtime);
+      }
+    }, 90_000);
+
     it("persists single-use OAuth rotations across isolated reviews", async () => {
       const root = await createTempDir("pi-oauth-contract-");
       const home = path.join(root, "agent");

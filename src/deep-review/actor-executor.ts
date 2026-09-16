@@ -102,6 +102,7 @@ async function launchStructuredActor(
     true,
     "public",
     request.signal,
+    capabilityExtensions,
   );
   try {
     await assertPiReady({

@@ -12,6 +12,7 @@ import type { PiAuthBroker } from "./pi-auth-broker.js";
 import { prepareAuthBroker, snapshotOAuthProviders } from "./pi-auth-runtime.js";
 import type { PiLaunchCommand } from "./pi-command.js";
 import { type PreparedExtensions, preparePiExtensions } from "./pi-extension-runtime.js";
+import { extensionPathsWithCapabilities } from "./pi-extension-snapshot.js";
 import { type PreparedPiHome, prepareIsolatedPiHome } from "./pi-home.js";
 import type { PiProbeResult } from "./pi-readiness.js";
 import {
@@ -34,6 +35,7 @@ export interface PreparedReviewRuntime {
   readonly extensions: PreparedExtensions;
   readonly network: "full" | "public";
   readonly authBroker?: PiAuthBroker;
+  readonly capabilityExtensions?: readonly string[];
 }
 
 export async function cleanupReviewRuntime(
@@ -59,6 +61,7 @@ export async function prepareReviewRuntime(
   extensionsEnabled = true,
   network: "full" | "public" = "full",
   signal?: AbortSignal,
+  capabilityExtensions: readonly string[] = [],
 ): Promise<PreparedReviewRuntime> {
   signal?.throwIfAborted();
   const scratch = await createReviewScratchDirectory(scratchBase);
@@ -86,7 +89,7 @@ export async function prepareReviewRuntime(
             extensionsEnabled,
           )
         : { command, paths: [], sourcePaths: [], digest: "0".repeat(64) };
-    const runtime = { scratch, extensionRoot, home, extensions, network };
+    const runtime = { scratch, extensionRoot, home, extensions, network, capabilityExtensions };
     const authBroker = await prepareAuthBroker(runtime);
     return authBroker === undefined
       ? runtime
@@ -114,7 +117,10 @@ export async function discoverPreparedExtensions(
       "--offline",
       "--no-approve",
       "--no-extensions",
-      ...runtime.extensions.paths.flatMap((entry) => ["--extension", entry]),
+      ...extensionPathsWithCapabilities(
+        runtime.extensions,
+        runtime.capabilityExtensions ?? [],
+      ).flatMap((entry) => ["--extension", entry]),
       "--no-session",
       "--no-skills",
       "--no-prompt-templates",
@@ -149,6 +155,7 @@ export async function runPreparedPiCommand(
     const config: SandboxPolicy = {
       readOnlyPaths: [
         runtime.extensionRoot,
+        ...(runtime.capabilityExtensions ?? []),
         ...(runtime.extensions.runtimeRoot === undefined ? [] : [runtime.extensions.runtimeRoot]),
         ...(await piRuntimePaths("pi")),
         ...(await piRuntimePaths("node")),
