@@ -1,5 +1,6 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { PI_PROVIDER_FIELD } from "./pi-provider-id.js";
 
 export async function installAuthBrokerClient(root: string): Promise<void> {
   const url = process.env.PIONEER_AUTH_BROKER_URL;
@@ -26,9 +27,9 @@ export async function installAuthBrokerClient(root: string): Promise<void> {
     };
   };
   async function credential(provider: string): Promise<unknown> {
-    if (!/^[a-zA-Z0-9._-]+$/.test(provider))
+    if (!PI_PROVIDER_FIELD.test(provider))
       throw new Error("[PI_OAUTH_REFRESH_FAILED] Invalid provider");
-    const response = await fetch(`${url}/oauth/${provider}`, {
+    const response = await fetch(`${url}/oauth/${encodeURIComponent(provider)}`, {
       headers: { authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(90_000),
     });

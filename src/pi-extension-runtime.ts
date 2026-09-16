@@ -140,6 +140,10 @@ export async function preparePiExtensions(
     path.join(destination, "pi-auth-client.js"),
   );
   await copyFile(
+    fileURLToPath(new URL("./pi-provider-id.js", import.meta.url)),
+    path.join(destination, "pi-provider-id.js"),
+  );
+  await copyFile(
     fileURLToPath(new URL("./pi-auth-worker.js", import.meta.url)),
     path.join(destination, "auth-worker.mjs"),
   );

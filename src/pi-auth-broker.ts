@@ -25,7 +25,13 @@ export async function startPiAuthBroker(
       response.writeHead(403).end();
       return;
     }
-    const provider = (request.url ?? "").slice("/oauth/".length);
+    let provider: string;
+    try {
+      provider = decodeURIComponent((request.url ?? "").slice("/oauth/".length));
+    } catch {
+      response.writeHead(400).end();
+      return;
+    }
     if (
       request.method !== "GET" ||
       !request.url?.startsWith("/oauth/") ||

@@ -50,7 +50,7 @@ it("uses the legacy broker result without calling the actor's original refresh a
 export class AuthStorage {
   calls=0;
   set(provider,credential){this.credential=credential;}
-  getOAuthProviders(){return [{id:'fixture',getApiKey:c=>c.access}];}
+  getOAuthProviders(){return [{id:'fixture:@+/id',getApiKey:c=>c.access}];}
   async refreshOAuthTokenWithLock(){this.calls++;return {apiKey:'second-refresh'};}
 }
 `,
@@ -78,9 +78,13 @@ export class AuthStorage {
     };
   };
   const store = new AuthStorage();
-  expect(await store.refreshOAuthTokenWithLock("fixture")).toEqual({
+  expect(await store.refreshOAuthTokenWithLock("fixture:@+/id")).toEqual({
     apiKey: "broker-access",
     newCredentials: credential,
   });
   expect(store.calls).toBe(0);
+  expect(fetch).toHaveBeenCalledWith(
+    "http://fixture.invalid/oauth/fixture%3A%40%2B%2Fid",
+    expect.anything(),
+  );
 });

@@ -52,13 +52,13 @@ describe.skipIf(process.env.PIONEER_PI_EXTENSION_INTEGRATION !== "1")(
       await writeFile(
         path.join(home, "auth.json"),
         JSON.stringify({
-          pinned: { type: "oauth", access: "expired", refresh: "fixture", expires: 1 },
+          "pinned:@+/id": { type: "oauth", access: "expired", refresh: "fixture", expires: 1 },
         }),
       );
       const extension = path.join(root, "provider.ts");
       await writeFile(
         extension,
-        `export default function(pi) { pi.registerProvider('pinned', {
+        `export default function(pi) { pi.registerProvider('pinned:@+/id', {
         baseUrl:'https://example.invalid',api:'openai-completions',streamSimple(){throw Error('unused')},
         oauth:{name:'Pinned',login:async()=>{throw Error('unused')},getApiKey:c=>c.access,refreshToken:async()=>({access:'refreshed',refresh:'rotated',expires:Date.now()+3600000})},
         models:[{id:'model',name:'Pinned',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:32000,maxTokens:1024}]
@@ -80,15 +80,15 @@ describe.skipIf(process.env.PIONEER_PI_EXTENSION_INTEGRATION !== "1")(
         if (broker === undefined) throw new Error("Missing broker");
         const url = new URL(broker.environment.PIONEER_AUTH_BROKER_URL ?? "");
         url.hostname = "127.0.0.1";
-        url.pathname = "/oauth/pinned";
+        url.pathname = `/oauth/${encodeURIComponent("pinned:@+/id")}`;
         const response = await fetch(url, {
           headers: { authorization: `Bearer ${broker.environment.PIONEER_AUTH_BROKER_TOKEN}` },
         });
         expect(response.status).toBe(200);
         const saved = JSON.parse(await readFile(path.join(home, "auth.json"), "utf8"));
-        expect(saved.pinned.refresh).toBe("rotated");
+        expect(saved["pinned:@+/id"].refresh).toBe("rotated");
         const catalog = await discoverPreparedExtensions(runtime);
-        expect(catalog.stdout, catalog.stderr).toContain("pinned");
+        expect(catalog.stdout, catalog.stderr).toContain("pinned:@+/id");
       } finally {
         await cleanupReviewRuntime(runtime);
       }

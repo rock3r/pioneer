@@ -5,6 +5,7 @@ import { type PiAuthBroker, startPiAuthBroker } from "./pi-auth-broker.js";
 import { type PreparedReviewRuntime, runPreparedPiCommand } from "./pi-extension-discovery.js";
 import { extensionPathsWithCapabilities } from "./pi-extension-snapshot.js";
 import { prepareIsolatedPiHome } from "./pi-home.js";
+import { PI_PROVIDER_FIELD } from "./pi-provider-id.js";
 import { createReviewScratchDirectory } from "./review/runner.js";
 
 type OAuthCredential = Record<string, unknown> & {
@@ -13,6 +14,27 @@ type OAuthCredential = Record<string, unknown> & {
   refresh: string;
   expires: number;
 };
+
+export async function readAuthWorkerResult(
+  handle: {
+    read(
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ): Promise<{ bytesRead: number }>;
+  },
+  size: number,
+): Promise<Buffer> {
+  const bytes = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+    if (bytesRead === 0) throw new Error("Incomplete OAuth worker result");
+    offset += bytesRead;
+  }
+  return bytes;
+}
 
 function parseAuth(content: string | undefined): Record<string, unknown> {
   if (content === undefined) return {};
@@ -74,7 +96,7 @@ export async function snapshotOAuthProviders(agentDir: string): Promise<Readonly
   });
   return new Set(
     Object.entries(parseAuth(contents))
-      .filter(([name, value]) => /^[a-zA-Z0-9._-]+$/.test(name) && oauth(value))
+      .filter(([name, value]) => PI_PROVIDER_FIELD.test(name) && oauth(value))
       .map(([name]) => name),
   );
 }
@@ -145,9 +167,7 @@ async function startRuntimeAuthBroker(
           const stats = await authHandle.stat();
           if (stats.nlink === 0 || stats.size > 1024 * 1024)
             throw new Error("Invalid OAuth worker output file");
-          const bytes = Buffer.alloc(stats.size);
-          const { bytesRead } = await authHandle.read(bytes, 0, bytes.length, 0);
-          if (bytesRead !== bytes.length) throw new Error("Incomplete OAuth worker result");
+          const bytes = await readAuthWorkerResult(authHandle, stats.size);
           const captured = parseAuth(bytes.toString("utf8"));
           const refreshed = captured.credential;
           if (!oauth(refreshed) || typeof captured.authenticated !== "boolean")

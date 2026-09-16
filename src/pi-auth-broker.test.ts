@@ -30,7 +30,7 @@ describe("Pi authentication broker", () => {
   });
   it("accepts only an authenticated configured provider and pins the proxy destination port", async () => {
     const refresh = vi.fn(async () => ({ type: "oauth", access: "fixture-access" }));
-    const broker = await startPiAuthBroker(new Set(["fixture"]), refresh);
+    const broker = await startPiAuthBroker(new Set(["fixture", "fixture:@+/id"]), refresh);
     const url = new URL(broker.environment.PIONEER_AUTH_BROKER_URL ?? "");
     const fallback = vi.fn(async () => ({ address: "192.0.2.1", family: 4 as const }));
     const resolve = broker.resolveWith(fallback);
@@ -78,6 +78,9 @@ describe("Pi authentication broker", () => {
       expect(result.status).toBe(200);
       expect(JSON.parse(result.body)).toEqual({ type: "oauth", access: "fixture-access" });
       expect(refresh).toHaveBeenCalledExactlyOnceWith("fixture");
+      expect((await call(`/oauth/${encodeURIComponent("fixture:@+/id")}`)).status).toBe(200);
+      expect(refresh).toHaveBeenLastCalledWith("fixture:@+/id");
+      expect((await call("/oauth/%ZZ")).status).toBe(400);
       refresh.mockRejectedValueOnce(new Error("secret-provider-error"));
       expect(await call("/oauth/fixture")).toEqual({
         status: 502,
