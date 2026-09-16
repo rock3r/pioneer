@@ -17,6 +17,7 @@ export async function installAuthBrokerClient(root: string): Promise<void> {
         ) => Promise<unknown>;
         refreshOAuthTokenWithLock?: (provider: string) => Promise<unknown>;
         set?: (provider: string, credential: unknown) => void;
+        getOAuthProviders?: () => readonly { id: string; getApiKey(credential: unknown): string }[];
       };
     };
   };
@@ -41,10 +42,18 @@ export async function installAuthBrokerClient(root: string): Promise<void> {
       const refreshed = await credential(provider);
       return await modify.call(this, provider, async () => refreshed, options);
     };
-  } else if (refresh !== undefined && prototype.set !== undefined) {
+  } else if (
+    refresh !== undefined &&
+    prototype.set !== undefined &&
+    prototype.getOAuthProviders !== undefined
+  ) {
+    const getProviders = prototype.getOAuthProviders;
     prototype.refreshOAuthTokenWithLock = async function (provider) {
-      this.set?.(provider, await credential(provider));
-      return await refresh.call(this, provider);
+      const refreshed = await credential(provider);
+      const oauth = getProviders.call(this).find((candidate) => candidate.id === provider);
+      if (oauth === undefined) throw new Error("[PI_OAUTH_REFRESH_FAILED] Provider is unavailable");
+      this.set?.(provider, refreshed);
+      return { apiKey: oauth.getApiKey(refreshed), newCredentials: refreshed };
     };
   } else {
     throw new Error("[PI_EXTENSION_RUNTIME_UNSUPPORTED] Unsupported Pi credential contract");

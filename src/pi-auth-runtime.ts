@@ -1,4 +1,4 @@
-import { open, readFile, realpath, rm } from "node:fs/promises";
+import { open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { type PiAuthBroker, startPiAuthBroker } from "./pi-auth-broker.js";
@@ -102,11 +102,14 @@ async function startRuntimeAuthBroker(
           mode: "eval",
         });
         const workerAuth = path.join(home.agentDir, "auth.json");
+        await writeFile(workerAuth, JSON.stringify({ [provider]: data[provider] }), {
+          mode: 0o600,
+        });
         // Open before launch and read back through this exact inode. A worker-created
         // symlink or replaced parent must never redirect a controller credential read.
-        const authHandle = await open(workerAuth, "w+", 0o600);
+        const workerResult = path.join(scratch, "auth-result.json");
+        const authHandle = await open(workerResult, "wx+", 0o600);
         try {
-          await authHandle.writeFile(JSON.stringify({ [provider]: data[provider] }));
           const workerRuntime: PreparedReviewRuntime = {
             scratch,
             extensionRoot: runtime.extensionRoot,
@@ -121,21 +124,26 @@ async function startRuntimeAuthBroker(
               path.join(runtime.extensionRoot, "extensions", "auth-worker.mjs"),
               root,
               provider,
+              workerResult,
               ...runtime.extensions.paths,
             ],
             30_000,
           );
+          if (result.exitCode !== 0)
+            throw new Error("OAuth worker failed before returning its API result");
           const stats = await authHandle.stat();
           if (stats.nlink === 0 || stats.size > 1024 * 1024)
             throw new Error("Invalid OAuth worker output file");
           const bytes = Buffer.alloc(stats.size);
           const { bytesRead } = await authHandle.read(bytes, 0, bytes.length, 0);
           if (bytesRead !== bytes.length) throw new Error("Incomplete OAuth worker result");
-          const refreshed = parseAuth(bytes.toString("utf8"))[provider];
-          if (!oauth(refreshed)) throw new Error("Invalid OAuth worker result");
+          const captured = parseAuth(bytes.toString("utf8"));
+          const refreshed = captured.credential;
+          if (!oauth(refreshed) || typeof captured.authenticated !== "boolean")
+            throw new Error("Invalid OAuth worker result");
           // Preserve an already-written rotation even if a subsequent worker step failed.
           return {
-            result: { credential: refreshed, succeeded: result.exitCode === 0 },
+            result: { credential: refreshed, succeeded: captured.authenticated },
             next: JSON.stringify({ ...data, [provider]: refreshed }, null, 2),
           };
         } finally {

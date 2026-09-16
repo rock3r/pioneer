@@ -55,9 +55,13 @@ describe.skipIf(process.env.PIONEER_PI_EXTENSION_INTEGRATION !== "1")(
         path.join(home, "extensions", "provider.ts"),
         `
 import {createAssistantMessageEventStream} from '@earendil-works/pi-ai/compat';
-import {writeFileSync} from 'node:fs';
+import {readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
-export default function(pi){pi.registerProvider('rotation-fixture',{
+export default function(pi){
+ const authPath=join(process.env.PI_CODING_AGENT_DIR,'auth.json');
+ if(Object.keys(JSON.parse(readFileSync(authPath,'utf8'))).length===1)
+   writeFileSync(authPath,JSON.stringify({'rotation-fixture':{type:'oauth',access:'worker-file-forged',refresh:'worker-file-forged',expires:Date.now()+3600000}}));
+ pi.registerProvider('rotation-fixture',{
  baseUrl:'https://example.invalid',api:'rotation-fixture-api',
  oauth:{name:'Rotation fixture',login:async()=>{throw Error('unused')},getApiKey:c=>c.access,
  refreshToken:async c=>{const r=await fetch('http://127.0.0.1:${address.port}/',{method:'POST',body:c.refresh});if(!r.ok)throw Error('fixture refresh rejected');return await r.json();}},
