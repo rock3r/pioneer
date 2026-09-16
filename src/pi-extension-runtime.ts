@@ -106,22 +106,25 @@ export async function preparePiExtensions(
   environment: NodeJS.ProcessEnv,
   signal?: AbortSignal,
   settingsFile = path.join(sourceAgentDir, "settings.json"),
+  enabled = true,
 ): Promise<PreparedExtensions> {
   signal?.throwIfAborted();
   const root = await installedPiRoot(command, environment);
-  let resources: ExtensionResource[];
+  let resources: ExtensionResource[] = [];
   try {
-    const result = await execute(
-      process.execPath,
-      ["--input-type=module", "--eval", RESOLVE, root, sourceAgentDir, destination, settingsFile],
-      {
-        env: { ...environment, PI_OFFLINE: "1", PI_TELEMETRY: "0" },
-        timeout: 30_000,
-        ...(signal === undefined ? {} : { signal }),
-        maxBuffer: 1024 * 1024,
-      },
-    );
-    resources = parseResources(JSON.parse(result.stdout));
+    if (enabled) {
+      const result = await execute(
+        process.execPath,
+        ["--input-type=module", "--eval", RESOLVE, root, sourceAgentDir, destination, settingsFile],
+        {
+          env: { ...environment, PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+          timeout: 30_000,
+          ...(signal === undefined ? {} : { signal }),
+          maxBuffer: 1024 * 1024,
+        },
+      );
+      resources = parseResources(JSON.parse(result.stdout));
+    }
   } catch {
     throw new Error(
       "[PI_EXTENSION_RESOLUTION_FAILED] Pi could not resolve its installed user extensions. Verify the selected Pi settings and installed packages with normal Pi. Extension code was not executed.",
@@ -132,6 +135,23 @@ export async function preparePiExtensions(
   const policy = path.join(destination, "pi-extension-policy.js");
   await copyFile(fileURLToPath(new URL("./pi-extension-entry.js", import.meta.url)), entry);
   await copyFile(fileURLToPath(new URL("./pi-extension-policy.js", import.meta.url)), policy);
+  await copyFile(
+    fileURLToPath(new URL("./pi-auth-client.js", import.meta.url)),
+    path.join(destination, "pi-auth-client.js"),
+  );
+  await copyFile(
+    fileURLToPath(new URL("./pi-provider-id.js", import.meta.url)),
+    path.join(destination, "pi-provider-id.js"),
+  );
+  await copyFile(
+    fileURLToPath(new URL("./pi-auth-worker.js", import.meta.url)),
+    path.join(destination, "auth-worker.mjs"),
+  );
   await writeFile(path.join(destination, "package.json"), '{"type":"module"}', { mode: 0o600 });
-  return { ...snapshot, command: [process.execPath, entry, root], runtimeRoot: root };
+  return {
+    ...snapshot,
+    ...(enabled ? {} : { digest: "0".repeat(64) }),
+    command: [process.execPath, entry, root],
+    runtimeRoot: root,
+  };
 }

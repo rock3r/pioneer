@@ -40,7 +40,7 @@ REVIEW_BOT_LOGIN_KEYWORDS = {
 # Login / check-name keyword fragments for CodeRabbit. CodeRabbit is treated as
 # a *presence-conditional* gate, not an assumed-present one: it only gates a PR
 # when it shows signs of life (a CodeRabbit CI check, a reaction, or an authored
-# comment). When dormant, the watcher behaves as a bugbot+codex-only gate, so
+# comment). When dormant, the watcher relies on the required Codex gate, so
 # the gate degrades gracefully if CodeRabbit is later removed from the repo.
 CODERABBIT_LOGIN_KEYWORDS = {
     "coderabbit",
@@ -49,8 +49,7 @@ CODERABBIT_CHECK_KEYWORDS = {
     "coderabbit",
 }
 # Workflow name keyword fragments used to identify Cursor Bugbot CI runs.
-# The merge gate is hard-blocked unless the latest Bugbot run for the current
-# head SHA is `completed` with conclusion `success`.
+# Retained for interpreting historical snapshots; Bugbot is no longer required.
 BUGBOT_WORKFLOW_KEYWORDS = {
     "cursor",
     "bugbot",
@@ -108,14 +107,6 @@ HUNG_CHECK_THRESHOLDS_SECONDS = {
 RETRY_ELIGIBLE_WORKFLOW_KEYWORDS = {
     "e2e",
 }
-# Login keyword fragments for Codex bot, used for emoji reaction gate detection.
-# Codex signals it is reviewing a PR by adding a 👀 reaction; it either posts a
-# review with comments (issues found) or removes the reaction silently (clean).
-CODEX_BOT_LOGIN_KEYWORDS = {
-    "codex",
-    "chatgpt-codex",
-}
-
 MAX_SESSION_MINUTES_DEFAULT = 90
 STATE_STALENESS_RESET_SECONDS = 2 * 60 * 60
 
@@ -670,7 +661,7 @@ def summarize_bugbot_gate(checks, runs, head_sha):
 
 def is_codex_bot_login(login):
     lower = str(login or "").lower()
-    return any(keyword in lower for keyword in CODEX_BOT_LOGIN_KEYWORDS)
+    return lower in {"chatgpt-codex-connector[bot]", "chatgpt-codex-connector"}
 
 
 def is_coderabbit_login(login):
@@ -727,22 +718,38 @@ def _bot_has_any_reaction(reactions, login_predicate):
     return False
 
 
-def summarize_codex_gate(reactions):
-    """Detect Codex review status via PR emoji reactions.
+def get_codex_summary_comments(repo, pr_number):
+    try:
+        return gh_api_list_paginated(f"repos/{repo}/issues/{pr_number}/comments", repo=repo)
+    except GhCommandError:
+        return None
 
-    Codex signals it is reviewing a PR by adding a 👀 (eyes) reaction.
-    It either posts a review with comments (issues found) or removes the
-    reaction silently (clean).  A present 👀 reaction from a Codex bot
-    account means review is still in progress.
 
-    `reactions` is the pre-fetched issue-reactions list (or None when the
-    lookup failed).
-    """
-    if reactions is None:
-        return {"reviewing": False, "status": "unknown"}
+def summarize_codex_gate(reactions, comments, head_sha):
+    """Require a completed Codex summary for this head, not merely absent eyes."""
+    if reactions is None or comments is None:
+        return {"reviewing": False, "status": "unknown", "is_success": False}
     if _bot_has_eyes_reaction(reactions, is_codex_bot_login):
-        return {"reviewing": True, "status": "in_progress"}
-    return {"reviewing": False, "status": "idle"}
+        return {"reviewing": True, "status": "in_progress", "is_success": False}
+    summaries = [item for item in comments
+                 if is_codex_bot_login((item.get("user") or {}).get("login"))
+                 and "<!-- codex-pull-request-review-summary -->" in str(item.get("body") or "")]
+    if not summaries:
+        return {"reviewing": False, "status": "missing", "is_success": False}
+    latest = max(summaries, key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""))
+    for row in str(latest.get("body") or "").splitlines():
+        columns = row.split("|")
+        if len(columns) < 5 or "**Code Review**" not in columns[1]:
+            continue
+        commit = re.fullmatch(r"\s*`([0-9a-f]{7,40})`\s*", columns[3])
+        current = commit is not None and bool(head_sha) and head_sha.startswith(commit.group(1))
+        completed = "✅ **Completed**" in columns[2]
+        success = current and completed
+        running = current and "🔄 **Running**" in columns[2]
+        return {"reviewing": running,
+                "status": "completed" if success else "in_progress" if running else "unknown" if current else "stale",
+                "is_success": success}
+    return {"reviewing": False, "status": "unknown", "is_success": False}
 
 
 def summarize_coderabbit_gate(checks, reactions):
@@ -752,7 +759,7 @@ def summarize_coderabbit_gate(checks, reactions):
     when it shows signs of life: a CodeRabbit CI check, or a reaction from the
     CodeRabbit bot. (Authored review comments are surfaced and block merge
     independently via the normal review-item path.) When CodeRabbit is dormant
-    the gate is inert and the watcher behaves as a bugbot+codex-only gate, so
+    the gate is inert and the watcher relies on the required Codex gate, so
     the watcher stays correct if CodeRabbit is later removed.
 
     `reviewing` is True only while CodeRabbit appears to still be working: its
@@ -1359,9 +1366,7 @@ def is_pr_ready_to_merge(
         return False
     if str(pr.get("review_decision") or "") in MERGE_BLOCKING_REVIEW_DECISIONS:
         return False
-    if bugbot_gate and bool(bugbot_gate.get("required")) and not bool(bugbot_gate.get("is_success")):
-        return False
-    if codex_gate and bool(codex_gate.get("reviewing")):
+    if not codex_gate or not bool(codex_gate.get("is_success")):
         return False
     if coderabbit_gate and bool(coderabbit_gate.get("reviewing")):
         return False
@@ -1522,30 +1527,14 @@ def recommend_actions(
     elif blocking_review_items:
         actions.append("process_review_comment")
 
-    if codex_gate and bool(codex_gate.get("reviewing")):
-        actions.append("wait_codex")
+    if not codex_gate or not bool(codex_gate.get("is_success")):
+        status = (codex_gate or {}).get("status", "missing")
+        actions.append("wait_codex" if status == "in_progress" else
+                       "request_codex_review" if status in {"missing", "stale"} else
+                       "diagnose_codex_review")
 
     if coderabbit_gate and bool(coderabbit_gate.get("reviewing")):
         actions.append("wait_coderabbit")
-
-    if bugbot_gate and bool(bugbot_gate.get("required")) and not bool(bugbot_gate.get("is_success")):
-        bugbot_status = str(bugbot_gate.get("status") or "")
-        grace_active = (
-            checks_terminal_elapsed is not None
-            and checks_terminal_elapsed < CHECKS_TERMINAL_GRACE_PERIOD_SECONDS
-        )
-        if bugbot_status == "completed":
-            if grace_active:
-                actions.append("wait_bugbot")
-            else:
-                actions.append("stop_bugbot_not_green")
-        elif bugbot_status == "missing":
-            if checks_summary["all_terminal"] and not grace_active:
-                actions.append("stop_bugbot_not_green")
-            else:
-                actions.append("wait_bugbot")
-        else:
-            actions.append("wait_bugbot")
 
     if hung_checks:
         actions.append("diagnose_hung_check")
@@ -1592,18 +1581,15 @@ def collect_snapshot(args):
     pending_checks_first_seen_at = update_pending_checks_first_seen(state, checks, now)
     hung_checks = hung_checks_from_checks(checks, pending_checks_first_seen_at)
 
-    bugbot_gate = summarize_bugbot_gate_from_checks(checks)
+    bugbot_gate = {"required": False, "status": "dismissed", "is_success": False}
 
     workflow_runs = []
     failed_runs = []
     needs_failed_run_lookup = checks_summary["failed_count"] > 0
-    needs_bugbot_run_lookup = not bool(bugbot_gate.get("present"))
-    if needs_failed_run_lookup or needs_bugbot_run_lookup:
+    if needs_failed_run_lookup:
         workflow_runs = get_workflow_runs_for_sha(pr["repo"], pr["head_sha"])
         if needs_failed_run_lookup:
             failed_runs = failed_runs_from_workflow_runs(workflow_runs, pr["head_sha"])
-        if needs_bugbot_run_lookup:
-            bugbot_gate = summarize_bugbot_gate(checks, workflow_runs, pr["head_sha"])
 
     try:
         authenticated_login = get_authenticated_login()
@@ -1642,7 +1628,8 @@ def collect_snapshot(args):
         checks_terminal_elapsed = None
 
     pr_issue_reactions = get_pr_issue_reactions(pr["repo"], pr["number"])
-    codex_gate = summarize_codex_gate(pr_issue_reactions)
+    codex_comments = get_codex_summary_comments(pr["repo"], pr["number"])
+    codex_gate = summarize_codex_gate(pr_issue_reactions, codex_comments, pr["head_sha"])
     coderabbit_gate = summarize_coderabbit_gate(checks, pr_issue_reactions)
 
     retries_used = current_retry_count(state, pr["head_sha"])
@@ -1775,11 +1762,8 @@ def is_ci_green(snapshot):
         return False
     checks = snapshot.get("checks") or {}
     pr = snapshot.get("pr") or {}
-    bugbot_gate = snapshot.get("bugbot_gate") or {}
     blocking_review_items = snapshot.get("blocking_review_items") or []
     review_decision = str(pr.get("review_decision") or "")
-    bugbot_required = bool(bugbot_gate.get("required")) if bugbot_gate else False
-    bugbot_green = (not bugbot_required) or bool(bugbot_gate.get("is_success"))
     codex_gate = snapshot.get("codex_gate") or {}
     codex_reviewing = bool(codex_gate.get("reviewing"))
     coderabbit_gate = snapshot.get("coderabbit_gate") or {}
@@ -1790,7 +1774,7 @@ def is_ci_green(snapshot):
         and int(checks.get("pending_count") or 0) == 0
         and not blocking_review_items
         and review_decision not in MERGE_BLOCKING_REVIEW_DECISIONS
-        and bugbot_green
+        and bool(codex_gate.get("is_success"))
         and not codex_reviewing
         and not coderabbit_reviewing
     )

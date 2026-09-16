@@ -33,6 +33,7 @@ Before changing production code, read `docs/ARCHITECTURE.md`, `docs/CONVENTIONS.
 - Pass subprocess arguments as arrays. Never interpolate user-controlled values into a shell command.
 - Validate and canonicalize repository paths and refs before use.
 - Snapshot Pi authentication/configuration into a private run-local `PI_CODING_AGENT_DIR`; include configured skills for reviews and exclude them for evals. Never log or return credentials.
+- Persist native-review OAuth rotations only through the controller's provider-scoped authentication worker and Pi's source credential lock. Never copy credential changes from the review actor back to the source Pi home.
 - Fail closed when a requested model, thinking level, repository, or review target cannot be validated.
 
 ### TDD first
@@ -63,6 +64,8 @@ Before feature work on the default branch, offer an isolated worktree unless the
 Before commits, pushes, PR operations, or other GitHub mutations, read `.agents/skills/git-github-ops/SKILL.md`.
 
 Opening, merging, closing, or deleting a PR requires explicit user approval. Destructive Git operations also require explicit approval.
+
+The required automated review gate is the Codex review bot on the current PR head, with all actionable findings resolved. Bugbot has been dismissed; do not request it or block merges on its absence. Follow `.agents/skills/babysit-pr/SKILL.md` for the gate and CI checks.
 
 ## Working style
 
