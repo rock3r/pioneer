@@ -254,7 +254,9 @@ async function ownsPublishedReviewReportFile(
     const stats = await lstat(file);
     if (!stats.isFile()) return false;
     const identity = sameKnownFileIdentity(stats, reservation);
-    if (identity !== undefined) return identity;
+    if (identity === false) return false;
+    // A removed sidecar's file ID may be reused before cleanup, notably on NTFS.
+    // Matching identity alone cannot establish ownership of the replacement.
     return (await readFile(file)).equals(contents);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;

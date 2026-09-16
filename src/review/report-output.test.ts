@@ -14,10 +14,17 @@ const linkFile = vi.hoisted(() =>
     return link(...args);
   }),
 );
+const lstatFile = vi.hoisted(() =>
+  vi.fn(async (...args: Parameters<typeof import("node:fs/promises").lstat>) => {
+    const { lstat } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    return lstat(...args);
+  }),
+);
 
 vi.mock("node:fs/promises", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:fs/promises")>()),
   link: linkFile,
+  lstat: lstatFile,
   unlink: unlinkFile,
 }));
 
@@ -284,6 +291,39 @@ describe("review report output", () => {
 
     expect(await readFile(reservation.reservationPath, "utf8")).toBe("replacement reservation\n");
     expect(await readFile(reservation.publicationPath, "utf8")).toBe("replacement publication\n");
+  });
+
+  it("preserves a replaced publication sidecar when the filesystem reuses its identity", async () => {
+    const root = await createTempDir("pioneer-review-report-");
+    const target = path.join(root, "report.md");
+    const reservation = await reserveReviewReport(target);
+    try {
+      await publishReservedReviewReport(
+        reservation,
+        "No findings.",
+        async () => {},
+        async () => {},
+        async (handle) => {
+          await handle.close();
+          const { rm, lstat } =
+            await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+          await rm(reservation.reservationPath);
+          await writeFile(reservation.reservationPath, "replacement reservation\n");
+          lstatFile.mockImplementation(async (...args) => {
+            const stats = await lstat(...args);
+            // Reproduce the file-ID reuse observed on Windows after unlink/recreate.
+            return Object.assign(stats, { dev: reservation.device, ino: reservation.inode });
+          });
+        },
+      );
+      expect(await readFile(reservation.reservationPath, "utf8")).toBe("replacement reservation\n");
+    } finally {
+      lstatFile.mockImplementation(async (...args) => {
+        const { lstat } =
+          await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+        return lstat(...args);
+      });
+    }
   });
 
   it("removes an unpublished report reservation", async () => {
