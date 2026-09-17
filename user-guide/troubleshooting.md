@@ -111,9 +111,13 @@ Pioneer selects only the known root configuration files and, for reviews, the sa
 
 An error such as `[PI_HOME_SYMLINK_TARGET_MISSING]` means a selected skill points at a path omitted by the default policy. Add the reported relative target with `--pi-home-include` when it is not hard-excluded. Broken, escaping, special-file, hard-excluded, or ambiguous symlink selections must be removed or replaced with a self-contained skill.
 
-## Pi's session directory is relative
+## Pi's session directory cannot be located
 
-`[PI_SESSION_DIR_RELATIVE]` means `PI_CODING_AGENT_SESSION_DIR` or the `sessionDir` setting is a relative path. Pi resolves it against its own working directory, so Pioneer cannot tell where your private sessions are and cannot keep them out of snapshots. Set an absolute path, or a path starting with `~/`, and retry.
+Pioneer must know where Pi stores private sessions so it can keep them out of snapshots. It reads `PI_CODING_AGENT_SESSION_DIR` and the `sessionDir` setting the same way Pi does, including `~/` paths, `file://` URLs, and Git Bash or WSL drive paths on Windows.
+
+- `[PI_SESSION_DIR_RELATIVE]`: the value is a relative path. Pi resolves it against its own working directory, which Pioneer cannot know. Set an absolute path, or a path starting with `~/`.
+- `[PI_SESSION_DIR_INVALID]`: the value is a `file://` URL that does not name a local path. Use a local absolute path.
+- `[PI_RUNTIME_STORAGE_UNREADABLE]`: Pioneer could not read Pi's `settings.json`. The error code in parentheses, such as `EACCES` or `EISDIR`, gives the reason. Make the file readable by the current user, or remove a directory that replaced it.
 
 ## An eval run fails before the model answers
 
