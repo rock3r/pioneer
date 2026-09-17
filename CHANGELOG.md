@@ -7,7 +7,7 @@ All notable user-facing changes are recorded here. The project follows semantic 
 ## 0.3.4 - 2026-09-17
 
 - Keep dependency source directories named `sessions` or `logs` when staging Pi extensions, so SDKs that load files such as `./sessions/sessions.js` no longer fail. Pioneer now excludes Pi's private session and log storage by its exact location, including a configured session directory, instead of by directory name. Configured session directories are also excluded from Pi-home snapshots. Explicit `--pi-home-include` dependencies also keep their `sessions`, `logs`, and `tmp` source directories.
-- Refuse a relative `sessionDir` setting or `PI_CODING_AGENT_SESSION_DIR` with `[PI_SESSION_DIR_RELATIVE]`. Pi resolves relative values against its own working directory, so Pioneer cannot otherwise keep those sessions out of snapshots. Use an absolute path or one starting with `~/`.
+- Refuse a relative `sessionDir` setting or `PI_CODING_AGENT_SESSION_DIR` with `[PI_SESSION_DIR_RELATIVE]`. Pi resolves relative values against its own working directory, so Pioneer cannot otherwise keep those sessions out of snapshots. Use an absolute path or one starting with `~/`. Pioneer reads `file://` URLs and Windows Git Bash or WSL drive paths as Pi does, and unreadable settings report their error code.
 
 ## 0.3.3 - 2026-09-16
 

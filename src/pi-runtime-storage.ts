@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Pi's private runtime storage. Snapshots exclude these exact locations. */
 export interface PiRuntimeStorage {
@@ -8,10 +9,29 @@ export interface PiRuntimeStorage {
   readonly sessionDirs: readonly string[];
 }
 
-function expandHome(value: string, home: string): string {
-  if (value === "~") return home;
-  if (value.startsWith("~/") || (process.platform === "win32" && value.startsWith("~\\")))
-    return path.join(home, value.slice(2));
+/** Pi's Windows conversion of Git Bash, MSYS, Cygwin, and WSL drive paths. */
+function normalizeWindowsShellPath(value: string): string {
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return value;
+  const match = value.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/iu);
+  if (!match?.[1]) return value;
+  return `${match[1].toUpperCase()}:\\${match[2]?.replaceAll("/", "\\") ?? ""}`;
+}
+
+/** Mirrors Pi's normalizePath for session directories, then requires an absolute result. */
+function normalizeSessionDir(input: string, home: string): string {
+  let value = process.platform === "win32" ? normalizeWindowsShellPath(input) : input;
+  if (value === "~") value = home;
+  else if (value.startsWith("~/") || (process.platform === "win32" && value.startsWith("~\\")))
+    value = path.join(home, value.slice(2));
+  else if (/^file:\/\//u.test(value)) {
+    try {
+      value = fileURLToPath(value);
+    } catch {
+      throw new Error(
+        "[PI_SESSION_DIR_INVALID] Pi's configured session directory is not a valid local file URL.",
+      );
+    }
+  }
   // Pi resolves a relative value against its own working directory, which Pioneer cannot know.
   if (!path.isAbsolute(value))
     throw new Error(
@@ -36,14 +56,16 @@ export async function piRuntimeStorage(
       : environment.HOME) || os.homedir();
   const sessionDirs: string[] = [];
   const fromEnvironment = environment.PI_CODING_AGENT_SESSION_DIR;
-  if (fromEnvironment) sessionDirs.push(expandHome(fromEnvironment, home));
+  if (fromEnvironment) sessionDirs.push(normalizeSessionDir(fromEnvironment, home));
   let text: string | undefined;
   try {
     text = await readFile(settingsFile, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "ENOENT")
       throw new Error(
-        "[PI_RUNTIME_STORAGE_UNREADABLE] Pi settings could not be read to locate private session storage.",
+        `[PI_RUNTIME_STORAGE_UNREADABLE] Pi settings could not be read to locate private session storage (${code ?? "unknown error"}).`,
+        { cause: error },
       );
   }
   let settings: unknown;
@@ -55,7 +77,7 @@ export async function piRuntimeStorage(
   if (typeof settings === "object" && settings !== null) {
     const configured = (settings as Record<string, unknown>).sessionDir;
     if (typeof configured === "string" && configured.length > 0)
-      sessionDirs.push(expandHome(configured, home));
+      sessionDirs.push(normalizeSessionDir(configured, home));
   }
   return { agentDir, sessionDirs };
 }

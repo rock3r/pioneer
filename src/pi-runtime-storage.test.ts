@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
 import { piRuntimeStorage } from "./pi-runtime-storage.js";
@@ -47,6 +48,41 @@ describe("piRuntimeStorage", () => {
         PI_CODING_AGENT_SESSION_DIR: "./history",
       }),
     ).rejects.toThrow("[PI_SESSION_DIR_RELATIVE]");
+  });
+
+  it("normalizes file URLs like Pi", async () => {
+    const root = await createTempDir("pi-runtime-storage-file-url-");
+    const agentDir = path.join(root, "agent");
+    const history = path.join(root, "history");
+    await expect(
+      piRuntimeStorage(agentDir, path.join(root, "missing.json"), {
+        PI_CODING_AGENT_SESSION_DIR: pathToFileURL(history).href,
+      }),
+    ).resolves.toEqual({ agentDir, sessionDirs: [history] });
+  });
+
+  it.runIf(process.platform === "win32")(
+    "normalizes Git Bash and WSL drive paths like Pi on Windows",
+    async () => {
+      const root = await createTempDir("pi-runtime-storage-shell-path-");
+      await expect(
+        piRuntimeStorage(path.join(root, "agent"), path.join(root, "missing.json"), {
+          PI_CODING_AGENT_SESSION_DIR: "/c/Users/pi/sessions",
+        }),
+      ).resolves.toMatchObject({ sessionDirs: ["C:\\Users\\pi\\sessions"] });
+      await expect(
+        piRuntimeStorage(path.join(root, "agent"), path.join(root, "missing.json"), {
+          PI_CODING_AGENT_SESSION_DIR: "/mnt/d/pi",
+        }),
+      ).resolves.toMatchObject({ sessionDirs: ["D:\\pi"] });
+    },
+  );
+
+  it("reports why settings could not be read", async () => {
+    const root = await createTempDir("pi-runtime-storage-unreadable-");
+    await expect(piRuntimeStorage(path.join(root, "agent"), root, {})).rejects.toThrow(
+      /\[PI_RUNTIME_STORAGE_UNREADABLE\].*\(EISDIR\)/u,
+    );
   });
 
   it("uses Pi's default storage when settings are missing or unparseable", async () => {
