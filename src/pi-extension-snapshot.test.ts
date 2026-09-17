@@ -286,6 +286,11 @@ describe("extension snapshots", () => {
     await writeFile(path.join(sdk, "debug.log"), "dependency file");
     if (process.platform !== "win32") {
       await symlink(path.join("..", "..", "sessions"), path.join(sdk, "linked-history"));
+      await writeFile(path.join(sdk, "debug-target.txt"), "linked debug log");
+      await symlink(
+        path.join("node_modules", "example-sdk", "debug-target.txt"),
+        path.join(agentDir, "linked-debug.log"),
+      );
     }
 
     const result = await snapshotExtensionResources(
@@ -303,6 +308,11 @@ describe("extension snapshots", () => {
     await expect(lstat(path.join(staged, logsName))).rejects.toThrow();
     await expect(lstat(path.join(staged, "pi-debug.log"))).rejects.toThrow();
     await expect(lstat(path.join(staged, "history"))).rejects.toThrow();
+    if (process.platform !== "win32") {
+      await expect(
+        lstat(path.join(staged, "node_modules", "example-sdk", "debug-target.txt")),
+      ).rejects.toThrow();
+    }
     await expect(
       lstat(path.join(staged, "node_modules", "example-sdk", "linked-history")),
     ).rejects.toThrow();

@@ -6,6 +6,7 @@ import {
   lstat,
   mkdir,
   opendir,
+  readdir,
   realpath,
   symlink,
 } from "node:fs/promises";
@@ -61,7 +62,7 @@ interface SelectionState {
   readonly entries: Map<string, SelectedEntry>;
   readonly budget: SnapshotBudget;
   readonly checkAborted: () => void;
-  /** Configured session directories inside the Pi home, as relative path parts. */
+  /** Private session and log storage inside the Pi home, as relative path parts. */
   readonly privatePaths: readonly (readonly string[])[];
 }
 
@@ -430,7 +431,7 @@ async function collectDefaultFile(
   await collectEntry(sourceRoot, relative, state, "default");
 }
 
-async function privateSessionPaths(
+async function privateStoragePaths(
   sourceRoot: string,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<string[][]> {
@@ -439,8 +440,21 @@ async function privateSessionPaths(
     path.join(sourceRoot, "settings.json"),
     environment,
   );
+  // Canonical targets matter when default storage is a link into otherwise selectable content.
+  const rootLogs: string[] = [];
+  for (const entry of await readdir(sourceRoot, { withFileTypes: true })) {
+    if (!isLogFile(entry.name)) continue;
+    const candidate = path.join(sourceRoot, entry.name);
+    const target = await realpath(candidate).catch(() => undefined);
+    if (target !== undefined && (await lstat(target)).isFile()) rootLogs.push(candidate);
+  }
   const paths: string[][] = [];
-  for (const directory of storage.sessionDirs) {
+  for (const directory of [
+    path.join(sourceRoot, "sessions"),
+    path.join(sourceRoot, "logs"),
+    ...rootLogs,
+    ...storage.sessionDirs,
+  ]) {
     const canonical = await realpath(directory).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
       throw error;
@@ -476,7 +490,7 @@ async function buildSelection(
     entries: new Map(),
     budget: { entries: 0, bytes: 0 },
     checkAborted,
-    privatePaths: await privateSessionPaths(sourceRoot, environment),
+    privatePaths: await privateStoragePaths(sourceRoot, environment),
   };
   for (const name of DEFAULT_ROOT_FILES) {
     state.checkAborted();

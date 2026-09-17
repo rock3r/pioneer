@@ -477,6 +477,43 @@ describe("prepareIsolatedPiHome", () => {
     ).rejects.toThrow(/hard-excluded/i);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "excludes the canonical targets of linked default session and log storage",
+    async () => {
+      const { source, destination } = await fixture();
+      const dependency = path.join(source, "node_modules", "root-package");
+      await mkdir(path.join(dependency, "history"));
+      await mkdir(path.join(dependency, "run-logs"));
+      await writeFile(path.join(dependency, "history", "private.jsonl"), "private history");
+      await writeFile(path.join(dependency, "run-logs", "private.jsonl"), "private log");
+      await unlink(path.join(source, "sessions", "old.jsonl"));
+      await execFileAsync("rmdir", [path.join(source, "sessions")]);
+      await symlink(
+        path.join("node_modules", "root-package", "history"),
+        path.join(source, "sessions"),
+      );
+      await symlink(
+        path.join("node_modules", "root-package", "run-logs"),
+        path.join(source, "logs"),
+      );
+
+      const prepared = await prepareIsolatedPiHome({
+        sourceDir: source,
+        destination,
+        mode: "review",
+        piHomeIncludes: ["node_modules/root-package"],
+        environment: {},
+      });
+
+      const staged = path.join(prepared.agentDir, "node_modules", "root-package");
+      await expect(readFile(path.join(staged, "index.js"), "utf8")).resolves.toBe(
+        "root dependency",
+      );
+      await expect(lstat(path.join(staged, "history"))).rejects.toThrow();
+      await expect(lstat(path.join(staged, "run-logs"))).rejects.toThrow();
+    },
+  );
+
   it("enforces snapshot limits while collecting an explicit include", async () => {
     const { source, destination } = await fixture();
     const sparsePath = path.join(source, "node_modules", "root-package", "sparse.bin");

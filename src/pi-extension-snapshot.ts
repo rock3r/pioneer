@@ -61,6 +61,24 @@ async function canonicalOrResolved(value: string): Promise<string> {
   }
 }
 
+/** Root log files, including links, so a linked debug log's canonical target is excluded too. */
+async function rootLogFiles(agentDir: string): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await readdir(agentDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const files: string[] = [];
+  for (const name of names.filter((entry) => policyPath(entry).endsWith(".log"))) {
+    const candidate = path.join(agentDir, name);
+    const target = await realpath(candidate).catch(() => undefined);
+    if (target !== undefined && (await lstat(target)).isFile()) files.push(candidate);
+  }
+  return files;
+}
+
 /** Copies code as data. No extension is imported in the controller. */
 export async function snapshotExtensionResources(
   resources: readonly ExtensionResource[],
@@ -76,6 +94,7 @@ export async function snapshotExtensionResources(
           [
             path.join(agentDir, "sessions"),
             path.join(agentDir, "logs"),
+            ...(await rootLogFiles(agentDir)),
             ...(storage?.sessionDirs ?? []),
           ].map(async (entry) => policyPath(await canonicalOrResolved(entry))),
         );
