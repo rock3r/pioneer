@@ -72,6 +72,7 @@ export async function prepareReviewRuntime(
       sourceDir: agentDir,
       destination: path.join(scratch, "pi-home"),
       mode: "review",
+      environment,
       checkAborted: () => signal?.throwIfAborted(),
       ...(includes === undefined ? {} : { piHomeIncludes: includes }),
     });

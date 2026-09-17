@@ -111,6 +111,10 @@ Pioneer selects only the known root configuration files and, for reviews, the sa
 
 An error such as `[PI_HOME_SYMLINK_TARGET_MISSING]` means a selected skill points at a path omitted by the default policy. Add the reported relative target with `--pi-home-include` when it is not hard-excluded. Broken, escaping, special-file, hard-excluded, or ambiguous symlink selections must be removed or replaced with a self-contained skill.
 
+## Pi's session directory is relative
+
+`[PI_SESSION_DIR_RELATIVE]` means `PI_CODING_AGENT_SESSION_DIR` or the `sessionDir` setting is a relative path. Pi resolves it against its own working directory, so Pioneer cannot tell where your private sessions are and cannot keep them out of snapshots. Set an absolute path, or a path starting with `~/`, and retry.
+
 ## An eval run fails before the model answers
 
 Look at the path printed as `[PIONEER_EVAL_WORK_LOG]`. The JSONL stages show whether Pioneer died during readiness, snapshot, proxy, isolation probe, or the actor itself. `Credential store read failed` plus `auth.json.lock` used to mean the isolated Pi home was read-only; current Pioneer grants that snapshot directory write access for Pi lock files while still leaving the real Pi home unmounted.

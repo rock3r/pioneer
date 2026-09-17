@@ -10,6 +10,7 @@ import {
   type PiProbeRunner,
   piConfigSandboxError,
   piReadinessEnvironment,
+  reviewRuntimeEnvironment,
 } from "./pi-readiness.js";
 
 const { createTempDir } = registerManagedTempPaths();
@@ -347,6 +348,20 @@ else process.exitCode = 2;
         { provider: "provider", id: "hockey:free" },
       ],
     });
+  });
+
+  it("keeps the caller's session directory for review runtime preparation only", () => {
+    const source = {
+      HOME: "/pi/home",
+      PI_CODING_AGENT_SESSION_DIR: "/custom/sessions",
+      OPENROUTER_API_KEY: "must-not-leak",
+    };
+    expect(piReadinessEnvironment(source)).not.toHaveProperty("PI_CODING_AGENT_SESSION_DIR");
+    expect(reviewRuntimeEnvironment(source)).toEqual({
+      HOME: "/pi/home",
+      PI_CODING_AGENT_SESSION_DIR: "/custom/sessions",
+    });
+    expect(reviewRuntimeEnvironment({ HOME: "/pi/home" })).toEqual({ HOME: "/pi/home" });
   });
 
   it("does not inherit outer-agent control state or provider secrets in Pi probe subprocesses", () => {

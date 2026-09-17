@@ -390,6 +390,130 @@ describe("prepareIsolatedPiHome", () => {
     ).rejects.toThrow();
   });
 
+  it("keeps runtime-named source directories inside an included dependency", async () => {
+    const { source, destination } = await fixture();
+    const dependency = path.join(source, "node_modules", "root-package");
+    for (const name of ["sessions", "logs", "tmp", ".cache"]) {
+      await mkdir(path.join(dependency, name));
+    }
+    await writeFile(path.join(dependency, "sessions", "sessions.js"), "sessions source");
+    await writeFile(path.join(dependency, "logs", "levels.json"), '{"levels":[]}');
+    await writeFile(path.join(dependency, "tmp", "index.js"), "tmp source");
+    await writeFile(path.join(dependency, ".cache", "build"), "cache");
+    await writeFile(path.join(dependency, "install.log"), "install log");
+
+    const prepared = await prepareIsolatedPiHome({
+      sourceDir: source,
+      destination,
+      mode: "review",
+      piHomeIncludes: ["node_modules/root-package", "node_modules/root-package/sessions"],
+    });
+
+    const staged = path.join(prepared.agentDir, "node_modules", "root-package");
+    await expect(readFile(path.join(staged, "sessions", "sessions.js"), "utf8")).resolves.toBe(
+      "sessions source",
+    );
+    await expect(readFile(path.join(staged, "logs", "levels.json"), "utf8")).resolves.toBe(
+      '{"levels":[]}',
+    );
+    await expect(readFile(path.join(staged, "tmp", "index.js"), "utf8")).resolves.toBe(
+      "tmp source",
+    );
+    await expect(lstat(path.join(staged, ".cache"))).rejects.toThrow();
+    await expect(lstat(path.join(staged, "install.log"))).rejects.toThrow();
+    await expect(lstat(path.join(prepared.agentDir, "sessions"))).rejects.toThrow();
+    await expect(lstat(path.join(prepared.agentDir, "pi-debug.log"))).rejects.toThrow();
+    await expect(
+      prepareIsolatedPiHome({
+        sourceDir: source,
+        destination: `${destination}-runtime`,
+        mode: "review",
+        piHomeIncludes: ["tmp/package/node_modules"],
+      }),
+    ).rejects.toThrow(/hard-excluded/i);
+  });
+
+  it("excludes configured session storage inside included dependencies and skills", async () => {
+    const { source, destination } = await fixture();
+    const dependencySessions = path.join(source, "node_modules", "root-package", "sessions");
+    const skillHistory = path.join(source, "skills", "review", "history");
+    await mkdir(dependencySessions);
+    await mkdir(skillHistory);
+    await writeFile(path.join(dependencySessions, "private.jsonl"), "private history");
+    await writeFile(path.join(skillHistory, "private.jsonl"), "private history");
+    await writeFile(
+      path.join(source, "settings.json"),
+      JSON.stringify({ sessionDir: "~/history" }),
+    );
+
+    const prepared = await prepareIsolatedPiHome({
+      sourceDir: source,
+      destination,
+      mode: "review",
+      piHomeIncludes: ["node_modules/root-package"],
+      environment: {
+        HOME: path.join(source, "skills", "review"),
+        PI_CODING_AGENT_SESSION_DIR: dependencySessions,
+      },
+    });
+
+    await expect(
+      readFile(path.join(prepared.agentDir, "node_modules", "root-package", "index.js"), "utf8"),
+    ).resolves.toBe("root dependency");
+    await expect(
+      lstat(path.join(prepared.agentDir, "node_modules", "root-package", "sessions")),
+    ).rejects.toThrow();
+    await expect(
+      lstat(path.join(prepared.agentDir, "skills", "review", "history")),
+    ).rejects.toThrow();
+    await expect(
+      prepareIsolatedPiHome({
+        sourceDir: source,
+        destination: `${destination}-explicit`,
+        mode: "review",
+        piHomeIncludes: ["node_modules/root-package/sessions"],
+        environment: { PI_CODING_AGENT_SESSION_DIR: dependencySessions },
+      }),
+    ).rejects.toThrow(/hard-excluded/i);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "excludes the canonical targets of linked default session and log storage",
+    async () => {
+      const { source, destination } = await fixture();
+      const dependency = path.join(source, "node_modules", "root-package");
+      await mkdir(path.join(dependency, "history"));
+      await mkdir(path.join(dependency, "run-logs"));
+      await writeFile(path.join(dependency, "history", "private.jsonl"), "private history");
+      await writeFile(path.join(dependency, "run-logs", "private.jsonl"), "private log");
+      await unlink(path.join(source, "sessions", "old.jsonl"));
+      await execFileAsync("rmdir", [path.join(source, "sessions")]);
+      await symlink(
+        path.join("node_modules", "root-package", "history"),
+        path.join(source, "sessions"),
+      );
+      await symlink(
+        path.join("node_modules", "root-package", "run-logs"),
+        path.join(source, "logs"),
+      );
+
+      const prepared = await prepareIsolatedPiHome({
+        sourceDir: source,
+        destination,
+        mode: "review",
+        piHomeIncludes: ["node_modules/root-package"],
+        environment: {},
+      });
+
+      const staged = path.join(prepared.agentDir, "node_modules", "root-package");
+      await expect(readFile(path.join(staged, "index.js"), "utf8")).resolves.toBe(
+        "root dependency",
+      );
+      await expect(lstat(path.join(staged, "history"))).rejects.toThrow();
+      await expect(lstat(path.join(staged, "run-logs"))).rejects.toThrow();
+    },
+  );
+
   it("enforces snapshot limits while collecting an explicit include", async () => {
     const { source, destination } = await fixture();
     const sparsePath = path.join(source, "node_modules", "root-package", "sparse.bin");

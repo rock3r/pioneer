@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, readdir, realpath, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
 
 export interface ExtensionResource {
   readonly path: string;
@@ -45,12 +46,68 @@ function within(root: string, candidate: string): boolean {
   );
 }
 
+function policyPath(value: string): string {
+  return process.platform === "darwin" || process.platform === "win32"
+    ? value.toLowerCase()
+    : value;
+}
+
+async function canonicalOrResolved(value: string): Promise<string> {
+  try {
+    return await realpath(value);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return path.resolve(value);
+    throw error;
+  }
+}
+
+/** Root log files, including links, so a linked debug log's canonical target is excluded too. */
+async function rootLogFiles(agentDir: string): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await readdir(agentDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const files: string[] = [];
+  for (const name of names.filter((entry) => policyPath(entry).endsWith(".log"))) {
+    const candidate = path.join(agentDir, name);
+    const target = await realpath(candidate).catch(() => undefined);
+    if (target !== undefined && (await lstat(target)).isFile()) files.push(candidate);
+  }
+  return files;
+}
+
 /** Copies code as data. No extension is imported in the controller. */
 export async function snapshotExtensionResources(
   resources: readonly ExtensionResource[],
   destination: string,
   signal?: AbortSignal,
+  storage?: PiRuntimeStorage,
 ): Promise<ExtensionSnapshot> {
+  const agentDir = storage === undefined ? undefined : await canonicalOrResolved(storage.agentDir);
+  const privateDirectories =
+    agentDir === undefined
+      ? []
+      : await Promise.all(
+          [
+            path.join(agentDir, "sessions"),
+            path.join(agentDir, "logs"),
+            ...(await rootLogFiles(agentDir)),
+            ...(storage?.sessionDirs ?? []),
+          ].map(async (entry) => policyPath(await canonicalOrResolved(entry))),
+        );
+  const isPrivateStorage = async (canonical: string): Promise<boolean> =>
+    privateDirectories.some((entry) => within(entry, policyPath(canonical))) ||
+    (agentDir !== undefined &&
+      policyPath(path.dirname(canonical)) === policyPath(agentDir) &&
+      policyPath(canonical).endsWith(".log") &&
+      (await lstat(canonical)).isFile());
+  const refusePrivateStorage = (): Error =>
+    new Error(
+      "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension is stored inside private Pi session or log storage. Move it to a dedicated extension directory.",
+    );
   const enabled = resources.filter(
     (resource) => resource.enabled && resource.metadata.scope === "user",
   );
@@ -109,6 +166,7 @@ export async function snapshotExtensionResources(
   ): Promise<void> {
     signal?.throwIfAborted();
     const canonical = await realpath(source);
+    if (await isPrivateStorage(canonical)) return;
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency link escapes the selected code directories. Install its dependencies inside the package before retrying.",
@@ -150,7 +208,7 @@ export async function snapshotExtensionResources(
       await mkdir(target, { recursive: true, mode: 0o700 });
       const next = new Set([...ancestors, canonical]);
       for (const name of (await readdir(canonical)).sort()) {
-        if ([".git", ".cache", ".npm", "sessions", "logs"].includes(name)) continue;
+        if ([".git", ".cache", ".npm"].includes(name)) continue;
         await copy(path.join(canonical, name), path.join(target, name), next);
       }
     } else if (details.isFile()) {
@@ -176,6 +234,7 @@ export async function snapshotExtensionResources(
       );
   }
   for (const root of selectedRoots) {
+    if (await isPrivateStorage(root)) throw refusePrivateStorage();
     const target = stagedPath(root);
     mapped.set(root, target);
     await copy(root, target, new Set());
@@ -184,6 +243,7 @@ export async function snapshotExtensionResources(
   const sourcePaths: string[] = [];
   for (const resource of enabled) {
     const canonical = await realpath(resource.path);
+    if (await isPrivateStorage(canonical)) throw refusePrivateStorage();
     const root = selectedRoots.find((candidate) => within(candidate, canonical));
     if (root === undefined)
       throw new Error(

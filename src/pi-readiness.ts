@@ -117,6 +117,20 @@ export function piReadinessEnvironment(
   );
 }
 
+/**
+ * Environment for controller-side review runtime preparation. It never reaches the sandboxed
+ * actor; it keeps the caller's Pi session directory so private storage can be excluded.
+ */
+export function reviewRuntimeEnvironment(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): NodeJS.ProcessEnv {
+  const sessionDir = environment.PI_CODING_AGENT_SESSION_DIR;
+  return {
+    ...piReadinessEnvironment(environment),
+    ...(sessionDir === undefined ? {} : { PI_CODING_AGENT_SESSION_DIR: sessionDir }),
+  };
+}
+
 function errorCode(error: unknown): string {
   return (error as NodeJS.ErrnoException).code ?? "unknown";
 }
@@ -317,7 +331,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
         runtime ??= await prepareReviewRuntime(
           command,
           environment.PI_CODING_AGENT_DIR ?? defaultPiAgentDir(environment),
-          piReadinessEnvironment(environment),
+          reviewRuntimeEnvironment(environment),
           process.platform === "win32" ? os.tmpdir() : "/tmp",
           undefined,
           true,

@@ -1,4 +1,6 @@
-import { mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { lstat, mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
@@ -205,6 +207,185 @@ describe("extension snapshots", () => {
     expect(result.digest).toMatch(/^[a-f0-9]{64}$/);
     await writeFile(path.join(pkg, "asset.txt"), "changed");
     expect(await readFile(path.join(staged, "asset.txt"), "utf8")).toBe("asset");
+  });
+
+  it("stages dependency source directories named sessions and logs with JSON resources", async () => {
+    const root = await createTempDir("extension-dependency-runtime-names-");
+    const agentDir = path.join(root, "agent");
+    const extensions = path.join(agentDir, "extensions");
+    const sdk = path.join(extensions, "node_modules", "example-sdk");
+    await mkdir(path.join(sdk, "sessions"), { recursive: true });
+    await mkdir(path.join(sdk, "logs"));
+    await writeFile(path.join(extensions, "index.ts"), "extension");
+    await writeFile(
+      path.join(sdk, "package.json"),
+      JSON.stringify({ name: "example-sdk", main: "index.js" }),
+    );
+    await writeFile(
+      path.join(sdk, "index.js"),
+      [
+        "const sessions = require('./sessions/sessions.js');",
+        "const logs = require('./logs/logger.js');",
+        "const schema = require('./sessions/schema.json');",
+        "module.exports = { sessions, logs, schema };",
+      ].join("\n"),
+    );
+    await writeFile(path.join(sdk, "sessions", "sessions.js"), "module.exports = 'sessions';");
+    await writeFile(path.join(sdk, "sessions", "schema.json"), '{"kind":"session-schema"}');
+    await writeFile(
+      path.join(sdk, "logs", "logger.js"),
+      "module.exports = require('./levels.json').levels;",
+    );
+    await writeFile(path.join(sdk, "logs", "levels.json"), '{"levels":["info","error"]}');
+
+    const result = await snapshotExtensionResources(
+      [
+        {
+          path: path.join(extensions, "index.ts"),
+          enabled: true,
+          metadata: { scope: "user", origin: "top-level", baseDir: agentDir },
+        },
+      ],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir, sessionDirs: [] },
+    );
+
+    const stagedRequire = createRequire(result.paths[0] ?? "");
+    const resolved = stagedRequire.resolve("example-sdk");
+    const fromSnapshot = path.relative(
+      realpathSync.native(path.join(root, "snapshot")),
+      realpathSync.native(resolved),
+    );
+    expect(fromSnapshot).not.toMatch(/^\.\.|^[A-Za-z]:|^[\\/]/u);
+    expect(stagedRequire("example-sdk")).toEqual({
+      sessions: "sessions",
+      logs: ["info", "error"],
+      schema: { kind: "session-schema" },
+    });
+  });
+
+  it("excludes private Pi session and log storage when a selected root contains it", async () => {
+    const root = await createTempDir("extension-private-storage-");
+    const agentDir = path.join(root, "agent");
+    const logsName = process.platform === "linux" ? "logs" : "Logs";
+    const history = path.join(root, "agent", "history");
+    const sdk = path.join(agentDir, "node_modules", "example-sdk");
+    await mkdir(path.join(agentDir, "sessions", "--project--"), { recursive: true });
+    await mkdir(path.join(agentDir, logsName));
+    await mkdir(history);
+    await mkdir(path.join(sdk, "sessions"), { recursive: true });
+    await mkdir(path.join(sdk, "logs"));
+    await writeFile(path.join(agentDir, "local.ts"), "extension");
+    await writeFile(path.join(agentDir, "sessions", "--project--", "run.jsonl"), "history");
+    await writeFile(path.join(agentDir, logsName, "run.jsonl"), "log");
+    await writeFile(path.join(agentDir, "pi-debug.log"), "debug");
+    await writeFile(path.join(history, "custom.jsonl"), "custom history");
+    await writeFile(path.join(sdk, "sessions", "sessions.js"), "module.exports = 'sessions';");
+    await writeFile(path.join(sdk, "logs", "levels.json"), "{}");
+    await writeFile(path.join(sdk, "debug.log"), "dependency file");
+    if (process.platform !== "win32") {
+      await symlink(path.join("..", "..", "sessions"), path.join(sdk, "linked-history"));
+      await writeFile(path.join(sdk, "debug-target.txt"), "linked debug log");
+      await symlink(
+        path.join("node_modules", "example-sdk", "debug-target.txt"),
+        path.join(agentDir, "linked-debug.log"),
+      );
+    }
+
+    const result = await snapshotExtensionResources(
+      [{ path: path.join(agentDir, "local.ts"), enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir, sessionDirs: [history] },
+    );
+
+    const staged = path.dirname(result.paths[0] ?? "");
+    await expect(
+      readFile(path.join(staged, "sessions", "--project--", "run.jsonl")),
+    ).rejects.toThrow();
+    await expect(lstat(path.join(staged, "sessions"))).rejects.toThrow();
+    await expect(lstat(path.join(staged, logsName))).rejects.toThrow();
+    await expect(lstat(path.join(staged, "pi-debug.log"))).rejects.toThrow();
+    await expect(lstat(path.join(staged, "history"))).rejects.toThrow();
+    if (process.platform !== "win32") {
+      await expect(
+        lstat(path.join(staged, "node_modules", "example-sdk", "debug-target.txt")),
+      ).rejects.toThrow();
+    }
+    await expect(
+      lstat(path.join(staged, "node_modules", "example-sdk", "linked-history")),
+    ).rejects.toThrow();
+    const stagedSdk = path.join(staged, "node_modules", "example-sdk");
+    await expect(readFile(path.join(stagedSdk, "sessions", "sessions.js"), "utf8")).resolves.toBe(
+      "module.exports = 'sessions';",
+    );
+    await expect(readFile(path.join(stagedSdk, "logs", "levels.json"), "utf8")).resolves.toBe("{}");
+    await expect(readFile(path.join(stagedSdk, "debug.log"), "utf8")).resolves.toBe(
+      "dependency file",
+    );
+  });
+
+  it("refuses an extension stored inside private Pi session storage", async () => {
+    const root = await createTempDir("extension-inside-sessions-");
+    const agentDir = path.join(root, "agent");
+    await mkdir(path.join(agentDir, "sessions", "code"), { recursive: true });
+    await writeFile(path.join(agentDir, "sessions", "code", "index.ts"), "extension");
+    await expect(
+      snapshotExtensionResources(
+        [
+          {
+            path: path.join(agentDir, "sessions", "code", "index.ts"),
+            enabled: true,
+            metadata: { scope: "user" },
+          },
+        ],
+        path.join(root, "snapshot"),
+        undefined,
+        { agentDir, sessionDirs: [] },
+      ),
+    ).rejects.toThrow("[PI_EXTENSION_RUNTIME_UNSUPPORTED]");
+  });
+
+  it("refuses an enabled entry inside session storage below a broader package root", async () => {
+    const root = await createTempDir("extension-entry-inside-sessions-");
+    const agentDir = path.join(root, "agent");
+    await mkdir(path.join(agentDir, "sessions", "code"), { recursive: true });
+    await writeFile(path.join(agentDir, "sessions", "code", "index.ts"), "extension");
+    await expect(
+      snapshotExtensionResources(
+        [
+          {
+            path: path.join(agentDir, "sessions", "code", "index.ts"),
+            enabled: true,
+            metadata: { scope: "user", origin: "package", baseDir: agentDir },
+          },
+        ],
+        path.join(root, "snapshot"),
+        undefined,
+        { agentDir, sessionDirs: [] },
+      ),
+    ).rejects.toThrow("[PI_EXTENSION_RUNTIME_UNSUPPORTED]");
+  });
+
+  it("stages an agent-directory child directory whose name ends in .log", async () => {
+    const root = await createTempDir("extension-log-named-directory-");
+    const agentDir = path.join(root, "agent");
+    await mkdir(path.join(agentDir, "audit.log"), { recursive: true });
+    await writeFile(path.join(agentDir, "audit.log", "index.ts"), "audit extension");
+    const result = await snapshotExtensionResources(
+      [
+        {
+          path: path.join(agentDir, "audit.log", "index.ts"),
+          enabled: true,
+          metadata: { scope: "user" },
+        },
+      ],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir, sessionDirs: [] },
+    );
+    await expect(readFile(result.paths[0] ?? "", "utf8")).resolves.toBe("audit extension");
   });
 
   it("stages local-file siblings once without loading extension code", async () => {

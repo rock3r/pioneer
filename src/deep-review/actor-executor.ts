@@ -8,7 +8,7 @@ import { resolvePiCommand } from "../pi-command.js";
 import { cleanupReviewRuntime, prepareReviewRuntime } from "../pi-extension-discovery.js";
 import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
 import { defaultPiAgentDir } from "../pi-home.js";
-import { assertPiReady, piReadinessEnvironment } from "../pi-readiness.js";
+import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
 import { applyResolvedPiLaunch, optimizePiStartupCommand } from "../pi-startup.js";
 import { buildReviewSandboxConfig, validateReviewPaths } from "../review/isolation.js";
 import {
@@ -96,7 +96,7 @@ async function launchStructuredActor(
   const runtime = await prepareReviewRuntime(
     command,
     piHomeSource,
-    piReadinessEnvironment(piEnvironment),
+    reviewRuntimeEnvironment(piEnvironment),
     path.dirname(request.actorScratchDir),
     undefined,
     true,

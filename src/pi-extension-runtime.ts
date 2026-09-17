@@ -10,6 +10,7 @@ import {
   type ExtensionSnapshot,
   snapshotExtensionResources,
 } from "./pi-extension-snapshot.js";
+import { piRuntimeStorage } from "./pi-runtime-storage.js";
 
 const execute = promisify(execFile);
 const RESOLVE = `
@@ -130,7 +131,12 @@ export async function preparePiExtensions(
       "[PI_EXTENSION_RESOLUTION_FAILED] Pi could not resolve its installed user extensions. Verify the selected Pi settings and installed packages with normal Pi. Extension code was not executed.",
     );
   }
-  const snapshot = await snapshotExtensionResources(resources, destination, signal);
+  const snapshot = await snapshotExtensionResources(
+    resources,
+    destination,
+    signal,
+    enabled ? await piRuntimeStorage(sourceAgentDir, settingsFile, environment) : undefined,
+  );
   const entry = path.join(destination, "entry.mjs");
   const policy = path.join(destination, "pi-extension-policy.js");
   await copyFile(fileURLToPath(new URL("./pi-extension-entry.js", import.meta.url)), entry);
