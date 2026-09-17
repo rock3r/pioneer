@@ -27,6 +27,11 @@ describe("piRuntimeStorage", () => {
       agentDir,
       sessionDirs: [path.join(os.homedir(), "pi-history")],
     });
+    const other = path.join(root, "other-home");
+    const preferred = process.platform === "win32" ? other : home;
+    await expect(
+      piRuntimeStorage(agentDir, settings, { HOME: home, USERPROFILE: other }),
+    ).resolves.toEqual({ agentDir, sessionDirs: [path.join(preferred, "pi-history")] });
   });
 
   it("uses Pi's default storage when settings are missing or unparseable", async () => {

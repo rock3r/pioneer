@@ -16,6 +16,20 @@ function expandHome(value: string, home: string): string {
 }
 
 /**
+ * Readiness environments omit Pi's session-directory variable. Restore the controller's value so
+ * private storage is still located, while keeping the Pi environment's home for tilde expansion.
+ */
+export function piStorageEnvironment(
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Readonly<NodeJS.ProcessEnv> {
+  return {
+    ...environment,
+    PI_CODING_AGENT_SESSION_DIR:
+      environment.PI_CODING_AGENT_SESSION_DIR ?? process.env.PI_CODING_AGENT_SESSION_DIR,
+  };
+}
+
+/**
  * Locates the session directories Pi would use. Tildes expand against the Pi environment's home.
  * Pi ignores unparseable settings and falls back to its default session directory, so this does too.
  */
@@ -24,10 +38,11 @@ export async function piRuntimeStorage(
   settingsFile: string,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<PiRuntimeStorage> {
+  // Match os.homedir(): Windows prefers USERPROFILE, other platforms use HOME.
   const home =
-    environment.HOME ||
-    (process.platform === "win32" ? environment.USERPROFILE : undefined) ||
-    os.homedir();
+    (process.platform === "win32"
+      ? environment.USERPROFILE || environment.HOME
+      : environment.HOME) || os.homedir();
   const sessionDirs: string[] = [];
   const fromEnvironment = environment.PI_CODING_AGENT_SESSION_DIR;
   if (fromEnvironment) sessionDirs.push(expandHome(fromEnvironment, home));

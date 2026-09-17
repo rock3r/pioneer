@@ -10,7 +10,7 @@ import {
   type ExtensionSnapshot,
   snapshotExtensionResources,
 } from "./pi-extension-snapshot.js";
-import { piRuntimeStorage } from "./pi-runtime-storage.js";
+import { piRuntimeStorage, piStorageEnvironment } from "./pi-runtime-storage.js";
 
 const execute = promisify(execFile);
 const RESOLVE = `
@@ -136,12 +136,7 @@ export async function preparePiExtensions(
     destination,
     signal,
     enabled
-      ? await piRuntimeStorage(sourceAgentDir, settingsFile, {
-          ...environment,
-          // Readiness environments omit this name; the controller's value still marks private storage.
-          PI_CODING_AGENT_SESSION_DIR:
-            environment.PI_CODING_AGENT_SESSION_DIR ?? process.env.PI_CODING_AGENT_SESSION_DIR,
-        })
+      ? await piRuntimeStorage(sourceAgentDir, settingsFile, piStorageEnvironment(environment))
       : undefined,
   );
   const entry = path.join(destination, "entry.mjs");
