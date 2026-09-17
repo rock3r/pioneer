@@ -433,6 +433,50 @@ describe("prepareIsolatedPiHome", () => {
     ).rejects.toThrow(/hard-excluded/i);
   });
 
+  it("excludes configured session storage inside included dependencies and skills", async () => {
+    const { source, destination } = await fixture();
+    const dependencySessions = path.join(source, "node_modules", "root-package", "sessions");
+    const skillHistory = path.join(source, "skills", "review", "history");
+    await mkdir(dependencySessions);
+    await mkdir(skillHistory);
+    await writeFile(path.join(dependencySessions, "private.jsonl"), "private history");
+    await writeFile(path.join(skillHistory, "private.jsonl"), "private history");
+    await writeFile(
+      path.join(source, "settings.json"),
+      JSON.stringify({ sessionDir: "~/history" }),
+    );
+
+    const prepared = await prepareIsolatedPiHome({
+      sourceDir: source,
+      destination,
+      mode: "review",
+      piHomeIncludes: ["node_modules/root-package"],
+      environment: {
+        HOME: path.join(source, "skills", "review"),
+        PI_CODING_AGENT_SESSION_DIR: dependencySessions,
+      },
+    });
+
+    await expect(
+      readFile(path.join(prepared.agentDir, "node_modules", "root-package", "index.js"), "utf8"),
+    ).resolves.toBe("root dependency");
+    await expect(
+      lstat(path.join(prepared.agentDir, "node_modules", "root-package", "sessions")),
+    ).rejects.toThrow();
+    await expect(
+      lstat(path.join(prepared.agentDir, "skills", "review", "history")),
+    ).rejects.toThrow();
+    await expect(
+      prepareIsolatedPiHome({
+        sourceDir: source,
+        destination: `${destination}-explicit`,
+        mode: "review",
+        piHomeIncludes: ["node_modules/root-package/sessions"],
+        environment: { PI_CODING_AGENT_SESSION_DIR: dependencySessions },
+      }),
+    ).rejects.toThrow(/hard-excluded/i);
+  });
+
   it("enforces snapshot limits while collecting an explicit include", async () => {
     const { source, destination } = await fixture();
     const sparsePath = path.join(source, "node_modules", "root-package", "sparse.bin");

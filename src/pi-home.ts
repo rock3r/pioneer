@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { piRuntimeStorage } from "./pi-runtime-storage.js";
 
 export type PiHomeMode = "review" | "eval";
 
@@ -20,6 +21,8 @@ export interface PreparePiHomeOptions {
   readonly sourceDir?: string;
   readonly piHomeIncludes?: readonly string[];
   readonly checkAborted?: () => void;
+  /** Environment Pi runs with; used to locate a configured session directory. */
+  readonly environment?: Readonly<NodeJS.ProcessEnv>;
 }
 
 export interface PreparedPiHome {
@@ -58,6 +61,8 @@ interface SelectionState {
   readonly entries: Map<string, SelectedEntry>;
   readonly budget: SnapshotBudget;
   readonly checkAborted: () => void;
+  /** Configured session directories inside the Pi home, as relative path parts. */
+  readonly privatePaths: readonly (readonly string[])[];
 }
 
 interface SnapshotBudget {
@@ -82,7 +87,19 @@ function isLogFile(name: string): boolean {
   return normalized.endsWith(".log") || normalized.endsWith("-debug.log");
 }
 
-function isHardExcluded(parts: readonly string[], kind: EntryKind): boolean {
+function isHardExcluded(
+  parts: readonly string[],
+  kind: EntryKind,
+  privatePaths: SelectionState["privatePaths"],
+): boolean {
+  if (
+    privatePaths.some(
+      (prefix) =>
+        prefix.length <= parts.length &&
+        prefix.every((part, index) => policyName(part) === policyName(parts[index] ?? "")),
+    )
+  )
+    return true;
   const dependencyIndex = parts.findIndex((part) => policyName(part) === "node_modules");
   return parts.some((part, index) => {
     const name = policyName(part);
@@ -95,11 +112,15 @@ function isHardExcluded(parts: readonly string[], kind: EntryKind): boolean {
   });
 }
 
-function isDefaultSkipped(parts: readonly string[], kind: EntryKind): boolean {
+function isDefaultSkipped(
+  parts: readonly string[],
+  kind: EntryKind,
+  privatePaths: SelectionState["privatePaths"],
+): boolean {
   const name = parts.at(-1);
   return (
     name !== undefined &&
-    (DEFAULT_SKIPPED_NAMES.has(policyName(name)) || isHardExcluded(parts, kind))
+    (DEFAULT_SKIPPED_NAMES.has(policyName(name)) || isHardExcluded(parts, kind, privatePaths))
   );
 }
 
@@ -138,8 +159,14 @@ function normalizeInclude(include: string): string[] {
   return parts;
 }
 
-function assertNotHardExcluded(parts: readonly string[], include: string, kind: EntryKind): void {
-  if (isHardExcluded(parts, kind)) throw invalidInclude(include, "is a hard-excluded runtime path");
+function assertNotHardExcluded(
+  parts: readonly string[],
+  include: string,
+  kind: EntryKind,
+  privatePaths: SelectionState["privatePaths"],
+): void {
+  if (isHardExcluded(parts, kind, privatePaths))
+    throw invalidInclude(include, "is a hard-excluded runtime path");
 }
 
 function entryKind(stats: Awaited<ReturnType<typeof lstat>>): EntryKind | undefined {
@@ -250,8 +277,10 @@ async function collectEntry(
         await collectEntry(sourceRoot, childRelative, state, traversal);
         continue;
       }
-      if (traversal === "default" && isDefaultSkipped(childParts, childKind)) continue;
-      if (traversal !== "default" && isHardExcluded(childParts, childKind)) continue;
+      if (traversal === "default" && isDefaultSkipped(childParts, childKind, state.privatePaths))
+        continue;
+      if (traversal !== "default" && isHardExcluded(childParts, childKind, state.privatePaths))
+        continue;
       await collectEntry(sourceRoot, childRelative, state, traversal);
       state.checkAborted();
     }
@@ -299,7 +328,7 @@ async function validateExplicitInclude(
   if (lexicalKind === undefined) {
     throw new Error(`[PI_HOME_SPECIAL_FILE] Pi home contains a special file at ${include}`);
   }
-  assertNotHardExcluded(parts, include, lexicalKind);
+  assertNotHardExcluded(parts, include, lexicalKind, state.privatePaths);
   let canonicalCandidate: string;
   try {
     canonicalCandidate = await realpath(candidate);
@@ -323,7 +352,7 @@ async function validateExplicitInclude(
     }
     throw error;
   }
-  assertNotHardExcluded(relativeCanonical.split("/"), include, lexicalKind);
+  assertNotHardExcluded(relativeCanonical.split("/"), include, lexicalKind, state.privatePaths);
   for (let index = 1; index < parts.length; index += 1) {
     await collectEntry(sourceRoot, relativePath(parts.slice(0, index)), state, "scaffold");
   }
@@ -355,7 +384,10 @@ async function validateSelectedSymlinks(sourceRoot: string, state: SelectionStat
     if (!state.entries.has(selectionKey(targetRelative))) {
       const targetStats = await lstat(target);
       const targetKind = entryKind(targetStats);
-      if (targetKind !== undefined && isHardExcluded(targetRelative.split("/"), targetKind)) {
+      if (
+        targetKind !== undefined &&
+        isHardExcluded(targetRelative.split("/"), targetKind, state.privatePaths)
+      ) {
         throw new Error(
           `[PI_HOME_SYMLINK_TARGET_EXCLUDED] Selected Pi home symlink ${entry.relativePath} targets hard-excluded path ${targetRelative}`,
         );
@@ -398,11 +430,42 @@ async function collectDefaultFile(
   await collectEntry(sourceRoot, relative, state, "default");
 }
 
+async function privateSessionPaths(
+  sourceRoot: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Promise<string[][]> {
+  const storage = await piRuntimeStorage(
+    sourceRoot,
+    path.join(sourceRoot, "settings.json"),
+    environment,
+  );
+  const paths: string[][] = [];
+  for (const directory of storage.sessionDirs) {
+    const canonical = await realpath(directory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    for (const candidate of new Set([path.resolve(directory), canonical ?? directory])) {
+      const relative = path.relative(sourceRoot, candidate);
+      if (
+        relative === "" ||
+        relative === ".." ||
+        relative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relative)
+      )
+        continue;
+      paths.push(relative.split(path.sep));
+    }
+  }
+  return paths;
+}
+
 async function buildSelection(
   sourceRoot: string,
   mode: PiHomeMode,
   includes: readonly string[],
   checkAborted: () => void,
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<SelectionState> {
   if (mode === "eval" && includes.length > 0) {
     throw new Error(
@@ -413,6 +476,7 @@ async function buildSelection(
     entries: new Map(),
     budget: { entries: 0, bytes: 0 },
     checkAborted,
+    privatePaths: await privateSessionPaths(sourceRoot, environment),
   };
   for (const name of DEFAULT_ROOT_FILES) {
     state.checkAborted();
@@ -515,6 +579,7 @@ export async function prepareIsolatedPiHome(
     options.mode,
     options.piHomeIncludes ?? [],
     checkAborted,
+    options.environment ?? process.env,
   );
   checkAborted();
   const requestedRoot = path.resolve(options.destination);

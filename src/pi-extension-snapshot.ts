@@ -1,17 +1,9 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import {
-  chmod,
-  copyFile,
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  realpath,
-  symlink,
-} from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, readdir, realpath, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
 
 export interface ExtensionResource {
   readonly path: string;
@@ -54,45 +46,6 @@ function within(root: string, candidate: string): boolean {
   );
 }
 
-/** Pi's private runtime storage. Only these exact locations are excluded from a snapshot. */
-export interface PiRuntimeStorage {
-  readonly agentDir: string;
-  readonly sessionDirs?: readonly string[];
-}
-
-function expandHome(value: string): string {
-  if (value === "~") return os.homedir();
-  if (value.startsWith("~/") || (process.platform === "win32" && value.startsWith("~\\")))
-    return path.join(os.homedir(), value.slice(2));
-  return path.resolve(value);
-}
-
-/** Reads the session directories Pi would use from its environment and settings. */
-export async function piRuntimeStorage(
-  agentDir: string,
-  settingsFile: string,
-  environment: NodeJS.ProcessEnv,
-): Promise<PiRuntimeStorage> {
-  const sessionDirs: string[] = [];
-  const fromEnvironment = environment.PI_CODING_AGENT_SESSION_DIR;
-  if (fromEnvironment) sessionDirs.push(expandHome(fromEnvironment));
-  let settings: unknown;
-  try {
-    settings = JSON.parse(await readFile(settingsFile, "utf8"));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-      throw new Error(
-        "[PI_EXTENSION_RESOLUTION_FAILED] Pi settings could not be read to locate private session storage.",
-      );
-  }
-  if (typeof settings === "object" && settings !== null) {
-    const configured = (settings as Record<string, unknown>).sessionDir;
-    if (typeof configured === "string" && configured.length > 0)
-      sessionDirs.push(expandHome(configured));
-  }
-  return { agentDir, sessionDirs };
-}
-
 function policyPath(value: string): string {
   return process.platform === "darwin" || process.platform === "win32"
     ? value.toLowerCase()
@@ -126,11 +79,16 @@ export async function snapshotExtensionResources(
             ...(storage?.sessionDirs ?? []),
           ].map(async (entry) => policyPath(await canonicalOrResolved(entry))),
         );
-  const isPrivateStorage = (canonical: string): boolean =>
+  const isPrivateStorage = async (canonical: string): Promise<boolean> =>
     privateDirectories.some((entry) => within(entry, policyPath(canonical))) ||
     (agentDir !== undefined &&
       policyPath(path.dirname(canonical)) === policyPath(agentDir) &&
-      policyPath(canonical).endsWith(".log"));
+      policyPath(canonical).endsWith(".log") &&
+      (await lstat(canonical)).isFile());
+  const refusePrivateStorage = (): Error =>
+    new Error(
+      "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension is stored inside private Pi session or log storage. Move it to a dedicated extension directory.",
+    );
   const enabled = resources.filter(
     (resource) => resource.enabled && resource.metadata.scope === "user",
   );
@@ -189,7 +147,7 @@ export async function snapshotExtensionResources(
   ): Promise<void> {
     signal?.throwIfAborted();
     const canonical = await realpath(source);
-    if (isPrivateStorage(canonical)) return;
+    if (await isPrivateStorage(canonical)) return;
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency link escapes the selected code directories. Install its dependencies inside the package before retrying.",
@@ -257,10 +215,7 @@ export async function snapshotExtensionResources(
       );
   }
   for (const root of selectedRoots) {
-    if (isPrivateStorage(root))
-      throw new Error(
-        "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension is stored inside private Pi session or log storage. Move it to a dedicated extension directory.",
-      );
+    if (await isPrivateStorage(root)) throw refusePrivateStorage();
     const target = stagedPath(root);
     mapped.set(root, target);
     await copy(root, target, new Set());
@@ -269,6 +224,7 @@ export async function snapshotExtensionResources(
   const sourcePaths: string[] = [];
   for (const resource of enabled) {
     const canonical = await realpath(resource.path);
+    if (await isPrivateStorage(canonical)) throw refusePrivateStorage();
     const root = selectedRoots.find((candidate) => within(candidate, canonical));
     if (root === undefined)
       throw new Error(

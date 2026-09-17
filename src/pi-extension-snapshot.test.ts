@@ -1,14 +1,12 @@
 import { realpathSync } from "node:fs";
 import { lstat, mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
 import {
   assertSameExtensionSnapshot,
   extensionPathsWithCapabilities,
-  piRuntimeStorage,
   snapshotExtensionResources,
 } from "./pi-extension-snapshot.js";
 
@@ -250,7 +248,7 @@ describe("extension snapshots", () => {
       ],
       path.join(root, "snapshot"),
       undefined,
-      { agentDir },
+      { agentDir, sessionDirs: [] },
     );
 
     const stagedRequire = createRequire(result.paths[0] ?? "");
@@ -334,30 +332,50 @@ describe("extension snapshots", () => {
         ],
         path.join(root, "snapshot"),
         undefined,
-        { agentDir },
+        { agentDir, sessionDirs: [] },
       ),
     ).rejects.toThrow("[PI_EXTENSION_RUNTIME_UNSUPPORTED]");
   });
 
-  it("resolves configured Pi session directories from settings and the environment", async () => {
-    const root = await createTempDir("extension-session-settings-");
-    const settings = path.join(root, "settings.json");
-    await writeFile(settings, JSON.stringify({ sessionDir: "~/pi-history" }));
+  it("refuses an enabled entry inside session storage below a broader package root", async () => {
+    const root = await createTempDir("extension-entry-inside-sessions-");
+    const agentDir = path.join(root, "agent");
+    await mkdir(path.join(agentDir, "sessions", "code"), { recursive: true });
+    await writeFile(path.join(agentDir, "sessions", "code", "index.ts"), "extension");
     await expect(
-      piRuntimeStorage(path.join(root, "agent"), settings, {
-        PI_CODING_AGENT_SESSION_DIR: path.join(root, "env-history"),
-      }),
-    ).resolves.toEqual({
-      agentDir: path.join(root, "agent"),
-      sessionDirs: [path.join(root, "env-history"), path.join(os.homedir(), "pi-history")],
-    });
-    await expect(
-      piRuntimeStorage(path.join(root, "agent"), path.join(root, "missing.json"), {}),
-    ).resolves.toEqual({ agentDir: path.join(root, "agent"), sessionDirs: [] });
-    await writeFile(settings, "{");
-    await expect(piRuntimeStorage(path.join(root, "agent"), settings, {})).rejects.toThrow(
-      "[PI_EXTENSION_RESOLUTION_FAILED]",
+      snapshotExtensionResources(
+        [
+          {
+            path: path.join(agentDir, "sessions", "code", "index.ts"),
+            enabled: true,
+            metadata: { scope: "user", origin: "package", baseDir: agentDir },
+          },
+        ],
+        path.join(root, "snapshot"),
+        undefined,
+        { agentDir, sessionDirs: [] },
+      ),
+    ).rejects.toThrow("[PI_EXTENSION_RUNTIME_UNSUPPORTED]");
+  });
+
+  it("stages an agent-directory child directory whose name ends in .log", async () => {
+    const root = await createTempDir("extension-log-named-directory-");
+    const agentDir = path.join(root, "agent");
+    await mkdir(path.join(agentDir, "audit.log"), { recursive: true });
+    await writeFile(path.join(agentDir, "audit.log", "index.ts"), "audit extension");
+    const result = await snapshotExtensionResources(
+      [
+        {
+          path: path.join(agentDir, "audit.log", "index.ts"),
+          enabled: true,
+          metadata: { scope: "user" },
+        },
+      ],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir, sessionDirs: [] },
     );
+    await expect(readFile(result.paths[0] ?? "", "utf8")).resolves.toBe("audit extension");
   });
 
   it("stages local-file siblings once without loading extension code", async () => {
