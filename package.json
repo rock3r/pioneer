@@ -1,6 +1,6 @@
 {
   "name": "@rock3r/pioneer",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Safely delegate reviews and isolated skill evals from coding agents to Pi",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
