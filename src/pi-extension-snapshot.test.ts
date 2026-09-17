@@ -1,4 +1,5 @@
-import { lstat, mkdir, readFile, readlink, realpath, symlink, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { lstat, mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -254,7 +255,11 @@ describe("extension snapshots", () => {
 
     const stagedRequire = createRequire(result.paths[0] ?? "");
     const resolved = stagedRequire.resolve("example-sdk");
-    expect(resolved.startsWith(await realpath(path.join(root, "snapshot")))).toBe(true);
+    const fromSnapshot = path.relative(
+      realpathSync.native(path.join(root, "snapshot")),
+      realpathSync.native(resolved),
+    );
+    expect(fromSnapshot).not.toMatch(/^\.\.|^[A-Za-z]:|^[\\/]/u);
     expect(stagedRequire("example-sdk")).toEqual({
       sessions: "sessions",
       logs: ["info", "error"],
