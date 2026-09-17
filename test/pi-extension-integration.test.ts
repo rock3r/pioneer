@@ -224,7 +224,19 @@ export default function(pi){
         path.join(dependency, "package.json"),
         JSON.stringify({ name: "fixture-dependency", main: "index.js" }),
       );
-      await writeFile(path.join(dependency, "index.js"), 'module.exports = "dependency-ok";');
+      await mkdir(path.join(dependency, "sessions"));
+      await mkdir(path.join(dependency, "logs"));
+      await writeFile(
+        path.join(dependency, "index.js"),
+        'module.exports = require("./sessions/sessions.js") + require("./logs/status.json").suffix;',
+      );
+      await writeFile(
+        path.join(dependency, "sessions", "sessions.js"),
+        'module.exports = "dependency";',
+      );
+      await writeFile(path.join(dependency, "logs", "status.json"), '{"suffix":"-ok"}');
+      await mkdir(path.join(home, "sessions"));
+      await writeFile(path.join(home, "sessions", "private.jsonl"), "private history");
       await writeFile(path.join(pkg, "asset.txt"), "asset-ok");
       await mkdir(path.join(extensions, "shared"));
       await writeFile(path.join(extensions, "shared", "helper.js"), 'exports.value = "local-ok";');

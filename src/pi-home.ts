@@ -41,6 +41,8 @@ const DEFAULT_ROOT_FILES = [
   "AGENTS.md",
 ] as const;
 const HARD_EXCLUDED_NAMES = new Set(["sessions", "logs", ".npm", ".cache", "tmp", ".tmp", "temp"]);
+// Inside an installed dependency these names are package source, not Pi runtime storage.
+const DEPENDENCY_SOURCE_NAMES = new Set(["sessions", "logs", "tmp", ".tmp", "temp"]);
 const DEFAULT_SKIPPED_NAMES = new Set(["node_modules", ".git"]);
 
 interface SelectedEntry {
@@ -81,11 +83,16 @@ function isLogFile(name: string): boolean {
 }
 
 function isHardExcluded(parts: readonly string[], kind: EntryKind): boolean {
-  return parts.some(
-    (part, index) =>
-      HARD_EXCLUDED_NAMES.has(policyName(part)) ||
-      (index === parts.length - 1 && kind === "file" && isLogFile(part)),
-  );
+  const dependencyIndex = parts.findIndex((part) => policyName(part) === "node_modules");
+  return parts.some((part, index) => {
+    const name = policyName(part);
+    const dependencySource =
+      dependencyIndex >= 0 && index > dependencyIndex && DEPENDENCY_SOURCE_NAMES.has(name);
+    return (
+      (HARD_EXCLUDED_NAMES.has(name) && !dependencySource) ||
+      (index === parts.length - 1 && kind === "file" && isLogFile(part))
+    );
+  });
 }
 
 function isDefaultSkipped(parts: readonly string[], kind: EntryKind): boolean {

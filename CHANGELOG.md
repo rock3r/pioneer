@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Keep dependency source directories named `sessions` or `logs` when staging Pi extensions, so SDKs that load files such as `./sessions/sessions.js` no longer fail. Pioneer now excludes Pi's private session and log storage by its exact location, including a configured session directory, instead of by directory name. Explicit `--pi-home-include` dependencies also keep their `sessions`, `logs`, and `tmp` source directories.
+
 ## 0.3.3 - 2026-09-16
 
 - Load enabled installed Pi extensions consistently for model discovery and sandboxed reviews, including extension-provided models such as `kimi-code/k3-256k`. Preserve package dependencies, assets, disabled resources, and provider/authentication hooks without trusting the reviewed project's extensions.

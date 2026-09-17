@@ -8,6 +8,7 @@ import type { PiLaunchCommand } from "./pi-command.js";
 import {
   type ExtensionResource,
   type ExtensionSnapshot,
+  piRuntimeStorage,
   snapshotExtensionResources,
 } from "./pi-extension-snapshot.js";
 
@@ -130,7 +131,18 @@ export async function preparePiExtensions(
       "[PI_EXTENSION_RESOLUTION_FAILED] Pi could not resolve its installed user extensions. Verify the selected Pi settings and installed packages with normal Pi. Extension code was not executed.",
     );
   }
-  const snapshot = await snapshotExtensionResources(resources, destination, signal);
+  const snapshot = await snapshotExtensionResources(
+    resources,
+    destination,
+    signal,
+    enabled
+      ? await piRuntimeStorage(sourceAgentDir, settingsFile, {
+          // Readiness environments omit this name; the controller's value still marks private storage.
+          PI_CODING_AGENT_SESSION_DIR:
+            environment.PI_CODING_AGENT_SESSION_DIR ?? process.env.PI_CODING_AGENT_SESSION_DIR,
+        })
+      : undefined,
+  );
   const entry = path.join(destination, "entry.mjs");
   const policy = path.join(destination, "pi-extension-policy.js");
   await copyFile(fileURLToPath(new URL("./pi-extension-entry.js", import.meta.url)), entry);
