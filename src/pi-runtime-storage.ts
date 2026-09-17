@@ -12,21 +12,12 @@ function expandHome(value: string, home: string): string {
   if (value === "~") return home;
   if (value.startsWith("~/") || (process.platform === "win32" && value.startsWith("~\\")))
     return path.join(home, value.slice(2));
+  // Pi resolves a relative value against its own working directory, which Pioneer cannot know.
+  if (!path.isAbsolute(value))
+    throw new Error(
+      "[PI_SESSION_DIR_RELATIVE] Pi's configured session directory is relative. Use an absolute path or one starting with ~/ so Pioneer can keep private sessions out of snapshots.",
+    );
   return path.resolve(value);
-}
-
-/**
- * Readiness environments omit Pi's session-directory variable. Restore the controller's value so
- * private storage is still located, while keeping the Pi environment's home for tilde expansion.
- */
-export function piStorageEnvironment(
-  environment: Readonly<NodeJS.ProcessEnv>,
-): Readonly<NodeJS.ProcessEnv> {
-  return {
-    ...environment,
-    PI_CODING_AGENT_SESSION_DIR:
-      environment.PI_CODING_AGENT_SESSION_DIR ?? process.env.PI_CODING_AGENT_SESSION_DIR,
-  };
 }
 
 /**

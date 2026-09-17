@@ -15,7 +15,6 @@ import { type PreparedExtensions, preparePiExtensions } from "./pi-extension-run
 import { extensionPathsWithCapabilities } from "./pi-extension-snapshot.js";
 import { type PreparedPiHome, prepareIsolatedPiHome } from "./pi-home.js";
 import type { PiProbeResult } from "./pi-readiness.js";
-import { piStorageEnvironment } from "./pi-runtime-storage.js";
 import {
   createReviewScratchDirectory,
   piRuntimePaths,
@@ -73,7 +72,7 @@ export async function prepareReviewRuntime(
       sourceDir: agentDir,
       destination: path.join(scratch, "pi-home"),
       mode: "review",
-      environment: piStorageEnvironment(environment),
+      environment,
       checkAborted: () => signal?.throwIfAborted(),
       ...(includes === undefined ? {} : { piHomeIncludes: includes }),
     });

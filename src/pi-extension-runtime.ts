@@ -10,7 +10,7 @@ import {
   type ExtensionSnapshot,
   snapshotExtensionResources,
 } from "./pi-extension-snapshot.js";
-import { piRuntimeStorage, piStorageEnvironment } from "./pi-runtime-storage.js";
+import { piRuntimeStorage } from "./pi-runtime-storage.js";
 
 const execute = promisify(execFile);
 const RESOLVE = `
@@ -135,9 +135,7 @@ export async function preparePiExtensions(
     resources,
     destination,
     signal,
-    enabled
-      ? await piRuntimeStorage(sourceAgentDir, settingsFile, piStorageEnvironment(environment))
-      : undefined,
+    enabled ? await piRuntimeStorage(sourceAgentDir, settingsFile, environment) : undefined,
   );
   const entry = path.join(destination, "entry.mjs");
   const policy = path.join(destination, "pi-extension-policy.js");

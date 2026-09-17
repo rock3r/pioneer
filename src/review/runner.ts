@@ -28,7 +28,7 @@ import {
 import { assertSameExtensionSnapshot } from "../pi-extension-snapshot.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
-import { assertPiReady, piReadinessEnvironment } from "../pi-readiness.js";
+import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
 import { applyResolvedPiLaunch, optimizePiStartupCommand } from "../pi-startup.js";
 import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../sandbox/launcher.js";
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
@@ -1375,7 +1375,7 @@ async function runReviewInternal(
     preparedRuntime = await prepareReviewRuntime(
       piCommand,
       piHomeSource,
-      piReadinessEnvironment(piEnvironment),
+      reviewRuntimeEnvironment(piEnvironment),
       requestedScratchBase ?? (windows ? os.tmpdir() : "/tmp"),
       request.piHomeIncludes,
       request.extensions !== false,

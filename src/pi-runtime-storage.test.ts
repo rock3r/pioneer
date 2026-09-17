@@ -34,6 +34,21 @@ describe("piRuntimeStorage", () => {
     ).resolves.toEqual({ agentDir, sessionDirs: [path.join(preferred, "pi-history")] });
   });
 
+  it("refuses relative session directories that Pi resolves against its own working directory", async () => {
+    const root = await createTempDir("pi-runtime-storage-relative-");
+    const agentDir = path.join(root, "agent");
+    const settings = path.join(root, "settings.json");
+    await writeFile(settings, JSON.stringify({ sessionDir: "history" }));
+    await expect(piRuntimeStorage(agentDir, settings, {})).rejects.toThrow(
+      "[PI_SESSION_DIR_RELATIVE]",
+    );
+    await expect(
+      piRuntimeStorage(agentDir, path.join(root, "missing.json"), {
+        PI_CODING_AGENT_SESSION_DIR: "./history",
+      }),
+    ).rejects.toThrow("[PI_SESSION_DIR_RELATIVE]");
+  });
+
   it("uses Pi's default storage when settings are missing or unparseable", async () => {
     const root = await createTempDir("pi-runtime-storage-default-");
     const agentDir = path.join(root, "agent");
