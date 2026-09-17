@@ -9,10 +9,10 @@ export interface PiRuntimeStorage {
   readonly sessionDirs: readonly string[];
 }
 
-/** Pi's Windows conversion of Git Bash, MSYS, Cygwin, and WSL drive paths. */
+/** Pi's Windows conversion of Git Bash, MSYS, Cygwin, and WSL drive paths. Non-Unicode /i folds ASCII only. */
 function normalizeWindowsShellPath(value: string): string {
   if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return value;
-  const match = value.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/iu);
+  const match = value.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i);
   if (!match?.[1]) return value;
   return `${match[1].toUpperCase()}:\\${match[2]?.replaceAll("/", "\\") ?? ""}`;
 }

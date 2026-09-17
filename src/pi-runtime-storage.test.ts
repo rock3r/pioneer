@@ -75,6 +75,17 @@ describe("piRuntimeStorage", () => {
           PI_CODING_AGENT_SESSION_DIR: "/mnt/d/pi",
         }),
       ).resolves.toMatchObject({ sessionDirs: ["D:\\pi"] });
+      const nonAscii = await piRuntimeStorage(
+        path.join(root, "agent"),
+        path.join(root, "missing.json"),
+        { PI_CODING_AGENT_SESSION_DIR: "/\u017f/private" },
+      );
+      expect(nonAscii.sessionDirs).toEqual([path.resolve("/\u017f/private")]);
+      await expect(
+        piRuntimeStorage(path.join(root, "agent"), path.join(root, "missing.json"), {
+          PI_CODING_AGENT_SESSION_DIR: "/\u212a/private",
+        }),
+      ).resolves.toMatchObject({ sessionDirs: [path.resolve("/\u212a/private")] });
     },
   );
 
