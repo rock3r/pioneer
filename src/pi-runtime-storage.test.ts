@@ -89,6 +89,27 @@ describe("piRuntimeStorage", () => {
     },
   );
 
+  it("reads settings with a UTF-8 byte order mark like Pi", async () => {
+    const root = await createTempDir("pi-runtime-storage-bom-");
+    const agentDir = path.join(root, "agent");
+    const settings = path.join(root, "settings.json");
+    const history = path.join(root, "history");
+    await writeFile(settings, `\uFEFF${JSON.stringify({ sessionDir: history })}`);
+    await expect(piRuntimeStorage(agentDir, settings, {})).resolves.toEqual({
+      agentDir,
+      sessionDirs: [history],
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("refuses a non-local file URL", async () => {
+    const root = await createTempDir("pi-runtime-storage-invalid-url-");
+    await expect(
+      piRuntimeStorage(path.join(root, "agent"), path.join(root, "missing.json"), {
+        PI_CODING_AGENT_SESSION_DIR: "file://remote-host/sessions",
+      }),
+    ).rejects.toThrow("[PI_SESSION_DIR_INVALID]");
+  });
+
   it("reports why settings could not be read", async () => {
     const root = await createTempDir("pi-runtime-storage-unreadable-");
     await expect(piRuntimeStorage(path.join(root, "agent"), root, {})).rejects.toThrow(

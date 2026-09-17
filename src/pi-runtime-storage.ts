@@ -70,7 +70,8 @@ export async function piRuntimeStorage(
   }
   let settings: unknown;
   try {
-    settings = text === undefined ? undefined : JSON.parse(text);
+    // Pi strips a leading byte order mark before parsing settings.
+    settings = text === undefined ? undefined : JSON.parse(text.replace(/^\uFEFF/u, ""));
   } catch {
     settings = undefined;
   }
