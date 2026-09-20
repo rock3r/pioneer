@@ -22,10 +22,10 @@ const PATH_DENYLIST = new Set([
 const PUNCTUATION_ONLY_TERMS = new Set(["case"]);
 
 const CONTENT_MARKERS: readonly { readonly marker: string; readonly pattern: RegExp }[] = [
-  { marker: "BUG:", pattern: /\bBUG:/ },
-  { marker: "FIXME", pattern: /\bFIXME\b/ },
-  { marker: "XXX", pattern: /\bXXX\b/ },
-  { marker: "TODO", pattern: /\bTODO\b/ },
+  { marker: "BUG:", pattern: /(?<![\p{L}\p{N}_])BUG:/u },
+  { marker: "FIXME", pattern: /(?<![\p{L}\p{N}_])FIXME(?![\p{L}\p{N}_])/u },
+  { marker: "XXX", pattern: /(?<![\p{L}\p{N}_])XXX(?![\p{L}\p{N}_])/u },
+  { marker: "TODO", pattern: /(?<![\p{L}\p{N}_])TODO(?![\p{L}\p{N}_])/u },
 ];
 
 function toPosix(value: string): string {

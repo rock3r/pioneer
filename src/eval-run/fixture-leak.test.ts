@@ -40,7 +40,13 @@ describe("deniedContentMarker", () => {
     expect(deniedContentMarker("fun render() = 42\n")).toBeUndefined();
     expect(deniedContentMarker("const todos = listOf(1)\n")).toBeUndefined();
     expect(deniedContentMarker('val prefix = "BUG"\n')).toBeUndefined();
-    expect(deniedContentMarker("DEBUG: request failed\n")).toBeUndefined();
+  });
+
+  it("does not treat DEBUG: as a BUG: grading marker", () => {
+    expect(deniedContentMarker("DEBUG: request failed")).toBeUndefined();
+    expect(deniedContentMarker("log DEBUG: still a level name")).toBeUndefined();
+    expect(deniedContentMarker("BUG: off-by-one")).toBe("BUG:");
+    expect(deniedContentMarker("// BUG: off-by-one")).toBe("BUG:");
   });
 
   it.each([

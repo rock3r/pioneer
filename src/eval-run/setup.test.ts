@@ -282,6 +282,34 @@ describe("prepareEvalBattery", () => {
     ).toBe("class BadgeCase");
   });
 
+  it("prepares a fixture whose contents mention DEBUG: without a BUG: marker", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    await writeFile(
+      path.join(fixture.skillDir, "evals", "files", "parser.ts"),
+      "DEBUG: request failed\n",
+    );
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 1, prompt: "Review parser.ts", files: ["evals/files/parser.ts"] }],
+      }),
+    );
+
+    const result = await prepareEvalBattery({
+      skillDir: fixture.skillDir,
+      evalsPath,
+      outputRoot: path.join(fixture.root, "battery"),
+    });
+    expect(
+      await readFile(
+        path.join(result.actorRunsDir, "eval-1", "baseline", "fixtures", "parser.ts"),
+        "utf8",
+      ),
+    ).toBe("DEBUG: request failed\n");
+  });
+
   it("rejects staged content markers and does not honor the name hatch for them", async () => {
     const fixture = await createSkillFixture();
     const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
