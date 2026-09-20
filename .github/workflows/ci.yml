@@ -40,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pi: ["0.80.6", "0.86.0"]
+        pi: ["0.80.6", "0.86.1"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -82,7 +82,7 @@ jobs:
       - run: npm run test:e2e
       - name: Test installed Pi extension isolation
         run: |
-          for version in 0.80.6 0.86.0; do
+          for version in 0.80.6 0.86.1; do
             npm install --global @earendil-works/pi-coding-agent@"$version"
             npx vitest run test/pi-extension-integration.test.ts
           done
