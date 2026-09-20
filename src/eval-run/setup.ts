@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   EVAL_CASE_FILE_NAME,
@@ -145,6 +145,15 @@ async function copySanitizedSkill(source: string, destination: string): Promise<
   }
 }
 
+async function assertRegularFixtureFile(canonicalSource: string): Promise<void> {
+  const details = await stat(canonicalSource);
+  if (!details.isFile()) {
+    throw new Error(
+      `Fixture is not a regular file (directories, FIFOs, and other special files are rejected): ${canonicalSource}`,
+    );
+  }
+}
+
 function fixtureDestination(relativeFile: string): string {
   const normalized = relativeFile.split(path.sep).join("/");
   const prefix = "evals/files/";
@@ -169,6 +178,7 @@ export async function prepareEvalBattery(
       ensureWithin(skillDir, source, "fixture");
       const canonicalSource = await realpath(source);
       ensureWithin(skillDir, canonicalSource, "fixture");
+      await assertRegularFixtureFile(canonicalSource);
       assertFixtureContentDoesNotLeak(relativeFile, await readFile(canonicalSource, "utf8"));
     }
   }

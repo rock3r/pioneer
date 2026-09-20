@@ -22,7 +22,7 @@ const PATH_DENYLIST = new Set([
 const PUNCTUATION_ONLY_TERMS = new Set(["case"]);
 
 const CONTENT_MARKERS: readonly { readonly marker: string; readonly pattern: RegExp }[] = [
-  { marker: "BUG:", pattern: /BUG:/ },
+  { marker: "BUG:", pattern: /\bBUG:/ },
   { marker: "FIXME", pattern: /\bFIXME\b/ },
   { marker: "XXX", pattern: /\bXXX\b/ },
   { marker: "TODO", pattern: /\bTODO\b/ },

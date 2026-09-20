@@ -40,6 +40,7 @@ describe("deniedContentMarker", () => {
     expect(deniedContentMarker("fun render() = 42\n")).toBeUndefined();
     expect(deniedContentMarker("const todos = listOf(1)\n")).toBeUndefined();
     expect(deniedContentMarker('val prefix = "BUG"\n')).toBeUndefined();
+    expect(deniedContentMarker("DEBUG: request failed\n")).toBeUndefined();
   });
 
   it.each([

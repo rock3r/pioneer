@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -307,6 +308,52 @@ describe("prepareEvalBattery", () => {
     ).rejects.toThrow(/\[EVAL_FIXTURE_LEAK\].*TODO/);
     await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
   });
+
+  it("rejects a directory fixture before reading contents", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    const directoryFixture = path.join(fixture.skillDir, "evals", "files", "sample-dir");
+    await mkdir(directoryFixture);
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 1, prompt: "Review sample-dir", files: ["evals/files/sample-dir"] }],
+      }),
+    );
+    const outputRoot = path.join(fixture.root, "battery");
+
+    await expect(
+      prepareEvalBattery({ skillDir: fixture.skillDir, evalsPath, outputRoot }),
+    ).rejects.toThrow(/not a regular file.*FIFO/i);
+    await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a FIFO fixture before reading contents",
+    async () => {
+      const fixture = await createSkillFixture();
+      const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+      const fifoFixture = path.join(fixture.skillDir, "evals", "files", "sample.pipe");
+      const created = spawnSync("mkfifo", [fifoFixture], { encoding: "utf8" });
+      expect(created.status, created.stderr).toBe(0);
+      await writeFile(
+        evalsPath,
+        JSON.stringify({
+          skill_name: "example-skill",
+          evals: [{ id: 1, prompt: "Review sample.pipe", files: ["evals/files/sample.pipe"] }],
+        }),
+      );
+      const outputRoot = path.join(fixture.root, "battery");
+
+      await expect(
+        prepareEvalBattery({ skillDir: fixture.skillDir, evalsPath, outputRoot }),
+      ).rejects.toThrow(/not a regular file.*FIFO/i);
+      await expect(
+        readFile(path.join(outputRoot, "controller", "manifest.json")),
+      ).rejects.toThrow();
+    },
+  );
 
   it("prepares a denylisted filename when --allow-fixture-name covers it", async () => {
     const fixture = await createSkillFixture();
