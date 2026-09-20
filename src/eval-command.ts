@@ -22,7 +22,7 @@ const processOutput: EvalCliOutput = {
 
 export function evalUsage(commandName: string): string {
   return `Usage:
-  ${commandName} prepare --skill DIR --evals FILE --output DIR
+  ${commandName} prepare --skill DIR --evals FILE --output DIR [--allow-fixture-name GLOB]...
   ${commandName} install-linux
   ${commandName} run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] [--work-log FILE] -- COMMAND [ARG ...]`;
 }
@@ -68,8 +68,14 @@ export async function runEvalCli(
     const skillDir = takeOption(args, "--skill", commandName);
     const evalsPath = takeOption(args, "--evals", commandName);
     const outputRoot = takeOption(args, "--output", commandName);
+    const allowFixtureNameGlobs = takeRepeatedOption(args, "--allow-fixture-name", commandName);
     if (!skillDir || !evalsPath || !outputRoot || args.length > 0) usage(commandName);
-    const prepared = await prepareEvalBattery({ skillDir, evalsPath, outputRoot });
+    const prepared = await prepareEvalBattery({
+      skillDir,
+      evalsPath,
+      outputRoot,
+      allowFixtureNameGlobs,
+    });
     output.stdout(`${JSON.stringify(prepared, null, 2)}\n`);
     output.stderr(`[PIONEER_EVAL_ACTOR_CONTRACT] ${prepared.actorContract.description}\n`);
     return;

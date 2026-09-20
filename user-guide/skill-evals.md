@@ -23,9 +23,9 @@ Place an `evals/evals.json` file inside the skill directory:
 }
 ```
 
-`skill_name` must be one non-empty portable path component of at most 255 UTF-8 bytes without `/` or `\\`; absolute paths, dot names, Windows reserved device names and invalid characters, and names ending in a dot or space are rejected. `id` must be an integer unique within the file. `prompt` is required. `files` is optional and contains paths below the skill directory. Controller-only fields such as `expected_output` and `expectations` may coexist in the source definition, but Pioneer never stages them into an actor run.
+`skill_name` must be one non-empty portable path component of at most 255 UTF-8 bytes without `/` or `\\`; absolute paths, dot names, Windows reserved device names and invalid characters, and names ending in a dot or space are rejected. `id` must be an integer unique within the file. `prompt` is required. `files` is optional and contains paths below the skill directory. Controller-only fields such as `expected_output` and `expectations` may coexist in the source definition, but Pioneer never stages them into an actor run. The converse is also true and easy to miss: **expectations are protected; paths are not.** Every `files[]` path is copied into the actor-visible `fixtures/` tree, listed in `case.json`, and printed on `eval run` as `[PIONEER_EVAL_FIXTURES]`. A filename or directory that states the expected finding hands the actor the answer.
 
-The complete source skill must be free of symbolic links. Generated eval workspaces and `evals/` content are excluded from the with-skill copy.
+The complete source skill must be free of symbolic links. Generated eval workspaces and `evals/` content are excluded from the with-skill copy. The actor must see only what a developer would see in a real checkout.
 
 ## Prepare a battery
 
@@ -37,6 +37,8 @@ pioneer eval prepare \
   --evals /absolute/path/to/example-skill/evals/evals.json \
   --output /absolute/path/to/new-eval-battery
 ```
+
+`eval prepare` fails closed with `[EVAL_FIXTURE_LEAK]` before creating the output directory when a staged path or its contents would leak the expected finding. Path matching is on word boundaries after camelCase, kebab, snake, and dot splits of each path component, so `MOTION-stale.md` and `rough-tier/` are rejected while `BadgeCase.kt` is not. Staged text containing `BUG:`, `FIXME`, `XXX`, or `TODO` markers is also rejected. Repeatable `--allow-fixture-name GLOB` is the escape hatch for a genuine filename collision in a real repository snapshot; it does not waive content markers.
 
 The output directory must not already exist. The generated layout is:
 
@@ -65,7 +67,7 @@ new-eval-battery/
 
 ### Staged fixture contract
 
-Actors run with their run directory as the working directory, and fixtures are staged one level down under `fixtures/`. Pioneer therefore rewrites each prepared prompt so the paths it names resolve from that working directory: a source prompt saying `File: fixture_42.kt` becomes `File: fixtures/fixture_42.kt`, while `source_prompt` keeps the original wording. A basename shared by two staged fixtures is left alone, because only its distinct relative path is unambiguous.
+Actors run with their run directory as the working directory, and fixtures are staged one level down under `fixtures/`. Pioneer therefore rewrites each prepared prompt so the paths it names resolve from that working directory: a source prompt saying `File: panel.kt` becomes `File: fixtures/panel.kt`, while `source_prompt` keeps the original wording. A basename shared by two staged fixtures is left alone, because only its distinct relative path is unambiguous.
 
 Use `case.json` as the actor prompt source. Nothing else is needed to locate a fixture: the run directory and `fixtures/` can be listed directly, so an actor never has to run a `find`-style search that the eval sandbox may refuse to launch.
 
@@ -105,5 +107,19 @@ If any probe fails, the actor never starts. There is no unsandboxed fallback.
 ## Grade outside the sandbox
 
 Capture actor stdout and artifacts, then grade them from the trusted controller against the original expectations. Keep answer keys outside all actor directories. Compare baseline and with-skill results across the same cases and model settings; do not treat a single successful output as evidence that the skill improved behavior.
+
+## Matrix batteries
+
+Arms are fixed at `baseline` and `with-skill`. A second factor — current vs stale config, present vs absent file — has nowhere to go inside one battery. Do not add a third arm, and do not put sibling fixtures such as `CONFIG-stale.md` next to `CONFIG.md` in the same battery: the actor can see every staged path.
+
+Use one battery per cell, with identical case ids, identical prompts, and identical staged filenames. Only the file contents and the controller-owned run manifest differ:
+
+```text
+batteries/config-current/actor-runs/eval-10/{baseline,with-skill}/fixtures/CONFIG.md
+batteries/config-stale/actor-runs/eval-10/{baseline,with-skill}/fixtures/CONFIG.md
+batteries/config-absent/actor-runs/eval-10/{baseline,with-skill}/
+```
+
+That yields the 2×2 that makes a skill's value measurable: whether behaviour *changes* when the input factor changes, rather than merely whether the skill emits output. One non-obvious cell is worth running: **factor absent, but the skill told it is present.** That catches a skill inventing conventions from a file that was never staged.
 
 For lower-level mechanics and the verified platform matrix, see [Isolated skill evals](../docs/EVALS.md).

@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   EVAL_CASE_FILE_NAME,
@@ -6,6 +6,7 @@ import {
   type StagedEvalFixture,
   stagePromptFixtureReferences,
 } from "./actor-contract.js";
+import { assertFixtureContentDoesNotLeak, assertFixturePathDoesNotLeak } from "./fixture-leak.js";
 
 interface EvalCase {
   readonly id: number;
@@ -17,6 +18,7 @@ export interface PrepareEvalBatteryOptions {
   readonly skillDir: string;
   readonly evalsPath: string;
   readonly outputRoot: string;
+  readonly allowFixtureNameGlobs?: readonly string[];
 }
 
 export interface PreparedEvalActorContract {
@@ -143,6 +145,15 @@ async function copySanitizedSkill(source: string, destination: string): Promise<
   }
 }
 
+async function assertRegularFixtureFile(canonicalSource: string): Promise<void> {
+  const details = await stat(canonicalSource);
+  if (!details.isFile()) {
+    throw new Error(
+      `Fixture is not a regular file (directories, FIFOs, and other special files are rejected): ${canonicalSource}`,
+    );
+  }
+}
+
 function fixtureDestination(relativeFile: string): string {
   const normalized = relativeFile.split(path.sep).join("/");
   const prefix = "evals/files/";
@@ -159,6 +170,18 @@ export async function prepareEvalBattery(
   ensureWithin(skillDir, evalsPath, "evals path");
   await assertTreeHasNoSymlinks(skillDir);
   const parsed = parseEvalCases(JSON.parse(await readFile(evalsPath, "utf8")) as unknown);
+  const allowFixtureNameGlobs = options.allowFixtureNameGlobs ?? [];
+  for (const evalCase of parsed.evals) {
+    for (const relativeFile of evalCase.files) {
+      assertFixturePathDoesNotLeak(relativeFile, allowFixtureNameGlobs);
+      const source = path.resolve(skillDir, relativeFile);
+      ensureWithin(skillDir, source, "fixture");
+      const canonicalSource = await realpath(source);
+      ensureWithin(skillDir, canonicalSource, "fixture");
+      await assertRegularFixtureFile(canonicalSource);
+      assertFixtureContentDoesNotLeak(relativeFile, await readFile(canonicalSource, "utf8"));
+    }
+  }
 
   const requestedOutputRoot = path.resolve(options.outputRoot);
   const outputParent = await realpath(path.dirname(requestedOutputRoot));

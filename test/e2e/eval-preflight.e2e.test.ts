@@ -135,12 +135,12 @@ describe.skipIf(!sandboxReady)(
       const created = await createEvalWorkspace("actor-isolation");
       workspaces.push(created);
       const skill = await createSkillFixture(created, {
-        files: [{ relativePath: "fixture_44.kt", contents: "class Fixture44\n" }],
+        files: [{ relativePath: "panel_44.kt", contents: "class Panel44\n" }],
         cases: [
           {
             id: 44,
-            prompt: "Review fixture_44.kt",
-            files: ["evals/files/fixture_44.kt"],
+            prompt: "Review panel_44.kt",
+            files: ["evals/files/panel_44.kt"],
             expectedOutput: "answer-key",
           },
         ],

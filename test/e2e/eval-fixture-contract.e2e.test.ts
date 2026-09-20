@@ -33,12 +33,12 @@ describe("pioneer eval prepare stages fixtures where prompts name them", () => {
   it("rewrites prompts, records the source prompt, and returns the actor contract", async () => {
     const created = await workspace("prepare-contract");
     const skill = await createSkillFixture(created, {
-      files: [{ relativePath: "fixture_42.kt", contents: "class Fixture42 { fun go() = 42 }\n" }],
+      files: [{ relativePath: "panel_42.kt", contents: "class Panel42 { fun go() = 42 }\n" }],
       cases: [
         {
           id: 42,
-          prompt: "Review this suggested-response panel. File: fixture_42.kt",
-          files: ["evals/files/fixture_42.kt"],
+          prompt: "Review this suggested-response panel. File: panel_42.kt",
+          files: ["evals/files/panel_42.kt"],
           expectedOutput: "answer-key-must-not-be-staged",
           expectations: ["expectation-must-not-be-staged"],
         },
@@ -70,22 +70,53 @@ describe("pioneer eval prepare stages fixtures where prompts name them", () => {
       const runDir = battery.runDir(42, arm);
       const preparedCase = await readPreparedCase(runDir);
       expect(preparedCase.prompt).toBe(
-        "Review this suggested-response panel. File: fixtures/fixture_42.kt",
+        "Review this suggested-response panel. File: fixtures/panel_42.kt",
       );
       expect(preparedCase.source_prompt).toBe(
-        "Review this suggested-response panel. File: fixture_42.kt",
+        "Review this suggested-response panel. File: panel_42.kt",
       );
       expect(preparedCase.fixtures_dir).toBe("fixtures");
-      expect(preparedCase.files).toEqual(["fixtures/fixture_42.kt"]);
+      expect(preparedCase.files).toEqual(["fixtures/panel_42.kt"]);
       // Every path the prepared prompt names resolves from the actor working directory.
       const named = preparedCase.prompt.split(" ").at(-1) ?? "";
       expect(await readFile(path.join(runDir, named), "utf8")).toBe(
-        "class Fixture42 { fun go() = 42 }\n",
+        "class Panel42 { fun go() = 42 }\n",
       );
       const staged = await readFile(path.join(runDir, "case.json"), "utf8");
       expect(staged).not.toContain("answer-key-must-not-be-staged");
       expect(staged).not.toContain("expectation-must-not-be-staged");
     }
+  });
+
+  it("fails closed with [EVAL_FIXTURE_LEAK] before creating output", async () => {
+    const created = await workspace("prepare-leak");
+    const skill = await createSkillFixture(created, {
+      files: [{ relativePath: "MOTION-stale.md", contents: "duration: 300\n" }],
+      cases: [
+        {
+          id: 64,
+          prompt: "Review CONFIG.md",
+          files: ["evals/files/MOTION-stale.md"],
+        },
+      ],
+    });
+    const outputRoot = path.join(created.root, "battery");
+
+    const prepared = await runPioneer(created, [
+      "eval",
+      "prepare",
+      "--skill",
+      skill.skillDir,
+      "--evals",
+      skill.evalsPath,
+      "--output",
+      outputRoot,
+    ]);
+
+    expect(prepared.exitCode).not.toBe(0);
+    expect(prepared.stderr).toContain("[EVAL_FIXTURE_LEAK]");
+    expect(prepared.stderr).toContain("stale");
+    await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
   });
 
   it("keeps nested fixture directories and rewrites every reference in one prompt", async () => {
@@ -133,12 +164,12 @@ describe.skipIf(!sandboxReady)("pioneer eval run resolves staged fixtures for th
     const created = await workspace("run-fixture");
     await writeScriptedPi(created, { actor: { kind: "review-referenced-files" } });
     const skill = await createSkillFixture(created, {
-      files: [{ relativePath: "fixture_42.kt", contents: "class Fixture42 { fun go() = 42 }\n" }],
+      files: [{ relativePath: "panel_42.kt", contents: "class Panel42 { fun go() = 42 }\n" }],
       cases: [
         {
           id: 42,
-          prompt: "Review this suggested-response panel. File: fixture_42.kt",
-          files: ["evals/files/fixture_42.kt"],
+          prompt: "Review this suggested-response panel. File: panel_42.kt",
+          files: ["evals/files/panel_42.kt"],
         },
       ],
     });
@@ -187,23 +218,23 @@ describe.skipIf(!sandboxReady)("pioneer eval run resolves staged fixtures for th
     };
     expect(review.model).toBe("scripted/fake-model");
     expect(review.reviewed).toEqual([
-      { file: "fixtures/fixture_42.kt", firstLine: "class Fixture42 { fun go() = 42 }" },
+      { file: "fixtures/panel_42.kt", firstLine: "class Panel42 { fun go() = 42 }" },
     ]);
     expect(review.skill).toContain("example-skill");
     expect(run.stderr).toContain("[PIONEER_EVAL_ACTOR_CONTRACT]");
-    expect(run.stderr).toContain("[PIONEER_EVAL_FIXTURES] fixtures/fixture_42.kt");
+    expect(run.stderr).toContain("[PIONEER_EVAL_FIXTURES] fixtures/panel_42.kt");
   });
 
   it("lets an actor list its run directory and fixtures without spawning a search", async () => {
     const created = await workspace("run-listing");
     await writeScriptedPi(created, { actor: { kind: "list-run-directory" } });
     const skill = await createSkillFixture(created, {
-      files: [{ relativePath: "fixture_43.kt", contents: "class Fixture43\n" }],
+      files: [{ relativePath: "panel_43.kt", contents: "class Panel43\n" }],
       cases: [
         {
           id: 43,
-          prompt: "Review fixture_43.kt",
-          files: ["evals/files/fixture_43.kt"],
+          prompt: "Review panel_43.kt",
+          files: ["evals/files/panel_43.kt"],
         },
       ],
     });
@@ -247,8 +278,8 @@ describe.skipIf(!sandboxReady)("pioneer eval run resolves staged fixtures for th
     };
     expect(listing.entries).toContain("fixtures");
     expect(listing.entries).toContain("case.json");
-    expect(listing.fixtures).toEqual(["fixture_43.kt"]);
-    expect(listing.preparedCase.prompt).toBe("Review fixtures/fixture_43.kt");
-    expect(listing.preparedCase.files).toEqual(["fixtures/fixture_43.kt"]);
+    expect(listing.fixtures).toEqual(["panel_43.kt"]);
+    expect(listing.preparedCase.prompt).toBe("Review fixtures/panel_43.kt");
+    expect(listing.preparedCase.files).toEqual(["fixtures/panel_43.kt"]);
   });
 });

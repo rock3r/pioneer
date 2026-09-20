@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -17,7 +18,7 @@ async function createSkillFixture(): Promise<{ root: string; skillDir: string }>
   );
   await writeFile(path.join(skillDir, "references", "guide.md"), "safe reference");
   await writeFile(path.join(skillDir, "skill-source.json"), '{"secret":"provenance"}');
-  await writeFile(path.join(skillDir, "evals", "files", "fixture.txt"), "prompt-safe fixture");
+  await writeFile(path.join(skillDir, "evals", "files", "sample.txt"), "prompt-safe fixture");
   await writeFile(
     path.join(skillDir, "evals", "evals.json"),
     JSON.stringify({
@@ -27,7 +28,7 @@ async function createSkillFixture(): Promise<{ root: string; skillDir: string }>
           id: 1,
           prompt: "Review the fixture.",
           expected_output: "Secret answer key",
-          files: ["evals/files/fixture.txt"],
+          files: ["evals/files/sample.txt"],
           expectations: ["Never visible to actors"],
         },
       ],
@@ -66,10 +67,10 @@ describe("prepareEvalBattery", () => {
     await expect(
       readFile(path.join(withSkill, "skills", "example-skill", "skill-source.json")),
     ).rejects.toThrow();
-    expect(await readFile(path.join(baseline, "fixtures", "fixture.txt"), "utf8")).toBe(
+    expect(await readFile(path.join(baseline, "fixtures", "sample.txt"), "utf8")).toBe(
       "prompt-safe fixture",
     );
-    expect(await readFile(path.join(withSkill, "fixtures", "fixture.txt"), "utf8")).toBe(
+    expect(await readFile(path.join(withSkill, "fixtures", "sample.txt"), "utf8")).toBe(
       "prompt-safe fixture",
     );
   });
@@ -84,8 +85,8 @@ describe("prepareEvalBattery", () => {
         evals: [
           {
             id: 7,
-            prompt: "Review this panel. File: fixture.txt",
-            files: ["evals/files/fixture.txt"],
+            prompt: "Review this panel. File: sample.txt",
+            files: ["evals/files/sample.txt"],
           },
         ],
       }),
@@ -104,10 +105,10 @@ describe("prepareEvalBattery", () => {
       fixtures_dir: string;
       files: string[];
     };
-    expect(preparedCase.prompt).toBe("Review this panel. File: fixtures/fixture.txt");
-    expect(preparedCase.source_prompt).toBe("Review this panel. File: fixture.txt");
+    expect(preparedCase.prompt).toBe("Review this panel. File: fixtures/sample.txt");
+    expect(preparedCase.source_prompt).toBe("Review this panel. File: sample.txt");
     expect(preparedCase.fixtures_dir).toBe("fixtures");
-    expect(preparedCase.files).toEqual(["fixtures/fixture.txt"]);
+    expect(preparedCase.files).toEqual(["fixtures/sample.txt"]);
     expect(await readFile(path.join(runDir, preparedCase.files[0] ?? ""), "utf8")).toBe(
       "prompt-safe fixture",
     );
@@ -203,6 +204,212 @@ describe("prepareEvalBattery", () => {
         outputRoot: path.join(fixture.skillDir, "..battery"),
       }),
     ).rejects.toThrow(/outside the source skill/i);
+  });
+
+  it("rejects a fixture basename that leaks the expected finding before creating output", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    await writeFile(
+      path.join(fixture.skillDir, "evals", "files", "MOTION-stale.md"),
+      "duration: 300",
+    );
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 1, prompt: "Review CONFIG.md", files: ["evals/files/MOTION-stale.md"] }],
+      }),
+    );
+    const outputRoot = path.join(fixture.root, "battery");
+
+    await expect(
+      prepareEvalBattery({ skillDir: fixture.skillDir, evalsPath, outputRoot }),
+    ).rejects.toThrow(/\[EVAL_FIXTURE_LEAK\].*stale/);
+    await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
+  });
+
+  it("rejects a leaking intermediate directory and allows BadgeCase.kt", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    await mkdir(path.join(fixture.skillDir, "evals", "files", "rough-tier"), { recursive: true });
+    await writeFile(
+      path.join(fixture.skillDir, "evals", "files", "rough-tier", "Screen.kt"),
+      "class Screen",
+    );
+    await writeFile(
+      path.join(fixture.skillDir, "evals", "files", "BadgeCase.kt"),
+      "class BadgeCase",
+    );
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [
+          {
+            id: 1,
+            prompt: "Review Screen.kt",
+            files: ["evals/files/rough-tier/Screen.kt"],
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      prepareEvalBattery({
+        skillDir: fixture.skillDir,
+        evalsPath,
+        outputRoot: path.join(fixture.root, "leaking-battery"),
+      }),
+    ).rejects.toThrow(/\[EVAL_FIXTURE_LEAK\].*rough/);
+
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 2, prompt: "Review BadgeCase.kt", files: ["evals/files/BadgeCase.kt"] }],
+      }),
+    );
+    const allowed = await prepareEvalBattery({
+      skillDir: fixture.skillDir,
+      evalsPath,
+      outputRoot: path.join(fixture.root, "badge-battery"),
+    });
+    expect(
+      await readFile(
+        path.join(allowed.actorRunsDir, "eval-2", "baseline", "fixtures", "BadgeCase.kt"),
+        "utf8",
+      ),
+    ).toBe("class BadgeCase");
+  });
+
+  it("prepares a fixture whose contents mention DEBUG: without a BUG: marker", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    await writeFile(
+      path.join(fixture.skillDir, "evals", "files", "parser.ts"),
+      "DEBUG: request failed\n",
+    );
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 1, prompt: "Review parser.ts", files: ["evals/files/parser.ts"] }],
+      }),
+    );
+
+    const result = await prepareEvalBattery({
+      skillDir: fixture.skillDir,
+      evalsPath,
+      outputRoot: path.join(fixture.root, "battery"),
+    });
+    expect(
+      await readFile(
+        path.join(result.actorRunsDir, "eval-1", "baseline", "fixtures", "parser.ts"),
+        "utf8",
+      ),
+    ).toBe("DEBUG: request failed\n");
+  });
+
+  it("rejects staged content markers and does not honor the name hatch for them", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    await writeFile(
+      path.join(fixture.skillDir, "evals", "files", "parser.ts"),
+      "// TODO: the off-by-one\n",
+    );
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 1, prompt: "Review parser.ts", files: ["evals/files/parser.ts"] }],
+      }),
+    );
+    const outputRoot = path.join(fixture.root, "battery");
+
+    await expect(
+      prepareEvalBattery({
+        skillDir: fixture.skillDir,
+        evalsPath,
+        outputRoot,
+        allowFixtureNameGlobs: ["parser.ts"],
+      }),
+    ).rejects.toThrow(/\[EVAL_FIXTURE_LEAK\].*TODO/);
+    await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
+  });
+
+  it("rejects a directory fixture before reading contents", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    const directoryFixture = path.join(fixture.skillDir, "evals", "files", "sample-dir");
+    await mkdir(directoryFixture);
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 1, prompt: "Review sample-dir", files: ["evals/files/sample-dir"] }],
+      }),
+    );
+    const outputRoot = path.join(fixture.root, "battery");
+
+    await expect(
+      prepareEvalBattery({ skillDir: fixture.skillDir, evalsPath, outputRoot }),
+    ).rejects.toThrow(/not a regular file.*FIFO/i);
+    await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a FIFO fixture before reading contents",
+    async () => {
+      const fixture = await createSkillFixture();
+      const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+      const fifoFixture = path.join(fixture.skillDir, "evals", "files", "sample.pipe");
+      const created = spawnSync("mkfifo", [fifoFixture], { encoding: "utf8" });
+      expect(created.status, created.stderr).toBe(0);
+      await writeFile(
+        evalsPath,
+        JSON.stringify({
+          skill_name: "example-skill",
+          evals: [{ id: 1, prompt: "Review sample.pipe", files: ["evals/files/sample.pipe"] }],
+        }),
+      );
+      const outputRoot = path.join(fixture.root, "battery");
+
+      await expect(
+        prepareEvalBattery({ skillDir: fixture.skillDir, evalsPath, outputRoot }),
+      ).rejects.toThrow(/not a regular file.*FIFO/i);
+      await expect(
+        readFile(path.join(outputRoot, "controller", "manifest.json")),
+      ).rejects.toThrow();
+    },
+  );
+
+  it("prepares a denylisted filename when --allow-fixture-name covers it", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    await writeFile(
+      path.join(fixture.skillDir, "evals", "files", "MOTION-stale.md"),
+      "duration: 300",
+    );
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 1, prompt: "Review CONFIG.md", files: ["evals/files/MOTION-stale.md"] }],
+      }),
+    );
+
+    const result = await prepareEvalBattery({
+      skillDir: fixture.skillDir,
+      evalsPath,
+      outputRoot: path.join(fixture.root, "battery"),
+      allowFixtureNameGlobs: ["MOTION-stale.md"],
+    });
+    expect(
+      await readFile(
+        path.join(result.actorRunsDir, "eval-1", "baseline", "fixtures", "MOTION-stale.md"),
+        "utf8",
+      ),
+    ).toBe("duration: 300");
   });
 
   it.each([
