@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Certify Pi `0.86.0` as the newest tested compatibility endpoint after reviewing its CLI, RPC, thinking-level, and session/startup contracts, and keep the minimum at `0.80.6`.
+
 ## 0.3.4 - 2026-09-17
 
 - Keep dependency source directories named `sessions` or `logs` when staging Pi extensions, so SDKs that load files such as `./sessions/sessions.js` no longer fail. Pioneer now excludes Pi's private session and log storage by its exact location, including a configured session directory, instead of by directory name. Configured session directories are also excluded from Pi-home snapshots. Explicit `--pi-home-include` dependencies also keep their `sessions`, `logs`, and `tmp` source directories.
