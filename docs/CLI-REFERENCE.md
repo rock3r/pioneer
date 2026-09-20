@@ -205,6 +205,8 @@ The output must not exist and its canonical parent must keep it outside the sour
 
 Before creating output, prepare fails closed with `[EVAL_FIXTURE_LEAK]` when a `files[]` path component matches a grading-cue denylist term (`stale`, `bug`, `defect`, `bad`, `good`, `broken`, `wrong`, `negative`, `positive`, `rough`, `showcase`, `expected`, `fixture`, `case`) on camelCase/kebab/snake/dot word boundaries, or when staged text contains `BUG:`, `FIXME`, `XXX`, or `TODO` markers. Repeatable `--allow-fixture-name GLOB` waives a path collision (basename or full relative path); it does not waive content markers.
 
+Every `files[]` entry must resolve to a regular file; directories and special files (for example FIFOs) are rejected before output is created.
+
 Fixtures are staged under `fixtures/` inside each actor run directory, and each prepared prompt is rewritten so the paths it names resolve from the actor working directory. `case.json` records `id`, the rewritten `prompt`, the original `source_prompt`, `fixtures_dir`, and the staged `files`. Ambiguous basenames shared by several staged fixtures are left unrewritten. The JSON result adds `actorContract` with `caseFile`, `fixturesDir`, `promptField`, and a one-sentence `description`; the same sentence is printed to stderr as `[PIONEER_EVAL_ACTOR_CONTRACT]`.
 
 ## `pioneer eval run`
