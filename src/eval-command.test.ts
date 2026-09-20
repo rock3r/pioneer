@@ -31,12 +31,12 @@ async function createSkill(prompt: string): Promise<{ root: string; skillDir: st
   const skillDir = path.join(root, "example-skill");
   await mkdir(path.join(skillDir, "evals", "files"), { recursive: true });
   await writeFile(path.join(skillDir, "SKILL.md"), "# Example\n");
-  await writeFile(path.join(skillDir, "evals", "files", "fixture_42.kt"), "class Fixture42\n");
+  await writeFile(path.join(skillDir, "evals", "files", "panel_42.kt"), "class Panel42\n");
   await writeFile(
     path.join(skillDir, "evals", "evals.json"),
     JSON.stringify({
       skill_name: "example-skill",
-      evals: [{ id: 42, prompt, files: ["evals/files/fixture_42.kt"] }],
+      evals: [{ id: 42, prompt, files: ["evals/files/panel_42.kt"] }],
     }),
   );
   return { root, skillDir };
@@ -44,7 +44,7 @@ async function createSkill(prompt: string): Promise<{ root: string; skillDir: st
 
 describe("pioneer eval prepare output", () => {
   it("returns the staged actor contract on stdout and documents it on stderr", async () => {
-    const skill = await createSkill("Review this panel. File: fixture_42.kt");
+    const skill = await createSkill("Review this panel. File: panel_42.kt");
     const output = capture();
 
     await runEvalCli(
@@ -72,13 +72,66 @@ describe("pioneer eval prepare output", () => {
   });
 });
 
+describe("pioneer eval prepare fixture leak", () => {
+  it("fails closed with [EVAL_FIXTURE_LEAK] and honors --allow-fixture-name", async () => {
+    const root = await createTempDir("pioneer-eval-cli-leak-");
+    const skillDir = path.join(root, "example-skill");
+    await mkdir(path.join(skillDir, "evals", "files"), { recursive: true });
+    await writeFile(path.join(skillDir, "SKILL.md"), "# Example\n");
+    await writeFile(path.join(skillDir, "evals", "files", "MOTION-stale.md"), "duration: 300\n");
+    await writeFile(
+      path.join(skillDir, "evals", "evals.json"),
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 1, prompt: "Review CONFIG.md", files: ["evals/files/MOTION-stale.md"] }],
+      }),
+    );
+
+    await expect(
+      runEvalCli(
+        [
+          "prepare",
+          "--skill",
+          skillDir,
+          "--evals",
+          path.join(skillDir, "evals", "evals.json"),
+          "--output",
+          path.join(root, "blocked"),
+        ],
+        "pioneer eval",
+        capture().write,
+      ),
+    ).rejects.toThrow(/\[EVAL_FIXTURE_LEAK\].*stale/);
+
+    const allowed = capture();
+    await runEvalCli(
+      [
+        "prepare",
+        "--skill",
+        skillDir,
+        "--evals",
+        path.join(skillDir, "evals", "evals.json"),
+        "--output",
+        path.join(root, "allowed"),
+        "--allow-fixture-name",
+        "MOTION-stale.md",
+      ],
+      "pioneer eval",
+      allowed.write,
+    );
+    expect(JSON.parse(allowed.stdout.join(""))).toMatchObject({ skillName: "example-skill" });
+  });
+});
+
 describe("pioneer eval usage", () => {
   it("keeps the documented run and prepare forms", async () => {
     const output = capture();
 
     await runEvalCli(["--help"], "pioneer eval", output.write);
 
-    expect(output.stdout.join("")).toContain("prepare --skill DIR --evals FILE --output DIR");
+    expect(output.stdout.join("")).toContain(
+      "prepare --skill DIR --evals FILE --output DIR [--allow-fixture-name GLOB]...",
+    );
     expect(output.stdout.join("")).toContain("run --run-dir DIR");
   });
 });

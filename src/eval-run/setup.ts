@@ -6,6 +6,7 @@ import {
   type StagedEvalFixture,
   stagePromptFixtureReferences,
 } from "./actor-contract.js";
+import { assertFixtureContentDoesNotLeak, assertFixturePathDoesNotLeak } from "./fixture-leak.js";
 
 interface EvalCase {
   readonly id: number;
@@ -17,6 +18,7 @@ export interface PrepareEvalBatteryOptions {
   readonly skillDir: string;
   readonly evalsPath: string;
   readonly outputRoot: string;
+  readonly allowFixtureNameGlobs?: readonly string[];
 }
 
 export interface PreparedEvalActorContract {
@@ -159,6 +161,17 @@ export async function prepareEvalBattery(
   ensureWithin(skillDir, evalsPath, "evals path");
   await assertTreeHasNoSymlinks(skillDir);
   const parsed = parseEvalCases(JSON.parse(await readFile(evalsPath, "utf8")) as unknown);
+  const allowFixtureNameGlobs = options.allowFixtureNameGlobs ?? [];
+  for (const evalCase of parsed.evals) {
+    for (const relativeFile of evalCase.files) {
+      assertFixturePathDoesNotLeak(relativeFile, allowFixtureNameGlobs);
+      const source = path.resolve(skillDir, relativeFile);
+      ensureWithin(skillDir, source, "fixture");
+      const canonicalSource = await realpath(source);
+      ensureWithin(skillDir, canonicalSource, "fixture");
+      assertFixtureContentDoesNotLeak(relativeFile, await readFile(canonicalSource, "utf8"));
+    }
+  }
 
   const requestedOutputRoot = path.resolve(options.outputRoot);
   const outputParent = await realpath(path.dirname(requestedOutputRoot));

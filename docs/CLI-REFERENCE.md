@@ -198,10 +198,12 @@ Windows always reports strict eval execution as unsupported.
 ## `pioneer eval prepare`
 
 ```text
-pioneer eval prepare --skill DIR --evals FILE --output DIR
+pioneer eval prepare --skill DIR --evals FILE --output DIR [--allow-fixture-name GLOB]...
 ```
 
 The output must not exist and its canonical parent must keep it outside the source skill. Pioneer revalidates the created destination before populating it. The command rejects symlinks in the skill, requires `skill_name` to be one portable path component valid on Windows and Unix, including the 255-byte filename limit, parses `evals.json`, and creates controller metadata plus baseline/with-skill actor directories.
+
+Before creating output, prepare fails closed with `[EVAL_FIXTURE_LEAK]` when a `files[]` path component matches a grading-cue denylist term (`stale`, `bug`, `defect`, `bad`, `good`, `broken`, `wrong`, `negative`, `positive`, `rough`, `showcase`, `expected`, `fixture`, `case`) on camelCase/kebab/snake/dot word boundaries, or when staged text contains `BUG:`, `FIXME`, `XXX`, or `TODO` markers. Repeatable `--allow-fixture-name GLOB` waives a path collision (basename or full relative path); it does not waive content markers.
 
 Fixtures are staged under `fixtures/` inside each actor run directory, and each prepared prompt is rewritten so the paths it names resolve from the actor working directory. `case.json` records `id`, the rewritten `prompt`, the original `source_prompt`, `fixtures_dir`, and the staged `files`. Ambiguous basenames shared by several staged fixtures are left unrewritten. The JSON result adds `actorContract` with `caseFile`, `fixturesDir`, `promptField`, and a one-sentence `description`; the same sentence is printed to stderr as `[PIONEER_EVAL_ACTOR_CONTRACT]`.
 
@@ -225,7 +227,7 @@ The isolated Pi snapshot `agentDir` is writable so Pi can create credential lock
 
 Immediately after opening the controller-owned work log, Pioneer prints `[PIONEER_EVAL_WORK_LOG] ABSOLUTE_PATH` to stderr. Without `--work-log`, it creates a unique `eval-*.jsonl` file in the platform Pioneer evals log directory. An explicit `--work-log` target must be absolute, absent, free of control characters, and outside every actor-visible grant. Work-log records cover runner stages and bounded exit metadata only. `[EVAL_WORK_LOG_CREATE_FAILED]` and `[EVAL_WORK_LOG_WRITE_FAILED]` are terminal.
 
-Eval failures return nonzero. Stable stderr diagnostics are `[EVAL_TIMEOUT]` for timeout, `[EVAL_INTERRUPTED]` for SIGINT/SIGTERM, `[EVAL_SPAWN_FAILED]` for sandbox launch failure, `[EVAL_SHEBANG_RESOLUTION_FAILED]` for a cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` interpreter chain, `[EVAL_PROCESS_CONTAINMENT_FAILED]` when inherited pipes prevent proving the process tree stopped, `[EVAL_OUTPUT_LIMIT]` when the output bound is exceeded, and the work-log failures described above. These diagnostics do not print the actor environment, Pi configuration, or authenticated proxy URL.
+Eval failures return nonzero. Stable stderr diagnostics are `[EVAL_FIXTURE_LEAK]` when prepare would stage a path or content marker that leaks the expected finding, `[EVAL_TIMEOUT]` for timeout, `[EVAL_INTERRUPTED]` for SIGINT/SIGTERM, `[EVAL_SPAWN_FAILED]` for sandbox launch failure, `[EVAL_SHEBANG_RESOLUTION_FAILED]` for a cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` interpreter chain, `[EVAL_PROCESS_CONTAINMENT_FAILED]` when inherited pipes prevent proving the process tree stopped, `[EVAL_OUTPUT_LIMIT]` when the output bound is exceeded, and the work-log failures described above. These diagnostics do not print the actor environment, Pi configuration, or authenticated proxy URL.
 
 When the actor executable is Pi, fast-start flags are added automatically and skills are disabled. The writable run directory and read-only runtime paths must all be narrow and non-overlapping. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, temporary, variable-data, and home roots, are rejected after canonicalization; narrowly selected read-only system runtimes and disposable temporary descendants remain supported. Eval networking is always public-only.
 

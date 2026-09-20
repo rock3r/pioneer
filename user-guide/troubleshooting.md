@@ -151,6 +151,8 @@ Timeout cleanup kills Pi and removes the private run state.
 
 ## Eval timed out or returned a containment diagnostic
 
+`[EVAL_FIXTURE_LEAK]` means `eval prepare` refused to stage a fixture whose path or contents would tell the actor the expected finding. Rename the file to what a real checkout would use, move the variant into a separate battery, or pass repeatable `--allow-fixture-name GLOB` for a genuine filename collision. Content markers (`BUG:`, `FIXME`, `XXX`, `TODO`) have no name hatch.
+
 Eval timeout errors begin with `[EVAL_TIMEOUT]` and preserve actor output captured before termination. `[EVAL_PROCESS_CONTAINMENT_FAILED]` means a descendant retained an inherited stdout/stderr pipe beyond the bounded cleanup grace; the run is nonzero and Pioneer stops accepting output. `[EVAL_SHEBANG_RESOLUTION_FAILED]` means `/usr/bin/env` interpreter resolution detected a cycle, exceeded its bounded depth, or began an unterminated overlong shebang; fix the actor's shebang chain. `[EVAL_INTERRUPTED]`, `[EVAL_SPAWN_FAILED]`, and `[EVAL_OUTPUT_LIMIT]` identify interruption, native launch failure, and bounded-output overflow respectively. Retry only after checking the actor's process creation and output behavior; do not add broad runtime grants or disable native isolation.
 
 ## Review appears to hang
