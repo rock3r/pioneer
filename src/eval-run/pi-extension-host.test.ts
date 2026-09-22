@@ -53,6 +53,11 @@ describe("Pi package runtime hosting", () => {
     ).toBe(true);
     expect(
       isSensitiveCredentialPath(
+        `${home}${path.sep}.local${path.sep}share${path.sep}keyrings${path.sep}provider.mjs`,
+      ),
+    ).toBe(true);
+    expect(
+      isSensitiveCredentialPath(
         `${home}${path.sep}.local${path.sep}share${path.sep}my-extension${path.sep}provider.mjs`,
       ),
     ).toBe(false);

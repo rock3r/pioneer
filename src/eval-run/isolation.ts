@@ -553,13 +553,14 @@ export function isBroadRuntimePath(
 const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/etc",
   "/private/etc",
-  "/private/var/lib",
+  "/private/var/backups",
   "/private/var/lib",
   "/private/var/log",
   "/private/var/run",
   "/private/var/spool",
   "/root",
   "/run",
+  "/var/backups",
   "/var/lib",
   "/var/log",
   "/var/run",
@@ -601,6 +602,13 @@ export function isSensitiveCredentialPath(file: string): boolean {
       segment === ".local" &&
       (segments[index + 1] === "share" || segments[index + 1] === "state") &&
       index + 1 === segments.length - 2
+    ) {
+      return true;
+    }
+    if (
+      segment === ".local" &&
+      segments[index + 1] === "share" &&
+      segments[index + 2] === "keyrings"
     ) {
       return true;
     }
