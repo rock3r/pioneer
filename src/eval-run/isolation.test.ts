@@ -11,6 +11,7 @@ import {
   findValidatedPiPackageRoot,
   isBroadExtensionParent,
   isPublicInternetAddress,
+  isSensitiveSystemExtensionParent,
   isTrustedPiInstallation,
   MAX_SHEBANG_RESOLUTION_DEPTH,
   resolveEvalExecutable,
@@ -432,6 +433,9 @@ describe("validateEvalRunSpec", () => {
       }
       expect(isBroadExtensionParent("/srv/my-extension")).toBe(false);
       expect(isBroadExtensionParent("/opt/homebrew")).toBe(false);
+      expect(isSensitiveSystemExtensionParent("/etc/ssh")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/etc/ssl/private")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/srv/my-extension")).toBe(false);
 
       for (const broadPath of ["/etc", "/run"]) {
         if (!(await import("node:fs")).existsSync(broadPath)) continue;

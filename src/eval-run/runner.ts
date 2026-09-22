@@ -56,6 +56,7 @@ import {
   evalIsolatedPiHomeWritablePaths,
   findValidatedPiPackageRoot,
   isBroadExtensionParent,
+  isSensitiveSystemExtensionParent,
   isTrustedPiInstallation,
   pathsOverlap,
   type ResolvedEvalExecutable,
@@ -614,7 +615,12 @@ async function stageExplicitExtensionFiles(
       (relativeToAgent !== ".." &&
         !relativeToAgent.startsWith(`..${path.sep}`) &&
         !path.isAbsolute(relativeToAgent));
-    if (blocked.has(parent) || isBroadExtensionParent(parent) || containsAgent) {
+    if (
+      blocked.has(parent) ||
+      isBroadExtensionParent(parent) ||
+      isSensitiveSystemExtensionParent(parent) ||
+      containsAgent
+    ) {
       throw new Error(
         "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or a directory that contains the Pi agent directory",
       );
@@ -789,14 +795,17 @@ async function stageEvalPiExtensions(
       const stagedEntry = extensions.paths[covered];
       const stagedSource = extensions.sourcePaths[covered];
       if (stagedEntry !== undefined && stagedSource !== undefined) {
-        alreadyStaged.set(
-          canonical,
-          path.join(
-            path.dirname(stagedEntry),
-            path.relative(path.dirname(stagedSource), canonical),
-          ),
+        const derived = path.join(
+          path.dirname(stagedEntry),
+          path.relative(path.dirname(stagedSource), canonical),
         );
-        continue;
+        try {
+          await lstat(derived);
+          alreadyStaged.set(canonical, derived);
+          continue;
+        } catch {
+          // The enabled snapshot skipped this file, so stage it on its own.
+        }
       }
     }
     pending.push(canonical);

@@ -550,6 +550,20 @@ export function isBroadRuntimePath(
   );
 }
 
+const SENSITIVE_SYSTEM_EXTENSION_ROOTS = ["/etc", "/private/etc", "/root"] as const;
+
+function pathIsWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+export function isSensitiveSystemExtensionParent(parent: string): boolean {
+  return SENSITIVE_SYSTEM_EXTENSION_ROOTS.some((root) => pathIsWithin(root, parent));
+}
+
 export function isBroadExtensionParent(
   candidate: string,
   platform: NodeJS.Platform = process.platform,
