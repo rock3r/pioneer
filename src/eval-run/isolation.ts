@@ -550,6 +550,14 @@ export function isBroadRuntimePath(
   );
 }
 
+export function isBroadExtensionParent(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (isBroadRuntimePath(candidate, platform)) return true;
+  return platform !== "win32" && BROAD_WRITABLE_POSIX_PATHS.has(candidate);
+}
+
 export function isBroadWritablePath(
   candidate: string,
   platform: NodeJS.Platform = process.platform,

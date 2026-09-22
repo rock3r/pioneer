@@ -9,6 +9,7 @@ import {
   buildEvalSandboxConfig,
   evalIsolatedPiHomeWritablePaths,
   findValidatedPiPackageRoot,
+  isBroadExtensionParent,
   isPublicInternetAddress,
   isTrustedPiInstallation,
   MAX_SHEBANG_RESOLUTION_DEPTH,
@@ -425,6 +426,12 @@ describe("validateEvalRunSpec", () => {
           runtimeReadPaths: ["/"],
         }),
       ).rejects.toThrow(/broad runtime read path/i);
+
+      for (const root of ["/opt", "/srv", "/mnt", "/media", "/usr", "/etc"]) {
+        expect(isBroadExtensionParent(root)).toBe(true);
+      }
+      expect(isBroadExtensionParent("/srv/my-extension")).toBe(false);
+      expect(isBroadExtensionParent("/opt/homebrew")).toBe(false);
 
       for (const broadPath of ["/etc", "/run"]) {
         if (!(await import("node:fs")).existsSync(broadPath)) continue;

@@ -54,7 +54,7 @@ import {
   type EvalRunSpec,
   evalIsolatedPiHomeWritablePaths,
   findValidatedPiPackageRoot,
-  isBroadRuntimePath,
+  isBroadExtensionParent,
   isTrustedPiInstallation,
   pathsOverlap,
   type ResolvedEvalExecutable,
@@ -591,7 +591,7 @@ async function stageExplicitExtensionFiles(
     const parent = path.dirname(canonical);
     if (
       blocked.has(parent) ||
-      isBroadRuntimePath(parent) ||
+      isBroadExtensionParent(parent) ||
       parent === (await realpath(sourceAgentDir))
     ) {
       throw new Error(
