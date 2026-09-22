@@ -97,7 +97,7 @@ export async function prepareReviewRuntime(
             path.join(home.agentDir, "settings.json"),
             extensionsEnabled,
           )
-        : { command, paths: [], sourcePaths: [], digest: "0".repeat(64) };
+        : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
     const runtime = { scratch, extensionRoot, home, extensions, network, capabilityExtensions };
     const authBroker = await prepareAuthBroker(runtime);
     return authBroker === undefined

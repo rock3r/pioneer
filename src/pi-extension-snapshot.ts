@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, copyFile, lstat, mkdir, readdir, realpath, symlink } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  readdir,
+  readlink,
+  realpath,
+  symlink,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
@@ -19,6 +28,8 @@ export interface ExtensionSnapshot {
   readonly paths: readonly string[];
   readonly sourcePaths: readonly string[];
   readonly digest: string;
+  readonly entries: number;
+  readonly bytes: number;
 }
 
 /** Capability paths have already been canonicalized and validated by their profile. */
@@ -95,6 +106,7 @@ export async function snapshotExtensionResources(
   destination: string,
   signal?: AbortSignal,
   storage?: PiRuntimeStorage,
+  budget?: { readonly entries: number; readonly bytes: number },
 ): Promise<ExtensionSnapshot> {
   const agentDir = storage === undefined ? undefined : await canonicalOrResolved(storage.agentDir);
   const privateDirectories =
@@ -158,8 +170,8 @@ export async function snapshotExtensionResources(
     .sort()
     .filter((root) => ![...roots].some((other) => other !== root && within(other, root)));
   await mkdir(destination, { recursive: true, mode: 0o700 });
-  let entries = 0;
-  let bytes = 0;
+  let entries = budget?.entries ?? 0;
+  let bytes = budget?.bytes ?? 0;
   const digest = createHash("sha256");
   const mapped = new Map<string, string>();
   const stagedPath = (source: string): string => mirroredExtensionStagePath(destination, source);
@@ -191,15 +203,16 @@ export async function snapshotExtensionResources(
       try {
         await symlink(relative, target);
       } catch (error) {
-        if (
-          !(
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            (error as { code?: string }).code === "EEXIST"
-          )
-        ) {
-          throw error;
+        const exists =
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          (error as { code?: string }).code === "EEXIST";
+        if (!exists) throw error;
+        if ((await readlink(target)) !== relative) {
+          throw new Error(
+            "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
+          );
         }
       }
       return;
@@ -273,5 +286,5 @@ export async function snapshotExtensionResources(
     }
   }
   digest.update(JSON.stringify(paths.map((entry) => path.relative(destination, entry))));
-  return { paths, sourcePaths, digest: digest.digest("hex") };
+  return { paths, sourcePaths, digest: digest.digest("hex"), entries, bytes };
 }

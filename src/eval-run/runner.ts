@@ -626,6 +626,7 @@ async function stageExplicitExtensionFiles(
   destinationDir: string,
   sourceAgentDir: string,
   signal: AbortSignal | undefined,
+  budget?: { readonly entries: number; readonly bytes: number },
 ): Promise<string[]> {
   if (sources.length === 0) return [];
   const blocked = await protectedExtensionRoots();
@@ -658,6 +659,7 @@ async function stageExplicitExtensionFiles(
         path.join(sourceAgentDir, "settings.json"),
         process.env,
       ),
+      budget,
     );
   } catch (error) {
     throw extensionStageError(error);
@@ -848,6 +850,7 @@ async function stageEvalPiExtensions(
     path.join(extensionRoot, "extensions"),
     sourceAgentDir,
     signal,
+    { entries: extensions.entries, bytes: extensions.bytes },
   );
   pending.forEach((source, index) => {
     const staged = copied[index];
