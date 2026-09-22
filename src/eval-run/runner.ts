@@ -589,6 +589,11 @@ async function stageExplicitExtensionFiles(
     if (!(await lstat(canonical)).isFile()) {
       throw new Error("Explicit Pi extension must be a regular file");
     }
+    if (isSensitiveCredentialPath(canonical)) {
+      throw new Error(
+        "Explicit Pi extension must not be staged from a credential directory such as .ssh or .aws",
+      );
+    }
     const parent = path.dirname(canonical);
     const agentRoot = await realpath(sourceAgentDir);
     const relativeToAgent = path.relative(parent, agentRoot);
@@ -626,6 +631,31 @@ async function stageExplicitExtensionFiles(
     if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
     return staged;
   });
+}
+
+const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
+  ".aws",
+  ".azure",
+  ".docker",
+  ".gnupg",
+  ".kube",
+  ".ssh",
+]);
+
+function isSensitiveCredentialPath(file: string): boolean {
+  const segments = file.split(path.sep);
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (segment !== undefined && SENSITIVE_CREDENTIAL_SEGMENTS.has(segment)) return true;
+    if (
+      segment === ".config" &&
+      (segments[index + 1] === "gcloud" || segments[index + 1] === "gh")
+    ) {
+      return true;
+    }
+    if (segment === "Library" && segments[index + 1] === "Keychains") return true;
+  }
+  return false;
 }
 
 function explicitExtensionKey(value: string, runDir: string): string {
