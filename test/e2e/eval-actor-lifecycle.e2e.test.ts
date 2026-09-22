@@ -177,6 +177,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["rejects an extension directly in the Pi agent directory", "cli.js", "agent-root"],
     ["rejects an extension above the Pi agent directory", "cli.js", "agent-ancestor"],
     ["rejects an extension inside a credential directory", "cli.js", "credential-dir"],
+    ["leaves an extension path after -- as a positional argument", "cli.js", "positional"],
     ["reuses an enabled extension named again on the command", "cli.js", "overlap"],
     ["reuses a sibling of an enabled extension", "cli.js", "sibling"],
   ] as const)(
@@ -312,7 +313,7 @@ process.stdout.write("READY\\n");
       if (mode === "directory") {
         await mkdir(path.join(created.piPackageRoot, "explicit-extension-dir"));
       }
-      if (mode === "relative" || mode === "duplicate") {
+      if (mode === "relative" || mode === "duplicate" || mode === "positional") {
         await writeFile(path.join(runDir, "provider.mjs"), "explicit-extension-marker\n");
         await writeFile(path.join(runDir, "helper.mjs"), "helper-marker\n");
       }
@@ -366,7 +367,9 @@ process.stdout.write("READY\\n");
                               ? ["--extension", extensionSource]
                               : mode === "sibling"
                                 ? ["--extension", path.join(extensionDirectory, "helper.ts")]
-                                : [];
+                                : mode === "positional"
+                                  ? ["--", "--extension", "./provider.mjs"]
+                                  : [];
       if (mode === "oauth") {
         await writeFile(
           path.join(created.piHome, "auth.json"),
@@ -493,7 +496,11 @@ export class FileAuthStorageBackend {
         brokerConfigured?: boolean;
         toolCount?: number | null;
       };
-      if (mode === "relative") {
+      if (mode === "positional") {
+        const flagIndex = invocation.argv.indexOf("--extension");
+        expect(invocation.argv[flagIndex - 1]).toBe("--");
+        expect(invocation.argv[flagIndex + 1]).toBe("./provider.mjs");
+      } else if (mode === "relative") {
         const flagIndex = invocation.argv.indexOf("-e");
         const extensionPath = invocation.argv[flagIndex + 1] ?? "";
         expect(extensionPath).not.toBe("./provider.mjs");

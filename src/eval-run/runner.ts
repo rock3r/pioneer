@@ -529,12 +529,19 @@ async function listenForLanProbe(): Promise<{ port: number; close(): Promise<voi
   };
 }
 
+function optionArguments(command: readonly string[]): readonly string[] {
+  const delimiter = command.indexOf("--");
+  return delimiter < 0 ? command : command.slice(0, delimiter);
+}
+
 function commandDisablesExtensions(command: readonly string[]): boolean {
-  return command.some((argument) => argument === "--no-extensions" || argument === "-ne");
+  return optionArguments(command).some(
+    (argument) => argument === "--no-extensions" || argument === "-ne",
+  );
 }
 
 function commandRequestsExplicitExtension(command: readonly string[]): boolean {
-  return command.some(
+  return optionArguments(command).some(
     (argument) =>
       argument === "--extension" || argument.startsWith("--extension=") || argument === "-e",
   );
@@ -542,12 +549,13 @@ function commandRequestsExplicitExtension(command: readonly string[]): boolean {
 
 function explicitExtensionPaths(command: readonly string[], runDir: string): string[] {
   const paths: string[] = [];
-  for (let index = 0; index < command.length; index += 1) {
-    const argument = command[index];
+  const options = optionArguments(command);
+  for (let index = 0; index < options.length; index += 1) {
+    const argument = options[index];
     if (argument === undefined) continue;
     let value: string | undefined;
     if (argument === "--extension" || argument === "-e") {
-      const next = command[index + 1];
+      const next = options[index + 1];
       if (next !== undefined && !next.startsWith("-")) value = next;
     } else if (argument.startsWith("--extension=")) {
       value = argument.slice("--extension=".length);
@@ -676,8 +684,13 @@ function replaceExplicitExtensionPaths(
   runDir: string,
 ): [string, ...string[]] {
   const next: string[] = [];
+  const optionCount = optionArguments(command).length;
   for (let index = 0; index < command.length; index += 1) {
     const argument = command[index] ?? "";
+    if (index >= optionCount) {
+      next.push(...command.slice(index));
+      break;
+    }
     if ((argument === "--extension" || argument === "-e") && index + 1 < command.length) {
       const value = command[index + 1] ?? "";
       next.push(argument, replacements.get(explicitExtensionKey(value, runDir)) ?? value);
