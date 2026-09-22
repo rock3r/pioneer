@@ -589,6 +589,30 @@ function extensionStageError(error: unknown): Error {
   return new Error("Explicit Pi extension could not be staged");
 }
 
+async function reuseStagedExtensionFile(
+  canonical: string,
+  stagedPath: string,
+  sourceAgentDir: string,
+): Promise<boolean> {
+  let staged: Awaited<ReturnType<typeof lstat>>;
+  try {
+    staged = await lstat(stagedPath);
+  } catch {
+    return false;
+  }
+  if (!staged.isFile()) return false;
+  try {
+    await assertExplicitExtensionAllowed(
+      canonical,
+      sourceAgentDir,
+      await protectedExtensionRoots(),
+    );
+  } catch (error) {
+    throw extensionStageError(error);
+  }
+  return true;
+}
+
 async function assertExplicitExtensionAllowed(
   canonical: string,
   sourceAgentDir: string,
@@ -764,12 +788,9 @@ async function stageEvalPiExtensions(
     resolvedSources.push(canonical);
     if (alreadyStaged.has(canonical)) continue;
     const mirrored = mirroredExtensionStagePath(path.join(extensionRoot, "extensions"), canonical);
-    try {
-      await lstat(mirrored);
+    if (await reuseStagedExtensionFile(canonical, mirrored, sourceAgentDir)) {
       alreadyStaged.set(canonical, mirrored);
       continue;
-    } catch {
-      // The enabled snapshot did not already place this file.
     }
     const covered = extensions.sourcePaths.findIndex((stagedSource) => {
       const root = path.dirname(stagedSource);
@@ -787,12 +808,9 @@ async function stageEvalPiExtensions(
           path.dirname(stagedEntry),
           path.relative(path.dirname(stagedSource), canonical),
         );
-        try {
-          await lstat(derived);
+        if (await reuseStagedExtensionFile(canonical, derived, sourceAgentDir)) {
           alreadyStaged.set(canonical, derived);
           continue;
-        } catch {
-          // The enabled snapshot skipped this file, so stage it on its own.
         }
       }
     }
