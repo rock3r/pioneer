@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Certify Pi `0.87.0` as the newest tested compatibility endpoint after reviewing the [0.87.0](https://github.com/earendil-works/pi/releases/tag/v0.87.0) release (canonical session context, extension boundaries, and per-model image limits). Required CLI options and thinking levels are unchanged; the minimum stays `0.80.6`.
+
 ## 0.3.5 - 2026-09-20
 
 - Fail closed when `eval prepare` would stage a fixture whose path or contents leak the expected finding (`[EVAL_FIXTURE_LEAK]`). Path matching uses camelCase / kebab / snake / dot word boundaries, so names such as `MOTION-stale.md` reject while `BadgeCase.kt` is allowed. Staged `BUG:` / `FIXME` / `XXX` / `TODO` markers are rejected; content markers are token-aware so `DEBUG:` does not trip `BUG:`. Repeatable `--allow-fixture-name <glob>` waives a genuine filename collision only.
