@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -568,10 +568,15 @@ function combineWarnings(...warnings: readonly (string | undefined)[]): string |
 }
 
 function executableOnPath(name: string): string {
-  if (name.includes(path.sep)) return path.resolve(name);
-  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
-    const candidate = path.join(directory, name);
-    if (existsSync(candidate)) return candidate;
+  if (name.includes(path.sep) || name.includes("/")) return path.resolve(name);
+  const pathValue = process.env.PATH;
+  if (pathValue === undefined) return name;
+  for (const entry of pathValue.split(path.delimiter)) {
+    const candidate = path.join(entry.length === 0 ? process.cwd() : entry, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {}
   }
   return name;
 }

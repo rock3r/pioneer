@@ -683,18 +683,46 @@ async function stageEvalPiExtensions(
     extensionsEnabled,
   );
   checkAborted();
-  const explicitCopies = await stageExplicitExtensionFiles(
-    explicitExtensionSources,
+  const alreadyStaged = new Map<string, string>();
+  extensions.sourcePaths.forEach((source, index) => {
+    const staged = extensions.paths[index];
+    if (staged !== undefined) alreadyStaged.set(source, staged);
+  });
+  const pending: string[] = [];
+  const resolvedSources: string[] = [];
+  for (const source of explicitExtensionSources) {
+    let canonical = source;
+    try {
+      canonical = await realpath(source);
+    } catch {
+      canonical = source;
+    }
+    resolvedSources.push(canonical);
+    if (!alreadyStaged.has(canonical)) pending.push(canonical);
+  }
+  const copied = await stageExplicitExtensionFiles(
+    pending,
     path.join(extensionRoot, "extensions"),
     sourceAgentDir,
     signal,
   );
+  pending.forEach((source, index) => {
+    const staged = copied[index];
+    if (staged !== undefined) alreadyStaged.set(source, staged);
+  });
+  const explicitCopies = resolvedSources.map((source) => {
+    const staged = alreadyStaged.get(source);
+    if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
+    return staged;
+  });
   const replacements = new Map<string, string>();
-  for (const [index, source] of explicitExtensionSources.entries()) {
+  explicitExtensionSources.forEach((source, index) => {
     const staged = explicitCopies[index];
     if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
     replacements.set(source, staged);
-  }
+    const resolved = resolvedSources[index];
+    if (resolved !== undefined) replacements.set(resolved, staged);
+  });
   const runtime: PreparedReviewRuntime = {
     // Writable scratch must not contain the read-only extension tree. Bubblewrap
     // rejects, or hides, a read-only mount nested inside a later writable parent.

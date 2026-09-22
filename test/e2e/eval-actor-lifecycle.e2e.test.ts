@@ -175,6 +175,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["rejects an extension directly in a shared temp directory", "cli.js", "shared-temp"],
     ["rejects an extension inside private Pi session storage", "cli.js", "private-session"],
     ["rejects an extension directly in the Pi agent directory", "cli.js", "agent-root"],
+    ["reuses an enabled extension named again on the command", "cli.js", "overlap"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -187,6 +188,9 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
       const cliPath = path.join(created.piPackageRoot, "dist", "cli.js");
       await mkdir(extensionDirectory);
       await writeFile(extensionSource, extensionMarker);
+      if (mode === "overlap") {
+        await symlink(extensionSource, path.join(extensionDirectory, "provider-link.ts"));
+      }
       await mkdir(path.join(created.piPackageRoot, "dist", "core"), { recursive: true });
       await writeFile(
         path.join(created.piPackageRoot, "package.json"),
@@ -339,7 +343,9 @@ process.stdout.write("READY\\n");
                       ? ["--extension", privateSessionExtension]
                       : mode === "agent-root"
                         ? ["--extension", agentRootExtension]
-                        : [];
+                        : mode === "overlap"
+                          ? ["--extension", extensionSource]
+                          : [];
       if (mode === "oauth") {
         await writeFile(
           path.join(created.piHome, "auth.json"),
@@ -386,7 +392,7 @@ export class FileAuthStorageBackend {
         "60000",
         "--",
         entry === "cli.js" ? cliPath : "pi",
-        ...(mode === "load" ? [] : (["--no-extensions"] as const)),
+        ...(mode === "load" || mode === "overlap" ? [] : (["--no-extensions"] as const)),
         ...extensionArgs,
         "--model",
         mode === "reject"
@@ -395,7 +401,8 @@ export class FileAuthStorageBackend {
               mode === "explicit" ||
               mode === "explicit-short" ||
               mode === "relative" ||
-              mode === "duplicate"
+              mode === "duplicate" ||
+              mode === "overlap"
             ? "extension-provider/demo"
             : "builtin/demo",
         "--print",
