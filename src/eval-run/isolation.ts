@@ -551,6 +551,7 @@ export function isBroadRuntimePath(
 }
 
 const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
+  "/dev/shm",
   "/etc",
   "/private/etc",
   "/private/var/backups",

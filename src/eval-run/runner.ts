@@ -640,7 +640,11 @@ async function stageExplicitExtensionFiles(
     } catch {
       throw new Error("Explicit Pi extension was not found");
     }
-    await assertExplicitExtensionAllowed(canonical, sourceAgentDir, blocked);
+    try {
+      await assertExplicitExtensionAllowed(canonical, sourceAgentDir, blocked);
+    } catch (error) {
+      throw extensionStageError(error);
+    }
     canonicals.push(canonical);
     resources.push({
       path: canonical,

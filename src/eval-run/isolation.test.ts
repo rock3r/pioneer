@@ -434,6 +434,7 @@ describe("validateEvalRunSpec", () => {
       expect(isBroadExtensionParent("/srv/my-extension")).toBe(false);
       expect(isBroadExtensionParent("/opt/homebrew")).toBe(false);
       expect(isSensitiveSystemExtensionParent("/etc/ssh")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/dev/shm")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/etc/ssl/private")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/run/secrets")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/var/lib")).toBe(true);
