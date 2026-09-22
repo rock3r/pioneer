@@ -48,5 +48,13 @@ describe("Pi package runtime hosting", () => {
         `${home}${path.sep}.config${path.sep}my-extension${path.sep}provider.mjs`,
       ),
     ).toBe(false);
+    expect(isSensitiveCredentialPath(`${home}${path.sep}Library${path.sep}provider.mjs`)).toBe(
+      process.platform !== "linux",
+    );
+    expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}Library${path.sep}my-extension${path.sep}provider.mjs`,
+      ),
+    ).toBe(false);
   });
 });

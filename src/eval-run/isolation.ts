@@ -550,7 +550,16 @@ export function isBroadRuntimePath(
   );
 }
 
-const SENSITIVE_SYSTEM_EXTENSION_ROOTS = ["/etc", "/private/etc", "/root"] as const;
+const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
+  "/etc",
+  "/private/etc",
+  "/private/var/lib",
+  "/private/var/run",
+  "/root",
+  "/run",
+  "/var/lib",
+  "/var/run",
+] as const;
 
 function pathIsWithin(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
