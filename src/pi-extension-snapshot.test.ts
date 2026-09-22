@@ -13,6 +13,23 @@ import {
 const { createTempDir } = registerManagedTempPaths();
 
 describe("extension snapshots", () => {
+  it("stops when the abort signal is already aborted", async () => {
+    const root = await createTempDir("extension-abort-");
+    const pkg = path.join(root, "package");
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    await writeFile(entry, "extension");
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      snapshotExtensionResources(
+        [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+        path.join(root, "snapshot"),
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("loads capability extensions already present in a snapshot only once", async () => {
     const root = await createTempDir("extension-capability-duplicate-");
     const pkg = path.join(root, "package");

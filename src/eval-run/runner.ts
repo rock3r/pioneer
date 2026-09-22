@@ -572,6 +572,7 @@ async function stageExplicitExtensionFiles(
   sources: readonly string[],
   destinationDir: string,
   sourceAgentDir: string,
+  signal: AbortSignal | undefined,
 ): Promise<string[]> {
   if (sources.length === 0) return [];
   const blocked = await protectedExtensionRoots();
@@ -608,7 +609,7 @@ async function stageExplicitExtensionFiles(
   const snapshot = await snapshotExtensionResources(
     resources,
     destinationDir,
-    undefined,
+    signal,
     await piRuntimeStorage(sourceAgentDir, path.join(sourceAgentDir, "settings.json"), process.env),
   );
   const stagedBySource = new Map<string, string>();
@@ -686,6 +687,7 @@ async function stageEvalPiExtensions(
     explicitExtensionSources,
     path.join(extensionRoot, "extensions"),
     sourceAgentDir,
+    signal,
   );
   const replacements = new Map<string, string>();
   for (const [index, source] of explicitExtensionSources.entries()) {
