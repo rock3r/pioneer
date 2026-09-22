@@ -22,16 +22,16 @@ describe("Pi version policy", () => {
   });
 
   it("accepts the newly certified tested maximum without a warning", () => {
-    expect(validatePiVersion("0.86.0")).toEqual({
-      version: "0.86.0",
+    expect(validatePiVersion("0.87.0")).toEqual({
+      version: "0.87.0",
     });
   });
 
   it("warns without failing for versions newer than the tested maximum", () => {
-    expect(validatePiVersion("0.86.1")).toEqual({
-      version: "0.86.1",
+    expect(validatePiVersion("0.87.1")).toEqual({
+      version: "0.87.1",
       warning:
-        "[PI_VERSION_UNTESTED] Pi 0.86.1 is newer than the newest version tested with this Pioneer release (0.86.0). Continuing because the CLI contract may still be compatible.",
+        "[PI_VERSION_UNTESTED] Pi 0.87.1 is newer than the newest version tested with this Pioneer release (0.87.0). Continuing because the CLI contract may still be compatible.",
     });
   });
 
@@ -39,7 +39,7 @@ describe("Pi version policy", () => {
     expect(validatePiVersion("development")).toEqual({
       version: "development",
       error:
-        "[PI_VERSION_UNRECOGNIZED] Pi returned an unrecognized version: development. Install a released Pi version between 0.80.6 and 0.86.0, or newer with a compatibility warning.",
+        "[PI_VERSION_UNRECOGNIZED] Pi returned an unrecognized version: development. Install a released Pi version between 0.80.6 and 0.87.0, or newer with a compatibility warning.",
     });
   });
 });

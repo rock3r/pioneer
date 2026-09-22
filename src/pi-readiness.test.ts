@@ -203,7 +203,7 @@ else process.exitCode = 2;
 
   it("warns but remains ready for a newer untested Pi", async () => {
     const runner = runnerWith([
-      { exitCode: 0, stdout: "0.86.1\n", stderr: "" },
+      { exitCode: 0, stdout: "0.87.1\n", stderr: "" },
       {
         exitCode: 0,
         stdout:
@@ -221,7 +221,7 @@ else process.exitCode = 2;
 
   it("remains ready for the tested maximum without a warning", async () => {
     const runner = runnerWith([
-      { exitCode: 0, stdout: "0.86.0\n", stderr: "" },
+      { exitCode: 0, stdout: "0.87.0\n", stderr: "" },
       {
         exitCode: 0,
         stdout:
@@ -233,7 +233,7 @@ else process.exitCode = 2;
     const result = await checkPiReadiness({ runner });
 
     expect(result.ready).toBe(true);
-    expect(result.version).toBe("0.86.0");
+    expect(result.version).toBe("0.87.0");
     expect(result.warning).toBeUndefined();
     expect(result.errors).toEqual([]);
   });
