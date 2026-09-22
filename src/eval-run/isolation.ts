@@ -620,6 +620,14 @@ export function isSensitiveCredentialPath(file: string): boolean {
     ) {
       return true;
     }
+    if (segment === ".mozilla" && segments[index + 1] === "firefox") return true;
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      segments[index + 2] === "firefox"
+    ) {
+      return true;
+    }
     if (
       segment === ".config" &&
       (segments[index + 1] === "gcloud" ||
