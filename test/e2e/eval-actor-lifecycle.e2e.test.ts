@@ -176,6 +176,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["rejects an extension inside private Pi session storage", "cli.js", "private-session"],
     ["rejects an extension directly in the Pi agent directory", "cli.js", "agent-root"],
     ["reuses an enabled extension named again on the command", "cli.js", "overlap"],
+    ["reuses a sibling of an enabled extension", "cli.js", "sibling"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -188,8 +189,11 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
       const cliPath = path.join(created.piPackageRoot, "dist", "cli.js");
       await mkdir(extensionDirectory);
       await writeFile(extensionSource, extensionMarker);
-      if (mode === "overlap") {
+      if (mode === "overlap" || mode === "sibling") {
         await symlink(extensionSource, path.join(extensionDirectory, "provider-link.ts"));
+      }
+      if (mode === "sibling") {
+        await writeFile(path.join(extensionDirectory, "helper.ts"), "helper\n");
       }
       await mkdir(path.join(created.piPackageRoot, "dist", "core"), { recursive: true });
       await writeFile(
@@ -345,7 +349,9 @@ process.stdout.write("READY\\n");
                         ? ["--extension", agentRootExtension]
                         : mode === "overlap"
                           ? ["--extension", extensionSource]
-                          : [];
+                          : mode === "sibling"
+                            ? ["--extension", path.join(extensionDirectory, "helper.ts")]
+                            : [];
       if (mode === "oauth") {
         await writeFile(
           path.join(created.piHome, "auth.json"),
@@ -392,7 +398,9 @@ export class FileAuthStorageBackend {
         "60000",
         "--",
         entry === "cli.js" ? cliPath : "pi",
-        ...(mode === "load" || mode === "overlap" ? [] : (["--no-extensions"] as const)),
+        ...(mode === "load" || mode === "overlap" || mode === "sibling"
+          ? []
+          : (["--no-extensions"] as const)),
         ...extensionArgs,
         "--model",
         mode === "reject"
@@ -402,7 +410,8 @@ export class FileAuthStorageBackend {
               mode === "explicit-short" ||
               mode === "relative" ||
               mode === "duplicate" ||
-              mode === "overlap"
+              mode === "overlap" ||
+              mode === "sibling"
             ? "extension-provider/demo"
             : "builtin/demo",
         "--print",

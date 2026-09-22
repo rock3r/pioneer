@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -574,6 +574,7 @@ function executableOnPath(name: string): string {
   for (const entry of pathValue.split(path.delimiter)) {
     const candidate = path.join(entry.length === 0 ? process.cwd() : entry, name);
     try {
+      if (!statSync(candidate).isFile()) continue;
       accessSync(candidate, constants.X_OK);
       return candidate;
     } catch {}

@@ -1,4 +1,4 @@
-import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -35,18 +35,16 @@ describe("review actor environment", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "grants the executable Pi package instead of an earlier non-executable PATH entry",
+    "grants the executable Pi package instead of an earlier PATH directory named pi",
     async () => {
       const root = await createTempDir("pioneer-pi-runtime-grant-");
       const earlier = path.join(root, "earlier");
       const bin = path.join(root, "bin");
       const packageRoot = path.join(root, "pkg");
       const target = path.join(packageRoot, "dist", "cli.js");
-      await mkdir(earlier);
+      await mkdir(path.join(earlier, "pi"), { recursive: true });
       await mkdir(bin);
       await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(path.join(earlier, "pi"), "not executable\n");
-      await chmod(path.join(earlier, "pi"), 0o644);
       await writeFile(target, "#!/usr/bin/env node\n", { mode: 0o755 });
       await writeFile(path.join(packageRoot, "package.json"), "{}\n");
       await symlink(target, path.join(bin, "pi"));

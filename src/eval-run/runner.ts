@@ -698,7 +698,30 @@ async function stageEvalPiExtensions(
       canonical = source;
     }
     resolvedSources.push(canonical);
-    if (!alreadyStaged.has(canonical)) pending.push(canonical);
+    if (alreadyStaged.has(canonical)) continue;
+    const covered = extensions.sourcePaths.findIndex((stagedSource) => {
+      const root = path.dirname(stagedSource);
+      const relative = path.relative(root, canonical);
+      return (
+        relative === "" ||
+        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+      );
+    });
+    if (covered >= 0) {
+      const stagedEntry = extensions.paths[covered];
+      const stagedSource = extensions.sourcePaths[covered];
+      if (stagedEntry !== undefined && stagedSource !== undefined) {
+        alreadyStaged.set(
+          canonical,
+          path.join(
+            path.dirname(stagedEntry),
+            path.relative(path.dirname(stagedSource), canonical),
+          ),
+        );
+        continue;
+      }
+    }
+    pending.push(canonical);
   }
   const copied = await stageExplicitExtensionFiles(
     pending,
