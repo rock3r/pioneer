@@ -535,7 +535,7 @@ async function assertNoSymlinks(root: string): Promise<void> {
   }
 }
 
-function isBroadRuntimePath(
+export function isBroadRuntimePath(
   candidate: string,
   platform: NodeJS.Platform = process.platform,
 ): boolean {

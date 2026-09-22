@@ -54,6 +54,7 @@ import {
   type EvalRunSpec,
   evalIsolatedPiHomeWritablePaths,
   findValidatedPiPackageRoot,
+  isBroadRuntimePath,
   isTrustedPiInstallation,
   pathsOverlap,
   type ResolvedEvalExecutable,
@@ -586,9 +587,14 @@ async function stageExplicitExtensionFiles(
     if (!(await lstat(canonical)).isFile()) {
       throw new Error("Explicit Pi extension must be a regular file");
     }
-    if (blocked.has(path.dirname(canonical))) {
+    const parent = path.dirname(canonical);
+    if (
+      blocked.has(parent) ||
+      isBroadRuntimePath(parent) ||
+      parent === (await realpath(sourceAgentDir))
+    ) {
       throw new Error(
-        "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, or filesystem root",
+        "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or the Pi agent directory",
       );
     }
     canonicals.push(canonical);

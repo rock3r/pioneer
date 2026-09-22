@@ -174,6 +174,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["stages a repeated explicit extension once", "cli.js", "duplicate"],
     ["rejects an extension directly in a shared temp directory", "cli.js", "shared-temp"],
     ["rejects an extension inside private Pi session storage", "cli.js", "private-session"],
+    ["rejects an extension directly in the Pi agent directory", "cli.js", "agent-root"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -317,6 +318,10 @@ process.stdout.write("READY\\n");
         await mkdir(path.dirname(privateSessionExtension), { recursive: true });
         await writeFile(privateSessionExtension, "explicit-extension-marker\n");
       }
+      const agentRootExtension = path.join(created.piHome, "provider.mjs");
+      if (mode === "agent-root") {
+        await writeFile(agentRootExtension, "explicit-extension-marker\n");
+      }
       const extensionArgs =
         mode === "explicit"
           ? ["--extension", path.join(created.piPackageRoot, "explicit-extension.mjs")]
@@ -332,7 +337,9 @@ process.stdout.write("READY\\n");
                     ? ["--extension", sharedTempExtension]
                     : mode === "private-session"
                       ? ["--extension", privateSessionExtension]
-                      : [];
+                      : mode === "agent-root"
+                        ? ["--extension", agentRootExtension]
+                        : [];
       if (mode === "oauth") {
         await writeFile(
           path.join(created.piHome, "auth.json"),
@@ -395,10 +402,20 @@ export class FileAuthStorageBackend {
         "Say READY",
       ]);
 
-      if (mode !== "directory" && mode !== "shared-temp" && mode !== "private-session") {
+      if (
+        mode !== "directory" &&
+        mode !== "shared-temp" &&
+        mode !== "private-session" &&
+        mode !== "agent-root"
+      ) {
         expect(run.stderr).not.toMatch(/PI_EXTENSION_|PI_OAUTH_/);
       }
-      if (mode === "directory" || mode === "shared-temp" || mode === "private-session") {
+      if (
+        mode === "directory" ||
+        mode === "shared-temp" ||
+        mode === "private-session" ||
+        mode === "agent-root"
+      ) {
         try {
           expect(run.exitCode, run.stderr).not.toBe(0);
           expect(run.stderr).toContain(
@@ -406,7 +423,9 @@ export class FileAuthStorageBackend {
               ? "regular file"
               : mode === "shared-temp"
                 ? "dedicated directory"
-                : "private Pi session or log storage",
+                : mode === "private-session"
+                  ? "private Pi session or log storage"
+                  : "Pi agent directory",
           );
         } finally {
           if (mode === "shared-temp") await unlink(sharedTempExtension).catch(() => undefined);

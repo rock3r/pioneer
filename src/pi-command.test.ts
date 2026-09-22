@@ -91,6 +91,24 @@ describe("POSIX Pi command resolution", () => {
     },
   );
 
+  it("launches a shebang Pi through the absolute node on PATH", async () => {
+    const root = await createTempDir("pioneer-pi-node-launch-");
+    const packageRoot = path.join(root, "lib", "pi-coding-agent");
+    const target = path.join(packageRoot, "dist", "cli.js");
+    const bin = path.join(root, "bin");
+    const node = path.join(bin, "node");
+    await mkdir(path.dirname(target), { recursive: true });
+    await mkdir(bin);
+    await writeFile(target, "#!/usr/bin/env node\n", { mode: 0o755 });
+    await writeFile(node, "", { mode: 0o755 });
+    await symlink(target, path.join(bin, "pi"));
+
+    await expect(resolvePiCommand("pi", { PATH: bin }, "linux")).resolves.toEqual([
+      await realpath(node),
+      await realpath(target),
+    ]);
+  });
+
   it("treats an empty PATH entry as the current directory", async () => {
     const root = await createTempDir("pioneer-pi-path-cwd-");
     const target = path.join(root, "pi");
