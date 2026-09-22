@@ -46,7 +46,10 @@ describe("review actor environment", () => {
       await mkdir(bin);
       await mkdir(path.dirname(target), { recursive: true });
       await writeFile(target, "#!/usr/bin/env node\n", { mode: 0o755 });
-      await writeFile(path.join(packageRoot, "package.json"), "{}\n");
+      await writeFile(
+        path.join(packageRoot, "package.json"),
+        `${JSON.stringify({ name: "@earendil-works/pi-coding-agent" })}\n`,
+      );
       await symlink(target, path.join(bin, "pi"));
       const previous = process.env.PATH;
       process.env.PATH = `${earlier}${path.delimiter}${bin}`;
@@ -54,6 +57,31 @@ describe("review actor environment", () => {
         const grants = await piRuntimePaths("pi");
         expect(grants).toContain(await realpath(packageRoot));
         expect(grants).not.toContain(path.join(earlier, "pi"));
+      } finally {
+        if (previous === undefined) delete process.env.PATH;
+        else process.env.PATH = previous;
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "grants the node binary directory instead of an unrelated ancestor package",
+    async () => {
+      const root = await createTempDir("pioneer-node-runtime-grant-");
+      const bin = path.join(root, "bin");
+      const node = path.join(bin, "node");
+      await mkdir(bin);
+      await writeFile(
+        path.join(root, "package.json"),
+        `${JSON.stringify({ name: "unrelated" })}\n`,
+      );
+      await writeFile(node, "", { mode: 0o755 });
+      const previous = process.env.PATH;
+      process.env.PATH = bin;
+      try {
+        const grants = await piRuntimePaths("node");
+        expect(grants).toContain(await realpath(bin));
+        expect(grants).not.toContain(await realpath(root));
       } finally {
         if (previous === undefined) delete process.env.PATH;
         else process.env.PATH = previous;

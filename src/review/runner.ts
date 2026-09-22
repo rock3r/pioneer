@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { accessSync, constants, existsSync, statSync } from "node:fs";
-import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -567,6 +567,22 @@ function combineWarnings(...warnings: readonly (string | undefined)[]): string |
   return present.length === 0 ? undefined : present.join("\n");
 }
 
+async function officialPiPackage(directory: string): Promise<boolean> {
+  try {
+    const raw = await readFile(path.join(directory, "package.json"), "utf8");
+    if (Buffer.byteLength(raw) > 1_000_000) return false;
+    const parsed: unknown = JSON.parse(raw);
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "name" in parsed &&
+      (parsed as { name?: unknown }).name === "@earendil-works/pi-coding-agent"
+    );
+  } catch {
+    return false;
+  }
+}
+
 function executableOnPath(name: string): string {
   if (name.includes(path.sep) || name.includes("/")) return path.resolve(name);
   const pathValue = process.env.PATH;
@@ -602,8 +618,8 @@ export async function piRuntimePaths(executable: string): Promise<string[]> {
     // Bind the package directory, not a symlink or a file inside it. Bubblewrap
     // cannot create a file mount for bin/pi when that symlink's parent is not
     // already in the new root.
-    if (packageDir !== undefined) paths.push(packageDir);
-    else paths.push(target);
+    if (packageDir !== undefined && (await officialPiPackage(packageDir))) paths.push(packageDir);
+    else paths.push(path.dirname(target));
     if (existsSync(link) && !(await lstat(link)).isSymbolicLink() && link !== target) {
       const relative = packageDir === undefined ? "" : path.relative(packageDir, link);
       const insidePackage =

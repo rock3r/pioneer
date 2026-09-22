@@ -560,6 +560,7 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/private/var/lib",
   "/private/var/log",
   "/private/var/run",
+  "/private/var/opt",
   "/private/var/spool",
   "/root",
   "/run",
@@ -569,6 +570,7 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/var/lib",
   "/var/log",
   "/var/run",
+  "/var/opt",
   "/var/spool",
 ] as const;
 
