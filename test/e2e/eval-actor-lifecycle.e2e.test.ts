@@ -169,6 +169,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["strips tools from an explicit extension", "cli.js", "explicit"],
     ["strips tools from an explicit short extension flag", "cli.js", "explicit-short"],
     ["rejects an explicit extension directory", "cli.js", "directory"],
+    ["loads a relative explicit extension from its staged copy", "cli.js", "relative"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -287,6 +288,9 @@ process.stdout.write("READY\\n");
       if (mode === "directory") {
         await mkdir(path.join(created.piPackageRoot, "explicit-extension-dir"));
       }
+      if (mode === "relative") {
+        await writeFile(path.join(runDir, "provider.mjs"), "explicit-extension-marker\n");
+      }
       if (mode === "oauth") {
         await writeFile(
           path.join(created.piHome, "auth.json"),
@@ -334,18 +338,26 @@ export class FileAuthStorageBackend {
         "--",
         entry === "cli.js" ? cliPath : "pi",
         ...(mode === "load" ? [] : (["--no-extensions"] as const)),
-        ...(mode === "explicit" || mode === "explicit-short" || mode === "directory"
+        ...(mode === "explicit" ||
+        mode === "explicit-short" ||
+        mode === "directory" ||
+        mode === "relative"
           ? ([
-              mode === "explicit-short" ? "-e" : "--extension",
+              mode === "explicit-short" || mode === "relative" ? "-e" : "--extension",
               mode === "directory"
                 ? path.join(created.piPackageRoot, "explicit-extension-dir")
-                : path.join(created.piPackageRoot, "explicit-extension.mjs"),
+                : mode === "relative"
+                  ? "./provider.mjs"
+                  : path.join(created.piPackageRoot, "explicit-extension.mjs"),
             ] as const)
           : []),
         "--model",
         mode === "reject"
           ? "missing/no-such-model"
-          : mode === "load" || mode === "explicit" || mode === "explicit-short"
+          : mode === "load" ||
+              mode === "explicit" ||
+              mode === "explicit-short" ||
+              mode === "relative"
             ? "extension-provider/demo"
             : "builtin/demo",
         "--print",
@@ -373,7 +385,13 @@ export class FileAuthStorageBackend {
         brokerConfigured?: boolean;
         toolCount?: number | null;
       };
-      if (mode === "explicit" || mode === "explicit-short") {
+      if (mode === "relative") {
+        const flagIndex = invocation.argv.indexOf("-e");
+        const extensionPath = invocation.argv[flagIndex + 1] ?? "";
+        expect(extensionPath).not.toBe("./provider.mjs");
+        expect(path.relative(runDir, extensionPath).startsWith("..")).toBe(true);
+        expect(invocation.extensionText).toBe("explicit-extension-marker\n");
+      } else if (mode === "explicit" || mode === "explicit-short") {
         expect(invocation.argv).toContain("--no-extensions");
         expect(invocation.argv).toContain(mode === "explicit-short" ? "-e" : "--extension");
         expect(invocation.extensionText).toBe("explicit-extension-marker\n");

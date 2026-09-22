@@ -543,7 +543,7 @@ function explicitExtensionPaths(command: readonly string[], runDir: string): str
       value = argument.slice("--extension=".length);
     }
     if (value === undefined || value.length === 0) continue;
-    paths.push(path.isAbsolute(value) ? path.normalize(value) : path.resolve(runDir, value));
+    paths.push(explicitExtensionKey(value, runDir));
   }
   return paths;
 }
@@ -570,25 +570,27 @@ async function stageExplicitExtensionFiles(
   return staged;
 }
 
+function explicitExtensionKey(value: string, runDir: string): string {
+  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(runDir, value);
+}
+
 function replaceExplicitExtensionPaths(
   command: readonly [string, ...string[]],
   replacements: ReadonlyMap<string, string>,
+  runDir: string,
 ): [string, ...string[]] {
   const next: string[] = [];
   for (let index = 0; index < command.length; index += 1) {
     const argument = command[index] ?? "";
     if ((argument === "--extension" || argument === "-e") && index + 1 < command.length) {
       const value = command[index + 1] ?? "";
-      next.push(
-        argument,
-        replacements.get(path.normalize(value)) ?? replacements.get(value) ?? value,
-      );
+      next.push(argument, replacements.get(explicitExtensionKey(value, runDir)) ?? value);
       index += 1;
       continue;
     }
     if (argument.startsWith("--extension=")) {
       const value = argument.slice("--extension=".length);
-      const replacement = replacements.get(path.normalize(value)) ?? replacements.get(value);
+      const replacement = replacements.get(explicitExtensionKey(value, runDir));
       next.push(replacement === undefined ? argument : `--extension=${replacement}`);
       continue;
     }
@@ -607,6 +609,7 @@ async function stageEvalPiExtensions(
   signal: AbortSignal | undefined,
   extensionsEnabled: boolean,
   explicitExtensionSources: readonly string[],
+  runDir: string,
 ): Promise<{
   readonly authBroker?: PiAuthBroker;
   readonly readPaths: readonly string[];
@@ -657,7 +660,7 @@ async function stageEvalPiExtensions(
       }),
       extensions.command,
     );
-    const command = replaceExplicitExtensionPaths(optimized.command, replacements);
+    const command = replaceExplicitExtensionPaths(optimized.command, replacements, runDir);
     const runtimeWithBroker: PreparedReviewRuntime =
       authBroker === undefined
         ? runtime
@@ -1042,6 +1045,7 @@ async function runEvalCommandWithInterruption(
           interruption.abortSignal,
           loadsUserExtensions,
           explicitExtensionPaths(validated.command.slice(1), validated.runDir),
+          validated.runDir,
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
