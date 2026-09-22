@@ -521,6 +521,12 @@ function commandDisablesExtensions(command: readonly string[]): boolean {
   return command.some((argument) => argument === "--no-extensions" || argument === "-ne");
 }
 
+function commandRequestsExplicitExtension(command: readonly string[]): boolean {
+  return command.some(
+    (argument) => argument === "--extension" || argument.startsWith("--extension="),
+  );
+}
+
 async function stageEvalPiExtensions(
   executablePath: string,
   sourceAgentDir: string,
@@ -915,9 +921,23 @@ async function runEvalCommandWithInterruption(
         piActorInspection.hostsExtensionRuntime &&
         process.platform !== "win32" &&
         (await snapshotOAuthProviders(piHome.agentDir)).size > 0;
-      // Built-in-only opt-out skips user extensions. It still brokers OAuth, matching
-      // reviews, so a refresh is not discarded with the private snapshot.
-      if (loadsUserExtensions || needsAuthBroker) {
+      const explicitExtension = commandRequestsExplicitExtension(validated.command.slice(1));
+      if (
+        explicitExtension &&
+        piActorInspection.trusted &&
+        !piActorInspection.hostsExtensionRuntime
+      ) {
+        throw new Error(
+          "Explicit Pi extensions require the tool-stripping adapter, and this Pi package cannot host it",
+        );
+      }
+      // Built-in-only opt-out skips the enabled user set. OAuth still uses the broker,
+      // and an explicit --extension still goes through the adapter so its tools are removed.
+      const stagePiAdapter =
+        loadsUserExtensions ||
+        needsAuthBroker ||
+        (explicitExtension && piActorInspection.trusted && piActorInspection.hostsExtensionRuntime);
+      if (stagePiAdapter) {
         const staged = await stageEvalPiExtensions(
           resolvedExecutable.commandPath,
           validatedPiHomeSource,

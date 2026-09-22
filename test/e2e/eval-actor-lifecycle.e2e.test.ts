@@ -163,6 +163,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["declared cli.js without extensions", "cli.js", "builtin"],
     ["declared cli.js rejects an unknown model", "cli.js", "reject"],
     ["brokers oauth without user extensions", "cli.js", "oauth"],
+    ["strips tools from an explicit extension", "cli.js", "explicit"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -213,6 +214,12 @@ const extensionIndex = argv.indexOf("--extension");
 const extensionPath = extensionIndex < 0 ? undefined : argv[extensionIndex + 1];
 let extensionText = "";
 if (extensionPath !== undefined) extensionText = fs.readFileSync(extensionPath, "utf8");
+const { DefaultResourceLoader } = await import(
+  new URL("./core/resource-loader.js", import.meta.url),
+);
+const loaded = new DefaultResourceLoader().getExtensions();
+const tools = loaded.extensions[0]?.tools;
+const toolCount = tools instanceof Map ? tools.size : null;
 fs.writeFileSync(
   path.join(process.cwd(), ${JSON.stringify(ACTOR_INVOCATION_FILE)}),
   JSON.stringify({
@@ -221,6 +228,7 @@ fs.writeFileSync(
     piAgentDir: process.env.PI_CODING_AGENT_DIR ?? null,
     extensionText,
     brokerConfigured: Boolean(process.env.PIONEER_AUTH_BROKER_URL),
+    toolCount,
   }) + "\\n",
 );
 process.stdout.write("READY\\n");
@@ -251,8 +259,24 @@ process.stdout.write("READY\\n");
       );
       await writeFile(
         path.join(created.piPackageRoot, "dist", "core", "resource-loader.js"),
-        "export class DefaultResourceLoader { getExtensions() { return { extensions: [], errors: [] }; } }\n",
+        mode === "explicit"
+          ? `export class DefaultResourceLoader {
+  getExtensions() {
+    return {
+      extensions: [{ path: "explicit", tools: new Map([["bash", {}]]) }],
+      errors: [],
+    };
+  }
+}
+`
+          : "export class DefaultResourceLoader { getExtensions() { return { extensions: [], errors: [] }; } }\n",
       );
+      if (mode === "explicit") {
+        await writeFile(
+          path.join(created.piPackageRoot, "explicit-extension.mjs"),
+          "explicit-extension-marker\n",
+        );
+      }
       if (mode === "oauth") {
         await writeFile(
           path.join(created.piHome, "auth.json"),
@@ -300,6 +324,9 @@ export class FileAuthStorageBackend {
         "--",
         entry === "cli.js" ? cliPath : "pi",
         ...(mode === "load" ? [] : (["--no-extensions"] as const)),
+        ...(mode === "explicit"
+          ? (["--extension", path.join(created.piPackageRoot, "explicit-extension.mjs")] as const)
+          : []),
         "--model",
         mode === "reject" ? "missing/no-such-model" : "extension-provider/demo",
         "--print",
@@ -317,8 +344,18 @@ export class FileAuthStorageBackend {
       expect(run.stdout.trim()).toBe("READY");
       const invocation = JSON.parse(
         await readFile(path.join(runDir, ACTOR_INVOCATION_FILE), "utf8"),
-      ) as ScriptedActorInvocation & { extensionText?: string; brokerConfigured?: boolean };
-      if (mode === "oauth") {
+      ) as ScriptedActorInvocation & {
+        extensionText?: string;
+        brokerConfigured?: boolean;
+        toolCount?: number | null;
+      };
+      if (mode === "explicit") {
+        expect(invocation.argv).toContain("--no-extensions");
+        expect(invocation.argv).toContain("--extension");
+        expect(invocation.extensionText).toBe("explicit-extension-marker\n");
+        expect(invocation.toolCount).toBe(0);
+        expect(invocation.brokerConfigured).toBe(false);
+      } else if (mode === "oauth") {
         expect(invocation.argv).toContain("--no-extensions");
         expect(invocation.argv).not.toContain("--extension");
         expect(invocation.extensionText).toBe("");
