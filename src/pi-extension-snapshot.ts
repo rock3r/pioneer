@@ -132,6 +132,7 @@ export async function snapshotExtensionResources(
           [
             path.join(agentDir, "sessions"),
             path.join(agentDir, "logs"),
+            path.join(agentDir, "skills"),
             ...(await rootLogFiles(agentDir)),
             ...(storage?.sessionDirs ?? []),
           ].map(async (entry) => policyPath(await canonicalOrResolved(entry))),
@@ -141,7 +142,13 @@ export async function snapshotExtensionResources(
     (agentDir !== undefined &&
       policyPath(path.dirname(canonical)) === policyPath(agentDir) &&
       policyPath(canonical).endsWith(".log") &&
-      (await lstat(canonical)).isFile());
+      (await lstat(canonical)).isFile()) ||
+    (agentDir !== undefined &&
+      policyPath(path.dirname(canonical)) === policyPath(agentDir) &&
+      [".json", ".md"].some((suffix) => policyPath(path.basename(canonical)).endsWith(suffix)) &&
+      ["auth.json", "models.json", "models-store.json", "settings.json", "agents.md"].includes(
+        policyPath(path.basename(canonical)),
+      ));
   const refusePrivateStorage = (): Error =>
     new Error(
       "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension is stored inside private Pi session or log storage. Move it to a dedicated extension directory.",
@@ -186,6 +193,17 @@ export async function snapshotExtensionResources(
     .sort()
     .filter((root) => ![...roots].some((other) => other !== root && within(other, root)));
   for (const root of selectedRoots) {
+    const relativeToAgent = agentDir === undefined ? ".." : path.relative(root, agentDir);
+    const containsAgent =
+      relativeToAgent !== "" &&
+      relativeToAgent !== ".." &&
+      !relativeToAgent.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativeToAgent);
+    if (containsAgent) {
+      throw new Error(
+        "Explicit Pi extension must live in a dedicated directory, not a directory that contains the Pi agent directory",
+      );
+    }
     if (
       isMetadataDirectory(path.basename(root)) ||
       isSensitiveCredentialPath(path.join(root, "entry.mjs")) ||
