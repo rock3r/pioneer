@@ -48,7 +48,10 @@ describe("review actor environment", () => {
       await writeFile(target, "#!/usr/bin/env node\n", { mode: 0o755 });
       await writeFile(
         path.join(packageRoot, "package.json"),
-        `${JSON.stringify({ name: "@earendil-works/pi-coding-agent" })}\n`,
+        `${JSON.stringify({
+          name: "@earendil-works/pi-coding-agent",
+          bin: { pi: "dist/cli.js" },
+        })}\n`,
       );
       await symlink(target, path.join(bin, "pi"));
       const previous = process.env.PATH;
@@ -80,6 +83,68 @@ describe("review actor environment", () => {
       process.env.PATH = bin;
       try {
         const grants = await piRuntimePaths("node");
+        expect(grants).toContain(await realpath(bin));
+        expect(grants).not.toContain(await realpath(root));
+      } finally {
+        if (previous === undefined) delete process.env.PATH;
+        else process.env.PATH = previous;
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "does not grant an ancestor that only claims the Pi package name",
+    async () => {
+      const root = await createTempDir("pioneer-node-spoofed-pi-grant-");
+      const bin = path.join(root, "bin");
+      const declared = path.join(root, "dist", "cli.js");
+      const node = path.join(bin, "node");
+      await mkdir(bin);
+      await mkdir(path.dirname(declared), { recursive: true });
+      await writeFile(declared, "#!/usr/bin/env node\n", { mode: 0o755 });
+      await writeFile(node, "", { mode: 0o755 });
+      await writeFile(
+        path.join(root, "package.json"),
+        `${JSON.stringify({
+          name: "@earendil-works/pi-coding-agent",
+          bin: { pi: "dist/cli.js" },
+        })}\n`,
+      );
+      const previous = process.env.PATH;
+      process.env.PATH = bin;
+      try {
+        const grants = await piRuntimePaths("node");
+        expect(grants).toContain(await realpath(bin));
+        expect(grants).not.toContain(await realpath(root));
+      } finally {
+        if (previous === undefined) delete process.env.PATH;
+        else process.env.PATH = previous;
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "does not grant the package when the Pi executable is not the declared bin",
+    async () => {
+      const root = await createTempDir("pioneer-pi-undeclared-bin-grant-");
+      const bin = path.join(root, "bin");
+      const declared = path.join(root, "dist", "cli.js");
+      const impostor = path.join(bin, "pi");
+      await mkdir(bin);
+      await mkdir(path.dirname(declared), { recursive: true });
+      await writeFile(declared, "#!/usr/bin/env node\n", { mode: 0o755 });
+      await writeFile(impostor, "#!/usr/bin/env node\n", { mode: 0o755 });
+      await writeFile(
+        path.join(root, "package.json"),
+        `${JSON.stringify({
+          name: "@earendil-works/pi-coding-agent",
+          bin: { pi: "dist/cli.js" },
+        })}\n`,
+      );
+      const previous = process.env.PATH;
+      process.env.PATH = bin;
+      try {
+        const grants = await piRuntimePaths("pi");
         expect(grants).toContain(await realpath(bin));
         expect(grants).not.toContain(await realpath(root));
       } finally {

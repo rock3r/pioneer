@@ -64,6 +64,26 @@ describe("Pi package runtime hosting", () => {
       ),
     ).toBe(true);
     expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}.config${path.sep}google-chrome${path.sep}provider.mjs`,
+      ),
+    ).toBe(true);
+    expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}.config${path.sep}chromium${path.sep}provider.mjs`,
+      ),
+    ).toBe(true);
+    expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}Library${path.sep}Application Support${path.sep}Google${path.sep}Chrome${path.sep}profile${path.sep}provider.mjs`,
+      ),
+    ).toBe(process.platform !== "linux");
+    expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}Library${path.sep}Application Support${path.sep}Chromium${path.sep}profile${path.sep}provider.mjs`,
+      ),
+    ).toBe(process.platform !== "linux");
+    expect(
       isSensitiveCredentialPath(`${home}${path.sep}.local${path.sep}share${path.sep}provider.mjs`),
     ).toBe(true);
     expect(

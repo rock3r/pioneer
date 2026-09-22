@@ -567,17 +567,25 @@ function combineWarnings(...warnings: readonly (string | undefined)[]): string |
   return present.length === 0 ? undefined : present.join("\n");
 }
 
-async function officialPiPackage(directory: string): Promise<boolean> {
+function isPiCommandName(executable: string): boolean {
+  const base = path.basename(executable);
+  const name = process.platform === "linux" ? base : base.toLowerCase();
+  return name === "pi" || name === "pi.exe" || name === "pi.cmd";
+}
+
+async function declaredPiExecutable(packageDir: string, target: string): Promise<boolean> {
   try {
-    const raw = await readFile(path.join(directory, "package.json"), "utf8");
+    const raw = await readFile(path.join(packageDir, "package.json"), "utf8");
     if (Buffer.byteLength(raw) > 1_000_000) return false;
     const parsed: unknown = JSON.parse(raw);
-    return (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      "name" in parsed &&
-      (parsed as { name?: unknown }).name === "@earendil-works/pi-coding-agent"
-    );
+    if (typeof parsed !== "object" || parsed === null) return false;
+    const record = parsed as { name?: unknown; bin?: unknown };
+    if (record.name !== "@earendil-works/pi-coding-agent") return false;
+    const bin = record.bin;
+    if (typeof bin !== "object" || bin === null || Array.isArray(bin)) return false;
+    const relative = (bin as { pi?: unknown }).pi;
+    if (typeof relative !== "string" || relative.length === 0) return false;
+    return (await realpath(path.resolve(packageDir, relative))) === target;
   } catch {
     return false;
   }
@@ -618,8 +626,13 @@ export async function piRuntimePaths(executable: string): Promise<string[]> {
     // Bind the package directory, not a symlink or a file inside it. Bubblewrap
     // cannot create a file mount for bin/pi when that symlink's parent is not
     // already in the new root.
-    if (packageDir !== undefined && (await officialPiPackage(packageDir))) paths.push(packageDir);
-    else paths.push(path.dirname(target));
+    if (
+      packageDir !== undefined &&
+      isPiCommandName(executable) &&
+      (await declaredPiExecutable(packageDir, target))
+    ) {
+      paths.push(packageDir);
+    } else paths.push(path.dirname(target));
     if (existsSync(link) && !(await lstat(link)).isSymbolicLink() && link !== target) {
       const relative = packageDir === undefined ? "" : path.relative(packageDir, link);
       const insidePackage =
