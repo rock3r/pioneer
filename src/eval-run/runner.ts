@@ -19,9 +19,19 @@ import {
   validateControllerScratchBase,
 } from "../controller-scratch.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
-import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
+import type { PiAuthBroker } from "../pi-auth-broker.js";
+import { prepareAuthBroker } from "../pi-auth-runtime.js";
+import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
+import { preparePiExtensions } from "../pi-extension-runtime.js";
+import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
+import { defaultPiAgentDir, type PreparedPiHome, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
-import { isPiExecutable, optimizePiStartupCommand, requestedPiModel } from "../pi-startup.js";
+import {
+  applyResolvedPiLaunch,
+  isPiExecutable,
+  optimizePiStartupCommand,
+  requestedPiModel,
+} from "../pi-startup.js";
 import {
   buildLinuxSandboxArgv,
   buildMacosSandboxArgv,
@@ -47,7 +57,12 @@ import {
 } from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
 import { macosRuntimeReadPaths } from "./macos-runtime.js";
-import { startPublicEgressProxy } from "./public-egress-proxy.js";
+import { isDeclaredPiExecutable, piPackageHostsExtensionRuntime } from "./pi-extension-host.js";
+import {
+  resolvePublicTarget,
+  startEgressProxy,
+  startPublicEgressProxy,
+} from "./public-egress-proxy.js";
 import {
   type EvalWorkLog,
   evalWorkLogCreateError,
@@ -502,6 +517,106 @@ async function listenForLanProbe(): Promise<{ port: number; close(): Promise<voi
   };
 }
 
+function commandDisablesExtensions(command: readonly string[]): boolean {
+  return command.some((argument) => argument === "--no-extensions" || argument === "-ne");
+}
+
+async function stageEvalPiExtensions(
+  executablePath: string,
+  sourceAgentDir: string,
+  isolationDir: string,
+  piHome: PreparedPiHome,
+  userCommand: readonly [string, ...string[]],
+  checkAborted: () => void,
+  signal: AbortSignal | undefined,
+): Promise<{
+  readonly authBroker?: PiAuthBroker;
+  readonly readPaths: readonly string[];
+  readonly optimized: ReturnType<typeof optimizePiStartupCommand>;
+  readonly command: readonly [string, ...string[]];
+  readonly runtime: PreparedReviewRuntime;
+}> {
+  checkAborted();
+  const extensionRoot = path.join(isolationDir, "pi-extensions");
+  const extensions = await preparePiExtensions(
+    [executablePath],
+    sourceAgentDir,
+    path.join(extensionRoot, "extensions"),
+    process.env,
+    signal,
+    path.join(piHome.agentDir, "settings.json"),
+    true,
+  );
+  checkAborted();
+  const runtime: PreparedReviewRuntime = {
+    scratch: isolationDir,
+    extensionRoot,
+    home: piHome,
+    extensions,
+    network: "public",
+  };
+  const authBroker = await prepareAuthBroker(runtime);
+  checkAborted();
+  const flagCommand: [string, ...string[]] = isPiExecutable(userCommand[0])
+    ? [userCommand[0], ...userCommand.slice(1)]
+    : ["pi", ...userCommand.slice(1)];
+  const optimized = applyResolvedPiLaunch(
+    optimizePiStartupCommand(flagCommand, {
+      disableExtensions: true,
+      disableSkills: true,
+      extensions: extensionPathsWithCapabilities(extensions, []),
+    }),
+    extensions.command,
+  );
+  return {
+    ...(authBroker === undefined ? {} : { authBroker }),
+    readPaths: [
+      extensionRoot,
+      ...(extensions.runtimeRoot === undefined ? [] : [extensions.runtimeRoot]),
+    ],
+    optimized,
+    command: optimized.command,
+    runtime,
+  };
+}
+
+/** Whether this actor should run the operator's enabled Pi extensions inside the sandbox. */
+async function evalPiExtensionActor(
+  command: readonly [string, ...string[]],
+  runDir: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  if (commandDisablesExtensions(command.slice(1))) return false;
+  let resolved: Awaited<ReturnType<typeof resolveEvalExecutable>>;
+  try {
+    resolved = await resolveEvalExecutable(
+      command[0],
+      runDir,
+      sanitizedBrokerEnvironment(environment).PATH ?? "",
+    );
+  } catch {
+    return false;
+  }
+  const installation = await findValidatedPiPackageRoot(resolved.commandPath, runDir);
+  if (installation === undefined) return false;
+  const namedPi = isPiExecutable(command[0]);
+  const declaredPi =
+    !namedPi && (await isDeclaredPiExecutable(resolved.commandPath, installation.packageRoot));
+  if (!namedPi && !declaredPi) return false;
+  try {
+    const controllerPi = await resolveEvalExecutable(
+      "pi",
+      runDir,
+      sanitizedBrokerEnvironment(environment).PATH ?? "",
+    );
+    const controllerInstallation = await findValidatedPiPackageRoot(controllerPi.commandPath);
+    if (!isTrustedPiInstallation(installation, controllerInstallation)) return false;
+  } catch {
+    return false;
+  }
+  return piPackageHostsExtensionRuntime(installation.packageRoot);
+}
+
 export async function runEvalCommand(
   spec: EvalRunSpec,
   options: RunEvalOptions = {},
@@ -539,8 +654,9 @@ async function runEvalCommandWithInterruption(
   throwIfEvalInterrupted(interruption);
   const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
+  const loadsUserExtensions = await evalPiExtensionActor(spec.command, spec.runDir, process.env);
   const initialReadinessOptions = {
-    extensions: false,
+    extensions: false as const,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
     ...(requestedModel === undefined ? {} : { requestedModel }),
     signal: interruption.abortSignal,
@@ -549,8 +665,12 @@ async function runEvalCommandWithInterruption(
   throwIfEvalInterrupted(interruption);
   await assertNativeSandboxReady();
   throwIfEvalInterrupted(interruption);
+  // Extension-backed models are absent from a built-in-only probe. Defer that probe until
+  // the same extension snapshot the actor will load is ready.
   let readiness =
-    spec.piHomeSource === undefined ? await assertPiReady(initialReadinessOptions) : undefined;
+    spec.piHomeSource === undefined && !loadsUserExtensions
+      ? await assertPiReady(initialReadinessOptions)
+      : undefined;
   throwIfEvalInterrupted(interruption);
   const validated = await validateEvalRunSpec({
     ...spec,
@@ -604,17 +724,17 @@ async function runEvalCommandWithInterruption(
         warning: readiness.warning !== undefined,
       });
     }
-    const optimizedPi = optimizePiStartupCommand(validated.command, {
+    let optimizedPi = optimizePiStartupCommand(validated.command, {
       disableExtensions: true,
       disableSkills: true,
     });
     const resolvedExecutable = await resolveEvalExecutable(
-      optimizedPi.command[0],
+      validated.command[0],
       validated.runDir,
       sanitizedBrokerEnvironment(process.env).PATH ?? "",
     );
     throwIfEvalInterrupted(interruption);
-    const sandboxCommand = buildEvalLaunchCommand(resolvedExecutable, optimizedPi.command.slice(1));
+    let sandboxCommand = buildEvalLaunchCommand(resolvedExecutable, optimizedPi.command.slice(1));
     const piActor = isPiExecutable(spec.command[0]);
     const controllerPiInstallation = piActor
       ? await (async () => {
@@ -630,9 +750,10 @@ async function runEvalCommandWithInterruption(
           }
         })()
       : undefined;
-    const piInstallation = piActor
-      ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath, validated.runDir)
-      : undefined;
+    const piInstallation =
+      piActor || loadsUserExtensions
+        ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath, validated.runDir)
+        : undefined;
     throwIfEvalInterrupted(interruption);
     if (piActor && !isTrustedPiInstallation(piInstallation, controllerPiInstallation)) {
       throw new Error("Pi eval actor is not a validated Pi installation");
@@ -661,7 +782,7 @@ async function runEvalCommandWithInterruption(
       ...(requestedModel === undefined ? {} : { requestedModel }),
       signal: interruption.abortSignal,
     };
-    if (readiness === undefined) {
+    if (readiness === undefined && !loadsUserExtensions) {
       recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
       readiness = await assertPiReady(readinessOptions);
       recordEvalWorkLog(workLog, "stage_completed", {
@@ -716,6 +837,8 @@ async function runEvalCommandWithInterruption(
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
     let bridgeRoot: string | undefined;
+    let authBroker: PiAuthBroker | undefined;
+    let extensionReadPaths: readonly string[] = [];
     try {
       const actorGrantPaths = [validated.runDir, ...completeActorReadPaths];
       if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
@@ -733,6 +856,47 @@ async function runEvalCommandWithInterruption(
       });
       recordEvalWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
       throwIfSetupInterrupted();
+      let actorEnvironment: Readonly<Record<string, string>> = {
+        ...optimizedPi.environment,
+        ...piHome.environment,
+      };
+      if (loadsUserExtensions) {
+        const staged = await stageEvalPiExtensions(
+          resolvedExecutable.commandPath,
+          validatedPiHomeSource,
+          isolationDir,
+          piHome,
+          validated.command,
+          throwIfSetupInterrupted,
+          interruption.abortSignal,
+        );
+        authBroker = staged.authBroker;
+        extensionReadPaths = staged.readPaths;
+        optimizedPi = staged.optimized;
+        sandboxCommand = [...staged.command] as [string, ...string[]];
+        actorEnvironment = {
+          ...staged.optimized.environment,
+          ...piHome.environment,
+          ...staged.authBroker?.environment,
+        };
+        if (readiness === undefined) {
+          const extensionModel =
+            requestedModel ?? requestedPiModel(["pi", ...validated.command.slice(1)]);
+          recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
+          readiness = await assertPiReady({
+            command: [resolvedExecutable.commandPath],
+            environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
+            preparedRuntime: staged.runtime,
+            ...(extensionModel === undefined ? {} : { requestedModel: extensionModel }),
+            signal: interruption.abortSignal,
+          });
+          recordEvalWorkLog(workLog, "stage_completed", {
+            stage: "pi_readiness",
+            warning: readiness.warning !== undefined,
+          });
+        }
+      }
+      throwIfSetupInterrupted();
       await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
       await writeFile(probeScript, PROBE_SOURCE, { flag: "wx", mode: 0o500 });
       await writeFile(launcherScript, LAUNCHER_SOURCE, { flag: "wx", mode: 0o500 });
@@ -741,7 +905,7 @@ async function runEvalCommandWithInterruption(
         JSON.stringify({
           command: sandboxCommand,
           cwd: validated.runDir,
-          environment: { ...optimizedPi.environment, ...piHome.environment },
+          environment: actorEnvironment,
         }),
         { flag: "wx", mode: 0o400 },
       );
@@ -761,7 +925,11 @@ async function runEvalCommandWithInterruption(
       throwIfSetupInterrupted();
 
       recordEvalWorkLog(workLog, "stage_started", { stage: "network_proxy" });
-      proxy = await startPublicEgressProxy(randomBytes(32).toString("hex"));
+      const proxyToken = randomBytes(32).toString("hex");
+      proxy =
+        authBroker === undefined
+          ? await startPublicEgressProxy(proxyToken)
+          : await startEgressProxy(proxyToken, authBroker.resolveWith(resolvePublicTarget));
       throwIfSetupInterrupted();
       const linuxBwrapPath =
         process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
@@ -792,6 +960,7 @@ async function runEvalCommandWithInterruption(
           launcherScript,
           launchSpec,
           ...executableReadPaths,
+          ...extensionReadPaths,
         ],
         writableScratchPaths: [...evalIsolatedPiHomeWritablePaths(piHome)],
         parentProxyUrl: proxy.url,
@@ -846,7 +1015,7 @@ async function runEvalCommandWithInterruption(
         completedResult = withWorkLogPath(
           {
             ...result,
-            ...(readiness.warning === undefined ? {} : { warning: readiness.warning }),
+            ...(readiness?.warning === undefined ? {} : { warning: readiness.warning }),
           },
           workLog.path,
         );
@@ -858,6 +1027,7 @@ async function runEvalCommandWithInterruption(
     } finally {
       delete process.env.PIONEER_HOST_SECRET;
       const cleanupResults = await Promise.allSettled([
+        authBroker?.close(),
         bridge?.close(),
         bridgeRoot === undefined ? undefined : rm(bridgeRoot, { recursive: true, force: true }),
         proxy?.close(),

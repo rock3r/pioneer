@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -156,6 +156,123 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     expect(invocation.piAgentDir).not.toBeNull();
     expect(path.relative(runDir, invocation.piAgentDir ?? "").startsWith("..")).toBe(true);
   });
+
+  it.each([
+    ["pi command", "pi"],
+    ["declared cli.js path", "cli.js"],
+  ] as const)(
+    "loads an enabled user extension inside the sandboxed Pi actor (%s)",
+    async (_label, entry) => {
+      const { created, runDir } = await workspace(`extension-provider-${entry}`);
+      const extensionDirectory = path.join(created.root, "user-extensions");
+      const extensionSource = path.join(extensionDirectory, "provider.ts");
+      const extensionMarker = "extension-provider-marker\n";
+      const cliPath = path.join(created.piPackageRoot, "dist", "cli.js");
+      await mkdir(extensionDirectory);
+      await writeFile(extensionSource, extensionMarker);
+      await mkdir(path.join(created.piPackageRoot, "dist", "core"), { recursive: true });
+      await writeFile(
+        path.join(created.piPackageRoot, "package.json"),
+        `${JSON.stringify(
+          {
+            name: "@earendil-works/pi-coding-agent",
+            version: "0.84.2",
+            type: "module",
+            bin: { pi: "dist/cli.js" },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      await writeFile(
+        cliPath,
+        `#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+const argv = process.argv.slice(2);
+if (argv.includes("--version")) {
+  process.stdout.write("0.84.2\\n");
+  process.exit(0);
+}
+if (argv.includes("--list-models")) {
+  process.stdout.write(
+    "provider  model  context  max-out  thinking  images\\nextension-provider  demo  1K  1K  no  no\\n",
+  );
+  process.exit(0);
+}
+const extensionIndex = argv.indexOf("--extension");
+const extensionPath = extensionIndex < 0 ? undefined : argv[extensionIndex + 1];
+let extensionText = "";
+if (extensionPath !== undefined) extensionText = fs.readFileSync(extensionPath, "utf8");
+fs.writeFileSync(
+  path.join(process.cwd(), ${JSON.stringify(ACTOR_INVOCATION_FILE)}),
+  JSON.stringify({
+    argv,
+    cwd: process.cwd(),
+    piAgentDir: process.env.PI_CODING_AGENT_DIR ?? null,
+    extensionText,
+  }) + "\\n",
+);
+process.stdout.write("READY\\n");
+`,
+        { mode: 0o755 },
+      );
+      await symlink(cliPath, path.join(created.binDir, "pi"));
+      await writeFile(
+        path.join(created.piPackageRoot, "dist", "core", "settings-manager.js"),
+        "export const SettingsManager = { inMemory() { return {}; } };\n",
+      );
+      await writeFile(
+        path.join(created.piPackageRoot, "dist", "core", "package-manager.js"),
+        `export class DefaultPackageManager {
+  async resolve() {
+    return {
+      extensions: [
+        {
+          path: ${JSON.stringify(extensionSource)},
+          enabled: true,
+          metadata: { scope: "user" },
+        },
+      ],
+    };
+  }
+}
+`,
+      );
+      await writeFile(
+        path.join(created.piPackageRoot, "dist", "core", "resource-loader.js"),
+        "export class DefaultResourceLoader { getExtensions() { return { extensions: [], errors: [] }; } }\n",
+      );
+
+      const run = await runPioneer(created, [
+        "eval",
+        "run",
+        "--run-dir",
+        runDir,
+        "--pi-home",
+        created.piHome,
+        "--work-log",
+        created.workLogPath(`extension-provider-${entry}`),
+        "--timeout-ms",
+        "60000",
+        "--",
+        entry === "cli.js" ? cliPath : "pi",
+        "--model",
+        "extension-provider/demo",
+        "--print",
+        "Say READY",
+      ]);
+
+      expect(run.stderr).not.toMatch(/PI_EXTENSION_|PI_OAUTH_/);
+      expect(run.exitCode, run.stderr).toBe(0);
+      expect(run.stdout.trim()).toBe("READY");
+      const invocation = JSON.parse(
+        await readFile(path.join(runDir, ACTOR_INVOCATION_FILE), "utf8"),
+      ) as ScriptedActorInvocation & { extensionText?: string };
+      expect(invocation.argv).toEqual(expect.arrayContaining(["--no-extensions", "--extension"]));
+      expect(invocation.extensionText).toBe(extensionMarker);
+    },
+  );
 
   it("writes a stage work log that never records prompts or credentials", async () => {
     const { created, runDir } = await workspace("work-log");

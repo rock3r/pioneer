@@ -4,6 +4,7 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Load enabled user extensions inside `pioneer eval run` so an extension-registered model provider that works in normal Pi also resolves in the eval sandbox. Ambient discovery stays off, extension tools stay stripped, and `--no-extensions` on the Pi command keeps built-in providers only. OAuth refresh uses the same broker as reviews. Eval snapshots still have no `--pi-home-include`.
 - Certify Pi `0.86.0` as the newest tested compatibility endpoint after reviewing its CLI, RPC, thinking-level, and session/startup contracts, and keep the minimum at `0.80.6`.
 
 ## 0.3.4 - 2026-09-17

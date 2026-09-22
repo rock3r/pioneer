@@ -1,6 +1,8 @@
 # Pi extensions in reviews
 
-Reviews, deep reviews, `models`, and `doctor` load the operator's enabled user extensions by default. Provider registration and authentication hooks are available without a provider allowlist. Strict evals continue to disable extensions. `review`, `models`, and `doctor` accept `--no-extensions` as an explicit built-in-only opt-out; the review API accepts `extensions: false`.
+Reviews, deep reviews, `models`, `doctor`, and strict evals load the operator's enabled user extensions by default. Provider registration and authentication hooks are available without a provider allowlist. Ambient discovery stays off: Pioneer passes `--no-extensions` and then the staged paths with `--extension`. Extension tools are removed. `review`, `models`, and `doctor` accept `--no-extensions` as an explicit built-in-only opt-out; the review API accepts `extensions: false`. An eval stays built-in-only when the Pi command itself includes `--no-extensions` or `-ne`, or when the actor is not the trusted official Pi package.
+
+Eval uses the same read-only extension snapshot and the same tool-stripping adapter as a review. The Pi-home snapshot is still the eval allowlist, without `skills/` and without `--pi-home-include`. OAuth refresh during an eval uses the review broker and the eval public network policy, so a rotated token is written back to the source credential file under Pi's lock. The eval actor does not get a copy of that write.
 
 ## Resolution and staging
 

@@ -18,7 +18,7 @@ Trusted controller responsibilities:
 - parse bounded Pi RPC output;
 - remove run-local state.
 
-Untrusted actor inputs include the source tree, reference directories, Git refs and command output, eval fixtures, Pi skills copied into a review snapshot, commands invoked by Pi, provider responses, and the final report. Reviews load enabled user extensions from a separate read-only snapshot; evals continue to disable extensions. See [Pi extensions](PI-EXTENSIONS.md) for resolution, tool policy and arbitrary-code limits.
+Untrusted actor inputs include the source tree, reference directories, Git refs and command output, eval fixtures, Pi skills copied into a review snapshot, commands invoked by Pi, provider responses, and the final report. Reviews and evals load enabled user extensions from a separate read-only snapshot. Extension tools are removed in both. Ambient discovery stays off. See [Pi extensions](PI-EXTENSIONS.md) for resolution, tool policy and arbitrary-code limits.
 
 ## Filesystem policy
 

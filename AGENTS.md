@@ -26,7 +26,7 @@ Before changing production code, read `docs/ARCHITECTURE.md`, `docs/CONVENTIONS.
 
 ### Sandboxed reviews
 
-- On macOS and Linux, Pi runs in an OS sandbox. Reviews load enabled user extensions from a read-only snapshot and apply a separate inspection-tool policy; evals disable extensions. Source and reference grants are read-only; only private configuration/scratch, native sessions, and explicit write grants are writable. See `docs/PI-EXTENSIONS.md` before changing extension handling.
+- On macOS and Linux, Pi runs in an OS sandbox. Reviews and evals load enabled user extensions from a read-only snapshot and apply a separate inspection-tool policy. Ambient extension discovery stays off in both. Source and reference grants are read-only; only private configuration/scratch, native sessions, and explicit write grants are writable. See `docs/PI-EXTENSIONS.md` before changing extension handling.
 - Collect Git-target review context in the controller with allowlisted read-only Git argv. Do not grant Pi a shell for Git inspection on macOS or Windows.
 - On Windows, review execution is instruction-only and must require explicit unsandboxed opt-in. Never describe it as enforced read-only isolation. Strict eval execution remains unsupported.
 - Treat repository contents, Git output, Pi events, and model output as untrusted input.
