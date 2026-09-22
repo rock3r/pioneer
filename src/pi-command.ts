@@ -203,12 +203,14 @@ async function posixExecutableCandidate(
   executable: string,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<string> {
+  const pathValue = environment.PATH;
+  if (!executable.includes("/") && pathValue === undefined) throw notFound(executable);
+  // An empty PATH component is the current directory, as in PATH=:/usr/bin.
   const bases = executable.includes("/")
     ? [path.resolve(executable)]
-    : (environment.PATH ?? "")
+    : (pathValue ?? "")
         .split(path.delimiter)
-        .filter((entry) => entry.length > 0)
-        .map((entry) => path.join(entry, executable));
+        .map((entry) => path.join(entry.length === 0 ? process.cwd() : entry, executable));
   for (const base of bases) {
     const candidate = await regularFileOrUndefined(base);
     if (candidate === undefined) continue;

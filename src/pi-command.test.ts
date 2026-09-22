@@ -90,6 +90,24 @@ describe("POSIX Pi command resolution", () => {
       ).resolves.toEqual([await realpath(target)]);
     },
   );
+
+  it("treats an empty PATH entry as the current directory", async () => {
+    const root = await createTempDir("pioneer-pi-path-cwd-");
+    const target = path.join(root, "pi");
+    const later = path.join(root, "later");
+    await mkdir(later);
+    await writeFile(target, "#!/usr/bin/env node\n");
+    await chmod(target, 0o755);
+    const previous = process.cwd();
+    process.chdir(root);
+    try {
+      await expect(resolvePiCommand("pi", { PATH: `:${later}` }, "linux")).resolves.toEqual([
+        await realpath(target),
+      ]);
+    } finally {
+      process.chdir(previous);
+    }
+  });
 });
 
 describe("Windows Pi command resolution", () => {

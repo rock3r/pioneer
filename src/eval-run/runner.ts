@@ -3,7 +3,6 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import {
   access,
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -25,7 +24,10 @@ import type { PiAuthBroker } from "../pi-auth-broker.js";
 import { prepareAuthBroker, snapshotOAuthProviders } from "../pi-auth-runtime.js";
 import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
 import { preparePiExtensions } from "../pi-extension-runtime.js";
-import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
+import {
+  extensionPathsWithCapabilities,
+  snapshotExtensionResources,
+} from "../pi-extension-snapshot.js";
 import { defaultPiAgentDir, type PreparedPiHome, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
 import {
@@ -552,8 +554,9 @@ async function stageExplicitExtensionFiles(
   sources: readonly string[],
   destinationDir: string,
 ): Promise<string[]> {
-  const staged: string[] = [];
-  for (const [index, source] of sources.entries()) {
+  if (sources.length === 0) return [];
+  const resources = [];
+  for (const source of sources) {
     let canonical: string;
     try {
       canonical = await realpath(source);
@@ -563,11 +566,15 @@ async function stageExplicitExtensionFiles(
     if (!(await lstat(canonical)).isFile()) {
       throw new Error("Explicit Pi extension must be a regular file");
     }
-    const target = path.join(destinationDir, `explicit-${index}${path.extname(canonical)}`);
-    await copyFile(canonical, target);
-    staged.push(target);
+    resources.push({
+      path: canonical,
+      enabled: true,
+      metadata: { scope: "user" as const },
+    });
   }
-  return staged;
+  // Stage the extension directory, not only the entry file, so sibling imports still resolve.
+  const snapshot = await snapshotExtensionResources(resources, destinationDir);
+  return [...snapshot.paths];
 }
 
 function explicitExtensionKey(value: string, runDir: string): string {

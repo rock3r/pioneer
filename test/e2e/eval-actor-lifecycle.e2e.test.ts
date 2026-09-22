@@ -221,7 +221,15 @@ if (argv.includes("--no-extensions") && !argv.includes("--extension")) {
 const extensionIndex = argv.findIndex((argument) => argument === "--extension" || argument === "-e");
 const extensionPath = extensionIndex < 0 ? undefined : argv[extensionIndex + 1];
 let extensionText = "";
-if (extensionPath !== undefined) extensionText = fs.readFileSync(extensionPath, "utf8");
+let siblingText = "";
+if (extensionPath !== undefined) {
+  extensionText = fs.readFileSync(extensionPath, "utf8");
+  try {
+    siblingText = fs.readFileSync(path.join(path.dirname(extensionPath), "helper.mjs"), "utf8");
+  } catch {
+    siblingText = "";
+  }
+}
 const { DefaultResourceLoader } = await import(
   new URL("./core/resource-loader.js", import.meta.url),
 );
@@ -235,6 +243,7 @@ fs.writeFileSync(
     cwd: process.cwd(),
     piAgentDir: process.env.PI_CODING_AGENT_DIR ?? null,
     extensionText,
+    siblingText,
     brokerConfigured: Boolean(process.env.PIONEER_AUTH_BROKER_URL),
     toolCount,
   }) + "\\n",
@@ -290,6 +299,7 @@ process.stdout.write("READY\\n");
       }
       if (mode === "relative") {
         await writeFile(path.join(runDir, "provider.mjs"), "explicit-extension-marker\n");
+        await writeFile(path.join(runDir, "helper.mjs"), "helper-marker\n");
       }
       if (mode === "oauth") {
         await writeFile(
@@ -382,6 +392,7 @@ export class FileAuthStorageBackend {
         await readFile(path.join(runDir, ACTOR_INVOCATION_FILE), "utf8"),
       ) as ScriptedActorInvocation & {
         extensionText?: string;
+        siblingText?: string;
         brokerConfigured?: boolean;
         toolCount?: number | null;
       };
@@ -391,6 +402,7 @@ export class FileAuthStorageBackend {
         expect(extensionPath).not.toBe("./provider.mjs");
         expect(path.relative(runDir, extensionPath).startsWith("..")).toBe(true);
         expect(invocation.extensionText).toBe("explicit-extension-marker\n");
+        expect(invocation.siblingText).toBe("helper-marker\n");
       } else if (mode === "explicit" || mode === "explicit-short") {
         expect(invocation.argv).toContain("--no-extensions");
         expect(invocation.argv).toContain(mode === "explicit-short" ? "-e" : "--extension");
