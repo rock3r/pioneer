@@ -578,6 +578,60 @@ export function isSensitiveSystemExtensionParent(parent: string): boolean {
   return SENSITIVE_SYSTEM_EXTENSION_ROOTS.some((root) => pathIsWithin(root, parent));
 }
 
+const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
+  ".aws",
+  ".azure",
+  ".docker",
+  ".gnupg",
+  ".kube",
+  ".ssh",
+]);
+
+function credentialSegment(segment: string): string {
+  return process.platform === "linux" ? segment : segment.toLowerCase();
+}
+
+export function isSensitiveCredentialPath(file: string): boolean {
+  const segments = file.split(path.sep).map(credentialSegment);
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (segment !== undefined && SENSITIVE_CREDENTIAL_SEGMENTS.has(segment)) return true;
+    if (segment === ".config" && index === segments.length - 2) return true;
+    if (
+      segment === ".config" &&
+      (segments[index + 1] === "gcloud" || segments[index + 1] === "gh")
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      index + 1 === segments.length - 2
+    ) {
+      return true;
+    }
+    if (
+      segment === "appdata" &&
+      (segments[index + 1] === "roaming" || segments[index + 1] === "local") &&
+      index + 1 === segments.length - 2
+    ) {
+      return true;
+    }
+    if (segment === "library" && index === segments.length - 2) return true;
+    if (
+      segment !== undefined &&
+      (segment.toLowerCase() === "documents" ||
+        segment.toLowerCase() === "desktop" ||
+        segment.toLowerCase() === "downloads") &&
+      index === segments.length - 2
+    ) {
+      return true;
+    }
+    if (segment === "library" && segments[index + 1] === "keychains") return true;
+  }
+  return false;
+}
+
 export function isBroadExtensionParent(
   candidate: string,
   platform: NodeJS.Platform = process.platform,

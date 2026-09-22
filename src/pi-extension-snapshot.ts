@@ -12,6 +12,11 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  isBroadExtensionParent,
+  isSensitiveCredentialPath,
+  isSensitiveSystemExtensionParent,
+} from "./eval-run/isolation.js";
 import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
 
 export interface ExtensionResource {
@@ -169,6 +174,19 @@ export async function snapshotExtensionResources(
   const selectedRoots = [...roots]
     .sort()
     .filter((root) => ![...roots].some((other) => other !== root && within(other, root)));
+  for (const resource of enabled) {
+    const canonical = await realpath(resource.path);
+    const parent = path.dirname(canonical);
+    if (
+      isSensitiveCredentialPath(canonical) ||
+      isBroadExtensionParent(parent) ||
+      isSensitiveSystemExtensionParent(parent)
+    ) {
+      throw new Error(
+        "Explicit Pi extension must not be staged from a credential directory such as .ssh or .aws",
+      );
+    }
+  }
   await mkdir(destination, { recursive: true, mode: 0o700 });
   let entries = budget?.entries ?? 0;
   let bytes = budget?.bytes ?? 0;
@@ -193,8 +211,15 @@ export async function snapshotExtensionResources(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency contains a symlink cycle.",
       );
     const lexical = await lstat(source);
+    let stagedAlready = false;
+    try {
+      await lstat(target);
+      stagedAlready = true;
+    } catch {
+      stagedAlready = false;
+    }
     if (lexical.isSymbolicLink()) {
-      entries += 1;
+      if (!stagedAlready) entries += 1;
       if (entries > 500_000)
         throw new Error("[PI_EXTENSION_SNAPSHOT_LIMIT] Too many extension dependency links.");
       const relative = path.relative(path.dirname(target), stagedPath(canonical));
@@ -218,8 +243,10 @@ export async function snapshotExtensionResources(
       return;
     }
     const details = await lstat(canonical);
-    entries += 1;
-    bytes += details.isFile() ? details.size : 0;
+    if (!stagedAlready) {
+      entries += 1;
+      bytes += details.isFile() ? details.size : 0;
+    }
     if (entries > 500_000 || bytes > 1024 ** 3) {
       throw new Error(
         "[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the 1 GiB or 500000-entry snapshot limit.",
@@ -242,6 +269,7 @@ export async function snapshotExtensionResources(
         await copy(path.join(canonical, name), path.join(target, name), next);
       }
     } else if (details.isFile()) {
+      if (stagedAlready) return;
       await copyFile(canonical, target);
       const copied = await lstat(target);
       const after = await lstat(canonical);

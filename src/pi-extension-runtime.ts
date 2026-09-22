@@ -131,12 +131,23 @@ export async function preparePiExtensions(
       "[PI_EXTENSION_RESOLUTION_FAILED] Pi could not resolve its installed user extensions. Verify the selected Pi settings and installed packages with normal Pi. Extension code was not executed.",
     );
   }
-  const snapshot = await snapshotExtensionResources(
-    resources,
-    destination,
-    signal,
-    enabled ? await piRuntimeStorage(sourceAgentDir, settingsFile, environment) : undefined,
-  );
+  let snapshot: Awaited<ReturnType<typeof snapshotExtensionResources>>;
+  try {
+    snapshot = await snapshotExtensionResources(
+      resources,
+      destination,
+      signal,
+      enabled ? await piRuntimeStorage(sourceAgentDir, settingsFile, environment) : undefined,
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.startsWith("[PI_") || error.message.startsWith("Explicit Pi extension"))
+    ) {
+      throw error;
+    }
+    throw new Error("Pi extension could not be staged");
+  }
   const entry = path.join(destination, "entry.mjs");
   const policy = path.join(destination, "pi-extension-policy.js");
   await copyFile(fileURLToPath(new URL("./pi-extension-entry.js", import.meta.url)), entry);
