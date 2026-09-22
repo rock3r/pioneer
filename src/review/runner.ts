@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -584,14 +584,26 @@ export async function piRuntimePaths(executable: string): Promise<string[]> {
   try {
     const link = executableOnPath(executable);
     const target = await realpath(link);
-    paths.push(link, target);
+    let packageDir: string | undefined;
     let directory = path.dirname(target);
     while (directory !== path.dirname(directory)) {
       if (existsSync(path.join(directory, "package.json"))) {
-        paths.push(directory);
+        packageDir = directory;
         break;
       }
       directory = path.dirname(directory);
+    }
+    // Bind the package directory, not a symlink or a file inside it. Bubblewrap
+    // cannot create a file mount for bin/pi when that symlink's parent is not
+    // already in the new root.
+    if (packageDir !== undefined) paths.push(packageDir);
+    else paths.push(target);
+    if (existsSync(link) && !(await lstat(link)).isSymbolicLink() && link !== target) {
+      const relative = packageDir === undefined ? "" : path.relative(packageDir, link);
+      const insidePackage =
+        relative === "" ||
+        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+      if (packageDir === undefined || !insidePackage) paths.push(link);
     }
   } catch {
     // Pi readiness reports the actionable executable error.
