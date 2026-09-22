@@ -616,6 +616,39 @@ function extensionStageError(error: unknown): Error {
   return new Error("Explicit Pi extension could not be staged");
 }
 
+async function assertExplicitExtensionAllowed(
+  canonical: string,
+  sourceAgentDir: string,
+  blocked: ReadonlySet<string>,
+): Promise<void> {
+  if (!(await lstat(canonical)).isFile()) {
+    throw new Error("Explicit Pi extension must be a regular file");
+  }
+  if (isSensitiveCredentialPath(canonical)) {
+    throw new Error(
+      "Explicit Pi extension must not be staged from a credential directory such as .ssh or .aws",
+    );
+  }
+  const parent = path.dirname(canonical);
+  const agentRoot = await realpath(sourceAgentDir);
+  const relativeToAgent = path.relative(parent, agentRoot);
+  const containsAgent =
+    relativeToAgent === "" ||
+    (relativeToAgent !== ".." &&
+      !relativeToAgent.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativeToAgent));
+  if (
+    blocked.has(parent) ||
+    isBroadExtensionParent(parent) ||
+    isSensitiveSystemExtensionParent(parent) ||
+    containsAgent
+  ) {
+    throw new Error(
+      "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or a directory that contains the Pi agent directory",
+    );
+  }
+}
+
 async function stageExplicitExtensionFiles(
   sources: readonly string[],
   destinationDir: string,
@@ -633,32 +666,7 @@ async function stageExplicitExtensionFiles(
     } catch {
       throw new Error("Explicit Pi extension was not found");
     }
-    if (!(await lstat(canonical)).isFile()) {
-      throw new Error("Explicit Pi extension must be a regular file");
-    }
-    if (isSensitiveCredentialPath(canonical)) {
-      throw new Error(
-        "Explicit Pi extension must not be staged from a credential directory such as .ssh or .aws",
-      );
-    }
-    const parent = path.dirname(canonical);
-    const agentRoot = await realpath(sourceAgentDir);
-    const relativeToAgent = path.relative(parent, agentRoot);
-    const containsAgent =
-      relativeToAgent === "" ||
-      (relativeToAgent !== ".." &&
-        !relativeToAgent.startsWith(`..${path.sep}`) &&
-        !path.isAbsolute(relativeToAgent));
-    if (
-      blocked.has(parent) ||
-      isBroadExtensionParent(parent) ||
-      isSensitiveSystemExtensionParent(parent) ||
-      containsAgent
-    ) {
-      throw new Error(
-        "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or a directory that contains the Pi agent directory",
-      );
-    }
+    await assertExplicitExtensionAllowed(canonical, sourceAgentDir, blocked);
     canonicals.push(canonical);
     resources.push({
       path: canonical,
@@ -871,6 +879,11 @@ async function stageEvalPiExtensions(
       );
     });
     if (overlapsStagedChild) {
+      await assertExplicitExtensionAllowed(
+        canonical,
+        sourceAgentDir,
+        await protectedExtensionRoots(),
+      );
       const parent = path.dirname(canonical);
       try {
         await mergeExtensionDirectory(
