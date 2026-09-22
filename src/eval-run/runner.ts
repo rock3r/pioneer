@@ -597,7 +597,7 @@ async function stageExplicitExtensionFiles(
     try {
       canonical = await realpath(source);
     } catch {
-      throw new Error(`Explicit Pi extension was not found: ${source}`);
+      throw new Error("Explicit Pi extension was not found");
     }
     if (!(await lstat(canonical)).isFile()) {
       throw new Error("Explicit Pi extension must be a regular file");
