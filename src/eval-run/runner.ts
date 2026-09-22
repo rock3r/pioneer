@@ -549,7 +549,9 @@ async function stageEvalPiExtensions(
   );
   checkAborted();
   const runtime: PreparedReviewRuntime = {
-    scratch: isolationDir,
+    // Writable scratch must not contain the read-only extension tree. Bubblewrap
+    // rejects, or hides, a read-only mount nested inside a later writable parent.
+    scratch: path.dirname(piHome.root),
     extensionRoot,
     home: piHome,
     extensions,
