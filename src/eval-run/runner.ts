@@ -556,37 +556,51 @@ async function stageEvalPiExtensions(
     network: "public",
   };
   const authBroker = await prepareAuthBroker(runtime);
-  checkAborted();
-  const flagCommand: [string, ...string[]] = isPiExecutable(userCommand[0])
-    ? [userCommand[0], ...userCommand.slice(1)]
-    : ["pi", ...userCommand.slice(1)];
-  const optimized = applyResolvedPiLaunch(
-    optimizePiStartupCommand(flagCommand, {
-      disableExtensions: true,
-      disableSkills: true,
-      extensions: extensionPathsWithCapabilities(extensions, []),
-    }),
-    extensions.command,
-  );
-  return {
-    ...(authBroker === undefined ? {} : { authBroker }),
-    readPaths: [
-      extensionRoot,
-      ...(extensions.runtimeRoot === undefined ? [] : [extensions.runtimeRoot]),
-    ],
-    optimized,
-    command: optimized.command,
-    runtime,
-  };
+  try {
+    checkAborted();
+    const flagCommand: [string, ...string[]] = isPiExecutable(userCommand[0])
+      ? [userCommand[0], ...userCommand.slice(1)]
+      : ["pi", ...userCommand.slice(1)];
+    const optimized = applyResolvedPiLaunch(
+      optimizePiStartupCommand(flagCommand, {
+        disableExtensions: true,
+        disableSkills: true,
+        extensions: extensionPathsWithCapabilities(extensions, []),
+      }),
+      extensions.command,
+    );
+    return {
+      ...(authBroker === undefined ? {} : { authBroker }),
+      readPaths: [
+        extensionRoot,
+        ...(extensions.runtimeRoot === undefined ? [] : [extensions.runtimeRoot]),
+      ],
+      optimized,
+      command: optimized.command,
+      runtime,
+    };
+  } catch (error) {
+    await authBroker?.close().catch(() => undefined);
+    throw error;
+  }
 }
 
-/** Whether this actor should run the operator's enabled Pi extensions inside the sandbox. */
-async function evalPiExtensionActor(
+interface EvalPiActor {
+  readonly trusted: boolean;
+  readonly hostsExtensionRuntime: boolean;
+}
+
+const UNTRUSTED_EVAL_PI_ACTOR: EvalPiActor = {
+  trusted: false,
+  hostsExtensionRuntime: false,
+};
+
+/** Trusted Pi identity, separate from whether this run stages extensions. */
+async function inspectEvalPiActor(
   command: readonly [string, ...string[]],
   runDir: string,
   environment: NodeJS.ProcessEnv,
-): Promise<boolean> {
-  if (commandDisablesExtensions(command.slice(1))) return false;
+): Promise<EvalPiActor> {
   let resolved: Awaited<ReturnType<typeof resolveEvalExecutable>>;
   try {
     resolved = await resolveEvalExecutable(
@@ -595,14 +609,14 @@ async function evalPiExtensionActor(
       sanitizedBrokerEnvironment(environment).PATH ?? "",
     );
   } catch {
-    return false;
+    return UNTRUSTED_EVAL_PI_ACTOR;
   }
   const installation = await findValidatedPiPackageRoot(resolved.commandPath, runDir);
-  if (installation === undefined) return false;
+  if (installation === undefined) return UNTRUSTED_EVAL_PI_ACTOR;
   const namedPi = isPiExecutable(command[0]);
   const declaredPi =
     !namedPi && (await isDeclaredPiExecutable(resolved.commandPath, installation.packageRoot));
-  if (!namedPi && !declaredPi) return false;
+  if (!namedPi && !declaredPi) return UNTRUSTED_EVAL_PI_ACTOR;
   try {
     const controllerPi = await resolveEvalExecutable(
       "pi",
@@ -610,11 +624,15 @@ async function evalPiExtensionActor(
       sanitizedBrokerEnvironment(environment).PATH ?? "",
     );
     const controllerInstallation = await findValidatedPiPackageRoot(controllerPi.commandPath);
-    if (!isTrustedPiInstallation(installation, controllerInstallation)) return false;
+    if (!isTrustedPiInstallation(installation, controllerInstallation))
+      return UNTRUSTED_EVAL_PI_ACTOR;
   } catch {
-    return false;
+    return UNTRUSTED_EVAL_PI_ACTOR;
   }
-  return piPackageHostsExtensionRuntime(installation.packageRoot);
+  return {
+    trusted: true,
+    hostsExtensionRuntime: await piPackageHostsExtensionRuntime(installation.packageRoot),
+  };
 }
 
 export async function runEvalCommand(
@@ -654,7 +672,11 @@ async function runEvalCommandWithInterruption(
   throwIfEvalInterrupted(interruption);
   const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
-  const loadsUserExtensions = await evalPiExtensionActor(spec.command, spec.runDir, process.env);
+  const piActorInspection = await inspectEvalPiActor(spec.command, spec.runDir, process.env);
+  const loadsUserExtensions =
+    piActorInspection.trusted &&
+    piActorInspection.hostsExtensionRuntime &&
+    !commandDisablesExtensions(spec.command.slice(1));
   const initialReadinessOptions = {
     extensions: false as const,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -724,7 +746,11 @@ async function runEvalCommandWithInterruption(
         warning: readiness.warning !== undefined,
       });
     }
-    let optimizedPi = optimizePiStartupCommand(validated.command, {
+    const startupCommand: [string, ...string[]] =
+      piActorInspection.trusted && !isPiExecutable(validated.command[0])
+        ? ["pi", ...validated.command.slice(1)]
+        : [validated.command[0], ...validated.command.slice(1)];
+    let optimizedPi = optimizePiStartupCommand(startupCommand, {
       disableExtensions: true,
       disableSkills: true,
     });
@@ -751,7 +777,7 @@ async function runEvalCommandWithInterruption(
         })()
       : undefined;
     const piInstallation =
-      piActor || loadsUserExtensions
+      piActor || piActorInspection.trusted
         ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath, validated.runDir)
         : undefined;
     throwIfEvalInterrupted(interruption);
@@ -1026,8 +1052,15 @@ async function runEvalCommandWithInterruption(
       else primaryFailure = error;
     } finally {
       delete process.env.PIONEER_HOST_SECRET;
+      // The refresh worker reads the staged extension tree. Shut the broker down before
+      // that tree is deleted, or a rotation can be lost after the provider already issued it.
+      let brokerCloseFailure: unknown;
+      try {
+        await authBroker?.close();
+      } catch (error) {
+        brokerCloseFailure = error;
+      }
       const cleanupResults = await Promise.allSettled([
-        authBroker?.close(),
         bridge?.close(),
         bridgeRoot === undefined ? undefined : rm(bridgeRoot, { recursive: true, force: true }),
         proxy?.close(),
@@ -1035,9 +1068,11 @@ async function runEvalCommandWithInterruption(
         unlink(deniedWritePath).catch(() => undefined),
         rm(isolationDir, { recursive: true, force: true }),
       ]);
-      cleanupFailure = cleanupResults.find(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
-      )?.reason;
+      cleanupFailure =
+        brokerCloseFailure ??
+        cleanupResults.find(
+          (result): result is PromiseRejectedResult => result.status === "rejected",
+        )?.reason;
       try {
         recordEvalWorkLog(workLog, "stage_completed", {
           stage: "cleanup",

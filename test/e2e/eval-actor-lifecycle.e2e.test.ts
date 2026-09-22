@@ -158,12 +158,15 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
   });
 
   it.each([
-    ["pi command", "pi"],
-    ["declared cli.js path", "cli.js"],
+    ["pi command", "pi", "load"],
+    ["declared cli.js path", "cli.js", "load"],
+    ["declared cli.js without extensions", "cli.js", "builtin"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
-    async (_label, entry) => {
-      const { created, runDir } = await workspace(`extension-provider-${entry}`);
+    async (label, entry, mode) => {
+      const { created, runDir } = await workspace(
+        `extension-provider-${label.replaceAll(" ", "-")}`,
+      );
       const extensionDirectory = path.join(created.root, "user-extensions");
       const extensionSource = path.join(extensionDirectory, "provider.ts");
       const extensionMarker = "extension-provider-marker\n";
@@ -189,6 +192,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
         `#!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 const argv = process.argv.slice(2);
 if (argv.includes("--version")) {
   process.stdout.write("0.84.2\\n");
@@ -199,6 +203,9 @@ if (argv.includes("--list-models")) {
     "provider  model  context  max-out  thinking  images\\nextension-provider  demo  1K  1K  no  no\\n",
   );
   process.exit(0);
+}
+if (argv.includes("--no-extensions") && !argv.includes("--extension")) {
+  fs.readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8");
 }
 const extensionIndex = argv.indexOf("--extension");
 const extensionPath = extensionIndex < 0 ? undefined : argv[extensionIndex + 1];
@@ -252,11 +259,12 @@ process.stdout.write("READY\\n");
         "--pi-home",
         created.piHome,
         "--work-log",
-        created.workLogPath(`extension-provider-${entry}`),
+        created.workLogPath(`extension-provider-${label.replaceAll(" ", "-")}`),
         "--timeout-ms",
         "60000",
         "--",
         entry === "cli.js" ? cliPath : "pi",
+        ...(mode === "builtin" ? (["--no-extensions"] as const) : []),
         "--model",
         "extension-provider/demo",
         "--print",
@@ -269,8 +277,22 @@ process.stdout.write("READY\\n");
       const invocation = JSON.parse(
         await readFile(path.join(runDir, ACTOR_INVOCATION_FILE), "utf8"),
       ) as ScriptedActorInvocation & { extensionText?: string };
-      expect(invocation.argv).toEqual(expect.arrayContaining(["--no-extensions", "--extension"]));
-      expect(invocation.extensionText).toBe(extensionMarker);
+      if (mode === "builtin") {
+        expect(invocation.argv).toEqual(
+          expect.arrayContaining([
+            "--offline",
+            "--no-session",
+            "--no-approve",
+            "--no-skills",
+            "--no-extensions",
+          ]),
+        );
+        expect(invocation.argv).not.toContain("--extension");
+        expect(invocation.extensionText).toBe("");
+      } else {
+        expect(invocation.argv).toEqual(expect.arrayContaining(["--no-extensions", "--extension"]));
+        expect(invocation.extensionText).toBe(extensionMarker);
+      }
     },
   );
 
