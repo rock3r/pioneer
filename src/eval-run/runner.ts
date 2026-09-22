@@ -832,7 +832,18 @@ async function stageEvalPiExtensions(
     network: "public",
     ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: [...new Set(explicitCopies)] }),
   };
-  const authBroker = await prepareAuthBroker(runtime);
+  let authBroker: Awaited<ReturnType<typeof prepareAuthBroker>>;
+  try {
+    authBroker = await prepareAuthBroker(runtime);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.startsWith("[PI_") || error.message.startsWith("Explicit Pi extension"))
+    ) {
+      throw error;
+    }
+    throw new Error("Pi OAuth broker could not be started");
+  }
   try {
     checkAborted();
     const flagCommand: [string, ...string[]] = isPiExecutable(userCommand[0])

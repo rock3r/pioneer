@@ -302,6 +302,8 @@ export async function snapshotExtensionResources(
             "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
           );
         }
+        const sourceMode = details.mode & 0o777;
+        if ((staged.mode & 0o777) !== sourceMode) await chmod(target, sourceMode);
         return;
       }
       await copyFile(canonical, target);
