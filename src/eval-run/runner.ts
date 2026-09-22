@@ -528,6 +528,24 @@ function commandRequestsExplicitExtension(command: readonly string[]): boolean {
   );
 }
 
+function explicitExtensionPaths(command: readonly string[], runDir: string): string[] {
+  const paths: string[] = [];
+  for (let index = 0; index < command.length; index += 1) {
+    const argument = command[index];
+    if (argument === undefined) continue;
+    let value: string | undefined;
+    if (argument === "--extension" || argument === "-e") {
+      const next = command[index + 1];
+      if (next !== undefined && !next.startsWith("-")) value = next;
+    } else if (argument.startsWith("--extension=")) {
+      value = argument.slice("--extension=".length);
+    }
+    if (value === undefined || value.length === 0) continue;
+    paths.push(path.isAbsolute(value) ? path.normalize(value) : path.resolve(runDir, value));
+  }
+  return paths;
+}
+
 async function stageEvalPiExtensions(
   executablePath: string,
   sourceAgentDir: string,
@@ -702,6 +720,11 @@ async function runEvalCommandWithInterruption(
     piActorInspection.trusted &&
     piActorInspection.hostsExtensionRuntime &&
     !commandDisablesExtensions(spec.command.slice(1));
+  const loadsExplicitExtensions =
+    piActorInspection.trusted &&
+    piActorInspection.hostsExtensionRuntime &&
+    commandRequestsExplicitExtension(spec.command.slice(1));
+  const deferExtensionReadiness = loadsUserExtensions || loadsExplicitExtensions;
   const initialReadinessOptions = {
     extensions: false as const,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -715,7 +738,7 @@ async function runEvalCommandWithInterruption(
   // Extension-backed models are absent from a built-in-only probe. Defer that probe until
   // the same extension snapshot the actor will load is ready.
   let readiness =
-    spec.piHomeSource === undefined && !loadsUserExtensions
+    spec.piHomeSource === undefined && !deferExtensionReadiness
       ? await assertPiReady(initialReadinessOptions)
       : undefined;
   throwIfEvalInterrupted(interruption);
@@ -839,7 +862,7 @@ async function runEvalCommandWithInterruption(
       ...(requestedModel === undefined ? {} : { requestedModel }),
       signal: interruption.abortSignal,
     };
-    if (readiness === undefined && !loadsUserExtensions) {
+    if (readiness === undefined && !deferExtensionReadiness) {
       recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
       readiness = await assertPiReady(readinessOptions);
       recordEvalWorkLog(workLog, "stage_completed", {
@@ -958,12 +981,19 @@ async function runEvalCommandWithInterruption(
           ...piHome.environment,
           ...staged.authBroker?.environment,
         };
-        if (loadsUserExtensions && readiness === undefined) {
+        if (deferExtensionReadiness && readiness === undefined) {
           recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
+          const explicitPaths = explicitExtensionPaths(
+            validated.command.slice(1),
+            validated.runDir,
+          );
           readiness = await assertPiReady({
             command: [resolvedExecutable.commandPath],
             environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
-            preparedRuntime: staged.runtime,
+            preparedRuntime:
+              explicitPaths.length === 0
+                ? staged.runtime
+                : { ...staged.runtime, capabilityExtensions: explicitPaths },
             ...(requestedModel === undefined ? {} : { requestedModel }),
             signal: interruption.abortSignal,
           });

@@ -203,9 +203,11 @@ if (argv.includes("--version")) {
   process.exit(0);
 }
 if (argv.includes("--list-models")) {
-  process.stdout.write(
-    "provider  model  context  max-out  thinking  images\\nextension-provider  demo  1K  1K  no  no\\n",
-  );
+  const explicit = argv.includes("--extension") || argv.includes("-e");
+  const row = explicit
+    ? "extension-provider  demo  1K  1K  no  no"
+    : "builtin  demo  1K  1K  no  no";
+  process.stdout.write("provider  model  context  max-out  thinking  images\\n" + row + "\\n");
   process.exit(0);
 }
 if (argv.includes("--no-extensions") && !argv.includes("--extension")) {
@@ -332,7 +334,11 @@ export class FileAuthStorageBackend {
             ] as const)
           : []),
         "--model",
-        mode === "reject" ? "missing/no-such-model" : "extension-provider/demo",
+        mode === "reject"
+          ? "missing/no-such-model"
+          : mode === "load" || mode === "explicit" || mode === "explicit-short"
+            ? "extension-provider/demo"
+            : "builtin/demo",
         "--print",
         "Say READY",
       ]);

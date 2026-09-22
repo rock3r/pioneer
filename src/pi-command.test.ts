@@ -1,4 +1,4 @@
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
@@ -67,6 +67,24 @@ describe("POSIX Pi command resolution", () => {
     await expect(resolvePiCommand("pi", { PATH: bin }, "linux")).resolves.toEqual([
       await realpath(target),
     ]);
+  });
+
+  it("skips a non-executable PATH entry and uses a later executable", async () => {
+    const root = await createTempDir("pioneer-pi-path-exec-");
+    const earlier = path.join(root, "earlier");
+    const later = path.join(root, "later");
+    const blocked = path.join(earlier, "pi");
+    const target = path.join(later, "pi");
+    await mkdir(earlier);
+    await mkdir(later);
+    await writeFile(blocked, "not executable\n");
+    await writeFile(target, "#!/usr/bin/env node\n");
+    await chmod(blocked, 0o644);
+    await chmod(target, 0o755);
+
+    await expect(
+      resolvePiCommand("pi", { PATH: `${earlier}${path.delimiter}${later}` }, "linux"),
+    ).resolves.toEqual([await realpath(target)]);
   });
 });
 

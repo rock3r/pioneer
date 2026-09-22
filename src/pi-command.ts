@@ -1,4 +1,5 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 export type PiLaunchCommand = readonly [string, ...string[]];
@@ -210,7 +211,13 @@ async function posixExecutableCandidate(
         .map((entry) => path.join(entry, executable));
   for (const base of bases) {
     const candidate = await regularFileOrUndefined(base);
-    if (candidate !== undefined) return candidate;
+    if (candidate === undefined) continue;
+    try {
+      await access(candidate, constants.X_OK);
+    } catch {
+      continue;
+    }
+    return candidate;
   }
   throw notFound(executable);
 }
