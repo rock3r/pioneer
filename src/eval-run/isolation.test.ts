@@ -442,6 +442,8 @@ describe("validateEvalRunSpec", () => {
       expect(isSensitiveSystemExtensionParent("/private/var/log")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/var/spool")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/var/backups")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/cache")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/cache")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/var/db")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/private/var/db")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/private/var/backups")).toBe(true);
