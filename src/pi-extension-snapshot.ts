@@ -280,7 +280,15 @@ export async function snapshotExtensionResources(
         await copy(path.join(canonical, name), path.join(target, name), next);
       }
     } else if (details.isFile()) {
-      if (stagedAlready) return;
+      if (stagedAlready) {
+        const staged = await lstat(target);
+        if (staged.size !== details.size) {
+          throw new Error(
+            "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
+          );
+        }
+        return;
+      }
       await copyFile(canonical, target);
       const copied = await lstat(target);
       const after = await lstat(canonical);

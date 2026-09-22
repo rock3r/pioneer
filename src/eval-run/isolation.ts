@@ -598,6 +598,13 @@ export function isSensitiveCredentialPath(file: string): boolean {
     if (segment !== undefined && SENSITIVE_CREDENTIAL_SEGMENTS.has(segment)) return true;
     if (segment === ".config" && index === segments.length - 2) return true;
     if (
+      segment === ".local" &&
+      (segments[index + 1] === "share" || segments[index + 1] === "state") &&
+      index + 1 === segments.length - 2
+    ) {
+      return true;
+    }
+    if (
       segment === ".config" &&
       (segments[index + 1] === "gcloud" || segments[index + 1] === "gh")
     ) {

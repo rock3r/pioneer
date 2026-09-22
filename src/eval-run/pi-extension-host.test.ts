@@ -48,6 +48,14 @@ describe("Pi package runtime hosting", () => {
         `${home}${path.sep}.config${path.sep}my-extension${path.sep}provider.mjs`,
       ),
     ).toBe(false);
+    expect(
+      isSensitiveCredentialPath(`${home}${path.sep}.local${path.sep}share${path.sep}provider.mjs`),
+    ).toBe(true);
+    expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}.local${path.sep}share${path.sep}my-extension${path.sep}provider.mjs`,
+      ),
+    ).toBe(false);
     expect(isSensitiveCredentialPath(`${home}${path.sep}Library${path.sep}provider.mjs`)).toBe(
       process.platform !== "linux",
     );
