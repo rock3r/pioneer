@@ -437,6 +437,8 @@ describe("validateEvalRunSpec", () => {
       expect(isSensitiveSystemExtensionParent("/etc/ssl/private")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/run/secrets")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/var/lib")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/log")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/log")).toBe(true);
       expect(isSensitiveSystemExtensionParent("/srv/my-extension")).toBe(false);
       expect(isSensitiveSystemExtensionParent("/var/folders/xx/T")).toBe(false);
 

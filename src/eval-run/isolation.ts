@@ -554,10 +554,12 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/etc",
   "/private/etc",
   "/private/var/lib",
+  "/private/var/log",
   "/private/var/run",
   "/root",
   "/run",
   "/var/lib",
+  "/var/log",
   "/var/run",
 ] as const;
 
