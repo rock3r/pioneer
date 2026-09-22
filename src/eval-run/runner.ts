@@ -7,9 +7,12 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
+  readlink,
   realpath,
   rm,
+  symlink,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -583,6 +586,36 @@ async function protectedExtensionRoots(): Promise<ReadonlySet<string>> {
   return roots;
 }
 
+function isAlreadyExists(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "EEXIST"
+  );
+}
+
+async function mergeExtensionDirectory(source: string, destination: string): Promise<void> {
+  await mkdir(destination, { recursive: true });
+  for (const entry of await readdir(source, { withFileTypes: true })) {
+    const from = path.join(source, entry.name);
+    const to = path.join(destination, entry.name);
+    try {
+      if (entry.isSymbolicLink()) await symlink(await readlink(from), to);
+      else if (entry.isDirectory()) await mergeExtensionDirectory(from, to);
+      else if (entry.isFile()) await copyFile(from, to, constants.COPYFILE_EXCL);
+    } catch (error) {
+      if (!isAlreadyExists(error)) throw error;
+    }
+  }
+}
+
+function extensionStageError(error: unknown): Error {
+  if (error instanceof Error && error.message.startsWith("Explicit Pi extension")) return error;
+  if (error instanceof Error && error.message.startsWith("[PI_")) return error;
+  return new Error("Explicit Pi extension could not be staged");
+}
+
 async function stageExplicitExtensionFiles(
   sources: readonly string[],
   destinationDir: string,
@@ -634,12 +667,21 @@ async function stageExplicitExtensionFiles(
     });
   }
   // Stage the extension directory, not only the entry file, so sibling imports still resolve.
-  const snapshot = await snapshotExtensionResources(
-    resources,
-    destinationDir,
-    signal,
-    await piRuntimeStorage(sourceAgentDir, path.join(sourceAgentDir, "settings.json"), process.env),
-  );
+  let snapshot: Awaited<ReturnType<typeof snapshotExtensionResources>>;
+  try {
+    snapshot = await snapshotExtensionResources(
+      resources,
+      destinationDir,
+      signal,
+      await piRuntimeStorage(
+        sourceAgentDir,
+        path.join(sourceAgentDir, "settings.json"),
+        process.env,
+      ),
+    );
+  } catch (error) {
+    throw extensionStageError(error);
+  }
   const stagedBySource = new Map<string, string>();
   snapshot.sourcePaths.forEach((source, index) => {
     const staged = snapshot.paths[index];
@@ -829,8 +871,15 @@ async function stageEvalPiExtensions(
       );
     });
     if (overlapsStagedChild) {
-      await mkdir(path.dirname(mirrored), { recursive: true });
-      await copyFile(canonical, mirrored);
+      const parent = path.dirname(canonical);
+      try {
+        await mergeExtensionDirectory(
+          parent,
+          mirroredExtensionStagePath(path.join(extensionRoot, "extensions"), parent),
+        );
+      } catch (error) {
+        throw extensionStageError(error);
+      }
       alreadyStaged.set(canonical, mirrored);
       continue;
     }
