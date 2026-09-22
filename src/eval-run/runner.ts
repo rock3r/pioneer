@@ -65,7 +65,11 @@ import {
 } from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
 import { macosRuntimeReadPaths } from "./macos-runtime.js";
-import { isDeclaredPiExecutable, piPackageHostsExtensionRuntime } from "./pi-extension-host.js";
+import {
+  isDeclaredPiExecutable,
+  piPackageHostsAuthAdapter,
+  piPackageHostsExtensionRuntime,
+} from "./pi-extension-host.js";
 import {
   resolvePublicTarget,
   startEgressProxy,
@@ -843,12 +847,14 @@ async function stageEvalPiExtensions(
 interface EvalPiActor {
   readonly trusted: boolean;
   readonly hostsExtensionRuntime: boolean;
+  readonly hostsAuthAdapter: boolean;
   readonly packageRoot?: string;
 }
 
 const UNTRUSTED_EVAL_PI_ACTOR: EvalPiActor = {
   trusted: false,
   hostsExtensionRuntime: false,
+  hostsAuthAdapter: false,
 };
 
 /** Trusted Pi identity, separate from whether this run stages extensions. */
@@ -888,6 +894,7 @@ async function inspectEvalPiActor(
   return {
     trusted: true,
     hostsExtensionRuntime: await piPackageHostsExtensionRuntime(installation.packageRoot),
+    hostsAuthAdapter: await piPackageHostsAuthAdapter(installation.packageRoot),
     packageRoot: installation.packageRoot,
   };
 }
@@ -1168,6 +1175,7 @@ async function runEvalCommandWithInterruption(
       const needsAuthBroker =
         piActorInspection.trusted &&
         piActorInspection.hostsExtensionRuntime &&
+        piActorInspection.hostsAuthAdapter &&
         process.platform !== "win32" &&
         (await snapshotOAuthProviders(piHome.agentDir)).size > 0;
       const explicitExtension = commandRequestsExplicitExtension(validated.command.slice(1));

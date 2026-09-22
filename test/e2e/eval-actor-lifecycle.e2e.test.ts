@@ -381,6 +381,14 @@ process.stdout.write("READY\\n");
           { mode: 0o600 },
         );
         await writeFile(
+          path.join(created.piPackageRoot, "dist", "core", "http-dispatcher.js"),
+          "export function configureHttpDispatcher() {}\n",
+        );
+        await writeFile(
+          path.join(created.piPackageRoot, "dist", "core", "model-registry.js"),
+          "export class ModelRegistry { static create() { return {}; } }\n",
+        );
+        await writeFile(
           path.join(created.piPackageRoot, "dist", "core", "auth-storage.js"),
           `export class AuthStorage {
   async modify(_provider, update) { return await update(); }

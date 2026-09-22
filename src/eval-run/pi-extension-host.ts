@@ -8,20 +8,38 @@ const EXTENSION_RUNTIME_FILES = [
   "dist/core/resource-loader.js",
   "dist/core/settings-manager.js",
 ] as const;
+const AUTH_RUNTIME_FILES = [
+  "dist/core/auth-storage.js",
+  "dist/core/http-dispatcher.js",
+  "dist/core/resource-loader.js",
+] as const;
+
+async function readableRegularFile(candidate: string): Promise<boolean> {
+  try {
+    await access(candidate, constants.R_OK);
+    const canonical = await realpath(candidate);
+    return (await lstat(canonical)).isFile();
+  } catch {
+    return false;
+  }
+}
 
 /** The official Pi package can host Pioneer's extension adapter. */
 export async function piPackageHostsExtensionRuntime(packageRoot: string): Promise<boolean> {
   for (const relative of EXTENSION_RUNTIME_FILES) {
-    const candidate = path.join(packageRoot, relative);
-    try {
-      await access(candidate, constants.R_OK);
-      const canonical = await realpath(candidate);
-      if (!(await lstat(canonical)).isFile()) return false;
-    } catch {
-      return false;
-    }
+    if (!(await readableRegularFile(path.join(packageRoot, relative)))) return false;
   }
   return true;
+}
+
+/** The package can host the OAuth broker and auth worker without a missing import. */
+export async function piPackageHostsAuthAdapter(packageRoot: string): Promise<boolean> {
+  for (const relative of AUTH_RUNTIME_FILES) {
+    if (!(await readableRegularFile(path.join(packageRoot, relative)))) return false;
+  }
+  const runtime = await readableRegularFile(path.join(packageRoot, "dist/core/model-runtime.js"));
+  const registry = await readableRegularFile(path.join(packageRoot, "dist/core/model-registry.js"));
+  return runtime || registry;
 }
 
 /** True when the executable is the package's declared `pi` entry point. */

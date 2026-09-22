@@ -1,6 +1,7 @@
 import { lstat, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { piPackageHostsAuthAdapter } from "./eval-run/pi-extension-host.js";
 import { type PiAuthBroker, startPiAuthBroker } from "./pi-auth-broker.js";
 import { type PreparedReviewRuntime, runPreparedPiCommand } from "./pi-extension-discovery.js";
 import { extensionPathsWithCapabilities } from "./pi-extension-snapshot.js";
@@ -73,6 +74,7 @@ export async function prepareAuthBroker(
 ): Promise<PiAuthBroker | undefined> {
   const root = runtime.extensions.runtimeRoot;
   if (root === undefined || process.platform === "win32") return undefined;
+  if (!(await piPackageHostsAuthAdapter(root))) return undefined;
   const providers = await snapshotOAuthProviders(runtime.home.agentDir);
   if (providers.size === 0) return undefined;
   if (!(await lstat(path.join(runtime.home.sourceDir, "auth.json"))).isFile())
