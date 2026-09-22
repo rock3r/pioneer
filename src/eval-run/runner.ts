@@ -646,8 +646,12 @@ const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
   ".ssh",
 ]);
 
-function isSensitiveCredentialPath(file: string): boolean {
-  const segments = file.split(path.sep);
+function credentialSegment(segment: string): string {
+  return process.platform === "linux" ? segment : segment.toLowerCase();
+}
+
+export function isSensitiveCredentialPath(file: string): boolean {
+  const segments = file.split(path.sep).map(credentialSegment);
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
     if (segment !== undefined && SENSITIVE_CREDENTIAL_SEGMENTS.has(segment)) return true;
@@ -657,7 +661,7 @@ function isSensitiveCredentialPath(file: string): boolean {
     ) {
       return true;
     }
-    if (segment === "Library" && segments[index + 1] === "Keychains") return true;
+    if (segment === "library" && segments[index + 1] === "keychains") return true;
   }
   return false;
 }
@@ -1174,7 +1178,6 @@ async function runEvalCommandWithInterruption(
       };
       const needsAuthBroker =
         piActorInspection.trusted &&
-        piActorInspection.hostsExtensionRuntime &&
         piActorInspection.hostsAuthAdapter &&
         process.platform !== "win32" &&
         (await snapshotOAuthProviders(piHome.agentDir)).size > 0;

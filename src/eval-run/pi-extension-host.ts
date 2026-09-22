@@ -9,6 +9,7 @@ const EXTENSION_RUNTIME_FILES = [
   "dist/core/settings-manager.js",
 ] as const;
 const AUTH_RUNTIME_FILES = [
+  "dist/cli.js",
   "dist/core/auth-storage.js",
   "dist/core/http-dispatcher.js",
   "dist/core/resource-loader.js",
