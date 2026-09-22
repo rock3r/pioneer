@@ -195,10 +195,10 @@ export async function snapshotExtensionResources(
   for (const root of selectedRoots) {
     const relativeToAgent = agentDir === undefined ? ".." : path.relative(root, agentDir);
     const containsAgent =
-      relativeToAgent !== "" &&
-      relativeToAgent !== ".." &&
-      !relativeToAgent.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relativeToAgent);
+      relativeToAgent === "" ||
+      (relativeToAgent !== ".." &&
+        !relativeToAgent.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relativeToAgent));
     if (containsAgent) {
       throw new Error(
         "Explicit Pi extension must live in a dedicated directory, not a directory that contains the Pi agent directory",

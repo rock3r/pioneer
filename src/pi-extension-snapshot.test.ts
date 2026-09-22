@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { lstat, mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -310,37 +310,14 @@ describe("extension snapshots", () => {
       );
     }
 
-    const result = await snapshotExtensionResources(
-      [{ path: path.join(agentDir, "local.ts"), enabled: true, metadata: { scope: "user" } }],
-      path.join(root, "snapshot"),
-      undefined,
-      { agentDir, sessionDirs: [history] },
-    );
-
-    const staged = path.dirname(result.paths[0] ?? "");
     await expect(
-      readFile(path.join(staged, "sessions", "--project--", "run.jsonl")),
-    ).rejects.toThrow();
-    await expect(lstat(path.join(staged, "sessions"))).rejects.toThrow();
-    await expect(lstat(path.join(staged, logsName))).rejects.toThrow();
-    await expect(lstat(path.join(staged, "pi-debug.log"))).rejects.toThrow();
-    await expect(lstat(path.join(staged, "history"))).rejects.toThrow();
-    if (process.platform !== "win32") {
-      await expect(
-        lstat(path.join(staged, "node_modules", "example-sdk", "debug-target.txt")),
-      ).rejects.toThrow();
-    }
-    await expect(
-      lstat(path.join(staged, "node_modules", "example-sdk", "linked-history")),
-    ).rejects.toThrow();
-    const stagedSdk = path.join(staged, "node_modules", "example-sdk");
-    await expect(readFile(path.join(stagedSdk, "sessions", "sessions.js"), "utf8")).resolves.toBe(
-      "module.exports = 'sessions';",
-    );
-    await expect(readFile(path.join(stagedSdk, "logs", "levels.json"), "utf8")).resolves.toBe("{}");
-    await expect(readFile(path.join(stagedSdk, "debug.log"), "utf8")).resolves.toBe(
-      "dependency file",
-    );
+      snapshotExtensionResources(
+        [{ path: path.join(agentDir, "local.ts"), enabled: true, metadata: { scope: "user" } }],
+        path.join(root, "snapshot"),
+        undefined,
+        { agentDir, sessionDirs: [history] },
+      ),
+    ).rejects.toThrow("Pi agent directory");
   });
 
   it("refuses an extension stored inside private Pi session storage", async () => {
@@ -382,7 +359,7 @@ describe("extension snapshots", () => {
         undefined,
         { agentDir, sessionDirs: [] },
       ),
-    ).rejects.toThrow("[PI_EXTENSION_RUNTIME_UNSUPPORTED]");
+    ).rejects.toThrow("Pi agent directory");
   });
 
   it("stages an agent-directory child directory whose name ends in .log", async () => {
