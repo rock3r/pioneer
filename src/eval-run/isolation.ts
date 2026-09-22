@@ -559,6 +559,7 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/private/var/db",
   "/private/var/lib",
   "/private/var/log",
+  "/private/var/mail",
   "/private/var/run",
   "/private/var/opt",
   "/private/var/spool",
@@ -569,6 +570,7 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/var/db",
   "/var/lib",
   "/var/log",
+  "/var/mail",
   "/var/run",
   "/var/opt",
   "/var/spool",
@@ -650,6 +652,16 @@ export function isSensitiveCredentialPath(file: string): boolean {
       segment === "library" &&
       segments[index + 1] === "application support" &&
       segments[index + 2] === "chromium"
+    ) {
+      return true;
+    }
+    if (segment === "library" && segments[index + 1] === "safari") return true;
+    const safariContainer = segments[index + 2];
+    if (
+      segment === "library" &&
+      segments[index + 1] === "containers" &&
+      safariContainer !== undefined &&
+      (safariContainer === "com.apple.safari" || safariContainer.startsWith("com.apple.safari."))
     ) {
       return true;
     }

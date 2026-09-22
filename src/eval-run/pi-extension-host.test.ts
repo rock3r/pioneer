@@ -84,6 +84,16 @@ describe("Pi package runtime hosting", () => {
       ),
     ).toBe(process.platform !== "linux");
     expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}Library${path.sep}Safari${path.sep}provider.mjs`,
+      ),
+    ).toBe(process.platform !== "linux");
+    expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}Library${path.sep}Containers${path.sep}com.apple.Safari${path.sep}Data${path.sep}provider.mjs`,
+      ),
+    ).toBe(process.platform !== "linux");
+    expect(
       isSensitiveCredentialPath(`${home}${path.sep}.local${path.sep}share${path.sep}provider.mjs`),
     ).toBe(true);
     expect(
