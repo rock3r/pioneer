@@ -198,12 +198,31 @@ async function windowsExecutableCandidate(
   throw notFound(executable);
 }
 
+async function posixExecutableCandidate(
+  executable: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Promise<string> {
+  const bases = executable.includes("/")
+    ? [path.resolve(executable)]
+    : (environment.PATH ?? "")
+        .split(path.delimiter)
+        .filter((entry) => entry.length > 0)
+        .map((entry) => path.join(entry, executable));
+  for (const base of bases) {
+    const candidate = await regularFileOrUndefined(base);
+    if (candidate !== undefined) return candidate;
+  }
+  throw notFound(executable);
+}
+
 export async function resolvePiCommand(
   executable = "pi",
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   platform: NodeJS.Platform = process.platform,
 ): Promise<PiLaunchCommand> {
-  if (platform !== "win32") return [executable];
+  // Return the canonical file. A PATH symlink often lives outside the package, and the
+  // sandbox grants the package directory rather than that external launcher.
+  if (platform !== "win32") return [await posixExecutableCandidate(executable, environment)];
   const resolved = await windowsExecutableCandidate(executable, environment);
   const extension = path.win32.extname(resolved).toLowerCase();
   if (extension === ".cmd") return await resolveNpmPiCmdShim(resolved);

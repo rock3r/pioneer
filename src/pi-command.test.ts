@@ -1,4 +1,4 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
@@ -48,6 +48,27 @@ async function npmPiFixture(
   );
   return { shim, target };
 }
+
+describe("POSIX Pi command resolution", () => {
+  it("launches the canonical file when PATH pi is a symlink outside the package", async () => {
+    const root = await createTempDir("pioneer-pi-symlink-");
+    const packageRoot = path.join(root, "lib", "pi-coding-agent");
+    const target = path.join(packageRoot, "dist", "cli.js");
+    const bin = path.join(root, "bin");
+    await mkdir(path.dirname(target), { recursive: true });
+    await mkdir(bin);
+    await writeFile(target, "#!/usr/bin/env node\n", { mode: 0o755 });
+    await writeFile(
+      path.join(packageRoot, "package.json"),
+      JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli.js" } }),
+    );
+    await symlink(target, path.join(bin, "pi"));
+
+    await expect(resolvePiCommand("pi", { PATH: bin }, "linux")).resolves.toEqual([
+      await realpath(target),
+    ]);
+  });
+});
 
 describe("Windows Pi command resolution", () => {
   it("unwraps a generated npm pi.cmd shim into an argv-safe Node launch", async () => {

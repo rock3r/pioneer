@@ -164,6 +164,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["declared cli.js rejects an unknown model", "cli.js", "reject"],
     ["brokers oauth without user extensions", "cli.js", "oauth"],
     ["strips tools from an explicit extension", "cli.js", "explicit"],
+    ["strips tools from an explicit short extension flag", "cli.js", "explicit-short"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -210,7 +211,7 @@ if (argv.includes("--list-models")) {
 if (argv.includes("--no-extensions") && !argv.includes("--extension")) {
   fs.readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8");
 }
-const extensionIndex = argv.indexOf("--extension");
+const extensionIndex = argv.findIndex((argument) => argument === "--extension" || argument === "-e");
 const extensionPath = extensionIndex < 0 ? undefined : argv[extensionIndex + 1];
 let extensionText = "";
 if (extensionPath !== undefined) extensionText = fs.readFileSync(extensionPath, "utf8");
@@ -259,7 +260,7 @@ process.stdout.write("READY\\n");
       );
       await writeFile(
         path.join(created.piPackageRoot, "dist", "core", "resource-loader.js"),
-        mode === "explicit"
+        mode === "explicit" || mode === "explicit-short"
           ? `export class DefaultResourceLoader {
   getExtensions() {
     return {
@@ -271,7 +272,7 @@ process.stdout.write("READY\\n");
 `
           : "export class DefaultResourceLoader { getExtensions() { return { extensions: [], errors: [] }; } }\n",
       );
-      if (mode === "explicit") {
+      if (mode === "explicit" || mode === "explicit-short") {
         await writeFile(
           path.join(created.piPackageRoot, "explicit-extension.mjs"),
           "explicit-extension-marker\n",
@@ -324,8 +325,11 @@ export class FileAuthStorageBackend {
         "--",
         entry === "cli.js" ? cliPath : "pi",
         ...(mode === "load" ? [] : (["--no-extensions"] as const)),
-        ...(mode === "explicit"
-          ? (["--extension", path.join(created.piPackageRoot, "explicit-extension.mjs")] as const)
+        ...(mode === "explicit" || mode === "explicit-short"
+          ? ([
+              mode === "explicit-short" ? "-e" : "--extension",
+              path.join(created.piPackageRoot, "explicit-extension.mjs"),
+            ] as const)
           : []),
         "--model",
         mode === "reject" ? "missing/no-such-model" : "extension-provider/demo",
@@ -349,9 +353,9 @@ export class FileAuthStorageBackend {
         brokerConfigured?: boolean;
         toolCount?: number | null;
       };
-      if (mode === "explicit") {
+      if (mode === "explicit" || mode === "explicit-short") {
         expect(invocation.argv).toContain("--no-extensions");
-        expect(invocation.argv).toContain("--extension");
+        expect(invocation.argv).toContain(mode === "explicit-short" ? "-e" : "--extension");
         expect(invocation.extensionText).toBe("explicit-extension-marker\n");
         expect(invocation.toolCount).toBe(0);
         expect(invocation.brokerConfigured).toBe(false);

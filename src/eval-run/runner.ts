@@ -523,7 +523,8 @@ function commandDisablesExtensions(command: readonly string[]): boolean {
 
 function commandRequestsExplicitExtension(command: readonly string[]): boolean {
   return command.some(
-    (argument) => argument === "--extension" || argument.startsWith("--extension="),
+    (argument) =>
+      argument === "--extension" || argument.startsWith("--extension=") || argument === "-e",
   );
 }
 
