@@ -101,9 +101,9 @@ describe("POSIX Pi command resolution", () => {
     const previous = process.cwd();
     process.chdir(root);
     try {
-      await expect(resolvePiCommand("pi", { PATH: `:${later}` }, "linux")).resolves.toEqual([
-        await realpath(target),
-      ]);
+      await expect(
+        resolvePiCommand("pi", { PATH: `${path.delimiter}${later}` }, "linux"),
+      ).resolves.toEqual([await realpath(target)]);
     } finally {
       process.chdir(previous);
     }
