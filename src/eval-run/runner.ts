@@ -27,6 +27,7 @@ import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
 import { preparePiExtensions } from "../pi-extension-runtime.js";
 import {
   extensionPathsWithCapabilities,
+  mirroredExtensionStagePath,
   snapshotExtensionResources,
 } from "../pi-extension-snapshot.js";
 import { defaultPiAgentDir, type PreparedPiHome, prepareIsolatedPiHome } from "../pi-home.js";
@@ -589,13 +590,16 @@ async function stageExplicitExtensionFiles(
       throw new Error("Explicit Pi extension must be a regular file");
     }
     const parent = path.dirname(canonical);
-    if (
-      blocked.has(parent) ||
-      isBroadExtensionParent(parent) ||
-      parent === (await realpath(sourceAgentDir))
-    ) {
+    const agentRoot = await realpath(sourceAgentDir);
+    const relativeToAgent = path.relative(parent, agentRoot);
+    const containsAgent =
+      relativeToAgent === "" ||
+      (relativeToAgent !== ".." &&
+        !relativeToAgent.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relativeToAgent));
+    if (blocked.has(parent) || isBroadExtensionParent(parent) || containsAgent) {
       throw new Error(
-        "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or the Pi agent directory",
+        "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or a directory that contains the Pi agent directory",
       );
     }
     canonicals.push(canonical);
@@ -699,6 +703,14 @@ async function stageEvalPiExtensions(
     }
     resolvedSources.push(canonical);
     if (alreadyStaged.has(canonical)) continue;
+    const mirrored = mirroredExtensionStagePath(path.join(extensionRoot, "extensions"), canonical);
+    try {
+      await lstat(mirrored);
+      alreadyStaged.set(canonical, mirrored);
+      continue;
+    } catch {
+      // The enabled snapshot did not already place this file.
+    }
     const covered = extensions.sourcePaths.findIndex((stagedSource) => {
       const root = path.dirname(stagedSource);
       const relative = path.relative(root, canonical);

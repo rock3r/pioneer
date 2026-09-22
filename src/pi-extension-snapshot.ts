@@ -80,6 +80,16 @@ async function rootLogFiles(agentDir: string): Promise<string[]> {
 }
 
 /** Copies code as data. No extension is imported in the controller. */
+export function mirroredExtensionStagePath(destination: string, source: string): string {
+  const parsed = path.parse(source);
+  return path.join(
+    destination,
+    "tree",
+    encodeURIComponent(parsed.root),
+    path.relative(parsed.root, source),
+  );
+}
+
 export async function snapshotExtensionResources(
   resources: readonly ExtensionResource[],
   destination: string,
@@ -152,13 +162,7 @@ export async function snapshotExtensionResources(
   let bytes = 0;
   const digest = createHash("sha256");
   const mapped = new Map<string, string>();
-  const stagedPath = (source: string): string =>
-    path.join(
-      destination,
-      "tree",
-      encodeURIComponent(path.parse(source).root),
-      path.relative(path.parse(source).root, source),
-    );
+  const stagedPath = (source: string): string => mirroredExtensionStagePath(destination, source);
   async function copy(
     source: string,
     target: string,

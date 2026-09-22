@@ -175,6 +175,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["rejects an extension directly in a shared temp directory", "cli.js", "shared-temp"],
     ["rejects an extension inside private Pi session storage", "cli.js", "private-session"],
     ["rejects an extension directly in the Pi agent directory", "cli.js", "agent-root"],
+    ["rejects an extension above the Pi agent directory", "cli.js", "agent-ancestor"],
     ["reuses an enabled extension named again on the command", "cli.js", "overlap"],
     ["reuses a sibling of an enabled extension", "cli.js", "sibling"],
   ] as const)(
@@ -330,6 +331,10 @@ process.stdout.write("READY\\n");
       if (mode === "agent-root") {
         await writeFile(agentRootExtension, "explicit-extension-marker\n");
       }
+      const agentAncestorExtension = path.join(created.root, "outside-agent.mjs");
+      if (mode === "agent-ancestor") {
+        await writeFile(agentAncestorExtension, "explicit-extension-marker\n");
+      }
       const extensionArgs =
         mode === "explicit"
           ? ["--extension", path.join(created.piPackageRoot, "explicit-extension.mjs")]
@@ -347,11 +352,13 @@ process.stdout.write("READY\\n");
                       ? ["--extension", privateSessionExtension]
                       : mode === "agent-root"
                         ? ["--extension", agentRootExtension]
-                        : mode === "overlap"
-                          ? ["--extension", extensionSource]
-                          : mode === "sibling"
-                            ? ["--extension", path.join(extensionDirectory, "helper.ts")]
-                            : [];
+                        : mode === "agent-ancestor"
+                          ? ["--extension", agentAncestorExtension]
+                          : mode === "overlap"
+                            ? ["--extension", extensionSource]
+                            : mode === "sibling"
+                              ? ["--extension", path.join(extensionDirectory, "helper.ts")]
+                              : [];
       if (mode === "oauth") {
         await writeFile(
           path.join(created.piHome, "auth.json"),
@@ -422,7 +429,8 @@ export class FileAuthStorageBackend {
         mode !== "directory" &&
         mode !== "shared-temp" &&
         mode !== "private-session" &&
-        mode !== "agent-root"
+        mode !== "agent-root" &&
+        mode !== "agent-ancestor"
       ) {
         expect(run.stderr).not.toMatch(/PI_EXTENSION_|PI_OAUTH_/);
       }
@@ -430,7 +438,8 @@ export class FileAuthStorageBackend {
         mode === "directory" ||
         mode === "shared-temp" ||
         mode === "private-session" ||
-        mode === "agent-root"
+        mode === "agent-root" ||
+        mode === "agent-ancestor"
       ) {
         try {
           expect(run.exitCode, run.stderr).not.toBe(0);
