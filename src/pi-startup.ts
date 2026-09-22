@@ -54,7 +54,9 @@ function optionValue(args: readonly string[], name: string): string | undefined 
 
 export function requestedPiModel(command: readonly [string, ...string[]]): string | undefined {
   if (!isPiExecutable(command[0])) return undefined;
-  const args = command.slice(1);
+  const rawArgs = command.slice(1);
+  const delimiter = rawArgs.indexOf("--");
+  const args = delimiter < 0 ? rawArgs : rawArgs.slice(0, delimiter);
   const model = optionValue(args, "--model");
   if (!model) return undefined;
   const provider = optionValue(args, "--provider");

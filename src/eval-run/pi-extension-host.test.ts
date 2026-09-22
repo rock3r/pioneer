@@ -39,5 +39,14 @@ describe("Pi package runtime hosting", () => {
     ).toBe(true);
     const mixed = `${path.sep}Users${path.sep}user${path.sep}.SSH${path.sep}provider.mjs`;
     expect(isSensitiveCredentialPath(mixed)).toBe(process.platform !== "linux");
+    const home = `${path.sep}home${path.sep}user`;
+    expect(isSensitiveCredentialPath(`${home}${path.sep}.config${path.sep}provider.mjs`)).toBe(
+      true,
+    );
+    expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}.config${path.sep}my-extension${path.sep}provider.mjs`,
+      ),
+    ).toBe(false);
   });
 });

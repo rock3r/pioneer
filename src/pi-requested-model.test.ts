@@ -21,5 +21,6 @@ describe("requested Pi model extraction", () => {
   it("returns undefined for non-Pi commands or the configured default", () => {
     expect(requestedPiModel(["node", "actor.mjs", "--model", "gpt-5.5"])).toBeUndefined();
     expect(requestedPiModel(["pi", "--mode", "rpc"])).toBeUndefined();
+    expect(requestedPiModel(["pi", "--no-extensions", "--", "--model", "literal"])).toBeUndefined();
   });
 });

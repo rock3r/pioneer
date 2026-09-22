@@ -663,9 +663,24 @@ export function isSensitiveCredentialPath(file: string): boolean {
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
     if (segment !== undefined && SENSITIVE_CREDENTIAL_SEGMENTS.has(segment)) return true;
+    if (segment === ".config" && index === segments.length - 2) return true;
     if (
       segment === ".config" &&
       (segments[index + 1] === "gcloud" || segments[index + 1] === "gh")
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      index + 1 === segments.length - 2
+    ) {
+      return true;
+    }
+    if (
+      segment === "appdata" &&
+      (segments[index + 1] === "roaming" || segments[index + 1] === "local") &&
+      index + 1 === segments.length - 2
     ) {
       return true;
     }
