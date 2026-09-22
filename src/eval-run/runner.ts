@@ -20,7 +20,7 @@ import {
 } from "../controller-scratch.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
 import type { PiAuthBroker } from "../pi-auth-broker.js";
-import { prepareAuthBroker } from "../pi-auth-runtime.js";
+import { prepareAuthBroker, snapshotOAuthProviders } from "../pi-auth-runtime.js";
 import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
 import { preparePiExtensions } from "../pi-extension-runtime.js";
 import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
@@ -529,6 +529,7 @@ async function stageEvalPiExtensions(
   userCommand: readonly [string, ...string[]],
   checkAborted: () => void,
   signal: AbortSignal | undefined,
+  extensionsEnabled: boolean,
 ): Promise<{
   readonly authBroker?: PiAuthBroker;
   readonly readPaths: readonly string[];
@@ -545,7 +546,7 @@ async function stageEvalPiExtensions(
     process.env,
     signal,
     path.join(piHome.agentDir, "settings.json"),
-    true,
+    extensionsEnabled,
   );
   checkAborted();
   const runtime: PreparedReviewRuntime = {
@@ -567,7 +568,7 @@ async function stageEvalPiExtensions(
       optimizePiStartupCommand(flagCommand, {
         disableExtensions: true,
         disableSkills: true,
-        extensions: extensionPathsWithCapabilities(extensions, []),
+        extensions: extensionsEnabled ? extensionPathsWithCapabilities(extensions, []) : [],
       }),
       extensions.command,
     );
@@ -601,6 +602,7 @@ async function stageEvalPiExtensions(
 interface EvalPiActor {
   readonly trusted: boolean;
   readonly hostsExtensionRuntime: boolean;
+  readonly packageRoot?: string;
 }
 
 const UNTRUSTED_EVAL_PI_ACTOR: EvalPiActor = {
@@ -645,6 +647,7 @@ async function inspectEvalPiActor(
   return {
     trusted: true,
     hostsExtensionRuntime: await piPackageHostsExtensionRuntime(installation.packageRoot),
+    packageRoot: installation.packageRoot,
   };
 }
 
@@ -799,6 +802,12 @@ async function runEvalCommandWithInterruption(
     if (piActor && !isTrustedPiInstallation(piInstallation, controllerPiInstallation)) {
       throw new Error("Pi eval actor is not a validated Pi installation");
     }
+    if (
+      piActorInspection.packageRoot !== undefined &&
+      piInstallation?.packageRoot !== piActorInspection.packageRoot
+    ) {
+      throw new Error("Pi eval actor is not a validated Pi installation");
+    }
     const executableReadPaths = buildEvalExecutableReadPaths(resolvedExecutable, piInstallation);
     const platformRuntimeReadPaths = await macosRuntimeReadPaths(process.execPath);
     throwIfEvalInterrupted(interruption);
@@ -901,7 +910,14 @@ async function runEvalCommandWithInterruption(
         ...optimizedPi.environment,
         ...piHome.environment,
       };
-      if (loadsUserExtensions) {
+      const needsAuthBroker =
+        piActorInspection.trusted &&
+        piActorInspection.hostsExtensionRuntime &&
+        process.platform !== "win32" &&
+        (await snapshotOAuthProviders(piHome.agentDir)).size > 0;
+      // Built-in-only opt-out skips user extensions. It still brokers OAuth, matching
+      // reviews, so a refresh is not discarded with the private snapshot.
+      if (loadsUserExtensions || needsAuthBroker) {
         const staged = await stageEvalPiExtensions(
           resolvedExecutable.commandPath,
           validatedPiHomeSource,
@@ -910,6 +926,7 @@ async function runEvalCommandWithInterruption(
           validated.command,
           throwIfSetupInterrupted,
           interruption.abortSignal,
+          loadsUserExtensions,
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
@@ -920,7 +937,7 @@ async function runEvalCommandWithInterruption(
           ...piHome.environment,
           ...staged.authBroker?.environment,
         };
-        if (readiness === undefined) {
+        if (loadsUserExtensions && readiness === undefined) {
           recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
           readiness = await assertPiReady({
             command: [resolvedExecutable.commandPath],

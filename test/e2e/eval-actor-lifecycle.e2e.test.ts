@@ -162,6 +162,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["declared cli.js path", "cli.js", "load"],
     ["declared cli.js without extensions", "cli.js", "builtin"],
     ["declared cli.js rejects an unknown model", "cli.js", "reject"],
+    ["brokers oauth without user extensions", "cli.js", "oauth"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -219,6 +220,7 @@ fs.writeFileSync(
     cwd: process.cwd(),
     piAgentDir: process.env.PI_CODING_AGENT_DIR ?? null,
     extensionText,
+    brokerConfigured: Boolean(process.env.PIONEER_AUTH_BROKER_URL),
   }) + "\\n",
 );
 process.stdout.write("READY\\n");
@@ -251,6 +253,38 @@ process.stdout.write("READY\\n");
         path.join(created.piPackageRoot, "dist", "core", "resource-loader.js"),
         "export class DefaultResourceLoader { getExtensions() { return { extensions: [], errors: [] }; } }\n",
       );
+      if (mode === "oauth") {
+        await writeFile(
+          path.join(created.piHome, "auth.json"),
+          `${JSON.stringify({
+            scripted: {
+              type: "oauth",
+              access: "scripted-oauth-access",
+              refresh: "scripted-oauth-refresh",
+              expires: 1,
+            },
+          })}\n`,
+          { mode: 0o600 },
+        );
+        await writeFile(
+          path.join(created.piPackageRoot, "dist", "core", "auth-storage.js"),
+          `export class AuthStorage {
+  async modify(_provider, update) { return await update(); }
+}
+export class FileAuthStorageBackend {
+  constructor(file) { this.file = file; }
+  async withLockAsync(operation) {
+    const { readFile, writeFile } = await import("node:fs/promises");
+    let current;
+    try { current = await readFile(this.file, "utf8"); } catch { current = undefined; }
+    const outcome = await operation(current);
+    if (outcome.next !== undefined) await writeFile(this.file, outcome.next);
+    return outcome.result;
+  }
+}
+`,
+        );
+      }
 
       const run = await runPioneer(created, [
         "eval",
@@ -283,8 +317,16 @@ process.stdout.write("READY\\n");
       expect(run.stdout.trim()).toBe("READY");
       const invocation = JSON.parse(
         await readFile(path.join(runDir, ACTOR_INVOCATION_FILE), "utf8"),
-      ) as ScriptedActorInvocation & { extensionText?: string };
-      if (mode === "builtin") {
+      ) as ScriptedActorInvocation & { extensionText?: string; brokerConfigured?: boolean };
+      if (mode === "oauth") {
+        expect(invocation.argv).toContain("--no-extensions");
+        expect(invocation.argv).not.toContain("--extension");
+        expect(invocation.extensionText).toBe("");
+        expect(invocation.brokerConfigured).toBe(true);
+        expect(await readFile(path.join(created.piHome, "auth.json"), "utf8")).toContain(
+          "scripted-oauth-access",
+        );
+      } else if (mode === "builtin") {
         expect(invocation.argv).toEqual(
           expect.arrayContaining([
             "--offline",

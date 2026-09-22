@@ -33,7 +33,7 @@ Before changing production code, read `docs/ARCHITECTURE.md`, `docs/CONVENTIONS.
 - Pass subprocess arguments as arrays. Never interpolate user-controlled values into a shell command.
 - Validate and canonicalize repository paths and refs before use.
 - Snapshot Pi authentication/configuration into a private run-local `PI_CODING_AGENT_DIR`; include configured skills for reviews and exclude them for evals. Never log or return credentials.
-- Persist native-review OAuth rotations only through the controller's provider-scoped authentication worker and Pi's source credential lock. Never copy credential changes from the review actor back to the source Pi home.
+- Persist native review and eval OAuth rotations only through the controller's provider-scoped authentication worker and Pi's source credential lock. Never copy credential changes from the review or eval actor back to the source Pi home.
 - Fail closed when a requested model, thinking level, repository, or review target cannot be validated.
 
 ### TDD first
