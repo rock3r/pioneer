@@ -173,6 +173,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["loads a relative explicit extension from its staged copy", "cli.js", "relative"],
     ["stages a repeated explicit extension once", "cli.js", "duplicate"],
     ["rejects an extension directly in a shared temp directory", "cli.js", "shared-temp"],
+    ["rejects an extension inside private Pi session storage", "cli.js", "private-session"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -311,6 +312,11 @@ process.stdout.write("READY\\n");
       if (mode === "shared-temp") {
         await writeFile(sharedTempExtension, "explicit-extension-marker\n");
       }
+      const privateSessionExtension = path.join(created.piHome, "sessions", "provider.mjs");
+      if (mode === "private-session") {
+        await mkdir(path.dirname(privateSessionExtension), { recursive: true });
+        await writeFile(privateSessionExtension, "explicit-extension-marker\n");
+      }
       const extensionArgs =
         mode === "explicit"
           ? ["--extension", path.join(created.piPackageRoot, "explicit-extension.mjs")]
@@ -324,7 +330,9 @@ process.stdout.write("READY\\n");
                   ? ["-e", "./provider.mjs", "-e", "./provider.mjs"]
                   : mode === "shared-temp"
                     ? ["--extension", sharedTempExtension]
-                    : [];
+                    : mode === "private-session"
+                      ? ["--extension", privateSessionExtension]
+                      : [];
       if (mode === "oauth") {
         await writeFile(
           path.join(created.piHome, "auth.json"),
@@ -387,14 +395,18 @@ export class FileAuthStorageBackend {
         "Say READY",
       ]);
 
-      if (mode !== "directory" && mode !== "shared-temp") {
+      if (mode !== "directory" && mode !== "shared-temp" && mode !== "private-session") {
         expect(run.stderr).not.toMatch(/PI_EXTENSION_|PI_OAUTH_/);
       }
-      if (mode === "directory" || mode === "shared-temp") {
+      if (mode === "directory" || mode === "shared-temp" || mode === "private-session") {
         try {
           expect(run.exitCode, run.stderr).not.toBe(0);
           expect(run.stderr).toContain(
-            mode === "directory" ? "regular file" : "dedicated directory",
+            mode === "directory"
+              ? "regular file"
+              : mode === "shared-temp"
+                ? "dedicated directory"
+                : "private Pi session or log storage",
           );
         } finally {
           if (mode === "shared-temp") await unlink(sharedTempExtension).catch(() => undefined);

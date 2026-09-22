@@ -31,6 +31,7 @@ import {
 } from "../pi-extension-snapshot.js";
 import { defaultPiAgentDir, type PreparedPiHome, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
+import { piRuntimeStorage } from "../pi-runtime-storage.js";
 import {
   applyResolvedPiLaunch,
   isPiExecutable,
@@ -569,6 +570,7 @@ async function protectedExtensionRoots(): Promise<ReadonlySet<string>> {
 async function stageExplicitExtensionFiles(
   sources: readonly string[],
   destinationDir: string,
+  sourceAgentDir: string,
 ): Promise<string[]> {
   if (sources.length === 0) return [];
   const blocked = await protectedExtensionRoots();
@@ -597,7 +599,12 @@ async function stageExplicitExtensionFiles(
     });
   }
   // Stage the extension directory, not only the entry file, so sibling imports still resolve.
-  const snapshot = await snapshotExtensionResources(resources, destinationDir);
+  const snapshot = await snapshotExtensionResources(
+    resources,
+    destinationDir,
+    undefined,
+    await piRuntimeStorage(sourceAgentDir, path.join(sourceAgentDir, "settings.json"), process.env),
+  );
   const stagedBySource = new Map<string, string>();
   snapshot.sourcePaths.forEach((source, index) => {
     const staged = snapshot.paths[index];
@@ -672,6 +679,7 @@ async function stageEvalPiExtensions(
   const explicitCopies = await stageExplicitExtensionFiles(
     explicitExtensionSources,
     path.join(extensionRoot, "extensions"),
+    sourceAgentDir,
   );
   const replacements = new Map<string, string>();
   for (const [index, source] of explicitExtensionSources.entries()) {
