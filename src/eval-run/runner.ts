@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { constants } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { constants, createReadStream } from "node:fs";
 import {
   access,
   lstat,
@@ -610,7 +610,34 @@ async function reuseStagedExtensionFile(
   } catch (error) {
     throw extensionStageError(error);
   }
+  let unchanged = false;
+  try {
+    unchanged = (await fileDigest(canonical)) === (await fileDigest(stagedPath));
+  } catch (error) {
+    throw extensionStageError(error);
+  }
+  if (!unchanged) {
+    throw new Error(
+      "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
+    );
+  }
   return true;
+}
+
+async function fileDigest(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
+
+export async function confirmReusedExtension(
+  canonical: string,
+  stagedPath: string,
+  sourceAgentDir: string,
+): Promise<void> {
+  if (!(await reuseStagedExtensionFile(canonical, stagedPath, sourceAgentDir))) {
+    throw new Error("Explicit Pi extension could not be staged");
+  }
 }
 
 async function assertExplicitExtensionAllowed(
@@ -786,7 +813,11 @@ async function stageEvalPiExtensions(
       canonical = source;
     }
     resolvedSources.push(canonical);
-    if (alreadyStaged.has(canonical)) continue;
+    const stagedExact = alreadyStaged.get(canonical);
+    if (stagedExact !== undefined) {
+      await confirmReusedExtension(canonical, stagedExact, sourceAgentDir);
+      continue;
+    }
     const mirrored = mirroredExtensionStagePath(path.join(extensionRoot, "extensions"), canonical);
     if (await reuseStagedExtensionFile(canonical, mirrored, sourceAgentDir)) {
       alreadyStaged.set(canonical, mirrored);
