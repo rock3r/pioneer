@@ -96,6 +96,11 @@ async function rootLogFiles(agentDir: string): Promise<string[]> {
 }
 
 /** Copies code as data. No extension is imported in the controller. */
+function isMetadataDirectory(name: string): boolean {
+  const folded = process.platform === "linux" ? name : name.toLowerCase();
+  return folded === ".git" || folded === ".cache" || folded === ".npm";
+}
+
 async function fileDigest(file: string): Promise<string> {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
@@ -182,7 +187,7 @@ export async function snapshotExtensionResources(
     .filter((root) => ![...roots].some((other) => other !== root && within(other, root)));
   for (const root of selectedRoots) {
     if (
-      [".git", ".cache", ".npm"].includes(path.basename(root)) ||
+      isMetadataDirectory(path.basename(root)) ||
       isSensitiveCredentialPath(path.join(root, "entry.mjs")) ||
       isBroadExtensionParent(root) ||
       isSensitiveSystemExtensionParent(root)
@@ -283,7 +288,7 @@ export async function snapshotExtensionResources(
       await mkdir(target, { recursive: true, mode: 0o700 });
       const next = new Set([...ancestors, canonical]);
       for (const name of (await readdir(canonical)).sort()) {
-        if ([".git", ".cache", ".npm"].includes(name)) continue;
+        if (isMetadataDirectory(name)) continue;
         await copy(path.join(canonical, name), path.join(target, name), next);
       }
     } else if (details.isFile()) {
