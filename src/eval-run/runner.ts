@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import {
   access,
+  copyFile,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -546,6 +548,55 @@ function explicitExtensionPaths(command: readonly string[], runDir: string): str
   return paths;
 }
 
+async function stageExplicitExtensionFiles(
+  sources: readonly string[],
+  destinationDir: string,
+): Promise<string[]> {
+  const staged: string[] = [];
+  for (const [index, source] of sources.entries()) {
+    let canonical: string;
+    try {
+      canonical = await realpath(source);
+    } catch {
+      throw new Error(`Explicit Pi extension was not found: ${source}`);
+    }
+    if (!(await lstat(canonical)).isFile()) {
+      throw new Error("Explicit Pi extension must be a regular file");
+    }
+    const target = path.join(destinationDir, `explicit-${index}${path.extname(canonical)}`);
+    await copyFile(canonical, target);
+    staged.push(target);
+  }
+  return staged;
+}
+
+function replaceExplicitExtensionPaths(
+  command: readonly [string, ...string[]],
+  replacements: ReadonlyMap<string, string>,
+): [string, ...string[]] {
+  const next: string[] = [];
+  for (let index = 0; index < command.length; index += 1) {
+    const argument = command[index] ?? "";
+    if ((argument === "--extension" || argument === "-e") && index + 1 < command.length) {
+      const value = command[index + 1] ?? "";
+      next.push(
+        argument,
+        replacements.get(path.normalize(value)) ?? replacements.get(value) ?? value,
+      );
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--extension=")) {
+      const value = argument.slice("--extension=".length);
+      const replacement = replacements.get(path.normalize(value)) ?? replacements.get(value);
+      next.push(replacement === undefined ? argument : `--extension=${replacement}`);
+      continue;
+    }
+    next.push(argument);
+  }
+  return next as [string, ...string[]];
+}
+
 async function stageEvalPiExtensions(
   executablePath: string,
   sourceAgentDir: string,
@@ -555,6 +606,7 @@ async function stageEvalPiExtensions(
   checkAborted: () => void,
   signal: AbortSignal | undefined,
   extensionsEnabled: boolean,
+  explicitExtensionSources: readonly string[],
 ): Promise<{
   readonly authBroker?: PiAuthBroker;
   readonly readPaths: readonly string[];
@@ -574,6 +626,13 @@ async function stageEvalPiExtensions(
     extensionsEnabled,
   );
   checkAborted();
+  const explicitCopies = await stageExplicitExtensionFiles(
+    explicitExtensionSources,
+    path.join(extensionRoot, "extensions"),
+  );
+  const replacements = new Map(
+    explicitExtensionSources.map((source, index) => [source, explicitCopies[index] ?? source]),
+  );
   const runtime: PreparedReviewRuntime = {
     // Writable scratch must not contain the read-only extension tree. Bubblewrap
     // rejects, or hides, a read-only mount nested inside a later writable parent.
@@ -582,6 +641,7 @@ async function stageEvalPiExtensions(
     home: piHome,
     extensions,
     network: "public",
+    ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: explicitCopies }),
   };
   const authBroker = await prepareAuthBroker(runtime);
   try {
@@ -597,6 +657,7 @@ async function stageEvalPiExtensions(
       }),
       extensions.command,
     );
+    const command = replaceExplicitExtensionPaths(optimized.command, replacements);
     const runtimeWithBroker: PreparedReviewRuntime =
       authBroker === undefined
         ? runtime
@@ -615,7 +676,7 @@ async function stageEvalPiExtensions(
         ...(extensions.runtimeRoot === undefined ? [] : [extensions.runtimeRoot]),
       ],
       optimized,
-      command: optimized.command,
+      command,
       runtime: runtimeWithBroker,
     };
   } catch (error) {
@@ -724,6 +785,15 @@ async function runEvalCommandWithInterruption(
     piActorInspection.trusted &&
     piActorInspection.hostsExtensionRuntime &&
     commandRequestsExplicitExtension(spec.command.slice(1));
+  if (
+    piActorInspection.trusted &&
+    !piActorInspection.hostsExtensionRuntime &&
+    !commandDisablesExtensions(spec.command.slice(1))
+  ) {
+    throw new Error(
+      "[PI_EXTENSION_RUNTIME_UNSUPPORTED] This Pi package cannot host the tool-stripping adapter. Pass --no-extensions to stay on built-in providers.",
+    );
+  }
   const deferExtensionReadiness = loadsUserExtensions || loadsExplicitExtensions;
   const initialReadinessOptions = {
     extensions: false as const,
@@ -971,6 +1041,7 @@ async function runEvalCommandWithInterruption(
           throwIfSetupInterrupted,
           interruption.abortSignal,
           loadsUserExtensions,
+          explicitExtensionPaths(validated.command.slice(1), validated.runDir),
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
@@ -983,17 +1054,10 @@ async function runEvalCommandWithInterruption(
         };
         if (deferExtensionReadiness && readiness === undefined) {
           recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
-          const explicitPaths = explicitExtensionPaths(
-            validated.command.slice(1),
-            validated.runDir,
-          );
           readiness = await assertPiReady({
             command: [resolvedExecutable.commandPath],
             environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
-            preparedRuntime:
-              explicitPaths.length === 0
-                ? staged.runtime
-                : { ...staged.runtime, capabilityExtensions: explicitPaths },
+            preparedRuntime: staged.runtime,
             ...(requestedModel === undefined ? {} : { requestedModel }),
             signal: interruption.abortSignal,
           });

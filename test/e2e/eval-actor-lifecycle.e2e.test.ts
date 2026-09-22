@@ -62,6 +62,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
       "60000",
       "--",
       "pi",
+      "--no-extensions",
       "--model",
       "scripted/fake-model",
       "--no-tools",
@@ -92,6 +93,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
       "60000",
       "--",
       "pi",
+      "--no-extensions",
       "--model",
       "scripted/fake-model",
       "--print",
@@ -131,6 +133,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
       "60000",
       "--",
       "pi",
+      "--no-extensions",
       "--model",
       "scripted/fake-model",
       "--print",
@@ -165,6 +168,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["brokers oauth without user extensions", "cli.js", "oauth"],
     ["strips tools from an explicit extension", "cli.js", "explicit"],
     ["strips tools from an explicit short extension flag", "cli.js", "explicit-short"],
+    ["rejects an explicit extension directory", "cli.js", "directory"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -280,6 +284,9 @@ process.stdout.write("READY\\n");
           "explicit-extension-marker\n",
         );
       }
+      if (mode === "directory") {
+        await mkdir(path.join(created.piPackageRoot, "explicit-extension-dir"));
+      }
       if (mode === "oauth") {
         await writeFile(
           path.join(created.piHome, "auth.json"),
@@ -327,10 +334,12 @@ export class FileAuthStorageBackend {
         "--",
         entry === "cli.js" ? cliPath : "pi",
         ...(mode === "load" ? [] : (["--no-extensions"] as const)),
-        ...(mode === "explicit" || mode === "explicit-short"
+        ...(mode === "explicit" || mode === "explicit-short" || mode === "directory"
           ? ([
               mode === "explicit-short" ? "-e" : "--extension",
-              path.join(created.piPackageRoot, "explicit-extension.mjs"),
+              mode === "directory"
+                ? path.join(created.piPackageRoot, "explicit-extension-dir")
+                : path.join(created.piPackageRoot, "explicit-extension.mjs"),
             ] as const)
           : []),
         "--model",
@@ -343,7 +352,12 @@ export class FileAuthStorageBackend {
         "Say READY",
       ]);
 
-      expect(run.stderr).not.toMatch(/PI_EXTENSION_|PI_OAUTH_/);
+      if (mode !== "directory") expect(run.stderr).not.toMatch(/PI_EXTENSION_|PI_OAUTH_/);
+      if (mode === "directory") {
+        expect(run.exitCode, run.stderr).not.toBe(0);
+        expect(run.stderr).toContain("regular file");
+        return;
+      }
       if (mode === "reject") {
         expect(run.exitCode, run.stderr).not.toBe(0);
         expect(run.stderr).toContain("Configured Pi models:");
@@ -392,6 +406,33 @@ export class FileAuthStorageBackend {
     },
   );
 
+  it("fails closed when a trusted Pi package cannot host the extension adapter", async () => {
+    const { created, runDir } = await workspace("unsupported-extension-runtime");
+    await writeScriptedPi(created, { actor: { kind: "reply-verbatim" } });
+
+    const run = await runPioneer(created, [
+      "eval",
+      "run",
+      "--run-dir",
+      runDir,
+      "--pi-home",
+      created.piHome,
+      "--work-log",
+      created.workLogPath("unsupported-extension-runtime"),
+      "--timeout-ms",
+      "60000",
+      "--",
+      "pi",
+      "--model",
+      "scripted/fake-model",
+      "--print",
+      "Reply with exactly: OK",
+    ]);
+
+    expect(run.exitCode, run.stderr).not.toBe(0);
+    expect(run.stderr).toContain("PI_EXTENSION_RUNTIME_UNSUPPORTED");
+  });
+
   it("writes a stage work log that never records prompts or credentials", async () => {
     const { created, runDir } = await workspace("work-log");
     await writeScriptedPi(created, { actor: { kind: "credential-lock" } });
@@ -410,6 +451,7 @@ export class FileAuthStorageBackend {
       "60000",
       "--",
       "pi",
+      "--no-extensions",
       "--model",
       "scripted/fake-model",
       "--print",
@@ -454,6 +496,7 @@ export class FileAuthStorageBackend {
       "2000",
       "--",
       "pi",
+      "--no-extensions",
       "--model",
       "scripted/fake-model",
       "--print",
