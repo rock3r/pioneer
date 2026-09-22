@@ -691,6 +691,15 @@ export function isSensitiveCredentialPath(file: string): boolean {
       return true;
     }
     if (segment === "library" && index === segments.length - 2) return true;
+    if (
+      segment !== undefined &&
+      (segment.toLowerCase() === "documents" ||
+        segment.toLowerCase() === "desktop" ||
+        segment.toLowerCase() === "downloads") &&
+      index === segments.length - 2
+    ) {
+      return true;
+    }
     if (segment === "library" && segments[index + 1] === "keychains") return true;
   }
   return false;

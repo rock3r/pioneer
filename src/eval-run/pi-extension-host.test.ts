@@ -56,5 +56,15 @@ describe("Pi package runtime hosting", () => {
         `${home}${path.sep}Library${path.sep}my-extension${path.sep}provider.mjs`,
       ),
     ).toBe(false);
+    for (const folder of ["Documents", "Desktop", "Downloads"]) {
+      expect(isSensitiveCredentialPath(`${home}${path.sep}${folder}${path.sep}provider.mjs`)).toBe(
+        true,
+      );
+      expect(
+        isSensitiveCredentialPath(
+          `${home}${path.sep}${folder}${path.sep}my-extension${path.sep}provider.mjs`,
+        ),
+      ).toBe(false);
+    }
   });
 });
