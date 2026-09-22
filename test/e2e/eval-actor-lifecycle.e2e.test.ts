@@ -161,6 +161,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["pi command", "pi", "load"],
     ["declared cli.js path", "cli.js", "load"],
     ["declared cli.js without extensions", "cli.js", "builtin"],
+    ["declared cli.js rejects an unknown model", "cli.js", "reject"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -264,14 +265,20 @@ process.stdout.write("READY\\n");
         "60000",
         "--",
         entry === "cli.js" ? cliPath : "pi",
-        ...(mode === "builtin" ? (["--no-extensions"] as const) : []),
+        ...(mode === "load" ? [] : (["--no-extensions"] as const)),
         "--model",
-        "extension-provider/demo",
+        mode === "reject" ? "missing/no-such-model" : "extension-provider/demo",
         "--print",
         "Say READY",
       ]);
 
       expect(run.stderr).not.toMatch(/PI_EXTENSION_|PI_OAUTH_/);
+      if (mode === "reject") {
+        expect(run.exitCode, run.stderr).not.toBe(0);
+        expect(run.stderr).toContain("Configured Pi models:");
+        expect(existsSync(path.join(runDir, ACTOR_INVOCATION_FILE))).toBe(false);
+        return;
+      }
       expect(run.exitCode, run.stderr).toBe(0);
       expect(run.stdout.trim()).toBe("READY");
       const invocation = JSON.parse(

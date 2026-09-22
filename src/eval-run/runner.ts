@@ -571,6 +571,17 @@ async function stageEvalPiExtensions(
       }),
       extensions.command,
     );
+    const runtimeWithBroker: PreparedReviewRuntime =
+      authBroker === undefined
+        ? runtime
+        : {
+            ...runtime,
+            authBroker,
+            home: {
+              ...runtime.home,
+              environment: { ...runtime.home.environment, ...authBroker.environment },
+            },
+          };
     return {
       ...(authBroker === undefined ? {} : { authBroker }),
       readPaths: [
@@ -579,7 +590,7 @@ async function stageEvalPiExtensions(
       ],
       optimized,
       command: optimized.command,
-      runtime,
+      runtime: runtimeWithBroker,
     };
   } catch (error) {
     await authBroker?.close().catch(() => undefined);
@@ -672,9 +683,11 @@ async function runEvalCommandWithInterruption(
   interruption: EvalInterruptionState,
 ): Promise<EvalRunResult> {
   throwIfEvalInterrupted(interruption);
-  const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
   const piActorInspection = await inspectEvalPiActor(spec.command, spec.runDir, process.env);
+  const requestedModel =
+    requestedPiModel(spec.command) ??
+    (piActorInspection.trusted ? requestedPiModel(["pi", ...spec.command.slice(1)]) : undefined);
   const loadsUserExtensions =
     piActorInspection.trusted &&
     piActorInspection.hostsExtensionRuntime &&
@@ -908,14 +921,12 @@ async function runEvalCommandWithInterruption(
           ...staged.authBroker?.environment,
         };
         if (readiness === undefined) {
-          const extensionModel =
-            requestedModel ?? requestedPiModel(["pi", ...validated.command.slice(1)]);
           recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
           readiness = await assertPiReady({
             command: [resolvedExecutable.commandPath],
             environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
             preparedRuntime: staged.runtime,
-            ...(extensionModel === undefined ? {} : { requestedModel: extensionModel }),
+            ...(requestedModel === undefined ? {} : { requestedModel }),
             signal: interruption.abortSignal,
           });
           recordEvalWorkLog(workLog, "stage_completed", {
