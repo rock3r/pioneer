@@ -3,16 +3,12 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import {
   access,
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
-  readdir,
   readFile,
-  readlink,
   realpath,
   rm,
-  symlink,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -586,30 +582,6 @@ async function protectedExtensionRoots(): Promise<ReadonlySet<string>> {
   return roots;
 }
 
-function isAlreadyExists(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "EEXIST"
-  );
-}
-
-async function mergeExtensionDirectory(source: string, destination: string): Promise<void> {
-  await mkdir(destination, { recursive: true });
-  for (const entry of await readdir(source, { withFileTypes: true })) {
-    const from = path.join(source, entry.name);
-    const to = path.join(destination, entry.name);
-    try {
-      if (entry.isSymbolicLink()) await symlink(await readlink(from), to);
-      else if (entry.isDirectory()) await mergeExtensionDirectory(from, to);
-      else if (entry.isFile()) await copyFile(from, to, constants.COPYFILE_EXCL);
-    } catch (error) {
-      if (!isAlreadyExists(error)) throw error;
-    }
-  }
-}
-
 function extensionStageError(error: unknown): Error {
   if (error instanceof Error && error.message.startsWith("Explicit Pi extension")) return error;
   if (error instanceof Error && error.message.startsWith("[PI_")) return error;
@@ -868,33 +840,6 @@ async function stageEvalPiExtensions(
           // The enabled snapshot skipped this file, so stage it on its own.
         }
       }
-    }
-    const overlapsStagedChild = extensions.sourcePaths.some((stagedSource) => {
-      const relative = path.relative(path.dirname(canonical), stagedSource);
-      return (
-        relative !== "" &&
-        relative !== ".." &&
-        !relative.startsWith(`..${path.sep}`) &&
-        !path.isAbsolute(relative)
-      );
-    });
-    if (overlapsStagedChild) {
-      await assertExplicitExtensionAllowed(
-        canonical,
-        sourceAgentDir,
-        await protectedExtensionRoots(),
-      );
-      const parent = path.dirname(canonical);
-      try {
-        await mergeExtensionDirectory(
-          parent,
-          mirroredExtensionStagePath(path.join(extensionRoot, "extensions"), parent),
-        );
-      } catch (error) {
-        throw extensionStageError(error);
-      }
-      alreadyStaged.set(canonical, mirrored);
-      continue;
     }
     pending.push(canonical);
   }

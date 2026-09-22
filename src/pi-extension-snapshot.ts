@@ -188,7 +188,20 @@ export async function snapshotExtensionResources(
       const relative = path.relative(path.dirname(target), stagedPath(canonical));
       digest.update(JSON.stringify([path.relative(destination, target), "symlink", relative]));
       digest.update("\0");
-      await symlink(relative, target);
+      try {
+        await symlink(relative, target);
+      } catch (error) {
+        if (
+          !(
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            (error as { code?: string }).code === "EEXIST"
+          )
+        ) {
+          throw error;
+        }
+      }
       return;
     }
     const details = await lstat(canonical);
