@@ -96,6 +96,12 @@ async function rootLogFiles(agentDir: string): Promise<string[]> {
 }
 
 /** Copies code as data. No extension is imported in the controller. */
+async function fileDigest(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
+
 export function mirroredExtensionStagePath(destination: string, source: string): string {
   const parsed = path.parse(source);
   return path.join(
@@ -176,6 +182,7 @@ export async function snapshotExtensionResources(
     .filter((root) => ![...roots].some((other) => other !== root && within(other, root)));
   for (const root of selectedRoots) {
     if (
+      [".git", ".cache", ".npm"].includes(path.basename(root)) ||
       isSensitiveCredentialPath(path.join(root, "entry.mjs")) ||
       isBroadExtensionParent(root) ||
       isSensitiveSystemExtensionParent(root)
@@ -282,7 +289,10 @@ export async function snapshotExtensionResources(
     } else if (details.isFile()) {
       if (stagedAlready) {
         const staged = await lstat(target);
-        if (staged.size !== details.size) {
+        const same =
+          staged.size === details.size &&
+          (await fileDigest(target)) === (await fileDigest(canonical));
+        if (!same) {
           throw new Error(
             "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
           );
