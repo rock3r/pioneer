@@ -174,6 +174,17 @@ export async function snapshotExtensionResources(
   const selectedRoots = [...roots]
     .sort()
     .filter((root) => ![...roots].some((other) => other !== root && within(other, root)));
+  for (const root of selectedRoots) {
+    if (
+      isSensitiveCredentialPath(path.join(root, "entry.mjs")) ||
+      isBroadExtensionParent(root) ||
+      isSensitiveSystemExtensionParent(root)
+    ) {
+      throw new Error(
+        "Explicit Pi extension must not be staged from a credential directory such as .ssh or .aws",
+      );
+    }
+  }
   for (const resource of enabled) {
     const canonical = await realpath(resource.path);
     const parent = path.dirname(canonical);
