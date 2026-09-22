@@ -586,6 +586,7 @@ const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
   ".docker",
   ".gnupg",
   ".kube",
+  ".pki",
   ".ssh",
 ]);
 
