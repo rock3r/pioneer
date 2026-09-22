@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -170,6 +171,8 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
     ["strips tools from an explicit short extension flag", "cli.js", "explicit-short"],
     ["rejects an explicit extension directory", "cli.js", "directory"],
     ["loads a relative explicit extension from its staged copy", "cli.js", "relative"],
+    ["stages a repeated explicit extension once", "cli.js", "duplicate"],
+    ["rejects an extension directly in a shared temp directory", "cli.js", "shared-temp"],
   ] as const)(
     "loads an enabled user extension inside the sandboxed Pi actor (%s)",
     async (label, entry, mode) => {
@@ -297,10 +300,31 @@ process.stdout.write("READY\\n");
       if (mode === "directory") {
         await mkdir(path.join(created.piPackageRoot, "explicit-extension-dir"));
       }
-      if (mode === "relative") {
+      if (mode === "relative" || mode === "duplicate") {
         await writeFile(path.join(runDir, "provider.mjs"), "explicit-extension-marker\n");
         await writeFile(path.join(runDir, "helper.mjs"), "helper-marker\n");
       }
+      const sharedTempExtension = path.join(
+        os.tmpdir(),
+        `pioneer-explicit-${process.pid}-${Date.now()}.mjs`,
+      );
+      if (mode === "shared-temp") {
+        await writeFile(sharedTempExtension, "explicit-extension-marker\n");
+      }
+      const extensionArgs =
+        mode === "explicit"
+          ? ["--extension", path.join(created.piPackageRoot, "explicit-extension.mjs")]
+          : mode === "explicit-short"
+            ? ["-e", path.join(created.piPackageRoot, "explicit-extension.mjs")]
+            : mode === "directory"
+              ? ["--extension", path.join(created.piPackageRoot, "explicit-extension-dir")]
+              : mode === "relative"
+                ? ["-e", "./provider.mjs"]
+                : mode === "duplicate"
+                  ? ["-e", "./provider.mjs", "-e", "./provider.mjs"]
+                  : mode === "shared-temp"
+                    ? ["--extension", sharedTempExtension]
+                    : [];
       if (mode === "oauth") {
         await writeFile(
           path.join(created.piHome, "auth.json"),
@@ -348,36 +372,33 @@ export class FileAuthStorageBackend {
         "--",
         entry === "cli.js" ? cliPath : "pi",
         ...(mode === "load" ? [] : (["--no-extensions"] as const)),
-        ...(mode === "explicit" ||
-        mode === "explicit-short" ||
-        mode === "directory" ||
-        mode === "relative"
-          ? ([
-              mode === "explicit-short" || mode === "relative" ? "-e" : "--extension",
-              mode === "directory"
-                ? path.join(created.piPackageRoot, "explicit-extension-dir")
-                : mode === "relative"
-                  ? "./provider.mjs"
-                  : path.join(created.piPackageRoot, "explicit-extension.mjs"),
-            ] as const)
-          : []),
+        ...extensionArgs,
         "--model",
         mode === "reject"
           ? "missing/no-such-model"
           : mode === "load" ||
               mode === "explicit" ||
               mode === "explicit-short" ||
-              mode === "relative"
+              mode === "relative" ||
+              mode === "duplicate"
             ? "extension-provider/demo"
             : "builtin/demo",
         "--print",
         "Say READY",
       ]);
 
-      if (mode !== "directory") expect(run.stderr).not.toMatch(/PI_EXTENSION_|PI_OAUTH_/);
-      if (mode === "directory") {
-        expect(run.exitCode, run.stderr).not.toBe(0);
-        expect(run.stderr).toContain("regular file");
+      if (mode !== "directory" && mode !== "shared-temp") {
+        expect(run.stderr).not.toMatch(/PI_EXTENSION_|PI_OAUTH_/);
+      }
+      if (mode === "directory" || mode === "shared-temp") {
+        try {
+          expect(run.exitCode, run.stderr).not.toBe(0);
+          expect(run.stderr).toContain(
+            mode === "directory" ? "regular file" : "dedicated directory",
+          );
+        } finally {
+          if (mode === "shared-temp") await unlink(sharedTempExtension).catch(() => undefined);
+        }
         return;
       }
       if (mode === "reject") {
@@ -403,6 +424,14 @@ export class FileAuthStorageBackend {
         expect(path.relative(runDir, extensionPath).startsWith("..")).toBe(true);
         expect(invocation.extensionText).toBe("explicit-extension-marker\n");
         expect(invocation.siblingText).toBe("helper-marker\n");
+      } else if (mode === "duplicate") {
+        const paths = invocation.argv.flatMap((argument, index) =>
+          argument === "-e" ? [invocation.argv[index + 1] ?? ""] : [],
+        );
+        expect(paths).toHaveLength(2);
+        expect(paths[0]).toBe(paths[1]);
+        expect(paths[0]).not.toBe("./provider.mjs");
+        expect(path.relative(runDir, paths[0] ?? "").startsWith("..")).toBe(true);
       } else if (mode === "explicit" || mode === "explicit-short") {
         expect(invocation.argv).toContain("--no-extensions");
         expect(invocation.argv).toContain(mode === "explicit-short" ? "-e" : "--extension");

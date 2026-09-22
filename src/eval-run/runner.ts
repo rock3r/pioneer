@@ -13,6 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import {
   adoptCreatedScratchDirectory,
@@ -550,11 +551,28 @@ function explicitExtensionPaths(command: readonly string[], runDir: string): str
   return paths;
 }
 
+async function protectedExtensionRoots(): Promise<ReadonlySet<string>> {
+  const roots = new Set<string>([path.parse(process.cwd()).root]);
+  const add = async (candidate: string): Promise<void> => {
+    try {
+      roots.add(await realpath(candidate));
+    } catch {
+      // A missing system directory is not a staging root.
+    }
+  };
+  await add(os.homedir());
+  await add(os.tmpdir());
+  await Promise.all(["/tmp", "/private/tmp", "/var/tmp"].map((candidate) => add(candidate)));
+  return roots;
+}
+
 async function stageExplicitExtensionFiles(
   sources: readonly string[],
   destinationDir: string,
 ): Promise<string[]> {
   if (sources.length === 0) return [];
+  const blocked = await protectedExtensionRoots();
+  const canonicals: string[] = [];
   const resources = [];
   for (const source of sources) {
     let canonical: string;
@@ -566,6 +584,12 @@ async function stageExplicitExtensionFiles(
     if (!(await lstat(canonical)).isFile()) {
       throw new Error("Explicit Pi extension must be a regular file");
     }
+    if (blocked.has(path.dirname(canonical))) {
+      throw new Error(
+        "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, or filesystem root",
+      );
+    }
+    canonicals.push(canonical);
     resources.push({
       path: canonical,
       enabled: true,
@@ -574,7 +598,16 @@ async function stageExplicitExtensionFiles(
   }
   // Stage the extension directory, not only the entry file, so sibling imports still resolve.
   const snapshot = await snapshotExtensionResources(resources, destinationDir);
-  return [...snapshot.paths];
+  const stagedBySource = new Map<string, string>();
+  snapshot.sourcePaths.forEach((source, index) => {
+    const staged = snapshot.paths[index];
+    if (staged !== undefined) stagedBySource.set(source, staged);
+  });
+  return canonicals.map((canonical) => {
+    const staged = stagedBySource.get(canonical);
+    if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
+    return staged;
+  });
 }
 
 function explicitExtensionKey(value: string, runDir: string): string {
@@ -640,9 +673,12 @@ async function stageEvalPiExtensions(
     explicitExtensionSources,
     path.join(extensionRoot, "extensions"),
   );
-  const replacements = new Map(
-    explicitExtensionSources.map((source, index) => [source, explicitCopies[index] ?? source]),
-  );
+  const replacements = new Map<string, string>();
+  for (const [index, source] of explicitExtensionSources.entries()) {
+    const staged = explicitCopies[index];
+    if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
+    replacements.set(source, staged);
+  }
   const runtime: PreparedReviewRuntime = {
     // Writable scratch must not contain the read-only extension tree. Bubblewrap
     // rejects, or hides, a read-only mount nested inside a later writable parent.
@@ -651,7 +687,7 @@ async function stageEvalPiExtensions(
     home: piHome,
     extensions,
     network: "public",
-    ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: explicitCopies }),
+    ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: [...new Set(explicitCopies)] }),
   };
   const authBroker = await prepareAuthBroker(runtime);
   try {
