@@ -635,6 +635,7 @@ export function isSensitiveCredentialPath(file: string): boolean {
       (segments[index + 1] === "gcloud" ||
         segments[index + 1] === "gh" ||
         segments[index + 1] === "rclone" ||
+        segments[index + 1] === "containers" ||
         segments[index + 1] === "google-chrome" ||
         segments[index + 1] === "chromium")
     ) {
