@@ -554,13 +554,16 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/etc",
   "/private/etc",
   "/private/var/lib",
+  "/private/var/lib",
   "/private/var/log",
   "/private/var/run",
+  "/private/var/spool",
   "/root",
   "/run",
   "/var/lib",
   "/var/log",
   "/var/run",
+  "/var/spool",
 ] as const;
 
 function pathIsWithin(root: string, candidate: string): boolean {

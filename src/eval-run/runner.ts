@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import {
   access,
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -817,6 +818,21 @@ async function stageEvalPiExtensions(
           // The enabled snapshot skipped this file, so stage it on its own.
         }
       }
+    }
+    const overlapsStagedChild = extensions.sourcePaths.some((stagedSource) => {
+      const relative = path.relative(path.dirname(canonical), stagedSource);
+      return (
+        relative !== "" &&
+        relative !== ".." &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative)
+      );
+    });
+    if (overlapsStagedChild) {
+      await mkdir(path.dirname(mirrored), { recursive: true });
+      await copyFile(canonical, mirrored);
+      alreadyStaged.set(canonical, mirrored);
+      continue;
     }
     pending.push(canonical);
   }
