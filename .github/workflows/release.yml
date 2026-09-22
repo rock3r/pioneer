@@ -33,7 +33,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pi: ["0.80.6", "0.86.1"]
+        pi: ["0.80.6", "0.87.0"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -75,7 +75,7 @@ jobs:
       - run: npm run sandbox:smoke
       - name: Test installed Pi extension isolation
         run: |
-          for version in 0.80.6 0.86.1; do
+          for version in 0.80.6 0.87.0; do
             npm install --global @earendil-works/pi-coding-agent@"$version"
             npx vitest run test/pi-extension-integration.test.ts
           done
