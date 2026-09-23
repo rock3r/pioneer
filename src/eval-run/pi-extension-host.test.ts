@@ -72,6 +72,9 @@ describe("Pi package runtime hosting", () => {
       isSensitiveCredentialPath(`${home}${path.sep}.config${path.sep}git${path.sep}provider.mjs`),
     ).toBe(true);
     expect(
+      isSensitiveCredentialPath(`${home}${path.sep}.config${path.sep}helm${path.sep}provider.mjs`),
+    ).toBe(true);
+    expect(
       isSensitiveCredentialPath(`${home}${path.sep}.config${path.sep}sops${path.sep}provider.mjs`),
     ).toBe(true);
     expect(
