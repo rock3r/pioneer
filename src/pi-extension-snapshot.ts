@@ -140,8 +140,16 @@ export async function snapshotExtensionResources(
   excludedPaths: readonly string[] = [],
 ): Promise<ExtensionSnapshot> {
   const excluded = new Set<string>();
+  const excludedFiles = new Set<string>();
   for (const candidate of excludedPaths) {
-    excluded.add(policyPath(await canonicalOrResolved(candidate)));
+    const canonical = await canonicalOrResolved(candidate);
+    excluded.add(policyPath(canonical));
+    try {
+      const identity = await lstat(canonical);
+      if (identity.isFile()) excludedFiles.add(`${identity.dev}:${identity.ino}`);
+    } catch {
+      // A missing controller path has no file identity to match.
+    }
   }
   const agentDir = storage === undefined ? undefined : await canonicalOrResolved(storage.agentDir);
   const privateDirectories =
@@ -267,6 +275,8 @@ export async function snapshotExtensionResources(
     signal?.throwIfAborted();
     const canonical = await realpath(source);
     if ([...excluded].some((entry) => within(entry, policyPath(canonical)))) return;
+    const identity = await lstat(canonical);
+    if (identity.isFile() && excludedFiles.has(`${identity.dev}:${identity.ino}`)) return;
     if (await isPrivateStorage(canonical)) return;
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(

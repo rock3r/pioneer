@@ -1,5 +1,15 @@
 import { realpathSync } from "node:fs";
-import { chmod, mkdir, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdir,
+  readFile,
+  readlink,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -88,6 +98,35 @@ describe("extension snapshots", () => {
     const stagedPackage = path.dirname(staged);
     await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
     await expect(stat(path.join(stagedPackage, "answer.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("does not copy a hard link to an excluded file", async () => {
+    const root = await createTempDir("extension-excluded-hardlink-");
+    const pkg = path.join(root, "package");
+    const outside = path.join(root, "outside");
+    await mkdir(pkg);
+    await mkdir(outside);
+    const entry = path.join(pkg, "index.ts");
+    const answer = path.join(outside, "answer.txt");
+    const alias = path.join(pkg, "alias.txt");
+    await writeFile(entry, "extension");
+    await writeFile(answer, "secret");
+    await link(answer, alias);
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      undefined,
+      undefined,
+      [answer],
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, "alias.txt"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
