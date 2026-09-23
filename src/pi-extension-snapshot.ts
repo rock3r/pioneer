@@ -170,12 +170,9 @@ export async function snapshotExtensionResources(
         );
   const privateFiles = new Set<string>();
   const maxPrivateFileIdentities = 1024;
-  let privateIndexComplete = true;
+  let privateEntriesVisited = 0;
   const rememberPrivateFiles = async (root: string): Promise<boolean> => {
-    if (privateFiles.size >= maxPrivateFileIdentities) {
-      privateIndexComplete = false;
-      return false;
-    }
+    if (privateEntriesVisited >= maxPrivateFileIdentities) return false;
     signal?.throwIfAborted();
     let details: Awaited<ReturnType<typeof lstat>>;
     try {
@@ -183,14 +180,11 @@ export async function snapshotExtensionResources(
     } catch {
       return true;
     }
+    privateEntriesVisited += 1;
+    if (privateEntriesVisited > maxPrivateFileIdentities) return false;
     if (details.isSymbolicLink()) return true;
     if (details.isFile()) {
-      if (details.ino === 0n) return true;
-      if (privateFiles.size >= maxPrivateFileIdentities) {
-        privateIndexComplete = false;
-        return false;
-      }
-      privateFiles.add(`${details.dev}:${details.ino}`);
+      if (details.ino !== 0n) privateFiles.add(`${details.dev}:${details.ino}`);
       return true;
     }
     if (!details.isDirectory()) return true;
@@ -340,9 +334,7 @@ export async function snapshotExtensionResources(
     if (
       identity.isFile() &&
       identity.ino !== 0n &&
-      (excludedFiles.has(fileIdentity) ||
-        privateFiles.has(fileIdentity) ||
-        (!privateIndexComplete && identity.nlink > 1n))
+      (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity) || identity.nlink > 1n)
     ) {
       return;
     }

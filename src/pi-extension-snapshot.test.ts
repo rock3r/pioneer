@@ -104,6 +104,31 @@ describe("extension snapshots", () => {
     });
   });
 
+  it("does not copy a hard link into an extension package", async () => {
+    const root = await createTempDir("extension-any-hardlink-");
+    const pkg = path.join(root, "package");
+    const outside = path.join(root, "outside");
+    await mkdir(pkg);
+    await mkdir(outside);
+    const entry = path.join(pkg, "index.ts");
+    const secret = path.join(outside, "secret.txt");
+    const alias = path.join(pkg, "alias.txt");
+    await writeFile(entry, "extension");
+    await writeFile(secret, "secret");
+    await link(secret, alias);
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, "alias.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("does not copy a hard link to an excluded file", async () => {
     const root = await createTempDir("extension-excluded-hardlink-");
     const pkg = path.join(root, "package");
