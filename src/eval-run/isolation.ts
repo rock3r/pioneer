@@ -564,6 +564,7 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/private/var/run",
   "/private/var/opt",
   "/private/var/spool",
+  "/private/var/www",
   "/root",
   "/run",
   "/var/audit",
@@ -577,6 +578,7 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/var/run",
   "/var/opt",
   "/var/spool",
+  "/var/www",
 ] as const;
 
 function pathIsWithin(root: string, candidate: string): boolean {
