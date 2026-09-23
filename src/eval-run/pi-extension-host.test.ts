@@ -1,8 +1,12 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
-import { isPioneerApplicationDataPath, isSensitiveCredentialPath } from "./isolation.js";
+import {
+  isPioneerApplicationDataPath,
+  isSensitiveCredentialPath,
+  isXdgConfigCredentialPath,
+} from "./isolation.js";
 import { piPackageHostsAuthAdapter, piPackageHostsExtensionRuntime } from "./pi-extension-host.js";
 
 const { createTempDir } = registerManagedTempPaths();
@@ -25,6 +29,36 @@ describe("Pi package runtime hosting", () => {
         { XDG_DATA_HOME: "/home/me/private-data" },
         "/home/me",
       ),
+    ).toBe(false);
+  });
+
+  it("canonicalizes a symlinked Pioneer data root", async () => {
+    const root = await createTempDir("pioneer-data-link-");
+    const real = path.join(root, "real");
+    const link = path.join(root, "link");
+    await mkdir(path.join(real, "pioneer", "review-resumes"), { recursive: true });
+    await symlink(real, link);
+    const sessionDir = await realpath(path.join(link, "pioneer", "review-resumes"));
+    expect(
+      isPioneerApplicationDataPath(
+        path.join(sessionDir, "session.json"),
+        "linux",
+        { XDG_DATA_HOME: link },
+        root,
+      ),
+    ).toBe(true);
+  });
+
+  it("honors XDG_CONFIG_HOME for credential directories", () => {
+    expect(
+      isXdgConfigCredentialPath("/srv/xdg/sops/keys.txt", "linux", {
+        XDG_CONFIG_HOME: "/srv/xdg",
+      }),
+    ).toBe(true);
+    expect(
+      isXdgConfigCredentialPath("/srv/xdg/other/provider.mjs", "linux", {
+        XDG_CONFIG_HOME: "/srv/xdg",
+      }),
     ).toBe(false);
   });
 

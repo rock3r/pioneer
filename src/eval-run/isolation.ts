@@ -608,8 +608,40 @@ const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
   ".terraform.d",
 ]);
 
+const CONFIG_CREDENTIAL_DIRECTORIES = new Set([
+  "gcloud",
+  "gh",
+  "git",
+  "helm",
+  "pypoetry",
+  "sops",
+  "glab-cli",
+  "doctl",
+  "rclone",
+  "containers",
+  "google-chrome",
+  "chromium",
+  "microsoft-edge",
+]);
+
 function credentialSegment(segment: string): string {
   return process.platform === "linux" ? segment : segment.toLowerCase();
+}
+
+function canonicalOrLexical(candidate: string): string {
+  try {
+    return realpathSync(candidate);
+  } catch {
+    return path.resolve(candidate);
+  }
+}
+
+function isInsideRoot(root: string, candidate: string): boolean {
+  const relative = path.relative(canonicalOrLexical(root), canonicalOrLexical(candidate));
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
+  );
 }
 
 function pioneerApplicationDataRoot(
@@ -634,16 +666,28 @@ export function isPioneerApplicationDataPath(
   environment: NodeJS.ProcessEnv = process.env,
   home: string = os.homedir(),
 ): boolean {
-  const root = pioneerApplicationDataRoot(platform, environment, home);
-  const relative = path.relative(root, candidate);
-  return (
-    relative === "" ||
-    (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
-  );
+  return isInsideRoot(pioneerApplicationDataRoot(platform, environment, home), candidate);
+}
+
+export function isXdgConfigCredentialPath(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const base = environment.XDG_CONFIG_HOME;
+  if (base === undefined || !path.isAbsolute(base)) return false;
+  if (!isInsideRoot(base, candidate)) return false;
+  const relative = path.relative(canonicalOrLexical(base), canonicalOrLexical(candidate));
+  const [name, next] = relative.split(path.sep);
+  if (name === undefined || name === "") return false;
+  const folded = platform === "linux" ? name : name.toLowerCase();
+  if (CONFIG_CREDENTIAL_DIRECTORIES.has(folded)) return true;
+  const child = platform === "linux" ? next : next?.toLowerCase();
+  return folded === "bravesoftware" && child === "brave-browser";
 }
 
 export function isSensitiveCredentialPath(file: string): boolean {
-  if (isPioneerApplicationDataPath(file)) return true;
+  if (isPioneerApplicationDataPath(file) || isXdgConfigCredentialPath(file)) return true;
   const segments = file.split(path.sep).map(credentialSegment);
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
@@ -692,21 +736,11 @@ export function isSensitiveCredentialPath(file: string): boolean {
     ) {
       return true;
     }
+    const configChild = segments[index + 1];
     if (
       segment === ".config" &&
-      (segments[index + 1] === "gcloud" ||
-        segments[index + 1] === "gh" ||
-        segments[index + 1] === "git" ||
-        segments[index + 1] === "helm" ||
-        segments[index + 1] === "pypoetry" ||
-        segments[index + 1] === "sops" ||
-        segments[index + 1] === "glab-cli" ||
-        segments[index + 1] === "doctl" ||
-        segments[index + 1] === "rclone" ||
-        segments[index + 1] === "containers" ||
-        segments[index + 1] === "google-chrome" ||
-        segments[index + 1] === "chromium" ||
-        segments[index + 1] === "microsoft-edge")
+      configChild !== undefined &&
+      CONFIG_CREDENTIAL_DIRECTORIES.has(configChild)
     ) {
       return true;
     }
