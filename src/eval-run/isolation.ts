@@ -598,6 +598,7 @@ const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
   ".azure",
   ".cargo",
   ".docker",
+  ".gem",
   ".gnupg",
   ".kube",
   ".oci",
