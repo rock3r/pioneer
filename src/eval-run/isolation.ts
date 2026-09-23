@@ -567,6 +567,7 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/run",
   "/var/backups",
   "/var/cache",
+  "/var/crash",
   "/var/db",
   "/var/lib",
   "/var/log",
@@ -721,6 +722,21 @@ export function isSensitiveCredentialPath(file: string): boolean {
     if (segment === "library" && segments[index + 1] === "keychains") return true;
   }
   return false;
+}
+
+export async function protectedExtensionParents(): Promise<ReadonlySet<string>> {
+  const roots = new Set<string>([path.parse(process.cwd()).root]);
+  const add = async (candidate: string): Promise<void> => {
+    try {
+      roots.add(await realpath(candidate));
+    } catch {
+      // A missing system directory is not a staging root.
+    }
+  };
+  await add(os.homedir());
+  await add(os.tmpdir());
+  await Promise.all(["/tmp", "/private/tmp", "/var/tmp"].map((candidate) => add(candidate)));
+  return roots;
 }
 
 export function isBroadExtensionParent(

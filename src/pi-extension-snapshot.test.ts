@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
-import { chmod, mkdir, readFile, readlink, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
@@ -13,6 +14,21 @@ import {
 const { createTempDir } = registerManagedTempPaths();
 
 describe("extension snapshots", () => {
+  it("rejects an enabled extension placed directly in the temporary root", async () => {
+    const entry = path.join(os.tmpdir(), `pioneer-enabled-temp-${process.pid}-${Date.now()}.mjs`);
+    await writeFile(entry, "export {}\n");
+    try {
+      await expect(
+        snapshotExtensionResources(
+          [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+          await createTempDir("extension-temp-root-out-"),
+        ),
+      ).rejects.toThrow("dedicated directory");
+    } finally {
+      await rm(entry, { force: true });
+    }
+  });
+
   it("does not copy a credential directory nested in an extension package", async () => {
     const root = await createTempDir("extension-nested-credential-");
     const pkg = path.join(root, "package");

@@ -16,6 +16,7 @@ import {
   isBroadExtensionParent,
   isSensitiveCredentialPath,
   isSensitiveSystemExtensionParent,
+  protectedExtensionParents,
 } from "./eval-run/isolation.js";
 import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
 
@@ -192,6 +193,7 @@ export async function snapshotExtensionResources(
   const selectedRoots = [...roots]
     .sort()
     .filter((root) => ![...roots].some((other) => other !== root && within(other, root)));
+  const protectedParents = await protectedExtensionParents();
   for (const root of selectedRoots) {
     const relativeToAgent = agentDir === undefined ? ".." : path.relative(root, agentDir);
     const containsAgent =
@@ -199,9 +201,9 @@ export async function snapshotExtensionResources(
       (relativeToAgent !== ".." &&
         !relativeToAgent.startsWith(`..${path.sep}`) &&
         !path.isAbsolute(relativeToAgent));
-    if (containsAgent) {
+    if (containsAgent || protectedParents.has(root)) {
       throw new Error(
-        "Explicit Pi extension must live in a dedicated directory, not a directory that contains the Pi agent directory",
+        "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or a directory that contains the Pi agent directory",
       );
     }
     if (
@@ -218,6 +220,11 @@ export async function snapshotExtensionResources(
   for (const resource of enabled) {
     const canonical = await realpath(resource.path);
     const parent = path.dirname(canonical);
+    if (protectedParents.has(parent)) {
+      throw new Error(
+        "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or a directory that contains the Pi agent directory",
+      );
+    }
     if (
       isSensitiveCredentialPath(canonical) ||
       isBroadExtensionParent(parent) ||

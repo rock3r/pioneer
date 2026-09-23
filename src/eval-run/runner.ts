@@ -13,7 +13,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import net from "node:net";
-import os from "node:os";
 import path from "node:path";
 import {
   adoptCreatedScratchDirectory,
@@ -60,6 +59,7 @@ import {
   isSensitiveSystemExtensionParent,
   isTrustedPiInstallation,
   pathsOverlap,
+  protectedExtensionParents,
   type ResolvedEvalExecutable,
   resolveEvalExecutable,
   validateEvalRunSpec,
@@ -569,18 +569,7 @@ function explicitExtensionPaths(command: readonly string[], runDir: string): str
 }
 
 async function protectedExtensionRoots(): Promise<ReadonlySet<string>> {
-  const roots = new Set<string>([path.parse(process.cwd()).root]);
-  const add = async (candidate: string): Promise<void> => {
-    try {
-      roots.add(await realpath(candidate));
-    } catch {
-      // A missing system directory is not a staging root.
-    }
-  };
-  await add(os.homedir());
-  await add(os.tmpdir());
-  await Promise.all(["/tmp", "/private/tmp", "/var/tmp"].map((candidate) => add(candidate)));
-  return roots;
+  return protectedExtensionParents();
 }
 
 function extensionStageError(error: unknown): Error {
