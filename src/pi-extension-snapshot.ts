@@ -112,7 +112,8 @@ function isSensitiveCredentialFile(name: string): boolean {
     folded.startsWith(".env.") ||
     folded === ".git-credentials" ||
     folded === ".yarnrc" ||
-    folded === ".yarnrc.yml"
+    folded === ".yarnrc.yml" ||
+    folded === ".pypirc"
   );
 }
 
@@ -169,32 +170,39 @@ export async function snapshotExtensionResources(
         );
   const privateFiles = new Set<string>();
   const maxPrivateFileIdentities = 1024;
-  const rememberPrivateFiles = async (root: string): Promise<void> => {
-    if (privateFiles.size >= maxPrivateFileIdentities) return;
+  let privateIndexComplete = true;
+  const rememberPrivateFiles = async (root: string): Promise<boolean> => {
+    if (privateFiles.size >= maxPrivateFileIdentities) {
+      privateIndexComplete = false;
+      return false;
+    }
     signal?.throwIfAborted();
     let details: Awaited<ReturnType<typeof lstat>>;
     try {
       details = await lstat(root, { bigint: true });
     } catch {
-      return;
+      return true;
     }
-    if (details.isSymbolicLink()) return;
+    if (details.isSymbolicLink()) return true;
     if (details.isFile()) {
-      if (details.ino !== 0n && privateFiles.size < maxPrivateFileIdentities) {
-        privateFiles.add(`${details.dev}:${details.ino}`);
+      if (details.ino === 0n) return true;
+      if (privateFiles.size >= maxPrivateFileIdentities) {
+        privateIndexComplete = false;
+        return false;
       }
-      return;
+      privateFiles.add(`${details.dev}:${details.ino}`);
+      return true;
     }
-    if (!details.isDirectory()) return;
+    if (!details.isDirectory()) return true;
     const dir = await opendir(root);
     try {
       for await (const entry of dir) {
-        if (privateFiles.size >= maxPrivateFileIdentities) break;
-        await rememberPrivateFiles(path.join(root, entry.name));
+        if (!(await rememberPrivateFiles(path.join(root, entry.name)))) return false;
       }
     } finally {
       await dir.close().catch(() => undefined);
     }
+    return true;
   };
   if (agentDir !== undefined) {
     const namedCredentials = [
@@ -213,8 +221,7 @@ export async function snapshotExtensionResources(
       ...(storage?.sessionDirs ?? []),
     ];
     for (const root of privateRoots) {
-      if (privateFiles.size >= maxPrivateFileIdentities) break;
-      await rememberPrivateFiles(await canonicalOrResolved(root));
+      if (!(await rememberPrivateFiles(await canonicalOrResolved(root)))) break;
     }
   }
   const isPrivateStorage = async (canonical: string): Promise<boolean> =>
@@ -333,7 +340,9 @@ export async function snapshotExtensionResources(
     if (
       identity.isFile() &&
       identity.ino !== 0n &&
-      (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity))
+      (excludedFiles.has(fileIdentity) ||
+        privateFiles.has(fileIdentity) ||
+        (!privateIndexComplete && identity.nlink > 1n))
     ) {
       return;
     }

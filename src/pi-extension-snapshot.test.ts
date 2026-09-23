@@ -53,6 +53,7 @@ describe("extension snapshots", () => {
       ".git-credentials",
       ".yarnrc",
       ".yarnrc.yml",
+      ".pypirc",
     ]) {
       await writeFile(path.join(pkg, name), "secret");
     }
@@ -72,6 +73,7 @@ describe("extension snapshots", () => {
       ".git-credentials",
       ".yarnrc",
       ".yarnrc.yml",
+      ".pypirc",
     ]) {
       await expect(stat(path.join(stagedPackage, name))).rejects.toMatchObject({ code: "ENOENT" });
     }
@@ -185,6 +187,42 @@ describe("extension snapshots", () => {
     const staged = snapshot.paths[0];
     if (staged === undefined) throw new Error("expected a staged extension");
     await expect(stat(path.join(path.dirname(staged), "notes.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("does not copy an unindexed hard link after the identity cap", async () => {
+    const root = await createTempDir("extension-unindexed-hardlink-");
+    const agent = path.join(root, "agent");
+    const sessions = path.join(agent, "sessions");
+    const later = path.join(root, "later-sessions");
+    const pkg = path.join(root, "package");
+    await mkdir(sessions, { recursive: true });
+    await mkdir(later);
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    const secret = path.join(later, "secret.txt");
+    const alias = path.join(pkg, "alias.txt");
+    await writeFile(entry, "extension");
+    await writeFile(path.join(agent, "auth.json"), "secret");
+    await writeFile(secret, "secret");
+    await link(secret, alias);
+    await Promise.all(
+      Array.from({ length: 1024 }, (_, index) =>
+        writeFile(path.join(sessions, `session-${index}.jsonl`), "history"),
+      ),
+    );
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir: agent, sessionDirs: [later] },
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, "alias.txt"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
