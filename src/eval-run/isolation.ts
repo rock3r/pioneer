@@ -636,6 +636,7 @@ export function isSensitiveCredentialPath(file: string): boolean {
       segment === ".config" &&
       (segments[index + 1] === "gcloud" ||
         segments[index + 1] === "gh" ||
+        segments[index + 1] === "git" ||
         segments[index + 1] === "glab-cli" ||
         segments[index + 1] === "doctl" ||
         segments[index + 1] === "rclone" ||

@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readlink, stat, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -13,6 +13,31 @@ import {
 const { createTempDir } = registerManagedTempPaths();
 
 describe("extension snapshots", () => {
+  it.skipIf(process.platform === "win32")(
+    "keeps a reused extension file owner-readable",
+    async () => {
+      const root = await createTempDir("extension-reuse-mode-");
+      const pkg = path.join(root, "package");
+      await mkdir(pkg);
+      const entry = path.join(pkg, "index.ts");
+      await writeFile(entry, "extension");
+      await chmod(entry, 0o644);
+      const destination = path.join(root, "snapshot");
+      const first = await snapshotExtensionResources(
+        [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+        destination,
+      );
+      const staged = first.paths[0];
+      if (staged === undefined) throw new Error("expected a staged extension");
+      expect((await stat(staged)).mode & 0o777).toBe(0o600);
+      await snapshotExtensionResources(
+        [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+        destination,
+      );
+      expect((await stat(staged)).mode & 0o777).toBe(0o600);
+    },
+  );
+
   it("stops when the abort signal is already aborted", async () => {
     const root = await createTempDir("extension-abort-");
     const pkg = path.join(root, "package");
