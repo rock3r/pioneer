@@ -616,6 +616,7 @@ const CONFIG_CREDENTIAL_DIRECTORIES = new Set([
   "helm",
   "pypoetry",
   "sops",
+  "stripe",
   "glab-cli",
   "doctl",
   "rclone",
