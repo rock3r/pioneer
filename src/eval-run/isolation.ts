@@ -601,6 +601,7 @@ const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
   ".kube",
   ".oci",
   ".pki",
+  ".pulumi",
   ".ssh",
   ".terraform.d",
 ]);

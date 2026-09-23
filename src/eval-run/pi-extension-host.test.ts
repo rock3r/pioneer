@@ -49,6 +49,11 @@ describe("Pi package runtime hosting", () => {
     ).toBe(true);
     expect(
       isSensitiveCredentialPath(
+        `${path.sep}home${path.sep}user${path.sep}.pulumi${path.sep}provider.mjs`,
+      ),
+    ).toBe(true);
+    expect(
+      isSensitiveCredentialPath(
         `${path.sep}home${path.sep}user${path.sep}.terraform.d${path.sep}provider.mjs`,
       ),
     ).toBe(true);
