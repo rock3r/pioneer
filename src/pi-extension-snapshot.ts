@@ -102,6 +102,13 @@ function isMetadataDirectory(name: string): boolean {
   return folded === ".git" || folded === ".cache" || folded === ".npm";
 }
 
+function isSensitiveCredentialFile(name: string): boolean {
+  const folded = process.platform === "linux" ? name : name.toLowerCase();
+  return (
+    folded === ".npmrc" || folded === ".netrc" || folded === ".env" || folded.startsWith(".env.")
+  );
+}
+
 async function fileDigest(file: string): Promise<string> {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
@@ -313,7 +320,7 @@ export async function snapshotExtensionResources(
       await mkdir(target, { recursive: true, mode: 0o700 });
       const next = new Set([...ancestors, canonical]);
       for (const name of (await readdir(canonical)).sort()) {
-        if (isMetadataDirectory(name)) continue;
+        if (isMetadataDirectory(name) || isSensitiveCredentialFile(name)) continue;
         const child = path.join(canonical, name);
         if (isSensitiveCredentialPath(child)) continue;
         await copy(child, path.join(target, name), next);

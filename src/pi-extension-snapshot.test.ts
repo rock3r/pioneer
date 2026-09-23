@@ -29,6 +29,28 @@ describe("extension snapshots", () => {
     }
   });
 
+  it("does not copy credential files nested in an extension package", async () => {
+    const root = await createTempDir("extension-nested-credential-files-");
+    const pkg = path.join(root, "package");
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    await writeFile(entry, "extension");
+    for (const name of [".npmrc", ".netrc", ".env", ".env.local"]) {
+      await writeFile(path.join(pkg, name), "secret");
+    }
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    for (const name of [".npmrc", ".netrc", ".env", ".env.local"]) {
+      await expect(stat(path.join(stagedPackage, name))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
   it("does not copy a credential directory nested in an extension package", async () => {
     const root = await createTempDir("extension-nested-credential-");
     const pkg = path.join(root, "package");
