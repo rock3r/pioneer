@@ -145,8 +145,10 @@ export async function snapshotExtensionResources(
     const canonical = await canonicalOrResolved(candidate);
     excluded.add(policyPath(canonical));
     try {
-      const identity = await lstat(canonical);
-      if (identity.isFile()) excludedFiles.add(`${identity.dev}:${identity.ino}`);
+      const identity = await lstat(canonical, { bigint: true });
+      if (identity.isFile() && identity.ino !== 0n) {
+        excludedFiles.add(`${identity.dev}:${identity.ino}`);
+      }
     } catch {
       // A missing controller path has no file identity to match.
     }
@@ -169,13 +171,13 @@ export async function snapshotExtensionResources(
     signal?.throwIfAborted();
     let details: Awaited<ReturnType<typeof lstat>>;
     try {
-      details = await lstat(root);
+      details = await lstat(root, { bigint: true });
     } catch {
       return;
     }
     if (details.isSymbolicLink()) return;
     if (details.isFile()) {
-      privateFiles.add(`${details.dev}:${details.ino}`);
+      if (details.ino !== 0n) privateFiles.add(`${details.dev}:${details.ino}`);
       return;
     }
     if (!details.isDirectory()) return;
@@ -309,9 +311,13 @@ export async function snapshotExtensionResources(
     signal?.throwIfAborted();
     const canonical = await realpath(source);
     if ([...excluded].some((entry) => within(entry, policyPath(canonical)))) return;
-    const identity = await lstat(canonical);
+    const identity = await lstat(canonical, { bigint: true });
     const fileIdentity = `${identity.dev}:${identity.ino}`;
-    if (identity.isFile() && (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity))) {
+    if (
+      identity.isFile() &&
+      identity.ino !== 0n &&
+      (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity))
+    ) {
       return;
     }
     if (await isPrivateStorage(canonical)) return;
