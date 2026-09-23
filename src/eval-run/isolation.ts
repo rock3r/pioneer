@@ -554,6 +554,7 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/dev/shm",
   "/etc",
   "/private/etc",
+  "/private/var/audit",
   "/private/var/backups",
   "/private/var/cache",
   "/private/var/db",
@@ -565,6 +566,7 @@ const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
   "/private/var/spool",
   "/root",
   "/run",
+  "/var/audit",
   "/var/backups",
   "/var/cache",
   "/var/crash",
@@ -638,6 +640,7 @@ export function isSensitiveCredentialPath(file: string): boolean {
       (segments[index + 1] === "gcloud" ||
         segments[index + 1] === "gh" ||
         segments[index + 1] === "git" ||
+        segments[index + 1] === "sops" ||
         segments[index + 1] === "glab-cli" ||
         segments[index + 1] === "doctl" ||
         segments[index + 1] === "rclone" ||
