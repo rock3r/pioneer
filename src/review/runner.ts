@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
+import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -567,11 +567,41 @@ function combineWarnings(...warnings: readonly (string | undefined)[]): string |
   return present.length === 0 ? undefined : present.join("\n");
 }
 
+function isPiCommandName(executable: string): boolean {
+  const base = path.basename(executable);
+  const name = process.platform === "linux" ? base : base.toLowerCase();
+  return name === "pi" || name === "pi.exe" || name === "pi.cmd";
+}
+
+async function declaredPiExecutable(packageDir: string, target: string): Promise<boolean> {
+  try {
+    const raw = await readFile(path.join(packageDir, "package.json"), "utf8");
+    if (Buffer.byteLength(raw) > 1_000_000) return false;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return false;
+    const record = parsed as { name?: unknown; bin?: unknown };
+    if (record.name !== "@earendil-works/pi-coding-agent") return false;
+    const bin = record.bin;
+    if (typeof bin !== "object" || bin === null || Array.isArray(bin)) return false;
+    const relative = (bin as { pi?: unknown }).pi;
+    if (typeof relative !== "string" || relative.length === 0) return false;
+    return (await realpath(path.resolve(packageDir, relative))) === target;
+  } catch {
+    return false;
+  }
+}
+
 function executableOnPath(name: string): string {
-  if (name.includes(path.sep)) return path.resolve(name);
-  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
-    const candidate = path.join(directory, name);
-    if (existsSync(candidate)) return candidate;
+  if (name.includes(path.sep) || name.includes("/")) return path.resolve(name);
+  const pathValue = process.env.PATH;
+  if (pathValue === undefined) return name;
+  for (const entry of pathValue.split(path.delimiter)) {
+    const candidate = path.join(entry.length === 0 ? process.cwd() : entry, name);
+    try {
+      if (!statSync(candidate).isFile()) continue;
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {}
   }
   return name;
 }
@@ -584,14 +614,31 @@ export async function piRuntimePaths(executable: string): Promise<string[]> {
   try {
     const link = executableOnPath(executable);
     const target = await realpath(link);
-    paths.push(link, target);
+    let packageDir: string | undefined;
     let directory = path.dirname(target);
     while (directory !== path.dirname(directory)) {
       if (existsSync(path.join(directory, "package.json"))) {
-        paths.push(directory);
+        packageDir = directory;
         break;
       }
       directory = path.dirname(directory);
+    }
+    // Bind the package directory, not a symlink or a file inside it. Bubblewrap
+    // cannot create a file mount for bin/pi when that symlink's parent is not
+    // already in the new root.
+    if (
+      packageDir !== undefined &&
+      isPiCommandName(executable) &&
+      (await declaredPiExecutable(packageDir, target))
+    ) {
+      paths.push(packageDir);
+    } else paths.push(path.dirname(target));
+    if (existsSync(link) && !(await lstat(link)).isSymbolicLink() && link !== target) {
+      const relative = packageDir === undefined ? "" : path.relative(packageDir, link);
+      const insidePackage =
+        relative === "" ||
+        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+      if (packageDir === undefined || !insidePackage) paths.push(link);
     }
   } catch {
     // Pi readiness reports the actionable executable error.

@@ -4,6 +4,7 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Load enabled user extensions inside `pioneer eval run` so an extension-registered model provider that works in normal Pi also resolves in the eval sandbox. Ambient discovery stays off, extension tools stay stripped, and `--no-extensions` on the Pi command keeps built-in providers only. OAuth refresh uses the same broker as reviews, including that built-in-only opt-out. An explicit `--extension` or `-e` beside that opt-out still goes through the tool-stripping adapter. Built-in-only reviews launch Pi's canonical file so an external `pi` symlink is not required inside the sandbox. Eval snapshots still have no `--pi-home-include`.
 - Certify Pi `0.87.0` as the newest tested compatibility endpoint after reviewing the [0.87.0](https://github.com/earendil-works/pi/releases/tag/v0.87.0) release (canonical session context, extension boundaries, and per-model image limits). Required CLI options and thinking levels are unchanged; the minimum stays `0.80.6`.
 
 ## 0.3.5 - 2026-09-20

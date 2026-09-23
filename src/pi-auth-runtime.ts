@@ -1,6 +1,7 @@
 import { lstat, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { piPackageHostsAuthAdapter } from "./eval-run/pi-extension-host.js";
 import { type PiAuthBroker, startPiAuthBroker } from "./pi-auth-broker.js";
 import { type PreparedReviewRuntime, runPreparedPiCommand } from "./pi-extension-discovery.js";
 import { extensionPathsWithCapabilities } from "./pi-extension-snapshot.js";
@@ -68,6 +69,20 @@ interface AuthBackend {
   ): Promise<T>;
 }
 
+export function oauthBrokerRequiredButUnavailable(input: {
+  trusted: boolean;
+  hostsAuthAdapter: boolean;
+  platform: NodeJS.Platform;
+  oauthProviders: number;
+}): boolean {
+  return (
+    input.trusted &&
+    !input.hostsAuthAdapter &&
+    input.platform !== "win32" &&
+    input.oauthProviders > 0
+  );
+}
+
 export async function prepareAuthBroker(
   runtime: PreparedReviewRuntime,
 ): Promise<PiAuthBroker | undefined> {
@@ -75,6 +90,9 @@ export async function prepareAuthBroker(
   if (root === undefined || process.platform === "win32") return undefined;
   const providers = await snapshotOAuthProviders(runtime.home.agentDir);
   if (providers.size === 0) return undefined;
+  if (!(await piPackageHostsAuthAdapter(root))) {
+    throw new Error("[PI_OAUTH_REFRESH_FAILED] Pi cannot persist OAuth refresh-token rotation");
+  }
   if (!(await lstat(path.join(runtime.home.sourceDir, "auth.json"))).isFile())
     throw new Error(
       "[PI_OAUTH_REFRESH_FAILED] Source auth.json must be a regular file, not a symlink, so Pioneer and Pi share the same credential lock.",

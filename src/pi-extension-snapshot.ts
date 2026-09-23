@@ -1,9 +1,27 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, copyFile, lstat, mkdir, readdir, realpath, symlink } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  opendir,
+  readdir,
+  readlink,
+  realpath,
+  symlink,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  isBroadExtensionParent,
+  isSensitiveCredentialPath,
+  isSensitiveSystemExtensionParent,
+  protectedExtensionParents,
+} from "./eval-run/isolation.js";
 import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
+
+const SNAPSHOT_ENTRY_LIMIT = 500_000;
 
 export interface ExtensionResource {
   readonly path: string;
@@ -19,6 +37,8 @@ export interface ExtensionSnapshot {
   readonly paths: readonly string[];
   readonly sourcePaths: readonly string[];
   readonly digest: string;
+  readonly entries: number;
+  readonly bytes: number;
 }
 
 /** Capability paths have already been canonicalized and validated by their profile. */
@@ -80,12 +100,63 @@ async function rootLogFiles(agentDir: string): Promise<string[]> {
 }
 
 /** Copies code as data. No extension is imported in the controller. */
+function isMetadataDirectory(name: string): boolean {
+  const folded = process.platform === "linux" ? name : name.toLowerCase();
+  return folded === ".git" || folded === ".cache" || folded === ".npm";
+}
+
+function isSensitiveCredentialFile(name: string): boolean {
+  const folded = process.platform === "linux" ? name : name.toLowerCase();
+  return (
+    folded === ".npmrc" ||
+    folded === ".netrc" ||
+    folded === ".env" ||
+    folded.startsWith(".env.") ||
+    folded === ".git-credentials" ||
+    folded === ".yarnrc" ||
+    folded === ".yarnrc.yml" ||
+    folded === ".pypirc"
+  );
+}
+
+async function fileDigest(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
+
+export function mirroredExtensionStagePath(destination: string, source: string): string {
+  const parsed = path.parse(source);
+  return path.join(
+    destination,
+    "tree",
+    encodeURIComponent(parsed.root),
+    path.relative(parsed.root, source),
+  );
+}
+
 export async function snapshotExtensionResources(
   resources: readonly ExtensionResource[],
   destination: string,
   signal?: AbortSignal,
   storage?: PiRuntimeStorage,
+  budget?: { readonly entries: number; readonly bytes: number },
+  excludedPaths: readonly string[] = [],
 ): Promise<ExtensionSnapshot> {
+  const excluded = new Set<string>();
+  const excludedFiles = new Set<string>();
+  for (const candidate of excludedPaths) {
+    const canonical = await canonicalOrResolved(candidate);
+    excluded.add(policyPath(canonical));
+    try {
+      const identity = await lstat(canonical, { bigint: true });
+      if (identity.isFile() && identity.ino !== 0n) {
+        excludedFiles.add(`${identity.dev}:${identity.ino}`);
+      }
+    } catch {
+      // A missing controller path has no file identity to match.
+    }
+  }
   const agentDir = storage === undefined ? undefined : await canonicalOrResolved(storage.agentDir);
   const privateDirectories =
     agentDir === undefined
@@ -94,16 +165,73 @@ export async function snapshotExtensionResources(
           [
             path.join(agentDir, "sessions"),
             path.join(agentDir, "logs"),
+            path.join(agentDir, "skills"),
             ...(await rootLogFiles(agentDir)),
             ...(storage?.sessionDirs ?? []),
           ].map(async (entry) => policyPath(await canonicalOrResolved(entry))),
         );
+  const privateFiles = new Set<string>();
+  const maxPrivateFileIdentities = 1024;
+  let privateEntriesVisited = 0;
+  const rememberPrivateFiles = async (root: string): Promise<boolean> => {
+    if (privateEntriesVisited >= maxPrivateFileIdentities) return false;
+    signal?.throwIfAborted();
+    let details: Awaited<ReturnType<typeof lstat>>;
+    try {
+      details = await lstat(root, { bigint: true });
+    } catch {
+      return true;
+    }
+    privateEntriesVisited += 1;
+    if (privateEntriesVisited > maxPrivateFileIdentities) return false;
+    if (details.isSymbolicLink()) return true;
+    if (details.isFile()) {
+      if (details.ino !== 0n) privateFiles.add(`${details.dev}:${details.ino}`);
+      return true;
+    }
+    if (!details.isDirectory()) return true;
+    const dir = await opendir(root);
+    try {
+      for await (const entry of dir) {
+        if (!(await rememberPrivateFiles(path.join(root, entry.name)))) return false;
+      }
+    } finally {
+      await dir.close().catch(() => undefined);
+    }
+    return true;
+  };
+  if (agentDir !== undefined) {
+    const namedCredentials = [
+      "auth.json",
+      "models.json",
+      "models-store.json",
+      "settings.json",
+      "AGENTS.md",
+    ].map((name) => path.join(agentDir, name));
+    const privateRoots = [
+      ...namedCredentials,
+      ...(await rootLogFiles(agentDir)),
+      path.join(agentDir, "sessions"),
+      path.join(agentDir, "logs"),
+      path.join(agentDir, "skills"),
+      ...(storage?.sessionDirs ?? []),
+    ];
+    for (const root of privateRoots) {
+      if (!(await rememberPrivateFiles(await canonicalOrResolved(root)))) break;
+    }
+  }
   const isPrivateStorage = async (canonical: string): Promise<boolean> =>
     privateDirectories.some((entry) => within(entry, policyPath(canonical))) ||
     (agentDir !== undefined &&
       policyPath(path.dirname(canonical)) === policyPath(agentDir) &&
       policyPath(canonical).endsWith(".log") &&
-      (await lstat(canonical)).isFile());
+      (await lstat(canonical)).isFile()) ||
+    (agentDir !== undefined &&
+      policyPath(path.dirname(canonical)) === policyPath(agentDir) &&
+      [".json", ".md"].some((suffix) => policyPath(path.basename(canonical)).endsWith(suffix)) &&
+      ["auth.json", "models.json", "models-store.json", "settings.json", "agents.md"].includes(
+        policyPath(path.basename(canonical)),
+      ));
   const refusePrivateStorage = (): Error =>
     new Error(
       "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension is stored inside private Pi session or log storage. Move it to a dedicated extension directory.",
@@ -147,18 +275,54 @@ export async function snapshotExtensionResources(
   const selectedRoots = [...roots]
     .sort()
     .filter((root) => ![...roots].some((other) => other !== root && within(other, root)));
+  const protectedParents = await protectedExtensionParents();
+  for (const root of selectedRoots) {
+    const relativeToAgent = agentDir === undefined ? ".." : path.relative(root, agentDir);
+    const containsAgent =
+      relativeToAgent === "" ||
+      (relativeToAgent !== ".." &&
+        !relativeToAgent.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relativeToAgent));
+    if (containsAgent || protectedParents.has(root)) {
+      throw new Error(
+        "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or a directory that contains the Pi agent directory",
+      );
+    }
+    if (
+      isMetadataDirectory(path.basename(root)) ||
+      isSensitiveCredentialPath(path.join(root, "entry.mjs")) ||
+      isBroadExtensionParent(root) ||
+      isSensitiveSystemExtensionParent(root)
+    ) {
+      throw new Error(
+        "Explicit Pi extension must not be staged from a credential directory such as .ssh or .aws",
+      );
+    }
+  }
+  for (const resource of enabled) {
+    const canonical = await realpath(resource.path);
+    const parent = path.dirname(canonical);
+    if (protectedParents.has(parent)) {
+      throw new Error(
+        "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or a directory that contains the Pi agent directory",
+      );
+    }
+    if (
+      isSensitiveCredentialPath(canonical) ||
+      isBroadExtensionParent(parent) ||
+      isSensitiveSystemExtensionParent(parent)
+    ) {
+      throw new Error(
+        "Explicit Pi extension must not be staged from a credential directory such as .ssh or .aws",
+      );
+    }
+  }
   await mkdir(destination, { recursive: true, mode: 0o700 });
-  let entries = 0;
-  let bytes = 0;
+  let entries = budget?.entries ?? 0;
+  let bytes = budget?.bytes ?? 0;
   const digest = createHash("sha256");
   const mapped = new Map<string, string>();
-  const stagedPath = (source: string): string =>
-    path.join(
-      destination,
-      "tree",
-      encodeURIComponent(path.parse(source).root),
-      path.relative(path.parse(source).root, source),
-    );
+  const stagedPath = (source: string): string => mirroredExtensionStagePath(destination, source);
   async function copy(
     source: string,
     target: string,
@@ -166,6 +330,24 @@ export async function snapshotExtensionResources(
   ): Promise<void> {
     signal?.throwIfAborted();
     const canonical = await realpath(source);
+    if ([...excluded].some((entry) => within(entry, policyPath(canonical)))) return;
+    const identity = await lstat(canonical, { bigint: true });
+    const fileIdentity = `${identity.dev}:${identity.ino}`;
+    if (
+      identity.isFile() &&
+      identity.ino !== 0n &&
+      (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity))
+    ) {
+      return;
+    }
+    if (
+      identity.isFile() &&
+      identity.ino !== 0n &&
+      identity.nlink > 1n &&
+      BigInt(rootInodeCounts.get(fileIdentity) ?? 0) < identity.nlink
+    ) {
+      throw new Error("Explicit Pi extension uses an unsupported hard-link layout");
+    }
     if (await isPrivateStorage(canonical)) return;
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(
@@ -177,20 +359,43 @@ export async function snapshotExtensionResources(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency contains a symlink cycle.",
       );
     const lexical = await lstat(source);
+    let stagedAlready = false;
+    try {
+      await lstat(target);
+      stagedAlready = true;
+    } catch {
+      stagedAlready = false;
+    }
     if (lexical.isSymbolicLink()) {
-      entries += 1;
-      if (entries > 500_000)
+      if (!stagedAlready) entries += 1;
+      if (entries > SNAPSHOT_ENTRY_LIMIT)
         throw new Error("[PI_EXTENSION_SNAPSHOT_LIMIT] Too many extension dependency links.");
       const relative = path.relative(path.dirname(target), stagedPath(canonical));
       digest.update(JSON.stringify([path.relative(destination, target), "symlink", relative]));
       digest.update("\0");
-      await symlink(relative, target);
+      try {
+        await symlink(relative, target);
+      } catch (error) {
+        const exists =
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          (error as { code?: string }).code === "EEXIST";
+        if (!exists) throw error;
+        if ((await readlink(target)) !== relative) {
+          throw new Error(
+            "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
+          );
+        }
+      }
       return;
     }
     const details = await lstat(canonical);
-    entries += 1;
-    bytes += details.isFile() ? details.size : 0;
-    if (entries > 500_000 || bytes > 1024 ** 3) {
+    if (!stagedAlready) {
+      entries += 1;
+      bytes += details.isFile() ? details.size : 0;
+    }
+    if (entries > SNAPSHOT_ENTRY_LIMIT || bytes > 1024 ** 3) {
       throw new Error(
         "[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the 1 GiB or 500000-entry snapshot limit.",
       );
@@ -208,10 +413,26 @@ export async function snapshotExtensionResources(
       await mkdir(target, { recursive: true, mode: 0o700 });
       const next = new Set([...ancestors, canonical]);
       for (const name of (await readdir(canonical)).sort()) {
-        if ([".git", ".cache", ".npm"].includes(name)) continue;
-        await copy(path.join(canonical, name), path.join(target, name), next);
+        if (isMetadataDirectory(name) || isSensitiveCredentialFile(name)) continue;
+        const child = path.join(canonical, name);
+        if (isSensitiveCredentialPath(child)) continue;
+        await copy(child, path.join(target, name), next);
       }
     } else if (details.isFile()) {
+      if (stagedAlready) {
+        const staged = await lstat(target);
+        const same =
+          staged.size === details.size &&
+          (await fileDigest(target)) === (await fileDigest(canonical));
+        if (!same) {
+          throw new Error(
+            "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
+          );
+        }
+        const normalized = details.mode & 0o100 ? 0o700 : 0o600;
+        if ((staged.mode & 0o777) !== normalized) await chmod(target, normalized);
+        return;
+      }
       await copyFile(canonical, target);
       const copied = await lstat(target);
       const after = await lstat(canonical);
@@ -233,6 +454,41 @@ export async function snapshotExtensionResources(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] Extension resources must be regular files or directories.",
       );
   }
+  const rootInodeCounts = new Map<string, number>();
+  let prepassVisits = 0;
+  const countRootInodes = async (file: string): Promise<void> => {
+    signal?.throwIfAborted();
+    let details: Awaited<ReturnType<typeof lstat>>;
+    try {
+      details = await lstat(file, { bigint: true });
+    } catch {
+      return;
+    }
+    prepassVisits += 1;
+    if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) {
+      throw new Error(
+        "[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the 1 GiB or 500000-entry snapshot limit.",
+      );
+    }
+    if (details.isSymbolicLink()) return;
+    if (details.isFile()) {
+      if (details.ino === 0n) return;
+      const id = `${details.dev}:${details.ino}`;
+      rootInodeCounts.set(id, (rootInodeCounts.get(id) ?? 0) + 1);
+      if (isSensitiveCredentialFile(path.basename(file)) || isSensitiveCredentialPath(file)) {
+        excludedFiles.add(id);
+      }
+      return;
+    }
+    if (!details.isDirectory()) return;
+    const dir = await opendir(file);
+    try {
+      for await (const entry of dir) await countRootInodes(path.join(file, entry.name));
+    } finally {
+      await dir.close().catch(() => undefined);
+    }
+  };
+  for (const root of selectedRoots) await countRootInodes(root);
   for (const root of selectedRoots) {
     if (await isPrivateStorage(root)) throw refusePrivateStorage();
     const target = stagedPath(root);
@@ -256,5 +512,5 @@ export async function snapshotExtensionResources(
     }
   }
   digest.update(JSON.stringify(paths.map((entry) => path.relative(destination, entry))));
-  return { paths, sourcePaths, digest: digest.digest("hex") };
+  return { paths, sourcePaths, digest: digest.digest("hex"), entries, bytes };
 }

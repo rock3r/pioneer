@@ -1,8 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { constants } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { constants, createReadStream } from "node:fs";
 import {
   access,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -19,9 +20,28 @@ import {
   validateControllerScratchBase,
 } from "../controller-scratch.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
-import { defaultPiAgentDir, prepareIsolatedPiHome } from "../pi-home.js";
+import type { PiAuthBroker } from "../pi-auth-broker.js";
+import {
+  oauthBrokerRequiredButUnavailable,
+  prepareAuthBroker,
+  snapshotOAuthProviders,
+} from "../pi-auth-runtime.js";
+import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
+import { preparePiExtensions } from "../pi-extension-runtime.js";
+import {
+  extensionPathsWithCapabilities,
+  mirroredExtensionStagePath,
+  snapshotExtensionResources,
+} from "../pi-extension-snapshot.js";
+import { defaultPiAgentDir, type PreparedPiHome, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
-import { isPiExecutable, optimizePiStartupCommand, requestedPiModel } from "../pi-startup.js";
+import { piRuntimeStorage } from "../pi-runtime-storage.js";
+import {
+  applyResolvedPiLaunch,
+  isPiExecutable,
+  optimizePiStartupCommand,
+  requestedPiModel,
+} from "../pi-startup.js";
 import {
   buildLinuxSandboxArgv,
   buildMacosSandboxArgv,
@@ -38,8 +58,12 @@ import {
   type EvalRunSpec,
   evalIsolatedPiHomeWritablePaths,
   findValidatedPiPackageRoot,
+  isBroadExtensionParent,
+  isSensitiveCredentialPath,
+  isSensitiveSystemExtensionParent,
   isTrustedPiInstallation,
   pathsOverlap,
+  protectedExtensionParents,
   type ResolvedEvalExecutable,
   resolveEvalExecutable,
   validateEvalRunSpec,
@@ -47,7 +71,16 @@ import {
 } from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
 import { macosRuntimeReadPaths } from "./macos-runtime.js";
-import { startPublicEgressProxy } from "./public-egress-proxy.js";
+import {
+  isDeclaredPiExecutable,
+  piPackageHostsAuthAdapter,
+  piPackageHostsExtensionRuntime,
+} from "./pi-extension-host.js";
+import {
+  resolvePublicTarget,
+  startEgressProxy,
+  startPublicEgressProxy,
+} from "./public-egress-proxy.js";
 import {
   type EvalWorkLog,
   evalWorkLogCreateError,
@@ -502,6 +535,457 @@ async function listenForLanProbe(): Promise<{ port: number; close(): Promise<voi
   };
 }
 
+function optionArguments(command: readonly string[]): readonly string[] {
+  const delimiter = command.indexOf("--");
+  return delimiter < 0 ? command : command.slice(0, delimiter);
+}
+
+function commandDisablesExtensions(command: readonly string[]): boolean {
+  return optionArguments(command).some(
+    (argument) => argument === "--no-extensions" || argument === "-ne",
+  );
+}
+
+function commandRequestsExplicitExtension(command: readonly string[]): boolean {
+  return optionArguments(command).some(
+    (argument) =>
+      argument === "--extension" || argument.startsWith("--extension=") || argument === "-e",
+  );
+}
+
+function explicitExtensionPaths(command: readonly string[], runDir: string): string[] {
+  const paths: string[] = [];
+  const options = optionArguments(command);
+  for (let index = 0; index < options.length; index += 1) {
+    const argument = options[index];
+    if (argument === undefined) continue;
+    let value: string | undefined;
+    if (argument === "--extension" || argument === "-e") {
+      const next = options[index + 1];
+      if (next !== undefined && !next.startsWith("-")) value = next;
+    } else if (argument.startsWith("--extension=")) {
+      value = argument.slice("--extension=".length);
+    }
+    if (value === undefined || value.length === 0) continue;
+    paths.push(explicitExtensionKey(value, runDir));
+  }
+  return paths;
+}
+
+async function protectedExtensionRoots(): Promise<ReadonlySet<string>> {
+  return protectedExtensionParents();
+}
+
+function extensionStageError(error: unknown): Error {
+  if (error instanceof Error && error.message.startsWith("Explicit Pi extension")) return error;
+  if (error instanceof Error && error.message.startsWith("[PI_")) return error;
+  return new Error("Explicit Pi extension could not be staged");
+}
+
+async function reuseStagedExtensionFile(
+  canonical: string,
+  stagedPath: string,
+  sourceAgentDir: string,
+): Promise<boolean> {
+  let staged: Awaited<ReturnType<typeof lstat>>;
+  try {
+    staged = await lstat(stagedPath);
+  } catch {
+    return false;
+  }
+  if (!staged.isFile()) return false;
+  try {
+    await assertExplicitExtensionAllowed(
+      canonical,
+      sourceAgentDir,
+      await protectedExtensionRoots(),
+    );
+  } catch (error) {
+    throw extensionStageError(error);
+  }
+  let unchanged = false;
+  try {
+    unchanged = (await fileDigest(canonical)) === (await fileDigest(stagedPath));
+  } catch (error) {
+    throw extensionStageError(error);
+  }
+  if (!unchanged) {
+    throw new Error(
+      "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
+    );
+  }
+  return true;
+}
+
+async function fileDigest(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
+}
+
+export async function confirmReusedExtension(
+  canonical: string,
+  stagedPath: string,
+  sourceAgentDir: string,
+): Promise<void> {
+  if (!(await reuseStagedExtensionFile(canonical, stagedPath, sourceAgentDir))) {
+    throw new Error("Explicit Pi extension could not be staged");
+  }
+}
+
+async function assertExplicitExtensionAllowed(
+  canonical: string,
+  sourceAgentDir: string,
+  blocked: ReadonlySet<string>,
+): Promise<void> {
+  if (!(await lstat(canonical)).isFile()) {
+    throw new Error("Explicit Pi extension must be a regular file");
+  }
+  if (isSensitiveCredentialPath(canonical)) {
+    throw new Error(
+      "Explicit Pi extension must not be staged from a credential directory such as .ssh or .aws",
+    );
+  }
+  const parent = path.dirname(canonical);
+  const agentRoot = await realpath(sourceAgentDir);
+  const relativeToAgent = path.relative(parent, agentRoot);
+  const containsAgent =
+    relativeToAgent === "" ||
+    (relativeToAgent !== ".." &&
+      !relativeToAgent.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativeToAgent));
+  if (
+    blocked.has(parent) ||
+    isBroadExtensionParent(parent) ||
+    isSensitiveSystemExtensionParent(parent) ||
+    containsAgent
+  ) {
+    throw new Error(
+      "Explicit Pi extension must live in a dedicated directory, not a shared temp, home, filesystem root, or a directory that contains the Pi agent directory",
+    );
+  }
+}
+
+async function stageExplicitExtensionFiles(
+  sources: readonly string[],
+  destinationDir: string,
+  sourceAgentDir: string,
+  signal: AbortSignal | undefined,
+  budget?: { readonly entries: number; readonly bytes: number },
+  excludedPaths: readonly string[] = [],
+): Promise<string[]> {
+  if (sources.length === 0) return [];
+  const blocked = await protectedExtensionRoots();
+  const canonicals: string[] = [];
+  const resources = [];
+  for (const source of sources) {
+    let canonical: string;
+    try {
+      canonical = await realpath(source);
+    } catch {
+      throw new Error("Explicit Pi extension was not found");
+    }
+    try {
+      await assertExplicitExtensionAllowed(canonical, sourceAgentDir, blocked);
+    } catch (error) {
+      throw extensionStageError(error);
+    }
+    canonicals.push(canonical);
+    resources.push({
+      path: canonical,
+      enabled: true,
+      metadata: { scope: "user" as const },
+    });
+  }
+  // Stage the extension directory, not only the entry file, so sibling imports still resolve.
+  let snapshot: Awaited<ReturnType<typeof snapshotExtensionResources>>;
+  try {
+    snapshot = await snapshotExtensionResources(
+      resources,
+      destinationDir,
+      signal,
+      await piRuntimeStorage(
+        sourceAgentDir,
+        path.join(sourceAgentDir, "settings.json"),
+        process.env,
+      ),
+      budget,
+      excludedPaths,
+    );
+  } catch (error) {
+    throw extensionStageError(error);
+  }
+  const stagedBySource = new Map<string, string>();
+  snapshot.sourcePaths.forEach((source, index) => {
+    const staged = snapshot.paths[index];
+    if (staged !== undefined) stagedBySource.set(source, staged);
+  });
+  return canonicals.map((canonical) => {
+    const staged = stagedBySource.get(canonical);
+    if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
+    return staged;
+  });
+}
+
+export { isSensitiveCredentialPath };
+
+function explicitExtensionKey(value: string, runDir: string): string {
+  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(runDir, value);
+}
+
+function replaceExplicitExtensionPaths(
+  command: readonly [string, ...string[]],
+  replacements: ReadonlyMap<string, string>,
+  runDir: string,
+): [string, ...string[]] {
+  const next: string[] = [];
+  const optionCount = optionArguments(command).length;
+  for (let index = 0; index < command.length; index += 1) {
+    const argument = command[index] ?? "";
+    if (index >= optionCount) {
+      next.push(...command.slice(index));
+      break;
+    }
+    if ((argument === "--extension" || argument === "-e") && index + 1 < command.length) {
+      const value = command[index + 1] ?? "";
+      next.push(argument, replacements.get(explicitExtensionKey(value, runDir)) ?? value);
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--extension=")) {
+      const value = argument.slice("--extension=".length);
+      const replacement = replacements.get(explicitExtensionKey(value, runDir));
+      next.push(replacement === undefined ? argument : `--extension=${replacement}`);
+      continue;
+    }
+    next.push(argument);
+  }
+  return next as [string, ...string[]];
+}
+
+async function stageEvalPiExtensions(
+  executablePath: string,
+  sourceAgentDir: string,
+  isolationDir: string,
+  piHome: PreparedPiHome,
+  userCommand: readonly [string, ...string[]],
+  checkAborted: () => void,
+  signal: AbortSignal | undefined,
+  extensionsEnabled: boolean,
+  explicitExtensionSources: readonly string[],
+  runDir: string,
+  controllerOnlyPaths: readonly string[] = [],
+): Promise<{
+  readonly authBroker?: PiAuthBroker;
+  readonly readPaths: readonly string[];
+  readonly optimized: ReturnType<typeof optimizePiStartupCommand>;
+  readonly command: readonly [string, ...string[]];
+  readonly runtime: PreparedReviewRuntime;
+}> {
+  checkAborted();
+  const extensionRoot = path.join(isolationDir, "pi-extensions");
+  const extensions = await preparePiExtensions(
+    [executablePath],
+    sourceAgentDir,
+    path.join(extensionRoot, "extensions"),
+    process.env,
+    signal,
+    path.join(piHome.agentDir, "settings.json"),
+    extensionsEnabled,
+    controllerOnlyPaths,
+  );
+  checkAborted();
+  const alreadyStaged = new Map<string, string>();
+  extensions.sourcePaths.forEach((source, index) => {
+    const staged = extensions.paths[index];
+    if (staged !== undefined) alreadyStaged.set(source, staged);
+  });
+  const pending: string[] = [];
+  const resolvedSources: string[] = [];
+  for (const source of explicitExtensionSources) {
+    let canonical = source;
+    try {
+      canonical = await realpath(source);
+    } catch {
+      canonical = source;
+    }
+    resolvedSources.push(canonical);
+    const stagedExact = alreadyStaged.get(canonical);
+    if (stagedExact !== undefined) {
+      await confirmReusedExtension(canonical, stagedExact, sourceAgentDir);
+      continue;
+    }
+    const mirrored = mirroredExtensionStagePath(path.join(extensionRoot, "extensions"), canonical);
+    if (await reuseStagedExtensionFile(canonical, mirrored, sourceAgentDir)) {
+      alreadyStaged.set(canonical, mirrored);
+      continue;
+    }
+    const covered = extensions.sourcePaths.findIndex((stagedSource) => {
+      const root = path.dirname(stagedSource);
+      const relative = path.relative(root, canonical);
+      return (
+        relative === "" ||
+        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+      );
+    });
+    if (covered >= 0) {
+      const stagedEntry = extensions.paths[covered];
+      const stagedSource = extensions.sourcePaths[covered];
+      if (stagedEntry !== undefined && stagedSource !== undefined) {
+        const derived = path.join(
+          path.dirname(stagedEntry),
+          path.relative(path.dirname(stagedSource), canonical),
+        );
+        if (await reuseStagedExtensionFile(canonical, derived, sourceAgentDir)) {
+          alreadyStaged.set(canonical, derived);
+          continue;
+        }
+      }
+    }
+    pending.push(canonical);
+  }
+  const copied = await stageExplicitExtensionFiles(
+    pending,
+    path.join(extensionRoot, "extensions"),
+    sourceAgentDir,
+    signal,
+    { entries: extensions.entries, bytes: extensions.bytes },
+    controllerOnlyPaths,
+  );
+  pending.forEach((source, index) => {
+    const staged = copied[index];
+    if (staged !== undefined) alreadyStaged.set(source, staged);
+  });
+  const explicitCopies = resolvedSources.map((source) => {
+    const staged = alreadyStaged.get(source);
+    if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
+    return staged;
+  });
+  const replacements = new Map<string, string>();
+  explicitExtensionSources.forEach((source, index) => {
+    const staged = explicitCopies[index];
+    if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
+    replacements.set(source, staged);
+    const resolved = resolvedSources[index];
+    if (resolved !== undefined) replacements.set(resolved, staged);
+  });
+  const runtime: PreparedReviewRuntime = {
+    // Writable scratch must not contain the read-only extension tree. Bubblewrap
+    // rejects, or hides, a read-only mount nested inside a later writable parent.
+    scratch: path.dirname(piHome.root),
+    extensionRoot,
+    home: piHome,
+    extensions,
+    network: "public",
+    ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: [...new Set(explicitCopies)] }),
+  };
+  let authBroker: Awaited<ReturnType<typeof prepareAuthBroker>>;
+  try {
+    authBroker = await prepareAuthBroker(runtime);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.startsWith("[PI_") || error.message.startsWith("Explicit Pi extension"))
+    ) {
+      throw error;
+    }
+    throw new Error("Pi OAuth broker could not be started");
+  }
+  try {
+    checkAborted();
+    const flagCommand: [string, ...string[]] = isPiExecutable(userCommand[0])
+      ? [userCommand[0], ...userCommand.slice(1)]
+      : ["pi", ...userCommand.slice(1)];
+    const optimized = applyResolvedPiLaunch(
+      optimizePiStartupCommand(flagCommand, {
+        disableExtensions: true,
+        disableSkills: true,
+        extensions: extensionsEnabled ? extensionPathsWithCapabilities(extensions, []) : [],
+      }),
+      extensions.command,
+    );
+    const command = replaceExplicitExtensionPaths(optimized.command, replacements, runDir);
+    const runtimeWithBroker: PreparedReviewRuntime =
+      authBroker === undefined
+        ? runtime
+        : {
+            ...runtime,
+            authBroker,
+            home: {
+              ...runtime.home,
+              environment: { ...runtime.home.environment, ...authBroker.environment },
+            },
+          };
+    return {
+      ...(authBroker === undefined ? {} : { authBroker }),
+      readPaths: [
+        extensionRoot,
+        ...(extensions.runtimeRoot === undefined ? [] : [extensions.runtimeRoot]),
+      ],
+      optimized,
+      command,
+      runtime: runtimeWithBroker,
+    };
+  } catch (error) {
+    await authBroker?.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+interface EvalPiActor {
+  readonly trusted: boolean;
+  readonly hostsExtensionRuntime: boolean;
+  readonly hostsAuthAdapter: boolean;
+  readonly packageRoot?: string;
+}
+
+const UNTRUSTED_EVAL_PI_ACTOR: EvalPiActor = {
+  trusted: false,
+  hostsExtensionRuntime: false,
+  hostsAuthAdapter: false,
+};
+
+/** Trusted Pi identity, separate from whether this run stages extensions. */
+export async function inspectEvalPiActor(
+  command: readonly [string, ...string[]],
+  runDir: string,
+  environment: NodeJS.ProcessEnv,
+): Promise<EvalPiActor> {
+  let resolved: Awaited<ReturnType<typeof resolveEvalExecutable>>;
+  try {
+    resolved = await resolveEvalExecutable(
+      command[0],
+      runDir,
+      sanitizedBrokerEnvironment(environment).PATH ?? "",
+    );
+  } catch {
+    return UNTRUSTED_EVAL_PI_ACTOR;
+  }
+  const installation = await findValidatedPiPackageRoot(resolved.commandPath, runDir);
+  if (installation === undefined) return UNTRUSTED_EVAL_PI_ACTOR;
+  if (!(await isDeclaredPiExecutable(resolved.commandPath, installation.packageRoot))) {
+    return UNTRUSTED_EVAL_PI_ACTOR;
+  }
+  try {
+    const controllerPi = await resolveEvalExecutable(
+      "pi",
+      runDir,
+      sanitizedBrokerEnvironment(environment).PATH ?? "",
+    );
+    const controllerInstallation = await findValidatedPiPackageRoot(controllerPi.commandPath);
+    if (!isTrustedPiInstallation(installation, controllerInstallation))
+      return UNTRUSTED_EVAL_PI_ACTOR;
+  } catch {
+    return UNTRUSTED_EVAL_PI_ACTOR;
+  }
+  return {
+    trusted: true,
+    hostsExtensionRuntime: await piPackageHostsExtensionRuntime(installation.packageRoot),
+    hostsAuthAdapter: await piPackageHostsAuthAdapter(installation.packageRoot),
+    packageRoot: installation.packageRoot,
+  };
+}
+
 export async function runEvalCommand(
   spec: EvalRunSpec,
   options: RunEvalOptions = {},
@@ -537,10 +1021,31 @@ async function runEvalCommandWithInterruption(
   interruption: EvalInterruptionState,
 ): Promise<EvalRunResult> {
   throwIfEvalInterrupted(interruption);
-  const requestedModel = requestedPiModel(spec.command);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
+  const piActorInspection = await inspectEvalPiActor(spec.command, spec.runDir, process.env);
+  const requestedModel =
+    requestedPiModel(spec.command) ??
+    (piActorInspection.trusted ? requestedPiModel(["pi", ...spec.command.slice(1)]) : undefined);
+  const loadsUserExtensions =
+    piActorInspection.trusted &&
+    piActorInspection.hostsExtensionRuntime &&
+    !commandDisablesExtensions(spec.command.slice(1));
+  const loadsExplicitExtensions =
+    piActorInspection.trusted &&
+    piActorInspection.hostsExtensionRuntime &&
+    commandRequestsExplicitExtension(spec.command.slice(1));
+  if (
+    piActorInspection.trusted &&
+    !piActorInspection.hostsExtensionRuntime &&
+    !commandDisablesExtensions(spec.command.slice(1))
+  ) {
+    throw new Error(
+      "[PI_EXTENSION_RUNTIME_UNSUPPORTED] This Pi package cannot host the tool-stripping adapter. Pass --no-extensions to stay on built-in providers.",
+    );
+  }
+  const deferExtensionReadiness = loadsUserExtensions || loadsExplicitExtensions;
   const initialReadinessOptions = {
-    extensions: false,
+    extensions: false as const,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
     ...(requestedModel === undefined ? {} : { requestedModel }),
     signal: interruption.abortSignal,
@@ -549,8 +1054,12 @@ async function runEvalCommandWithInterruption(
   throwIfEvalInterrupted(interruption);
   await assertNativeSandboxReady();
   throwIfEvalInterrupted(interruption);
+  // Extension-backed models are absent from a built-in-only probe. Defer that probe until
+  // the same extension snapshot the actor will load is ready.
   let readiness =
-    spec.piHomeSource === undefined ? await assertPiReady(initialReadinessOptions) : undefined;
+    spec.piHomeSource === undefined && !deferExtensionReadiness
+      ? await assertPiReady(initialReadinessOptions)
+      : undefined;
   throwIfEvalInterrupted(interruption);
   const validated = await validateEvalRunSpec({
     ...spec,
@@ -604,17 +1113,21 @@ async function runEvalCommandWithInterruption(
         warning: readiness.warning !== undefined,
       });
     }
-    const optimizedPi = optimizePiStartupCommand(validated.command, {
+    const startupCommand: [string, ...string[]] =
+      piActorInspection.trusted && !isPiExecutable(validated.command[0])
+        ? ["pi", ...validated.command.slice(1)]
+        : [validated.command[0], ...validated.command.slice(1)];
+    let optimizedPi = optimizePiStartupCommand(startupCommand, {
       disableExtensions: true,
       disableSkills: true,
     });
     const resolvedExecutable = await resolveEvalExecutable(
-      optimizedPi.command[0],
+      validated.command[0],
       validated.runDir,
       sanitizedBrokerEnvironment(process.env).PATH ?? "",
     );
     throwIfEvalInterrupted(interruption);
-    const sandboxCommand = buildEvalLaunchCommand(resolvedExecutable, optimizedPi.command.slice(1));
+    let sandboxCommand = buildEvalLaunchCommand(resolvedExecutable, optimizedPi.command.slice(1));
     const piActor = isPiExecutable(spec.command[0]);
     const controllerPiInstallation = piActor
       ? await (async () => {
@@ -630,11 +1143,18 @@ async function runEvalCommandWithInterruption(
           }
         })()
       : undefined;
-    const piInstallation = piActor
-      ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath, validated.runDir)
-      : undefined;
+    const piInstallation =
+      piActor || piActorInspection.trusted
+        ? await findValidatedPiPackageRoot(resolvedExecutable.commandPath, validated.runDir)
+        : undefined;
     throwIfEvalInterrupted(interruption);
     if (piActor && !isTrustedPiInstallation(piInstallation, controllerPiInstallation)) {
+      throw new Error("Pi eval actor is not a validated Pi installation");
+    }
+    if (
+      piActorInspection.packageRoot !== undefined &&
+      piInstallation?.packageRoot !== piActorInspection.packageRoot
+    ) {
       throw new Error("Pi eval actor is not a validated Pi installation");
     }
     const executableReadPaths = buildEvalExecutableReadPaths(resolvedExecutable, piInstallation);
@@ -661,7 +1181,7 @@ async function runEvalCommandWithInterruption(
       ...(requestedModel === undefined ? {} : { requestedModel }),
       signal: interruption.abortSignal,
     };
-    if (readiness === undefined) {
+    if (readiness === undefined && !deferExtensionReadiness) {
       recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
       readiness = await assertPiReady(readinessOptions);
       recordEvalWorkLog(workLog, "stage_completed", {
@@ -716,6 +1236,8 @@ async function runEvalCommandWithInterruption(
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
     let bridgeRoot: string | undefined;
+    let authBroker: PiAuthBroker | undefined;
+    let extensionReadPaths: readonly string[] = [];
     try {
       const actorGrantPaths = [validated.runDir, ...completeActorReadPaths];
       if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
@@ -733,6 +1255,81 @@ async function runEvalCommandWithInterruption(
       });
       recordEvalWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
       throwIfSetupInterrupted();
+      let actorEnvironment: Readonly<Record<string, string>> = {
+        ...optimizedPi.environment,
+        ...piHome.environment,
+      };
+      const oauthProviders = await snapshotOAuthProviders(piHome.agentDir);
+      if (
+        oauthBrokerRequiredButUnavailable({
+          trusted: piActorInspection.trusted,
+          hostsAuthAdapter: piActorInspection.hostsAuthAdapter,
+          platform: process.platform,
+          oauthProviders: oauthProviders.size,
+        })
+      ) {
+        throw new Error("[PI_OAUTH_REFRESH_FAILED] Pi cannot persist OAuth refresh-token rotation");
+      }
+      const needsAuthBroker =
+        piActorInspection.trusted &&
+        piActorInspection.hostsAuthAdapter &&
+        process.platform !== "win32" &&
+        oauthProviders.size > 0;
+      const explicitExtension = commandRequestsExplicitExtension(validated.command.slice(1));
+      if (
+        explicitExtension &&
+        piActorInspection.trusted &&
+        !piActorInspection.hostsExtensionRuntime
+      ) {
+        throw new Error(
+          "Explicit Pi extensions require the tool-stripping adapter, and this Pi package cannot host it",
+        );
+      }
+      // Built-in-only opt-out skips the enabled user set. OAuth still uses the broker,
+      // and an explicit --extension still goes through the adapter so its tools are removed.
+      const stagePiAdapter =
+        loadsUserExtensions ||
+        needsAuthBroker ||
+        (explicitExtension && piActorInspection.trusted && piActorInspection.hostsExtensionRuntime);
+      if (stagePiAdapter) {
+        const staged = await stageEvalPiExtensions(
+          resolvedExecutable.commandPath,
+          validatedPiHomeSource,
+          isolationDir,
+          piHome,
+          validated.command,
+          throwIfSetupInterrupted,
+          interruption.abortSignal,
+          loadsUserExtensions,
+          explicitExtensionPaths(validated.command.slice(1), validated.runDir),
+          validated.runDir,
+          [workLog.path, ...(options.deniedReadProbePaths ?? [])],
+        );
+        authBroker = staged.authBroker;
+        extensionReadPaths = staged.readPaths;
+        optimizedPi = staged.optimized;
+        sandboxCommand = [...staged.command] as [string, ...string[]];
+        actorEnvironment = {
+          ...staged.optimized.environment,
+          ...piHome.environment,
+          ...staged.authBroker?.environment,
+        };
+        if (deferExtensionReadiness && readiness === undefined) {
+          recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
+          readiness = await assertPiReady({
+            command: [resolvedExecutable.commandPath],
+            environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
+            preparedRuntime: staged.runtime,
+            ...(requestedModel === undefined ? {} : { requestedModel }),
+            signal: interruption.abortSignal,
+          });
+          recordEvalWorkLog(workLog, "stage_completed", {
+            stage: "pi_readiness",
+            warning: readiness.warning !== undefined,
+          });
+        }
+      }
+      throwIfSetupInterrupted();
       await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
       await writeFile(probeScript, PROBE_SOURCE, { flag: "wx", mode: 0o500 });
       await writeFile(launcherScript, LAUNCHER_SOURCE, { flag: "wx", mode: 0o500 });
@@ -741,7 +1338,7 @@ async function runEvalCommandWithInterruption(
         JSON.stringify({
           command: sandboxCommand,
           cwd: validated.runDir,
-          environment: { ...optimizedPi.environment, ...piHome.environment },
+          environment: actorEnvironment,
         }),
         { flag: "wx", mode: 0o400 },
       );
@@ -761,7 +1358,11 @@ async function runEvalCommandWithInterruption(
       throwIfSetupInterrupted();
 
       recordEvalWorkLog(workLog, "stage_started", { stage: "network_proxy" });
-      proxy = await startPublicEgressProxy(randomBytes(32).toString("hex"));
+      const proxyToken = randomBytes(32).toString("hex");
+      proxy =
+        authBroker === undefined
+          ? await startPublicEgressProxy(proxyToken)
+          : await startEgressProxy(proxyToken, authBroker.resolveWith(resolvePublicTarget));
       throwIfSetupInterrupted();
       const linuxBwrapPath =
         process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
@@ -792,6 +1393,7 @@ async function runEvalCommandWithInterruption(
           launcherScript,
           launchSpec,
           ...executableReadPaths,
+          ...extensionReadPaths,
         ],
         writableScratchPaths: [...evalIsolatedPiHomeWritablePaths(piHome)],
         parentProxyUrl: proxy.url,
@@ -846,7 +1448,7 @@ async function runEvalCommandWithInterruption(
         completedResult = withWorkLogPath(
           {
             ...result,
-            ...(readiness.warning === undefined ? {} : { warning: readiness.warning }),
+            ...(readiness?.warning === undefined ? {} : { warning: readiness.warning }),
           },
           workLog.path,
         );
@@ -857,6 +1459,14 @@ async function runEvalCommandWithInterruption(
       else primaryFailure = error;
     } finally {
       delete process.env.PIONEER_HOST_SECRET;
+      // The refresh worker reads the staged extension tree. Shut the broker down before
+      // that tree is deleted, or a rotation can be lost after the provider already issued it.
+      let brokerCloseFailure: unknown;
+      try {
+        await authBroker?.close();
+      } catch (error) {
+        brokerCloseFailure = error;
+      }
       const cleanupResults = await Promise.allSettled([
         bridge?.close(),
         bridgeRoot === undefined ? undefined : rm(bridgeRoot, { recursive: true, force: true }),
@@ -865,9 +1475,11 @@ async function runEvalCommandWithInterruption(
         unlink(deniedWritePath).catch(() => undefined),
         rm(isolationDir, { recursive: true, force: true }),
       ]);
-      cleanupFailure = cleanupResults.find(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
-      )?.reason;
+      cleanupFailure =
+        brokerCloseFailure ??
+        cleanupResults.find(
+          (result): result is PromiseRejectedResult => result.status === "rejected",
+        )?.reason;
       try {
         recordEvalWorkLog(workLog, "stage_completed", {
           stage: "cleanup",

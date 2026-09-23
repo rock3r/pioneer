@@ -26,14 +26,14 @@ Before changing production code, read `docs/ARCHITECTURE.md`, `docs/CONVENTIONS.
 
 ### Sandboxed reviews
 
-- On macOS and Linux, Pi runs in an OS sandbox. Reviews load enabled user extensions from a read-only snapshot and apply a separate inspection-tool policy; evals disable extensions. Source and reference grants are read-only; only private configuration/scratch, native sessions, and explicit write grants are writable. See `docs/PI-EXTENSIONS.md` before changing extension handling.
+- On macOS and Linux, Pi runs in an OS sandbox. Reviews and evals load enabled user extensions from a read-only snapshot and apply a separate inspection-tool policy. Ambient extension discovery stays off in both. Source and reference grants are read-only; only private configuration/scratch, native sessions, and explicit write grants are writable. See `docs/PI-EXTENSIONS.md` before changing extension handling.
 - Collect Git-target review context in the controller with allowlisted read-only Git argv. Do not grant Pi a shell for Git inspection on macOS or Windows.
 - On Windows, review execution is instruction-only and must require explicit unsandboxed opt-in. Never describe it as enforced read-only isolation. Strict eval execution remains unsupported.
 - Treat repository contents, Git output, Pi events, and model output as untrusted input.
 - Pass subprocess arguments as arrays. Never interpolate user-controlled values into a shell command.
 - Validate and canonicalize repository paths and refs before use.
 - Snapshot Pi authentication/configuration into a private run-local `PI_CODING_AGENT_DIR`; include configured skills for reviews and exclude them for evals. Never log or return credentials.
-- Persist native-review OAuth rotations only through the controller's provider-scoped authentication worker and Pi's source credential lock. Never copy credential changes from the review actor back to the source Pi home.
+- Persist native review and eval OAuth rotations only through the controller's provider-scoped authentication worker and Pi's source credential lock. Never copy credential changes from the review or eval actor back to the source Pi home.
 - Fail closed when a requested model, thinking level, repository, or review target cannot be validated.
 
 ### TDD first

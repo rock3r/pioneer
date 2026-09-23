@@ -28,6 +28,14 @@ import {
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "./sandbox/linux-proxy-bridge.js";
 import { assertNativeSandboxReady } from "./sandbox/platform-readiness.js";
 
+function pathContains(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
 export interface PreparedReviewRuntime {
   readonly scratch: string;
   readonly extensionRoot: string;
@@ -89,7 +97,7 @@ export async function prepareReviewRuntime(
             path.join(home.agentDir, "settings.json"),
             extensionsEnabled,
           )
-        : { command, paths: [], sourcePaths: [], digest: "0".repeat(64) };
+        : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
     const runtime = { scratch, extensionRoot, home, extensions, network, capabilityExtensions };
     const authBroker = await prepareAuthBroker(runtime);
     return authBroker === undefined
@@ -156,7 +164,12 @@ export async function runPreparedPiCommand(
     const config: SandboxPolicy = {
       readOnlyPaths: [
         runtime.extensionRoot,
-        ...(runtime.capabilityExtensions ?? []),
+        ...(runtime.capabilityExtensions ?? []).filter(
+          (entry) =>
+            !pathContains(runtime.extensionRoot, entry) &&
+            (runtime.extensions.runtimeRoot === undefined ||
+              !pathContains(runtime.extensions.runtimeRoot, entry)),
+        ),
         ...(runtime.extensions.runtimeRoot === undefined ? [] : [runtime.extensions.runtimeRoot]),
         ...(await piRuntimePaths("pi")),
         ...(await piRuntimePaths("node")),

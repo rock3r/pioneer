@@ -535,7 +535,7 @@ async function assertNoSymlinks(root: string): Promise<void> {
   }
 }
 
-function isBroadRuntimePath(
+export function isBroadRuntimePath(
   candidate: string,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
@@ -548,6 +548,335 @@ function isBroadRuntimePath(
     candidate === path.resolve(os.homedir()) ||
     candidate === CANONICAL_HOME_DIR
   );
+}
+
+const SENSITIVE_SYSTEM_EXTENSION_ROOTS = [
+  "/dev/shm",
+  "/etc",
+  "/private/etc",
+  "/private/var/audit",
+  "/private/var/backups",
+  "/private/var/cache",
+  "/private/var/db",
+  "/private/var/lib",
+  "/private/var/log",
+  "/private/var/mail",
+  "/private/var/run",
+  "/private/var/opt",
+  "/private/var/spool",
+  "/private/var/www",
+  "/root",
+  "/run",
+  "/var/audit",
+  "/var/backups",
+  "/var/cache",
+  "/var/crash",
+  "/var/db",
+  "/var/lib",
+  "/var/log",
+  "/var/mail",
+  "/var/run",
+  "/var/opt",
+  "/var/spool",
+  "/var/www",
+] as const;
+
+function pathIsWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+export function isSensitiveSystemExtensionParent(parent: string): boolean {
+  return SENSITIVE_SYSTEM_EXTENSION_ROOTS.some((root) => pathIsWithin(root, parent));
+}
+
+const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
+  ".aws",
+  ".azure",
+  ".cargo",
+  ".docker",
+  ".gem",
+  ".gnupg",
+  ".kube",
+  ".oci",
+  ".pki",
+  ".pulumi",
+  ".ssh",
+  ".terraform.d",
+]);
+
+const CONFIG_CREDENTIAL_DIRECTORIES = new Set([
+  "age",
+  "gcloud",
+  "gh",
+  "git",
+  "helm",
+  "hcloud",
+  "pypoetry",
+  "sops",
+  "stripe",
+  "glab-cli",
+  "doctl",
+  "rclone",
+  "containers",
+  "google-chrome",
+  "chromium",
+  "microsoft-edge",
+]);
+
+function credentialSegment(segment: string): string {
+  return process.platform === "linux" ? segment : segment.toLowerCase();
+}
+
+function canonicalOrLexical(candidate: string): string {
+  try {
+    return realpathSync(candidate);
+  } catch {
+    return path.resolve(candidate);
+  }
+}
+
+function isInsideRoot(root: string, candidate: string): boolean {
+  const relative = path.relative(canonicalOrLexical(root), canonicalOrLexical(candidate));
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
+  );
+}
+
+function pioneerApplicationDataRoot(
+  platform: NodeJS.Platform,
+  environment: NodeJS.ProcessEnv,
+  home: string,
+): string {
+  if (platform === "darwin") return path.join(home, "Library", "Application Support", "Pioneer");
+  if (platform === "win32") {
+    const base = environment.LOCALAPPDATA;
+    if (base !== undefined && path.isAbsolute(base)) return path.join(base, "Pioneer");
+    return path.join(home, "AppData", "Local", "Pioneer");
+  }
+  const base = environment.XDG_DATA_HOME;
+  if (base !== undefined && path.isAbsolute(base)) return path.join(base, "pioneer");
+  return path.join(home, ".local", "share", "pioneer");
+}
+
+export function isPioneerApplicationDataPath(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): boolean {
+  return isInsideRoot(pioneerApplicationDataRoot(platform, environment, home), candidate);
+}
+
+function pioneerStateRoot(
+  platform: NodeJS.Platform,
+  environment: NodeJS.ProcessEnv,
+  home: string,
+): string {
+  if (platform === "darwin") return path.join(home, "Library", "Logs", "Pioneer");
+  if (platform === "win32") {
+    const base = environment.LOCALAPPDATA;
+    const root =
+      base !== undefined && path.isAbsolute(base) ? base : path.join(home, "AppData", "Local");
+    return path.join(root, "Pioneer", "Logs");
+  }
+  const base = environment.XDG_STATE_HOME;
+  const root =
+    base !== undefined && path.isAbsolute(base) ? base : path.join(home, ".local", "state");
+  return path.join(root, "pioneer");
+}
+
+export function isPioneerStatePath(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): boolean {
+  return isInsideRoot(pioneerStateRoot(platform, environment, home), candidate);
+}
+
+export function isXdgConfigCredentialPath(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const base = environment.XDG_CONFIG_HOME;
+  if (base === undefined || !path.isAbsolute(base)) return false;
+  if (!isInsideRoot(base, candidate)) return false;
+  const relative = path.relative(canonicalOrLexical(base), canonicalOrLexical(candidate));
+  const [name, next] = relative.split(path.sep);
+  if (name === undefined || name === "") return false;
+  const folded = platform === "linux" ? name : name.toLowerCase();
+  if (CONFIG_CREDENTIAL_DIRECTORIES.has(folded)) return true;
+  const child = platform === "linux" ? next : next?.toLowerCase();
+  return folded === "bravesoftware" && child === "brave-browser";
+}
+
+export function isSensitiveCredentialPath(file: string): boolean {
+  if (
+    isPioneerApplicationDataPath(file) ||
+    isPioneerStatePath(file) ||
+    isXdgConfigCredentialPath(file)
+  ) {
+    return true;
+  }
+  const segments = file.split(path.sep).map(credentialSegment);
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (segment !== undefined && SENSITIVE_CREDENTIAL_SEGMENTS.has(segment)) return true;
+    if (segment === ".config" && index === segments.length - 2) return true;
+    if (
+      segment === ".local" &&
+      (segments[index + 1] === "share" || segments[index + 1] === "state") &&
+      index + 1 === segments.length - 2
+    ) {
+      return true;
+    }
+    if (
+      segment === ".local" &&
+      (segments[index + 1] === "share" || segments[index + 1] === "state") &&
+      segments[index + 2] === "pioneer"
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      segments[index + 2] === "pioneer"
+    ) {
+      return true;
+    }
+    if (
+      segment === "appdata" &&
+      segments[index + 1] === "local" &&
+      segments[index + 2] === "pioneer"
+    ) {
+      return true;
+    }
+    if (
+      segment === ".local" &&
+      segments[index + 1] === "share" &&
+      segments[index + 2] === "keyrings"
+    ) {
+      return true;
+    }
+    if (segment === ".mozilla" && segments[index + 1] === "firefox") return true;
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      segments[index + 2] === "firefox"
+    ) {
+      return true;
+    }
+    const configChild = segments[index + 1];
+    if (
+      segment === ".config" &&
+      configChild !== undefined &&
+      CONFIG_CREDENTIAL_DIRECTORIES.has(configChild)
+    ) {
+      return true;
+    }
+    if (
+      segment === ".config" &&
+      segments[index + 1]?.toLowerCase() === "bravesoftware" &&
+      segments[index + 2]?.toLowerCase() === "brave-browser"
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      segments[index + 2] === "google" &&
+      segments[index + 3] === "chrome"
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      segments[index + 2] === "chromium"
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      segments[index + 2]?.toLowerCase() === "bravesoftware" &&
+      segments[index + 3]?.toLowerCase() === "brave-browser"
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      segments[index + 2] === "microsoft edge"
+    ) {
+      return true;
+    }
+    if (segment === "library" && segments[index + 1] === "safari") return true;
+    const safariContainer = segments[index + 2];
+    if (
+      segment === "library" &&
+      segments[index + 1] === "containers" &&
+      safariContainer !== undefined &&
+      (safariContainer === "com.apple.safari" || safariContainer.startsWith("com.apple.safari."))
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      index + 1 === segments.length - 2
+    ) {
+      return true;
+    }
+    if (
+      segment === "appdata" &&
+      (segments[index + 1] === "roaming" || segments[index + 1] === "local") &&
+      index + 1 === segments.length - 2
+    ) {
+      return true;
+    }
+    if (segment === "library" && index === segments.length - 2) return true;
+    if (
+      segment !== undefined &&
+      (segment.toLowerCase() === "documents" ||
+        segment.toLowerCase() === "desktop" ||
+        segment.toLowerCase() === "downloads") &&
+      index === segments.length - 2
+    ) {
+      return true;
+    }
+    if (segment === "library" && segments[index + 1] === "keychains") return true;
+  }
+  return false;
+}
+
+export async function protectedExtensionParents(): Promise<ReadonlySet<string>> {
+  const roots = new Set<string>([path.parse(process.cwd()).root]);
+  const add = async (candidate: string): Promise<void> => {
+    try {
+      roots.add(await realpath(candidate));
+    } catch {
+      // A missing system directory is not a staging root.
+    }
+  };
+  await add(os.homedir());
+  await add(os.tmpdir());
+  await Promise.all(["/tmp", "/private/tmp", "/var/tmp"].map((candidate) => add(candidate)));
+  return roots;
+}
+
+export function isBroadExtensionParent(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (isBroadRuntimePath(candidate, platform)) return true;
+  return platform !== "win32" && BROAD_WRITABLE_POSIX_PATHS.has(candidate);
 }
 
 export function isBroadWritablePath(

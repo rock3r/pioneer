@@ -1,4 +1,4 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
@@ -48,6 +48,85 @@ async function npmPiFixture(
   );
   return { shim, target };
 }
+
+describe("POSIX Pi command resolution", () => {
+  it("launches the canonical file when PATH pi is a symlink outside the package", async () => {
+    const root = await createTempDir("pioneer-pi-symlink-");
+    const packageRoot = path.join(root, "lib", "pi-coding-agent");
+    const target = path.join(packageRoot, "dist", "cli.js");
+    const bin = path.join(root, "bin");
+    await mkdir(path.dirname(target), { recursive: true });
+    await mkdir(bin);
+    await writeFile(target, "#!/usr/bin/env node\n", { mode: 0o755 });
+    await writeFile(
+      path.join(packageRoot, "package.json"),
+      JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli.js" } }),
+    );
+    await symlink(target, path.join(bin, "pi"));
+
+    await expect(resolvePiCommand("pi", { PATH: bin }, "linux")).resolves.toEqual([
+      await realpath(target),
+    ]);
+  });
+
+  // Windows reports X_OK for a mode 644 file, so this POSIX lookup cannot be exercised there.
+  it.skipIf(process.platform === "win32")(
+    "skips a non-executable PATH entry and uses a later executable",
+    async () => {
+      const root = await createTempDir("pioneer-pi-path-exec-");
+      const earlier = path.join(root, "earlier");
+      const later = path.join(root, "later");
+      const blocked = path.join(earlier, "pi");
+      const target = path.join(later, "pi");
+      await mkdir(earlier);
+      await mkdir(later);
+      await writeFile(blocked, "not executable\n");
+      await writeFile(target, "#!/usr/bin/env node\n");
+      await chmod(blocked, 0o644);
+      await chmod(target, 0o755);
+
+      await expect(
+        resolvePiCommand("pi", { PATH: `${earlier}${path.delimiter}${later}` }, "linux"),
+      ).resolves.toEqual([await realpath(target)]);
+    },
+  );
+
+  it("launches a shebang Pi through the absolute node on PATH", async () => {
+    const root = await createTempDir("pioneer-pi-node-launch-");
+    const packageRoot = path.join(root, "lib", "pi-coding-agent");
+    const target = path.join(packageRoot, "dist", "cli.js");
+    const bin = path.join(root, "bin");
+    const node = path.join(bin, "node");
+    await mkdir(path.dirname(target), { recursive: true });
+    await mkdir(bin);
+    await writeFile(target, "#!/usr/bin/env node\n", { mode: 0o755 });
+    await writeFile(node, "", { mode: 0o755 });
+    await symlink(target, path.join(bin, "pi"));
+
+    await expect(resolvePiCommand("pi", { PATH: bin }, "linux")).resolves.toEqual([
+      await realpath(node),
+      await realpath(target),
+    ]);
+  });
+
+  it("treats an empty PATH entry as the current directory", async () => {
+    const root = await createTempDir("pioneer-pi-path-cwd-");
+    const target = path.join(root, "pi");
+    const later = path.join(root, "later");
+    await mkdir(later);
+    await writeFile(target, "#!/usr/bin/env node\n");
+    await chmod(target, 0o755);
+    const previous = process.cwd();
+    process.chdir(root);
+    try {
+      await expect(
+        resolvePiCommand("pi", { PATH: `${path.delimiter}${later}` }, "linux"),
+      ).resolves.toEqual([await realpath(target)]);
+    } finally {
+      process.chdir(previous);
+    }
+  });
+});
 
 describe("Windows Pi command resolution", () => {
   it("unwraps a generated npm pi.cmd shim into an argv-safe Node launch", async () => {

@@ -1,4 +1,5 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, open, readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 export type PiLaunchCommand = readonly [string, ...string[]];
@@ -198,12 +199,64 @@ async function windowsExecutableCandidate(
   throw notFound(executable);
 }
 
+async function posixExecutableCandidate(
+  executable: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Promise<string> {
+  const pathValue = environment.PATH;
+  if (!executable.includes("/") && pathValue === undefined) throw notFound(executable);
+  // An empty PATH component is the current directory, as in PATH=:/usr/bin.
+  const bases = executable.includes("/")
+    ? [path.resolve(executable)]
+    : (pathValue ?? "")
+        .split(path.delimiter)
+        .map((entry) => path.join(entry.length === 0 ? process.cwd() : entry, executable));
+  for (const base of bases) {
+    const candidate = await regularFileOrUndefined(base);
+    if (candidate === undefined) continue;
+    try {
+      await access(candidate, constants.X_OK);
+    } catch {
+      continue;
+    }
+    return candidate;
+  }
+  throw notFound(executable);
+}
+
+async function usesEnvNodeShebang(script: string): Promise<boolean> {
+  const handle = await open(script, "r");
+  try {
+    const buffer = Buffer.alloc(64);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const line = buffer.subarray(0, bytesRead).toString("utf8").split("\n", 1)[0]?.trim() ?? "";
+    return line === "#!/usr/bin/env node";
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function resolvePiCommand(
   executable = "pi",
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
   platform: NodeJS.Platform = process.platform,
 ): Promise<PiLaunchCommand> {
-  if (platform !== "win32") return [executable];
+  // Return the canonical file. A PATH symlink often lives outside the package, and the
+  // sandbox grants the package directory rather than that external launcher.
+  if (platform !== "win32") {
+    const script = await posixExecutableCandidate(executable, environment);
+    // Launch through the absolute node binary. A PATH symlink such as Homebrew's
+    // node is not mounted, so the script's env shebang cannot find it.
+    if (await usesEnvNodeShebang(script)) {
+      try {
+        const nodePath = await posixExecutableCandidate("node", environment);
+        if (nodePath !== script) return [nodePath, script];
+      } catch {
+        // This PATH has the script but not node. Keep the script path.
+      }
+    }
+    return [script];
+  }
   const resolved = await windowsExecutableCandidate(executable, environment);
   const extension = path.win32.extname(resolved).toLowerCase();
   if (extension === ".cmd") return await resolveNpmPiCmdShim(resolved);

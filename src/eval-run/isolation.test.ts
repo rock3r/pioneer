@@ -9,7 +9,9 @@ import {
   buildEvalSandboxConfig,
   evalIsolatedPiHomeWritablePaths,
   findValidatedPiPackageRoot,
+  isBroadExtensionParent,
   isPublicInternetAddress,
+  isSensitiveSystemExtensionParent,
   isTrustedPiInstallation,
   MAX_SHEBANG_RESOLUTION_DEPTH,
   resolveEvalExecutable,
@@ -425,6 +427,45 @@ describe("validateEvalRunSpec", () => {
           runtimeReadPaths: ["/"],
         }),
       ).rejects.toThrow(/broad runtime read path/i);
+
+      for (const root of ["/opt", "/srv", "/mnt", "/media", "/usr", "/etc"]) {
+        expect(isBroadExtensionParent(root)).toBe(true);
+      }
+      expect(isBroadExtensionParent("/srv/my-extension")).toBe(false);
+      expect(isBroadExtensionParent("/opt/homebrew")).toBe(false);
+      expect(isSensitiveSystemExtensionParent("/etc/ssh")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/dev/shm")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/etc/ssl/private")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/run/secrets")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/lib")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/log")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/log")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/audit")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/audit/current")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/audit")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/audit/current")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/mail")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/mail/user")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/crash")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/crash/report")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/mail")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/mail/user")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/spool")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/backups")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/cache")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/cache")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/db")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/db")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/backups")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/spool")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/opt")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/www")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/var/www/html")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/www")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/www/html")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/private/var/opt")).toBe(true);
+      expect(isSensitiveSystemExtensionParent("/srv/my-extension")).toBe(false);
+      expect(isSensitiveSystemExtensionParent("/var/folders/xx/T")).toBe(false);
 
       for (const broadPath of ["/etc", "/run"]) {
         if (!(await import("node:fs")).existsSync(broadPath)) continue;

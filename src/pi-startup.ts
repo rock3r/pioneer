@@ -54,7 +54,9 @@ function optionValue(args: readonly string[], name: string): string | undefined 
 
 export function requestedPiModel(command: readonly [string, ...string[]]): string | undefined {
   if (!isPiExecutable(command[0])) return undefined;
-  const args = command.slice(1);
+  const rawArgs = command.slice(1);
+  const delimiter = rawArgs.indexOf("--");
+  const args = delimiter < 0 ? rawArgs : rawArgs.slice(0, delimiter);
   const model = optionValue(args, "--model");
   if (!model) return undefined;
   const provider = optionValue(args, "--provider");
@@ -68,13 +70,15 @@ export function optimizePiStartupCommand(
   if (!isPiExecutable(command[0])) return { command, environment: {} };
 
   const args = command.slice(1);
+  const delimiter = args.indexOf("--");
+  const optionArgs = delimiter < 0 ? args : args.slice(0, delimiter);
   const additions: string[] = [];
-  if (!hasAny(args, ["--offline"])) additions.push("--offline");
+  if (!hasAny(optionArgs, ["--offline"])) additions.push("--offline");
   if (options.resumeSession !== undefined) {
     additions.push("--session", options.resumeSession);
   } else if (
     options.sessionDir !== undefined &&
-    !hasAny(args, [
+    !hasAny(optionArgs, [
       "--session-dir",
       "--session",
       "--session-id",
@@ -88,7 +92,7 @@ export function optimizePiStartupCommand(
     additions.push("--session-dir", options.sessionDir);
   } else if (
     options.noSession === true &&
-    !hasAny(args, [
+    !hasAny(optionArgs, [
       "--no-session",
       "--session",
       "--session-dir",
@@ -103,7 +107,7 @@ export function optimizePiStartupCommand(
     additions.push("--no-session");
   } else if (
     options.noSession !== false &&
-    !hasAny(args, [
+    !hasAny(optionArgs, [
       "--no-session",
       "--session",
       "--session-dir",
@@ -117,12 +121,13 @@ export function optimizePiStartupCommand(
   ) {
     additions.push("--no-session");
   }
-  if (!hasAny(args, ["--no-approve", "-na", "--approve", "-a"])) additions.push("--no-approve");
-  if (!hasAny(args, ["--no-prompt-templates", "-np", "--prompt-template"])) {
+  if (!hasAny(optionArgs, ["--no-approve", "-na", "--approve", "-a"]))
+    additions.push("--no-approve");
+  if (!hasAny(optionArgs, ["--no-prompt-templates", "-np", "--prompt-template"])) {
     additions.push("--no-prompt-templates");
   }
-  if (!hasAny(args, ["--no-themes", "--theme"])) additions.push("--no-themes");
-  if (options.disableExtensions && !hasAny(args, ["--no-extensions", "-ne"])) {
+  if (!hasAny(optionArgs, ["--no-themes", "--theme"])) additions.push("--no-themes");
+  if (options.disableExtensions && !hasAny(optionArgs, ["--no-extensions", "-ne"])) {
     additions.push("--no-extensions");
   }
   if (options.extensions !== undefined) {
@@ -132,11 +137,11 @@ export function optimizePiStartupCommand(
   }
   if (
     options.tools !== undefined &&
-    !hasAny(args, ["--tools", "-t", "--no-tools", "-nt", "--no-builtin-tools", "-nbt"])
+    !hasAny(optionArgs, ["--tools", "-t", "--no-tools", "-nt", "--no-builtin-tools", "-nbt"])
   ) {
     additions.push("--tools", options.tools.join(","));
   }
-  if (options.disableSkills && !hasAny(args, ["--no-skills", "--skill"])) {
+  if (options.disableSkills && !hasAny(optionArgs, ["--no-skills", "--skill"])) {
     additions.push("--no-skills");
   }
 

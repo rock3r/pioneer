@@ -27,6 +27,33 @@ describe("Pi startup optimization", () => {
     );
   });
 
+  it("still injects safety flags when the same tokens appear after --", () => {
+    expect(
+      optimizePiStartupCommand(["pi", "--", "--no-extensions", "--approve", "--skill", "name"], {
+        disableExtensions: true,
+        disableSkills: true,
+        noSession: true,
+      }),
+    ).toEqual({
+      command: [
+        "pi",
+        "--offline",
+        "--no-session",
+        "--no-approve",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-extensions",
+        "--no-skills",
+        "--",
+        "--no-extensions",
+        "--approve",
+        "--skill",
+        "name",
+      ],
+      environment: { PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+    });
+  });
+
   it("does not duplicate flags or override explicit stateful choices", () => {
     const optimized = optimizePiStartupCommand([
       "pi",

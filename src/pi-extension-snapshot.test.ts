@@ -1,6 +1,17 @@
 import { realpathSync } from "node:fs";
-import { lstat, mkdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdir,
+  readFile,
+  readlink,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
@@ -13,6 +24,317 @@ import {
 const { createTempDir } = registerManagedTempPaths();
 
 describe("extension snapshots", () => {
+  it("rejects an enabled extension placed directly in the temporary root", async () => {
+    const entry = path.join(os.tmpdir(), `pioneer-enabled-temp-${process.pid}-${Date.now()}.mjs`);
+    await writeFile(entry, "export {}\n");
+    try {
+      await expect(
+        snapshotExtensionResources(
+          [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+          await createTempDir("extension-temp-root-out-"),
+        ),
+      ).rejects.toThrow("dedicated directory");
+    } finally {
+      await rm(entry, { force: true });
+    }
+  });
+
+  it("does not copy credential files nested in an extension package", async () => {
+    const root = await createTempDir("extension-nested-credential-files-");
+    const pkg = path.join(root, "package");
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    await writeFile(entry, "extension");
+    for (const name of [
+      ".npmrc",
+      ".netrc",
+      ".env",
+      ".env.local",
+      ".git-credentials",
+      ".yarnrc",
+      ".yarnrc.yml",
+      ".pypirc",
+    ]) {
+      await writeFile(path.join(pkg, name), "secret");
+    }
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    for (const name of [
+      ".npmrc",
+      ".netrc",
+      ".env",
+      ".env.local",
+      ".git-credentials",
+      ".yarnrc",
+      ".yarnrc.yml",
+      ".pypirc",
+    ]) {
+      await expect(stat(path.join(stagedPackage, name))).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  });
+
+  it("does not copy a controller-only file beside an extension", async () => {
+    const root = await createTempDir("extension-controller-only-");
+    const pkg = path.join(root, "package");
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    const answer = path.join(pkg, "answer.txt");
+    await writeFile(entry, "extension");
+    await writeFile(answer, "secret");
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      undefined,
+      undefined,
+      [answer],
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, "answer.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("copies hard links that all live inside the extension package", async () => {
+    const root = await createTempDir("extension-any-hardlink-");
+    const pkg = path.join(root, "package");
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    const first = path.join(pkg, "alias-a.txt");
+    const second = path.join(pkg, "alias-b.txt");
+    await writeFile(entry, "extension");
+    await writeFile(first, "secret");
+    await link(first, second);
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(readFile(path.join(stagedPackage, "alias-a.txt"), "utf8")).resolves.toBe("secret");
+    await expect(readFile(path.join(stagedPackage, "alias-b.txt"), "utf8")).resolves.toBe("secret");
+  });
+
+  it("does not copy an alias of a credential file inside the package", async () => {
+    const root = await createTempDir("extension-credential-alias-");
+    const pkg = path.join(root, "package");
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    const credential = path.join(pkg, ".npmrc");
+    const alias = path.join(pkg, "config.txt");
+    await writeFile(entry, "extension");
+    await writeFile(credential, "secret");
+    await link(credential, alias);
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, "config.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(stat(path.join(stagedPackage, ".npmrc"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("does not copy a hard link to an excluded file", async () => {
+    const root = await createTempDir("extension-excluded-hardlink-");
+    const pkg = path.join(root, "package");
+    const outside = path.join(root, "outside");
+    await mkdir(pkg);
+    await mkdir(outside);
+    const entry = path.join(pkg, "index.ts");
+    const answer = path.join(outside, "answer.txt");
+    const alias = path.join(pkg, "alias.txt");
+    await writeFile(entry, "extension");
+    await writeFile(answer, "secret");
+    await link(answer, alias);
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      undefined,
+      undefined,
+      [answer],
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, "alias.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("does not copy a hard link to a private Pi credential", async () => {
+    const root = await createTempDir("extension-private-hardlink-");
+    const agent = path.join(root, "agent");
+    const pkg = path.join(root, "package");
+    await mkdir(agent);
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    const auth = path.join(agent, "auth.json");
+    const alias = path.join(pkg, "notes.txt");
+    await writeFile(entry, "extension");
+    await writeFile(auth, "secret");
+    await link(auth, alias);
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir: agent, sessionDirs: [] },
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, "notes.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("still excludes auth.json when session storage exceeds the identity cap", async () => {
+    const root = await createTempDir("extension-private-identity-cap-");
+    const agent = path.join(root, "agent");
+    const sessions = path.join(agent, "sessions");
+    const pkg = path.join(root, "package");
+    await mkdir(sessions, { recursive: true });
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    const auth = path.join(agent, "auth.json");
+    const alias = path.join(pkg, "notes.txt");
+    await writeFile(entry, "extension");
+    await writeFile(auth, "secret");
+    await link(auth, alias);
+    await Promise.all(
+      Array.from({ length: 1024 }, (_, index) =>
+        writeFile(path.join(sessions, `session-${index}.jsonl`), "history"),
+      ),
+    );
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir: agent, sessionDirs: [] },
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    await expect(stat(path.join(path.dirname(staged), "notes.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rejects an unindexed hard link after the identity cap", async () => {
+    const root = await createTempDir("extension-unindexed-hardlink-");
+    const agent = path.join(root, "agent");
+    const sessions = path.join(agent, "sessions");
+    const later = path.join(root, "later-sessions");
+    const pkg = path.join(root, "package");
+    await mkdir(sessions, { recursive: true });
+    await mkdir(later);
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    const secret = path.join(later, "secret.txt");
+    const alias = path.join(pkg, "alias.txt");
+    await writeFile(entry, "extension");
+    await writeFile(path.join(agent, "auth.json"), "secret");
+    await writeFile(secret, "secret");
+    await link(secret, alias);
+    await Promise.all(
+      Array.from({ length: 1024 }, (_, index) =>
+        writeFile(path.join(sessions, `session-${index}.jsonl`), "history"),
+      ),
+    );
+    await expect(
+      snapshotExtensionResources(
+        [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+        path.join(root, "snapshot"),
+        undefined,
+        { agentDir: agent, sessionDirs: [later] },
+      ),
+    ).rejects.toThrow("unsupported hard-link layout");
+  });
+
+  it("does not copy a credential directory nested in an extension package", async () => {
+    const root = await createTempDir("extension-nested-credential-");
+    const pkg = path.join(root, "package");
+    await mkdir(path.join(pkg, ".ssh"), { recursive: true });
+    await mkdir(path.join(pkg, ".config", "git"), { recursive: true });
+    const entry = path.join(pkg, "index.ts");
+    await writeFile(entry, "extension");
+    await writeFile(path.join(pkg, ".ssh", "id_rsa"), "secret");
+    await writeFile(path.join(pkg, ".config", "git", "credentials"), "token");
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, ".ssh"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(path.join(stagedPackage, ".config", "git"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "keeps a reused extension file owner-readable",
+    async () => {
+      const root = await createTempDir("extension-reuse-mode-");
+      const pkg = path.join(root, "package");
+      await mkdir(pkg);
+      const entry = path.join(pkg, "index.ts");
+      await writeFile(entry, "extension");
+      await chmod(entry, 0o644);
+      const destination = path.join(root, "snapshot");
+      const first = await snapshotExtensionResources(
+        [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+        destination,
+      );
+      const staged = first.paths[0];
+      if (staged === undefined) throw new Error("expected a staged extension");
+      expect((await stat(staged)).mode & 0o777).toBe(0o600);
+      await snapshotExtensionResources(
+        [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+        destination,
+      );
+      expect((await stat(staged)).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it("stops when the abort signal is already aborted", async () => {
+    const root = await createTempDir("extension-abort-");
+    const pkg = path.join(root, "package");
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    await writeFile(entry, "extension");
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      snapshotExtensionResources(
+        [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+        path.join(root, "snapshot"),
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("loads capability extensions already present in a snapshot only once", async () => {
     const root = await createTempDir("extension-capability-duplicate-");
     const pkg = path.join(root, "package");
@@ -293,37 +615,14 @@ describe("extension snapshots", () => {
       );
     }
 
-    const result = await snapshotExtensionResources(
-      [{ path: path.join(agentDir, "local.ts"), enabled: true, metadata: { scope: "user" } }],
-      path.join(root, "snapshot"),
-      undefined,
-      { agentDir, sessionDirs: [history] },
-    );
-
-    const staged = path.dirname(result.paths[0] ?? "");
     await expect(
-      readFile(path.join(staged, "sessions", "--project--", "run.jsonl")),
-    ).rejects.toThrow();
-    await expect(lstat(path.join(staged, "sessions"))).rejects.toThrow();
-    await expect(lstat(path.join(staged, logsName))).rejects.toThrow();
-    await expect(lstat(path.join(staged, "pi-debug.log"))).rejects.toThrow();
-    await expect(lstat(path.join(staged, "history"))).rejects.toThrow();
-    if (process.platform !== "win32") {
-      await expect(
-        lstat(path.join(staged, "node_modules", "example-sdk", "debug-target.txt")),
-      ).rejects.toThrow();
-    }
-    await expect(
-      lstat(path.join(staged, "node_modules", "example-sdk", "linked-history")),
-    ).rejects.toThrow();
-    const stagedSdk = path.join(staged, "node_modules", "example-sdk");
-    await expect(readFile(path.join(stagedSdk, "sessions", "sessions.js"), "utf8")).resolves.toBe(
-      "module.exports = 'sessions';",
-    );
-    await expect(readFile(path.join(stagedSdk, "logs", "levels.json"), "utf8")).resolves.toBe("{}");
-    await expect(readFile(path.join(stagedSdk, "debug.log"), "utf8")).resolves.toBe(
-      "dependency file",
-    );
+      snapshotExtensionResources(
+        [{ path: path.join(agentDir, "local.ts"), enabled: true, metadata: { scope: "user" } }],
+        path.join(root, "snapshot"),
+        undefined,
+        { agentDir, sessionDirs: [history] },
+      ),
+    ).rejects.toThrow("Pi agent directory");
   });
 
   it("refuses an extension stored inside private Pi session storage", async () => {
@@ -365,7 +664,7 @@ describe("extension snapshots", () => {
         undefined,
         { agentDir, sessionDirs: [] },
       ),
-    ).rejects.toThrow("[PI_EXTENSION_RUNTIME_UNSUPPORTED]");
+    ).rejects.toThrow("Pi agent directory");
   });
 
   it("stages an agent-directory child directory whose name ends in .log", async () => {
