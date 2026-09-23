@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   isPioneerApplicationDataPath,
+  isPioneerStatePath,
   isSensitiveCredentialPath,
   isXdgConfigCredentialPath,
 } from "./isolation.js";
@@ -51,6 +52,27 @@ describe("Pi package runtime hosting", () => {
       ).toBe(true);
     },
   );
+
+  it("protects a custom XDG Pioneer state root", () => {
+    expect(
+      isPioneerStatePath(
+        "/var/state/pioneer/logs/evals/run.jsonl",
+        "linux",
+        {
+          XDG_STATE_HOME: "/var/state",
+        },
+        "/home/me",
+      ),
+    ).toBe(true);
+    expect(
+      isPioneerStatePath(
+        "/var/state/other/file",
+        "linux",
+        { XDG_STATE_HOME: "/var/state" },
+        "/home/me",
+      ),
+    ).toBe(false);
+  });
 
   it("honors XDG_CONFIG_HOME for credential directories", () => {
     expect(

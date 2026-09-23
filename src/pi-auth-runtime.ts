@@ -74,9 +74,11 @@ export async function prepareAuthBroker(
 ): Promise<PiAuthBroker | undefined> {
   const root = runtime.extensions.runtimeRoot;
   if (root === undefined || process.platform === "win32") return undefined;
-  if (!(await piPackageHostsAuthAdapter(root))) return undefined;
   const providers = await snapshotOAuthProviders(runtime.home.agentDir);
   if (providers.size === 0) return undefined;
+  if (!(await piPackageHostsAuthAdapter(root))) {
+    throw new Error("[PI_OAUTH_REFRESH_FAILED] Pi cannot persist OAuth refresh-token rotation");
+  }
   if (!(await lstat(path.join(runtime.home.sourceDir, "auth.json"))).isFile())
     throw new Error(
       "[PI_OAUTH_REFRESH_FAILED] Source auth.json must be a regular file, not a symlink, so Pioneer and Pi share the same credential lock.",

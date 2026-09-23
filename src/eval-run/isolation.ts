@@ -671,6 +671,33 @@ export function isPioneerApplicationDataPath(
   return isInsideRoot(pioneerApplicationDataRoot(platform, environment, home), candidate);
 }
 
+function pioneerStateRoot(
+  platform: NodeJS.Platform,
+  environment: NodeJS.ProcessEnv,
+  home: string,
+): string {
+  if (platform === "darwin") return path.join(home, "Library", "Logs", "Pioneer");
+  if (platform === "win32") {
+    const base = environment.LOCALAPPDATA;
+    const root =
+      base !== undefined && path.isAbsolute(base) ? base : path.join(home, "AppData", "Local");
+    return path.join(root, "Pioneer", "Logs");
+  }
+  const base = environment.XDG_STATE_HOME;
+  const root =
+    base !== undefined && path.isAbsolute(base) ? base : path.join(home, ".local", "state");
+  return path.join(root, "pioneer");
+}
+
+export function isPioneerStatePath(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): boolean {
+  return isInsideRoot(pioneerStateRoot(platform, environment, home), candidate);
+}
+
 export function isXdgConfigCredentialPath(
   candidate: string,
   platform: NodeJS.Platform = process.platform,
@@ -689,7 +716,13 @@ export function isXdgConfigCredentialPath(
 }
 
 export function isSensitiveCredentialPath(file: string): boolean {
-  if (isPioneerApplicationDataPath(file) || isXdgConfigCredentialPath(file)) return true;
+  if (
+    isPioneerApplicationDataPath(file) ||
+    isPioneerStatePath(file) ||
+    isXdgConfigCredentialPath(file)
+  ) {
+    return true;
+  }
   const segments = file.split(path.sep).map(credentialSegment);
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
