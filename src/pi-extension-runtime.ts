@@ -108,6 +108,7 @@ export async function preparePiExtensions(
   signal?: AbortSignal,
   settingsFile = path.join(sourceAgentDir, "settings.json"),
   enabled = true,
+  excludedPaths: readonly string[] = [],
 ): Promise<PreparedExtensions> {
   signal?.throwIfAborted();
   const root = await installedPiRoot(command, environment);
@@ -138,6 +139,8 @@ export async function preparePiExtensions(
       destination,
       signal,
       enabled ? await piRuntimeStorage(sourceAgentDir, settingsFile, environment) : undefined,
+      undefined,
+      excludedPaths,
     );
   } catch (error) {
     if (

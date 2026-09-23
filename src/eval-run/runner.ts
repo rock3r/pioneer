@@ -668,6 +668,7 @@ async function stageExplicitExtensionFiles(
   sourceAgentDir: string,
   signal: AbortSignal | undefined,
   budget?: { readonly entries: number; readonly bytes: number },
+  excludedPaths: readonly string[] = [],
 ): Promise<string[]> {
   if (sources.length === 0) return [];
   const blocked = await protectedExtensionRoots();
@@ -705,6 +706,7 @@ async function stageExplicitExtensionFiles(
         process.env,
       ),
       budget,
+      excludedPaths,
     );
   } catch (error) {
     throw extensionStageError(error);
@@ -768,6 +770,7 @@ async function stageEvalPiExtensions(
   extensionsEnabled: boolean,
   explicitExtensionSources: readonly string[],
   runDir: string,
+  controllerOnlyPaths: readonly string[] = [],
 ): Promise<{
   readonly authBroker?: PiAuthBroker;
   readonly readPaths: readonly string[];
@@ -785,6 +788,7 @@ async function stageEvalPiExtensions(
     signal,
     path.join(piHome.agentDir, "settings.json"),
     extensionsEnabled,
+    controllerOnlyPaths,
   );
   checkAborted();
   const alreadyStaged = new Map<string, string>();
@@ -842,6 +846,7 @@ async function stageEvalPiExtensions(
     sourceAgentDir,
     signal,
     { entries: extensions.entries, bytes: extensions.bytes },
+    controllerOnlyPaths,
   );
   pending.forEach((source, index) => {
     const staged = copied[index];
@@ -1283,6 +1288,7 @@ async function runEvalCommandWithInterruption(
           loadsUserExtensions,
           explicitExtensionPaths(validated.command.slice(1), validated.runDir),
           validated.runDir,
+          [workLog.path, ...(options.deniedReadProbePaths ?? [])],
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;

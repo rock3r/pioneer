@@ -67,6 +67,31 @@ describe("extension snapshots", () => {
     }
   });
 
+  it("does not copy a controller-only file beside an extension", async () => {
+    const root = await createTempDir("extension-controller-only-");
+    const pkg = path.join(root, "package");
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    const answer = path.join(pkg, "answer.txt");
+    await writeFile(entry, "extension");
+    await writeFile(answer, "secret");
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      undefined,
+      undefined,
+      [answer],
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, "answer.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("does not copy a credential directory nested in an extension package", async () => {
     const root = await createTempDir("extension-nested-credential-");
     const pkg = path.join(root, "package");

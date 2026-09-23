@@ -137,7 +137,12 @@ export async function snapshotExtensionResources(
   signal?: AbortSignal,
   storage?: PiRuntimeStorage,
   budget?: { readonly entries: number; readonly bytes: number },
+  excludedPaths: readonly string[] = [],
 ): Promise<ExtensionSnapshot> {
+  const excluded = new Set<string>();
+  for (const candidate of excludedPaths) {
+    excluded.add(policyPath(await canonicalOrResolved(candidate)));
+  }
   const agentDir = storage === undefined ? undefined : await canonicalOrResolved(storage.agentDir);
   const privateDirectories =
     agentDir === undefined
@@ -261,6 +266,7 @@ export async function snapshotExtensionResources(
   ): Promise<void> {
     signal?.throwIfAborted();
     const canonical = await realpath(source);
+    if ([...excluded].some((entry) => within(entry, policyPath(canonical)))) return;
     if (await isPrivateStorage(canonical)) return;
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(
