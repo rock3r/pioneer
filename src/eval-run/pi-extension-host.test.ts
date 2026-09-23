@@ -69,6 +69,9 @@ describe("Pi package runtime hosting", () => {
       ),
     ).toBe(true);
     expect(
+      isSensitiveCredentialPath(`${home}${path.sep}.config${path.sep}doctl${path.sep}provider.mjs`),
+    ).toBe(true);
+    expect(
       isSensitiveCredentialPath(
         `${home}${path.sep}.mozilla${path.sep}firefox${path.sep}profile${path.sep}provider.mjs`,
       ),
