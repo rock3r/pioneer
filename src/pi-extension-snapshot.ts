@@ -475,6 +475,9 @@ export async function snapshotExtensionResources(
       if (details.ino === 0n) return;
       const id = `${details.dev}:${details.ino}`;
       rootInodeCounts.set(id, (rootInodeCounts.get(id) ?? 0) + 1);
+      if (isSensitiveCredentialFile(path.basename(file)) || isSensitiveCredentialPath(file)) {
+        excludedFiles.add(id);
+      }
       return;
     }
     if (!details.isDirectory()) return;
