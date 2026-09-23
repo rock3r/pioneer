@@ -13,6 +13,29 @@ import {
 const { createTempDir } = registerManagedTempPaths();
 
 describe("extension snapshots", () => {
+  it("does not copy a credential directory nested in an extension package", async () => {
+    const root = await createTempDir("extension-nested-credential-");
+    const pkg = path.join(root, "package");
+    await mkdir(path.join(pkg, ".ssh"), { recursive: true });
+    await mkdir(path.join(pkg, ".config", "git"), { recursive: true });
+    const entry = path.join(pkg, "index.ts");
+    await writeFile(entry, "extension");
+    await writeFile(path.join(pkg, ".ssh", "id_rsa"), "secret");
+    await writeFile(path.join(pkg, ".config", "git", "credentials"), "token");
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, ".ssh"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(path.join(stagedPackage, ".config", "git"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it.skipIf(process.platform === "win32")(
     "keeps a reused extension file owner-readable",
     async () => {

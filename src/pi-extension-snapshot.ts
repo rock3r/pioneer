@@ -307,7 +307,9 @@ export async function snapshotExtensionResources(
       const next = new Set([...ancestors, canonical]);
       for (const name of (await readdir(canonical)).sort()) {
         if (isMetadataDirectory(name)) continue;
-        await copy(path.join(canonical, name), path.join(target, name), next);
+        const child = path.join(canonical, name);
+        if (isSensitiveCredentialPath(child)) continue;
+        await copy(child, path.join(target, name), next);
       }
     } else if (details.isFile()) {
       if (stagedAlready) {
