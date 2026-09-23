@@ -109,7 +109,9 @@ function isSensitiveCredentialFile(name: string): boolean {
     folded === ".netrc" ||
     folded === ".env" ||
     folded.startsWith(".env.") ||
-    folded === ".git-credentials"
+    folded === ".git-credentials" ||
+    folded === ".yarnrc" ||
+    folded === ".yarnrc.yml"
   );
 }
 

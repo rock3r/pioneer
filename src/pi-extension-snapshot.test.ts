@@ -35,7 +35,15 @@ describe("extension snapshots", () => {
     await mkdir(pkg);
     const entry = path.join(pkg, "index.ts");
     await writeFile(entry, "extension");
-    for (const name of [".npmrc", ".netrc", ".env", ".env.local", ".git-credentials"]) {
+    for (const name of [
+      ".npmrc",
+      ".netrc",
+      ".env",
+      ".env.local",
+      ".git-credentials",
+      ".yarnrc",
+      ".yarnrc.yml",
+    ]) {
       await writeFile(path.join(pkg, name), "secret");
     }
     const snapshot = await snapshotExtensionResources(
@@ -46,7 +54,15 @@ describe("extension snapshots", () => {
     if (staged === undefined) throw new Error("expected a staged extension");
     const stagedPackage = path.dirname(staged);
     await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
-    for (const name of [".npmrc", ".netrc", ".env", ".env.local", ".git-credentials"]) {
+    for (const name of [
+      ".npmrc",
+      ".netrc",
+      ".env",
+      ".env.local",
+      ".git-credentials",
+      ".yarnrc",
+      ".yarnrc.yml",
+    ]) {
       await expect(stat(path.join(stagedPackage, name))).rejects.toMatchObject({ code: "ENOENT" });
     }
   });
