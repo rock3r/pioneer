@@ -104,7 +104,7 @@ describe("extension snapshots", () => {
     });
   });
 
-  it("does not copy a hard link into an extension package", async () => {
+  it("copies a benign hard link into an extension package", async () => {
     const root = await createTempDir("extension-any-hardlink-");
     const pkg = path.join(root, "package");
     const outside = path.join(root, "outside");
@@ -124,9 +124,7 @@ describe("extension snapshots", () => {
     if (staged === undefined) throw new Error("expected a staged extension");
     const stagedPackage = path.dirname(staged);
     await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
-    await expect(stat(path.join(stagedPackage, "alias.txt"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(readFile(path.join(stagedPackage, "alias.txt"), "utf8")).resolves.toBe("secret");
   });
 
   it("does not copy a hard link to an excluded file", async () => {
@@ -216,7 +214,7 @@ describe("extension snapshots", () => {
     });
   });
 
-  it("does not copy an unindexed hard link after the identity cap", async () => {
+  it("rejects an unindexed hard link after the identity cap", async () => {
     const root = await createTempDir("extension-unindexed-hardlink-");
     const agent = path.join(root, "agent");
     const sessions = path.join(agent, "sessions");
@@ -237,19 +235,14 @@ describe("extension snapshots", () => {
         writeFile(path.join(sessions, `session-${index}.jsonl`), "history"),
       ),
     );
-    const snapshot = await snapshotExtensionResources(
-      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
-      path.join(root, "snapshot"),
-      undefined,
-      { agentDir: agent, sessionDirs: [later] },
-    );
-    const staged = snapshot.paths[0];
-    if (staged === undefined) throw new Error("expected a staged extension");
-    const stagedPackage = path.dirname(staged);
-    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
-    await expect(stat(path.join(stagedPackage, "alias.txt"))).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    await expect(
+      snapshotExtensionResources(
+        [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+        path.join(root, "snapshot"),
+        undefined,
+        { agentDir: agent, sessionDirs: [later] },
+      ),
+    ).rejects.toThrow("unsupported hard-link layout");
   });
 
   it("does not copy a credential directory nested in an extension package", async () => {

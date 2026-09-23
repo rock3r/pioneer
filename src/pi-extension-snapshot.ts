@@ -171,6 +171,7 @@ export async function snapshotExtensionResources(
   const privateFiles = new Set<string>();
   const maxPrivateFileIdentities = 1024;
   let privateEntriesVisited = 0;
+  let privateIndexComplete = true;
   const rememberPrivateFiles = async (root: string): Promise<boolean> => {
     if (privateEntriesVisited >= maxPrivateFileIdentities) return false;
     signal?.throwIfAborted();
@@ -215,7 +216,10 @@ export async function snapshotExtensionResources(
       ...(storage?.sessionDirs ?? []),
     ];
     for (const root of privateRoots) {
-      if (!(await rememberPrivateFiles(await canonicalOrResolved(root)))) break;
+      if (!(await rememberPrivateFiles(await canonicalOrResolved(root)))) {
+        privateIndexComplete = false;
+        break;
+      }
     }
   }
   const isPrivateStorage = async (canonical: string): Promise<boolean> =>
@@ -334,9 +338,12 @@ export async function snapshotExtensionResources(
     if (
       identity.isFile() &&
       identity.ino !== 0n &&
-      (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity) || identity.nlink > 1n)
+      (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity))
     ) {
       return;
+    }
+    if (identity.isFile() && identity.nlink > 1n && !privateIndexComplete) {
+      throw new Error("Explicit Pi extension uses an unsupported hard-link layout");
     }
     if (await isPrivateStorage(canonical)) return;
     if (!selectedRoots.some((root) => within(root, canonical))) {
