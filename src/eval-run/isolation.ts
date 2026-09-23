@@ -609,6 +609,7 @@ const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
 ]);
 
 const CONFIG_CREDENTIAL_DIRECTORIES = new Set([
+  "age",
   "gcloud",
   "gh",
   "git",
