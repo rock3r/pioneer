@@ -171,7 +171,6 @@ export async function snapshotExtensionResources(
   const privateFiles = new Set<string>();
   const maxPrivateFileIdentities = 1024;
   let privateEntriesVisited = 0;
-  let privateIndexComplete = true;
   const rememberPrivateFiles = async (root: string): Promise<boolean> => {
     if (privateEntriesVisited >= maxPrivateFileIdentities) return false;
     signal?.throwIfAborted();
@@ -216,10 +215,7 @@ export async function snapshotExtensionResources(
       ...(storage?.sessionDirs ?? []),
     ];
     for (const root of privateRoots) {
-      if (!(await rememberPrivateFiles(await canonicalOrResolved(root)))) {
-        privateIndexComplete = false;
-        break;
-      }
+      if (!(await rememberPrivateFiles(await canonicalOrResolved(root)))) break;
     }
   }
   const isPrivateStorage = async (canonical: string): Promise<boolean> =>
@@ -342,7 +338,12 @@ export async function snapshotExtensionResources(
     ) {
       return;
     }
-    if (identity.isFile() && identity.nlink > 1n && !privateIndexComplete) {
+    if (
+      identity.isFile() &&
+      identity.ino !== 0n &&
+      identity.nlink > 1n &&
+      BigInt(rootInodeCounts.get(fileIdentity) ?? 0) < identity.nlink
+    ) {
       throw new Error("Explicit Pi extension uses an unsupported hard-link layout");
     }
     if (await isPrivateStorage(canonical)) return;
@@ -451,6 +452,31 @@ export async function snapshotExtensionResources(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] Extension resources must be regular files or directories.",
       );
   }
+  const rootInodeCounts = new Map<string, number>();
+  const countRootInodes = async (file: string): Promise<void> => {
+    signal?.throwIfAborted();
+    let details: Awaited<ReturnType<typeof lstat>>;
+    try {
+      details = await lstat(file, { bigint: true });
+    } catch {
+      return;
+    }
+    if (details.isSymbolicLink()) return;
+    if (details.isFile()) {
+      if (details.ino === 0n) return;
+      const id = `${details.dev}:${details.ino}`;
+      rootInodeCounts.set(id, (rootInodeCounts.get(id) ?? 0) + 1);
+      return;
+    }
+    if (!details.isDirectory()) return;
+    const dir = await opendir(file);
+    try {
+      for await (const entry of dir) await countRootInodes(path.join(file, entry.name));
+    } finally {
+      await dir.close().catch(() => undefined);
+    }
+  };
+  for (const root of selectedRoots) await countRootInodes(root);
   for (const root of selectedRoots) {
     if (await isPrivateStorage(root)) throw refusePrivateStorage();
     const target = stagedPath(root);

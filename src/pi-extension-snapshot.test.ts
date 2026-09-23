@@ -104,18 +104,16 @@ describe("extension snapshots", () => {
     });
   });
 
-  it("copies a benign hard link into an extension package", async () => {
+  it("copies hard links that all live inside the extension package", async () => {
     const root = await createTempDir("extension-any-hardlink-");
     const pkg = path.join(root, "package");
-    const outside = path.join(root, "outside");
     await mkdir(pkg);
-    await mkdir(outside);
     const entry = path.join(pkg, "index.ts");
-    const secret = path.join(outside, "secret.txt");
-    const alias = path.join(pkg, "alias.txt");
+    const first = path.join(pkg, "alias-a.txt");
+    const second = path.join(pkg, "alias-b.txt");
     await writeFile(entry, "extension");
-    await writeFile(secret, "secret");
-    await link(secret, alias);
+    await writeFile(first, "secret");
+    await link(first, second);
     const snapshot = await snapshotExtensionResources(
       [{ path: entry, enabled: true, metadata: { scope: "user" } }],
       path.join(root, "snapshot"),
@@ -124,7 +122,8 @@ describe("extension snapshots", () => {
     if (staged === undefined) throw new Error("expected a staged extension");
     const stagedPackage = path.dirname(staged);
     await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
-    await expect(readFile(path.join(stagedPackage, "alias.txt"), "utf8")).resolves.toBe("secret");
+    await expect(readFile(path.join(stagedPackage, "alias-a.txt"), "utf8")).resolves.toBe("secret");
+    await expect(readFile(path.join(stagedPackage, "alias-b.txt"), "utf8")).resolves.toBe("secret");
   });
 
   it("does not copy a hard link to an excluded file", async () => {
