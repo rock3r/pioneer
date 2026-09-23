@@ -91,6 +91,11 @@ describe("Pi package runtime hosting", () => {
       }),
     ).toBe(true);
     expect(
+      isXdgConfigCredentialPath("/srv/xdg/hcloud/cli.toml", "linux", {
+        XDG_CONFIG_HOME: "/srv/xdg",
+      }),
+    ).toBe(true);
+    expect(
       isXdgConfigCredentialPath("/srv/xdg/other/provider.mjs", "linux", {
         XDG_CONFIG_HOME: "/srv/xdg",
       }),
@@ -175,6 +180,9 @@ describe("Pi package runtime hosting", () => {
     ).toBe(true);
     expect(
       isSensitiveCredentialPath(`${home}${path.sep}.config${path.sep}git${path.sep}provider.mjs`),
+    ).toBe(true);
+    expect(
+      isSensitiveCredentialPath(`${home}${path.sep}.config${path.sep}hcloud${path.sep}cli.toml`),
     ).toBe(true);
     expect(
       isSensitiveCredentialPath(

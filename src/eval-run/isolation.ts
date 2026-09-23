@@ -614,6 +614,7 @@ const CONFIG_CREDENTIAL_DIRECTORIES = new Set([
   "gh",
   "git",
   "helm",
+  "hcloud",
   "pypoetry",
   "sops",
   "stripe",
