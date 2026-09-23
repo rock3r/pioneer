@@ -596,6 +596,7 @@ export function isSensitiveSystemExtensionParent(parent: string): boolean {
 const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
   ".aws",
   ".azure",
+  ".cargo",
   ".docker",
   ".gnupg",
   ".kube",
