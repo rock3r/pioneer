@@ -69,6 +69,20 @@ interface AuthBackend {
   ): Promise<T>;
 }
 
+export function oauthBrokerRequiredButUnavailable(input: {
+  trusted: boolean;
+  hostsAuthAdapter: boolean;
+  platform: NodeJS.Platform;
+  oauthProviders: number;
+}): boolean {
+  return (
+    input.trusted &&
+    !input.hostsAuthAdapter &&
+    input.platform !== "win32" &&
+    input.oauthProviders > 0
+  );
+}
+
 export async function prepareAuthBroker(
   runtime: PreparedReviewRuntime,
 ): Promise<PiAuthBroker | undefined> {

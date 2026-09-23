@@ -2,12 +2,39 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
-import { prepareAuthBroker } from "./pi-auth-runtime.js";
+import { oauthBrokerRequiredButUnavailable, prepareAuthBroker } from "./pi-auth-runtime.js";
 import type { PreparedReviewRuntime } from "./pi-extension-discovery.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
 describe("prepareAuthBroker", () => {
+  it("requires a broker when OAuth credentials exist and the adapter is missing", () => {
+    expect(
+      oauthBrokerRequiredButUnavailable({
+        trusted: true,
+        hostsAuthAdapter: false,
+        platform: "linux",
+        oauthProviders: 1,
+      }),
+    ).toBe(true);
+    expect(
+      oauthBrokerRequiredButUnavailable({
+        trusted: true,
+        hostsAuthAdapter: true,
+        platform: "linux",
+        oauthProviders: 1,
+      }),
+    ).toBe(false);
+    expect(
+      oauthBrokerRequiredButUnavailable({
+        trusted: true,
+        hostsAuthAdapter: false,
+        platform: "linux",
+        oauthProviders: 0,
+      }),
+    ).toBe(false);
+  });
+
   it.skipIf(process.platform === "win32")(
     "rejects OAuth credentials when the Pi package cannot broker refresh rotation",
     async () => {

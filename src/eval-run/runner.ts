@@ -21,7 +21,11 @@ import {
 } from "../controller-scratch.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
 import type { PiAuthBroker } from "../pi-auth-broker.js";
-import { prepareAuthBroker, snapshotOAuthProviders } from "../pi-auth-runtime.js";
+import {
+  oauthBrokerRequiredButUnavailable,
+  prepareAuthBroker,
+  snapshotOAuthProviders,
+} from "../pi-auth-runtime.js";
 import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
 import { preparePiExtensions } from "../pi-extension-runtime.js";
 import {
@@ -1255,11 +1259,22 @@ async function runEvalCommandWithInterruption(
         ...optimizedPi.environment,
         ...piHome.environment,
       };
+      const oauthProviders = await snapshotOAuthProviders(piHome.agentDir);
+      if (
+        oauthBrokerRequiredButUnavailable({
+          trusted: piActorInspection.trusted,
+          hostsAuthAdapter: piActorInspection.hostsAuthAdapter,
+          platform: process.platform,
+          oauthProviders: oauthProviders.size,
+        })
+      ) {
+        throw new Error("[PI_OAUTH_REFRESH_FAILED] Pi cannot persist OAuth refresh-token rotation");
+      }
       const needsAuthBroker =
         piActorInspection.trusted &&
         piActorInspection.hostsAuthAdapter &&
         process.platform !== "win32" &&
-        (await snapshotOAuthProviders(piHome.agentDir)).size > 0;
+        oauthProviders.size > 0;
       const explicitExtension = commandRequestsExplicitExtension(validated.command.slice(1));
       if (
         explicitExtension &&

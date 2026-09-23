@@ -21,6 +21,8 @@ import {
 } from "./eval-run/isolation.js";
 import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
 
+const SNAPSHOT_ENTRY_LIMIT = 500_000;
+
 export interface ExtensionResource {
   readonly path: string;
   readonly enabled: boolean;
@@ -366,7 +368,7 @@ export async function snapshotExtensionResources(
     }
     if (lexical.isSymbolicLink()) {
       if (!stagedAlready) entries += 1;
-      if (entries > 500_000)
+      if (entries > SNAPSHOT_ENTRY_LIMIT)
         throw new Error("[PI_EXTENSION_SNAPSHOT_LIMIT] Too many extension dependency links.");
       const relative = path.relative(path.dirname(target), stagedPath(canonical));
       digest.update(JSON.stringify([path.relative(destination, target), "symlink", relative]));
@@ -393,7 +395,7 @@ export async function snapshotExtensionResources(
       entries += 1;
       bytes += details.isFile() ? details.size : 0;
     }
-    if (entries > 500_000 || bytes > 1024 ** 3) {
+    if (entries > SNAPSHOT_ENTRY_LIMIT || bytes > 1024 ** 3) {
       throw new Error(
         "[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the 1 GiB or 500000-entry snapshot limit.",
       );
@@ -453,6 +455,7 @@ export async function snapshotExtensionResources(
       );
   }
   const rootInodeCounts = new Map<string, number>();
+  let prepassVisits = 0;
   const countRootInodes = async (file: string): Promise<void> => {
     signal?.throwIfAborted();
     let details: Awaited<ReturnType<typeof lstat>>;
@@ -460,6 +463,12 @@ export async function snapshotExtensionResources(
       details = await lstat(file, { bigint: true });
     } catch {
       return;
+    }
+    prepassVisits += 1;
+    if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) {
+      throw new Error(
+        "[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the 1 GiB or 500000-entry snapshot limit.",
+      );
     }
     if (details.isSymbolicLink()) return;
     if (details.isFile()) {
