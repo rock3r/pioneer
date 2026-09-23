@@ -105,7 +105,11 @@ function isMetadataDirectory(name: string): boolean {
 function isSensitiveCredentialFile(name: string): boolean {
   const folded = process.platform === "linux" ? name : name.toLowerCase();
   return (
-    folded === ".npmrc" || folded === ".netrc" || folded === ".env" || folded.startsWith(".env.")
+    folded === ".npmrc" ||
+    folded === ".netrc" ||
+    folded === ".env" ||
+    folded.startsWith(".env.") ||
+    folded === ".git-credentials"
   );
 }
 
