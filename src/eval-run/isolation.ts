@@ -627,6 +627,27 @@ export function isSensitiveCredentialPath(file: string): boolean {
     }
     if (
       segment === ".local" &&
+      (segments[index + 1] === "share" || segments[index + 1] === "state") &&
+      segments[index + 2] === "pioneer"
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      segments[index + 2] === "pioneer"
+    ) {
+      return true;
+    }
+    if (
+      segment === "appdata" &&
+      segments[index + 1] === "local" &&
+      segments[index + 2] === "pioneer"
+    ) {
+      return true;
+    }
+    if (
+      segment === ".local" &&
       segments[index + 1] === "share" &&
       segments[index + 2] === "keyrings"
     ) {

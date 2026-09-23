@@ -175,6 +175,26 @@ describe("Pi package runtime hosting", () => {
     ).toBe(true);
     expect(
       isSensitiveCredentialPath(
+        `${home}${path.sep}.local${path.sep}share${path.sep}pioneer${path.sep}review-resumes${path.sep}session.json`,
+      ),
+    ).toBe(true);
+    expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}.local${path.sep}state${path.sep}pioneer${path.sep}provider.mjs`,
+      ),
+    ).toBe(true);
+    expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}Library${path.sep}Application Support${path.sep}Pioneer${path.sep}review-resumes${path.sep}session.json`,
+      ),
+    ).toBe(process.platform !== "linux");
+    expect(
+      isSensitiveCredentialPath(
+        `${home}${path.sep}AppData${path.sep}Local${path.sep}Pioneer${path.sep}review-resumes${path.sep}session.json`,
+      ),
+    ).toBe(process.platform !== "linux");
+    expect(
+      isSensitiveCredentialPath(
         `${home}${path.sep}.local${path.sep}share${path.sep}my-extension${path.sep}provider.mjs`,
       ),
     ).toBe(false);
