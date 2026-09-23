@@ -596,6 +596,7 @@ const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
   ".kube",
   ".pki",
   ".ssh",
+  ".terraform.d",
 ]);
 
 function credentialSegment(segment: string): string {

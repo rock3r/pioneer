@@ -42,6 +42,11 @@ describe("Pi package runtime hosting", () => {
         `${path.sep}home${path.sep}user${path.sep}.pki${path.sep}provider.mjs`,
       ),
     ).toBe(true);
+    expect(
+      isSensitiveCredentialPath(
+        `${path.sep}home${path.sep}user${path.sep}.terraform.d${path.sep}provider.mjs`,
+      ),
+    ).toBe(true);
     const mixed = `${path.sep}Users${path.sep}user${path.sep}.SSH${path.sep}provider.mjs`;
     expect(isSensitiveCredentialPath(mixed)).toBe(process.platform !== "linux");
     const home = `${path.sep}home${path.sep}user`;
