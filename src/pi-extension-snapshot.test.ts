@@ -131,6 +131,33 @@ describe("extension snapshots", () => {
     });
   });
 
+  it("does not copy a hard link to a private Pi credential", async () => {
+    const root = await createTempDir("extension-private-hardlink-");
+    const agent = path.join(root, "agent");
+    const pkg = path.join(root, "package");
+    await mkdir(agent);
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    const auth = path.join(agent, "auth.json");
+    const alias = path.join(pkg, "notes.txt");
+    await writeFile(entry, "extension");
+    await writeFile(auth, "secret");
+    await link(auth, alias);
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir: agent, sessionDirs: [] },
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    const stagedPackage = path.dirname(staged);
+    await expect(readFile(path.join(stagedPackage, "index.ts"), "utf8")).resolves.toBe("extension");
+    await expect(stat(path.join(stagedPackage, "notes.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("does not copy a credential directory nested in an extension package", async () => {
     const root = await createTempDir("extension-nested-credential-");
     const pkg = path.join(root, "package");

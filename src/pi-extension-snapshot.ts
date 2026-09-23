@@ -164,6 +164,40 @@ export async function snapshotExtensionResources(
             ...(storage?.sessionDirs ?? []),
           ].map(async (entry) => policyPath(await canonicalOrResolved(entry))),
         );
+  const privateFiles = new Set<string>();
+  const rememberPrivateFiles = async (root: string): Promise<void> => {
+    signal?.throwIfAborted();
+    let details: Awaited<ReturnType<typeof lstat>>;
+    try {
+      details = await lstat(root);
+    } catch {
+      return;
+    }
+    if (details.isSymbolicLink()) return;
+    if (details.isFile()) {
+      privateFiles.add(`${details.dev}:${details.ino}`);
+      return;
+    }
+    if (!details.isDirectory()) return;
+    for (const name of await readdir(root)) {
+      await rememberPrivateFiles(path.join(root, name));
+    }
+  };
+  if (agentDir !== undefined) {
+    const privateRoots = [
+      path.join(agentDir, "sessions"),
+      path.join(agentDir, "logs"),
+      path.join(agentDir, "skills"),
+      ...(await rootLogFiles(agentDir)),
+      ...(storage?.sessionDirs ?? []),
+      ...["auth.json", "models.json", "models-store.json", "settings.json", "AGENTS.md"].map(
+        (name) => path.join(agentDir, name),
+      ),
+    ];
+    for (const root of privateRoots) {
+      await rememberPrivateFiles(await canonicalOrResolved(root));
+    }
+  }
   const isPrivateStorage = async (canonical: string): Promise<boolean> =>
     privateDirectories.some((entry) => within(entry, policyPath(canonical))) ||
     (agentDir !== undefined &&
@@ -276,7 +310,10 @@ export async function snapshotExtensionResources(
     const canonical = await realpath(source);
     if ([...excluded].some((entry) => within(entry, policyPath(canonical)))) return;
     const identity = await lstat(canonical);
-    if (identity.isFile() && excludedFiles.has(`${identity.dev}:${identity.ino}`)) return;
+    const fileIdentity = `${identity.dev}:${identity.ino}`;
+    if (identity.isFile() && (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity))) {
+      return;
+    }
     if (await isPrivateStorage(canonical)) return;
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(
