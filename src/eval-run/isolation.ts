@@ -594,6 +594,7 @@ const SENSITIVE_CREDENTIAL_SEGMENTS = new Set([
   ".docker",
   ".gnupg",
   ".kube",
+  ".oci",
   ".pki",
   ".ssh",
   ".terraform.d",
@@ -645,6 +646,13 @@ export function isSensitiveCredentialPath(file: string): boolean {
       return true;
     }
     if (
+      segment === ".config" &&
+      segments[index + 1]?.toLowerCase() === "bravesoftware" &&
+      segments[index + 2]?.toLowerCase() === "brave-browser"
+    ) {
+      return true;
+    }
+    if (
       segment === "library" &&
       segments[index + 1] === "application support" &&
       segments[index + 2] === "google" &&
@@ -656,6 +664,14 @@ export function isSensitiveCredentialPath(file: string): boolean {
       segment === "library" &&
       segments[index + 1] === "application support" &&
       segments[index + 2] === "chromium"
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      segments[index + 2]?.toLowerCase() === "bravesoftware" &&
+      segments[index + 3]?.toLowerCase() === "brave-browser"
     ) {
       return true;
     }
