@@ -937,7 +937,7 @@ const UNTRUSTED_EVAL_PI_ACTOR: EvalPiActor = {
 };
 
 /** Trusted Pi identity, separate from whether this run stages extensions. */
-async function inspectEvalPiActor(
+export async function inspectEvalPiActor(
   command: readonly [string, ...string[]],
   runDir: string,
   environment: NodeJS.ProcessEnv,
@@ -954,10 +954,9 @@ async function inspectEvalPiActor(
   }
   const installation = await findValidatedPiPackageRoot(resolved.commandPath, runDir);
   if (installation === undefined) return UNTRUSTED_EVAL_PI_ACTOR;
-  const namedPi = isPiExecutable(command[0]);
-  const declaredPi =
-    !namedPi && (await isDeclaredPiExecutable(resolved.commandPath, installation.packageRoot));
-  if (!namedPi && !declaredPi) return UNTRUSTED_EVAL_PI_ACTOR;
+  if (!(await isDeclaredPiExecutable(resolved.commandPath, installation.packageRoot))) {
+    return UNTRUSTED_EVAL_PI_ACTOR;
+  }
   try {
     const controllerPi = await resolveEvalExecutable(
       "pi",
