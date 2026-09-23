@@ -641,7 +641,8 @@ export function isSensitiveCredentialPath(file: string): boolean {
         segments[index + 1] === "rclone" ||
         segments[index + 1] === "containers" ||
         segments[index + 1] === "google-chrome" ||
-        segments[index + 1] === "chromium")
+        segments[index + 1] === "chromium" ||
+        segments[index + 1] === "microsoft-edge")
     ) {
       return true;
     }
@@ -672,6 +673,13 @@ export function isSensitiveCredentialPath(file: string): boolean {
       segments[index + 1] === "application support" &&
       segments[index + 2]?.toLowerCase() === "bravesoftware" &&
       segments[index + 3]?.toLowerCase() === "brave-browser"
+    ) {
+      return true;
+    }
+    if (
+      segment === "library" &&
+      segments[index + 1] === "application support" &&
+      segments[index + 2] === "microsoft edge"
     ) {
       return true;
     }
