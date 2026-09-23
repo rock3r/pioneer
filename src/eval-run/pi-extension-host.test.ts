@@ -2,12 +2,32 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
+import { isPioneerApplicationDataPath, isSensitiveCredentialPath } from "./isolation.js";
 import { piPackageHostsAuthAdapter, piPackageHostsExtensionRuntime } from "./pi-extension-host.js";
-import { isSensitiveCredentialPath } from "./runner.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
 describe("Pi package runtime hosting", () => {
+  it("protects a custom XDG Pioneer data root", () => {
+    const session = "/home/me/private-data/pioneer/review-resumes/session.json";
+    expect(
+      isPioneerApplicationDataPath(
+        session,
+        "linux",
+        { XDG_DATA_HOME: "/home/me/private-data" },
+        "/home/me",
+      ),
+    ).toBe(true);
+    expect(
+      isPioneerApplicationDataPath(
+        "/home/me/private-data/other/provider.mjs",
+        "linux",
+        { XDG_DATA_HOME: "/home/me/private-data" },
+        "/home/me",
+      ),
+    ).toBe(false);
+  });
+
   it("requires the auth worker modules before brokering OAuth", async () => {
     const root = await createTempDir("pioneer-pi-auth-host-");
     const core = path.join(root, "dist", "core");

@@ -612,7 +612,38 @@ function credentialSegment(segment: string): string {
   return process.platform === "linux" ? segment : segment.toLowerCase();
 }
 
+function pioneerApplicationDataRoot(
+  platform: NodeJS.Platform,
+  environment: NodeJS.ProcessEnv,
+  home: string,
+): string {
+  if (platform === "darwin") return path.join(home, "Library", "Application Support", "Pioneer");
+  if (platform === "win32") {
+    const base = environment.LOCALAPPDATA;
+    if (base !== undefined && path.isAbsolute(base)) return path.join(base, "Pioneer");
+    return path.join(home, "AppData", "Local", "Pioneer");
+  }
+  const base = environment.XDG_DATA_HOME;
+  if (base !== undefined && path.isAbsolute(base)) return path.join(base, "pioneer");
+  return path.join(home, ".local", "share", "pioneer");
+}
+
+export function isPioneerApplicationDataPath(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): boolean {
+  const root = pioneerApplicationDataRoot(platform, environment, home);
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
+  );
+}
+
 export function isSensitiveCredentialPath(file: string): boolean {
+  if (isPioneerApplicationDataPath(file)) return true;
   const segments = file.split(path.sep).map(credentialSegment);
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
