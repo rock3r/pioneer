@@ -32,22 +32,25 @@ describe("Pi package runtime hosting", () => {
     ).toBe(false);
   });
 
-  it("canonicalizes a symlinked Pioneer data root", async () => {
-    const root = await createTempDir("pioneer-data-link-");
-    const real = path.join(root, "real");
-    const link = path.join(root, "link");
-    await mkdir(path.join(real, "pioneer", "review-resumes"), { recursive: true });
-    await symlink(real, link);
-    const sessionDir = await realpath(path.join(link, "pioneer", "review-resumes"));
-    expect(
-      isPioneerApplicationDataPath(
-        path.join(sessionDir, "session.json"),
-        "linux",
-        { XDG_DATA_HOME: link },
-        root,
-      ),
-    ).toBe(true);
-  });
+  it.skipIf(process.platform === "win32")(
+    "canonicalizes a symlinked Pioneer data root",
+    async () => {
+      const root = await createTempDir("pioneer-data-link-");
+      const real = path.join(root, "real");
+      const link = path.join(root, "link");
+      await mkdir(path.join(real, "pioneer", "review-resumes"), { recursive: true });
+      await symlink(real, link);
+      const sessionDir = await realpath(path.join(link, "pioneer", "review-resumes"));
+      expect(
+        isPioneerApplicationDataPath(
+          path.join(sessionDir, "session.json"),
+          "linux",
+          { XDG_DATA_HOME: link },
+          root,
+        ),
+      ).toBe(true);
+    },
+  );
 
   it("honors XDG_CONFIG_HOME for credential directories", () => {
     expect(
