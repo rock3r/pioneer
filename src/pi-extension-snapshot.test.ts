@@ -158,6 +158,37 @@ describe("extension snapshots", () => {
     });
   });
 
+  it("still excludes auth.json when session storage exceeds the identity cap", async () => {
+    const root = await createTempDir("extension-private-identity-cap-");
+    const agent = path.join(root, "agent");
+    const sessions = path.join(agent, "sessions");
+    const pkg = path.join(root, "package");
+    await mkdir(sessions, { recursive: true });
+    await mkdir(pkg);
+    const entry = path.join(pkg, "index.ts");
+    const auth = path.join(agent, "auth.json");
+    const alias = path.join(pkg, "notes.txt");
+    await writeFile(entry, "extension");
+    await writeFile(auth, "secret");
+    await link(auth, alias);
+    await Promise.all(
+      Array.from({ length: 1024 }, (_, index) =>
+        writeFile(path.join(sessions, `session-${index}.jsonl`), "history"),
+      ),
+    );
+    const snapshot = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir: agent, sessionDirs: [] },
+    );
+    const staged = snapshot.paths[0];
+    if (staged === undefined) throw new Error("expected a staged extension");
+    await expect(stat(path.join(path.dirname(staged), "notes.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("does not copy a credential directory nested in an extension package", async () => {
     const root = await createTempDir("extension-nested-credential-");
     const pkg = path.join(root, "package");

@@ -5,6 +5,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  opendir,
   readdir,
   readlink,
   realpath,
@@ -167,7 +168,9 @@ export async function snapshotExtensionResources(
           ].map(async (entry) => policyPath(await canonicalOrResolved(entry))),
         );
   const privateFiles = new Set<string>();
+  const maxPrivateFileIdentities = 1024;
   const rememberPrivateFiles = async (root: string): Promise<void> => {
+    if (privateFiles.size >= maxPrivateFileIdentities) return;
     signal?.throwIfAborted();
     let details: Awaited<ReturnType<typeof lstat>>;
     try {
@@ -177,26 +180,40 @@ export async function snapshotExtensionResources(
     }
     if (details.isSymbolicLink()) return;
     if (details.isFile()) {
-      if (details.ino !== 0n) privateFiles.add(`${details.dev}:${details.ino}`);
+      if (details.ino !== 0n && privateFiles.size < maxPrivateFileIdentities) {
+        privateFiles.add(`${details.dev}:${details.ino}`);
+      }
       return;
     }
     if (!details.isDirectory()) return;
-    for (const name of await readdir(root)) {
-      await rememberPrivateFiles(path.join(root, name));
+    const dir = await opendir(root);
+    try {
+      for await (const entry of dir) {
+        if (privateFiles.size >= maxPrivateFileIdentities) break;
+        await rememberPrivateFiles(path.join(root, entry.name));
+      }
+    } finally {
+      await dir.close().catch(() => undefined);
     }
   };
   if (agentDir !== undefined) {
+    const namedCredentials = [
+      "auth.json",
+      "models.json",
+      "models-store.json",
+      "settings.json",
+      "AGENTS.md",
+    ].map((name) => path.join(agentDir, name));
     const privateRoots = [
+      ...namedCredentials,
+      ...(await rootLogFiles(agentDir)),
       path.join(agentDir, "sessions"),
       path.join(agentDir, "logs"),
       path.join(agentDir, "skills"),
-      ...(await rootLogFiles(agentDir)),
       ...(storage?.sessionDirs ?? []),
-      ...["auth.json", "models.json", "models-store.json", "settings.json", "AGENTS.md"].map(
-        (name) => path.join(agentDir, name),
-      ),
     ];
     for (const root of privateRoots) {
+      if (privateFiles.size >= maxPrivateFileIdentities) break;
       await rememberPrivateFiles(await canonicalOrResolved(root));
     }
   }
