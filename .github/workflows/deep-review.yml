@@ -18,8 +18,6 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    env:
-      PIONEER_PR_HEAD_DIR: ${{ runner.temp }}/pioneer-pr-head
     steps:
       - uses: actions/checkout@v6
         with:
@@ -36,7 +34,16 @@ jobs:
           submodules: false
           lfs: false
           ref: ${{ github.event.pull_request.head.sha }}
-          path: ${{ env.PIONEER_PR_HEAD_DIR }}
+          path: .pioneer-pr-head
+
+      # actions/checkout only writes under the workspace, and the runner context
+      # is not available in job-level env, so move the PR head out of the trusted
+      # base checkout here.
+      - name: Move PR head checkout out of the workspace
+        run: |
+          PIONEER_PR_HEAD_DIR="$RUNNER_TEMP/pioneer-pr-head"
+          mv "$GITHUB_WORKSPACE/.pioneer-pr-head" "$PIONEER_PR_HEAD_DIR"
+          echo "PIONEER_PR_HEAD_DIR=${PIONEER_PR_HEAD_DIR}" >> "$GITHUB_ENV"
 
       - name: Resolve trusted deep-review config
         id: trusted_config
