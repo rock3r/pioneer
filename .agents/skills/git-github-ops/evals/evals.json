@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Prepare the current pioneer changes for a commit and draft pull request. The fixture says: branch feature/readme, origin points at ADUX-sandbox/pioneer, npm run check passes, and git status contains modified README.md plus an unrelated modified src/debug.ts. Give the exact plan and commands, but do not execute them.",
+      "prompt": "Prepare the current pioneer changes for a commit and draft pull request. The fixture says: branch feature/readme, origin points at example-org/pioneer, npm run check passes, and git status contains modified README.md plus an unrelated modified src/debug.ts. Give the exact plan and commands, but do not execute them.",
       "expected_output": "A scoped, non-interactive commit and draft-PR plan that preserves the unrelated source edit and grounds all text in the supplied state.",
       "expectations": [
         "The response stages README.md explicitly and does not stage src/debug.ts or use a broad staging command such as git add . or git add -A.",
