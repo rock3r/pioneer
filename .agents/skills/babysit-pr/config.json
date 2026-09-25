@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "local_gate": "npm run check",
+  "required_checks": [
+    "native sandbox (macos-latest)",
+    "native sandbox (ubuntu-latest)",
+    "quality and package (macos-latest)",
+    "quality and package (ubuntu-latest)",
+    "quality and package (windows-latest)"
+  ],
+  "codex": {
+    "required": true
+  },
+  "cleanup": {
+    "branch_delete_requires_approval": true
+  }
+}
