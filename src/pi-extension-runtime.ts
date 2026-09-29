@@ -155,6 +155,11 @@ export async function preparePiExtensions(
   const policy = path.join(destination, "pi-extension-policy.js");
   await copyFile(fileURLToPath(new URL("./pi-extension-entry.js", import.meta.url)), entry);
   await copyFile(fileURLToPath(new URL("./pi-extension-policy.js", import.meta.url)), policy);
+  // The policy reuses the credential detectors to decide which load-failure names to report.
+  await copyFile(
+    fileURLToPath(new URL("./diagnostics.js", import.meta.url)),
+    path.join(destination, "diagnostics.js"),
+  );
   await copyFile(
     fileURLToPath(new URL("./pi-auth-client.js", import.meta.url)),
     path.join(destination, "pi-auth-client.js"),

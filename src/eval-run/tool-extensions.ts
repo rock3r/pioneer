@@ -148,14 +148,29 @@ export async function stageToolExtensions(
           : { scope: "user" },
     })),
   );
-  const snapshot = await snapshotExtensionResources(
-    resources,
-    destination,
-    signal,
-    storage,
-    budget,
-    excludedPaths,
-  );
+  let snapshot: Awaited<ReturnType<typeof snapshotExtensionResources>>;
+  try {
+    snapshot = await snapshotExtensionResources(
+      resources,
+      destination,
+      signal,
+      storage,
+      budget,
+      excludedPaths,
+    );
+  } catch (error) {
+    // The budget carries the user and explicit extensions staged before these tool sources.
+    if (
+      error instanceof Error &&
+      error.message.startsWith("[PI_EXTENSION_SNAPSHOT_LIMIT]") &&
+      (budget.entries > 0 || budget.bytes > 0)
+    ) {
+      throw new Error(
+        `${error.message} The limit is shared with ${(budget.bytes / 1024 ** 2).toFixed(1)} MiB in ${budget.entries} entries of other staged Pi extensions; pass --no-extensions on the Pi command when this eval does not need the enabled user extensions.`,
+      );
+    }
+    throw error;
+  }
   const paths: string[] = [];
   for (const source of sources) {
     const staged = mirroredExtensionStagePath(destination, source.canonical);

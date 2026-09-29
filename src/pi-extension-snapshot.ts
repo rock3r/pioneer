@@ -22,6 +22,17 @@ import {
 import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
 
 const SNAPSHOT_ENTRY_LIMIT = 500_000;
+const SNAPSHOT_BYTE_LIMIT = 1024 ** 3;
+
+/** Names the exceeded limit with the running totals, which include any earlier staged budget. */
+function snapshotLimitError(entries: number, bytes?: number): Error {
+  const mebibytes = ((bytes ?? 0) / 1024 ** 2).toFixed(1);
+  return new Error(
+    entries > SNAPSHOT_ENTRY_LIMIT
+      ? `[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the ${SNAPSHOT_ENTRY_LIMIT}-entry snapshot limit (${entries} entries${bytes === undefined ? "" : `, ${mebibytes} MiB`} staged).`
+      : `[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the 1 GiB snapshot byte limit (${mebibytes} MiB in ${entries} entries staged).`,
+  );
+}
 
 export interface ExtensionResource {
   readonly path: string;
@@ -368,8 +379,7 @@ export async function snapshotExtensionResources(
     }
     if (lexical.isSymbolicLink()) {
       if (!stagedAlready) entries += 1;
-      if (entries > SNAPSHOT_ENTRY_LIMIT)
-        throw new Error("[PI_EXTENSION_SNAPSHOT_LIMIT] Too many extension dependency links.");
+      if (entries > SNAPSHOT_ENTRY_LIMIT) throw snapshotLimitError(entries, bytes);
       const relative = path.relative(path.dirname(target), stagedPath(canonical));
       digest.update(JSON.stringify([path.relative(destination, target), "symlink", relative]));
       digest.update("\0");
@@ -395,10 +405,8 @@ export async function snapshotExtensionResources(
       entries += 1;
       bytes += details.isFile() ? details.size : 0;
     }
-    if (entries > SNAPSHOT_ENTRY_LIMIT || bytes > 1024 ** 3) {
-      throw new Error(
-        "[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the 1 GiB or 500000-entry snapshot limit.",
-      );
+    if (entries > SNAPSHOT_ENTRY_LIMIT || bytes > SNAPSHOT_BYTE_LIMIT) {
+      throw snapshotLimitError(entries, bytes);
     }
     digest.update(
       JSON.stringify([
@@ -465,11 +473,7 @@ export async function snapshotExtensionResources(
       return;
     }
     prepassVisits += 1;
-    if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) {
-      throw new Error(
-        "[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the 1 GiB or 500000-entry snapshot limit.",
-      );
-    }
+    if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) throw snapshotLimitError(prepassVisits);
     if (details.isSymbolicLink()) return;
     if (details.isFile()) {
       if (details.ino === 0n) return;

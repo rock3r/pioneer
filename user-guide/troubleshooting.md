@@ -125,6 +125,14 @@ Look at the path printed as `[PIONEER_EVAL_WORK_LOG]`. The JSONL stages show whe
 
 `[EVAL_TIMEOUT]` and `[EVAL_PROCESS_CONTAINMENT_FAILED]` include any captured stdout/stderr. `[EVAL_WORK_LOG_CREATE_FAILED]` and `[EVAL_WORK_LOG_WRITE_FAILED]` mean the run stopped because it could not stay observable.
 
+## An extension fails to load or stage
+
+`[PI_EXTENSION_LOAD_FAILED]` names each failing extension by its last two path segments, and a missing module by its path below `node_modules`, for example `entry 1 (compose-pi/provider.ts): missing dependency @earendil-works/pi-ai/dist/compat.js/api/openai-completions`. Pioneer leaves out a name that looks like a credential or has unusual characters. It never prints the raw error. Pioneer refuses any extension that fails to load, while normal Pi can skip that extension without a message. So an extension can fail here and still seem to work in Pi. Fix or disable that extension. In an eval that does not need it, put `--no-extensions` on the Pi command.
+
+`[PI_EXTENSION_SNAPSHOT_LIMIT]` says whether the 1 GiB byte limit or the 500,000-entry limit was hit, with the staged totals. In an eval, a `--pi-extension` shares that budget with the enabled user extensions. When those use most of it, the message says so. Pass `--no-extensions` on the Pi command; the `--pi-extension` still loads.
+
+On macOS, an extension that starts a helper program, such as an MCP server, fails with `spawn EPERM` when the sandbox cannot read the program. Grant the exact executable with `--runtime-read`, for example `--runtime-read ~/.local/bin/uv`, and keep its directory on `PATH`. The actor's `HOME` is private scratch, so a helper that reads files from the real home directory needs a configurable path, passed with `--env` and granted with `--runtime-read`.
+
 ## A writable grant is rejected
 
 Writable grants must not overlap the source or any read-only grant. Create a dedicated artifact directory and grant only that directory. For the final report alone, use `--report /absolute/path/report.md` instead of granting a write capability.

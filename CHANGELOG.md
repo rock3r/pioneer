@@ -4,6 +4,10 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Name the failing extension and the missing module in `[PI_EXTENSION_LOAD_FAILED]`, for example `entry 1 (compose-pi/provider.ts): missing dependency @earendil-works/pi-ai/dist/compat.js/api/openai-completions`. Pioneer still suppresses the raw error. It leaves out any name that looks like a credential or has unusual characters.
+- Say which limit `[PI_EXTENSION_SNAPSHOT_LIMIT]` hit, the 1 GiB byte limit or the 500,000-entry limit, and give the staged totals. When an `eval run --pi-extension` exceeds a budget that the enabled user extensions mostly used, the message points to `--no-extensions` on the Pi command.
+- Document how to run an MCP adapter in an eval on macOS: use `--no-extensions` on the Pi command, grant the MCP server's executable with `--runtime-read`, and give helpers that read the real home directory a configurable path.
+
 ## 0.4.0 - 2026-09-29
 
 - Let `pioneer eval run` actors on macOS open `/dev/null`, so Pi's `bash` tool no longer fails with `spawn EPERM` and Git, shell redirections, and child processes with ignored stdio work ([#86](https://github.com/rock3r/pioneer/issues/86), [#87](https://github.com/rock3r/pioneer/issues/87)). Eval runs also grant `/private/var/select` and the selected Command Line Tools or Xcode developer directory read-only, so `/bin/sh` and `/usr/bin/git` work without extra `--runtime-read` flags. On usrmerged Linux, the sandbox restores the `/bin` alias so `/bin/sh` resolves.
