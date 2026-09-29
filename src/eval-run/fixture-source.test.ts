@@ -49,6 +49,26 @@ describe("openEvalFixture", () => {
     );
   });
 
+  it("reopens a validated fixture only while its identity is unchanged", async () => {
+    const { source, out } = await createSource("class Panel\n");
+    const validated = await openEvalFixture(source, "evals/files/panel.kt");
+    const identity = validated.identity;
+    await validated.close();
+
+    const same = await openEvalFixture(source, "evals/files/panel.kt", undefined, identity);
+    try {
+      await same.stageTo(path.join(out, "panel.kt"));
+    } finally {
+      await same.close();
+    }
+    expect(await readFile(path.join(out, "panel.kt"), "utf8")).toBe("class Panel\n");
+
+    await appendFile(source, "// changed\n");
+    await expect(
+      openEvalFixture(source, "evals/files/panel.kt", undefined, identity),
+    ).rejects.toThrow(/\[EVAL_FIXTURE_CHANGED\].*evals\/files\/panel\.kt/);
+  });
+
   it("rejects a leaking content marker when it opens the fixture", async () => {
     const { source } = await createSource("// todo: the off-by-one\n");
 

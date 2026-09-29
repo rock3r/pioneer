@@ -24,11 +24,13 @@ export interface EvalFixtureReader {
 }
 
 /**
- * One fixture opened once for the whole prepare run. Validation and every
- * staged copy read the same descriptor, so a path swapped after validation
- * cannot change what lands in `fixtures/`.
+ * One opened fixture. Validation records its identity and closes it; staging
+ * reopens it, requires the same identity, and rescans every byte it copies, so
+ * a file swapped or edited after validation cannot land in `fixtures/`.
  */
 export interface OpenedEvalFixture {
+  /** Device, inode, size, and modification time of the opened file. */
+  readonly identity: string;
   /** Rescans the opened file while copying it to a new destination. */
   stageTo(destination: string): Promise<void>;
   close(): Promise<void>;
@@ -112,6 +114,7 @@ export async function openEvalFixture(
   canonicalPath: string,
   relativePath: string,
   maxBytes: number = EVAL_FIXTURE_MAX_BYTES,
+  expectedIdentity?: string,
 ): Promise<OpenedEvalFixture> {
   // A link or FIFO swapped in after realpath must not be followed or block the open.
   const handle = await open(
@@ -119,21 +122,30 @@ export async function openEvalFixture(
     constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (constants.O_NOFOLLOW ?? 0),
   );
   let mode: number;
+  let identity: string;
   try {
-    const details = await handle.stat();
+    const details = await handle.stat({ bigint: true });
     if (!details.isFile()) {
       throw new Error(
         `Fixture is not a regular file (directories, FIFOs, and other special files are rejected): ${canonicalPath}`,
       );
     }
-    if (details.size > maxBytes) throw tooLargeError(relativePath, maxBytes);
-    await scanEvalFixture(handle, relativePath, maxBytes);
-    mode = details.mode & 0o777;
+    if (details.size > BigInt(maxBytes)) throw tooLargeError(relativePath, maxBytes);
+    identity = `${details.dev}:${details.ino}:${details.size}:${details.mtimeNs}`;
+    if (expectedIdentity !== undefined && identity !== expectedIdentity) {
+      throw new Error(
+        `[EVAL_FIXTURE_CHANGED] Fixture changed after validation; retry when it is stable: ${relativePath}`,
+      );
+    }
+    // A reopened fixture is rescanned while it is staged, so only validation scans here.
+    if (expectedIdentity === undefined) await scanEvalFixture(handle, relativePath, maxBytes);
+    mode = Number(details.mode) & 0o777;
   } catch (error) {
     await handle.close().catch(() => undefined);
     throw error;
   }
   return {
+    identity,
     stageTo: (destination) => stageFromHandle(handle, relativePath, maxBytes, mode, destination),
     close: () => handle.close(),
   };

@@ -7,7 +7,7 @@ import {
   stagePromptFixtureReferences,
 } from "./actor-contract.js";
 import { assertFixturePathDoesNotLeak } from "./fixture-leak.js";
-import { type OpenedEvalFixture, openEvalFixture } from "./fixture-source.js";
+import { openEvalFixture } from "./fixture-source.js";
 
 interface EvalCase {
   readonly id: number;
@@ -18,7 +18,9 @@ interface EvalCase {
 interface ValidatedFixture {
   readonly sourcePath: string;
   readonly destinationRelative: string;
-  readonly opened: OpenedEvalFixture;
+  readonly canonicalSource: string;
+  /** Identity recorded at validation; staging refuses a file that no longer matches. */
+  readonly identity: string;
 }
 
 interface ValidatedEvalCase {
@@ -179,8 +181,9 @@ async function validateFixtures(
   skillDir: string,
   evals: readonly EvalCase[],
   allowFixtureNameGlobs: readonly string[],
-  opened: Map<string, OpenedEvalFixture>,
 ): Promise<ValidatedEvalCase[]> {
+  // Descriptors are closed after each check, so a large battery cannot exhaust them.
+  const identities = new Map<string, string>();
   const validated: ValidatedEvalCase[] = [];
   for (const evalCase of evals) {
     const fixtures: ValidatedFixture[] = [];
@@ -192,12 +195,14 @@ async function validateFixtures(
       const canonicalSource = await realpath(source);
       ensureWithin(skillDir, canonicalSource, "fixture");
       await assertRegularFixtureFile(canonicalSource);
-      let fixture = opened.get(canonicalSource);
-      if (fixture === undefined) {
-        fixture = await openEvalFixture(canonicalSource, relativeFile);
-        opened.set(canonicalSource, fixture);
+      let identity = identities.get(canonicalSource);
+      if (identity === undefined) {
+        const fixture = await openEvalFixture(canonicalSource, relativeFile);
+        identity = fixture.identity;
+        await fixture.close();
+        identities.set(canonicalSource, identity);
       }
-      fixtures.push({ sourcePath: relativeFile, destinationRelative, opened: fixture });
+      fixtures.push({ sourcePath: relativeFile, destinationRelative, canonicalSource, identity });
     }
     validated.push({ evalCase, fixtures });
   }
@@ -206,21 +211,6 @@ async function validateFixtures(
 
 export async function prepareEvalBattery(
   options: PrepareEvalBatteryOptions,
-): Promise<PreparedEvalBattery> {
-  // Each fixture is opened once; validation and every staged copy read that descriptor.
-  const opened = new Map<string, OpenedEvalFixture>();
-  try {
-    return await prepareWithOpenedFixtures(options, opened);
-  } finally {
-    await Promise.all(
-      [...opened.values()].map((fixture) => fixture.close().catch(() => undefined)),
-    );
-  }
-}
-
-async function prepareWithOpenedFixtures(
-  options: PrepareEvalBatteryOptions,
-  opened: Map<string, OpenedEvalFixture>,
 ): Promise<PreparedEvalBattery> {
   const skillDir = await realpath(options.skillDir);
   const evalsPath = await realpath(options.evalsPath);
@@ -231,7 +221,6 @@ async function prepareWithOpenedFixtures(
     skillDir,
     parsed.evals,
     options.allowFixtureNameGlobs ?? [],
-    opened,
   );
 
   const requestedOutputRoot = path.resolve(options.outputRoot);
@@ -264,12 +253,17 @@ async function prepareWithOpenedFixtures(
       await mkdir(path.join(runDir, "work"), { recursive: true });
 
       const stagedFixtures: StagedEvalFixture[] = [];
-      for (const { sourcePath, destinationRelative, opened: fixture } of fixtures) {
+      for (const { sourcePath, destinationRelative, canonicalSource, identity } of fixtures) {
         const fixturesDir = path.join(runDir, EVAL_FIXTURES_DIR_NAME);
         const destination = path.join(fixturesDir, destinationRelative);
         ensureWithin(fixturesDir, destination, "fixture destination");
         await mkdir(path.dirname(destination), { recursive: true });
-        await fixture.stageTo(destination);
+        const fixture = await openEvalFixture(canonicalSource, sourcePath, undefined, identity);
+        try {
+          await fixture.stageTo(destination);
+        } finally {
+          await fixture.close();
+        }
         stagedFixtures.push({
           sourcePath,
           stagedPath: path.posix.join(
