@@ -1,4 +1,4 @@
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -6,6 +6,7 @@ import {
   assertDistinctToolExtensionSources,
   assertToolExtensionCount,
   resolveToolExtensionSource,
+  stageToolExtensions,
 } from "./tool-extensions.js";
 
 const { createTempDir } = registerManagedTempPaths();
@@ -126,5 +127,50 @@ describe("--pi-extension source resolution (#89)", () => {
     expect(() => assertToolExtensionCount(Array.from({ length: 9 }, (_, i) => `/x/${i}`))).toThrow(
       /PI_EXTENSION_TOOL_SOURCE_INVALID.*at most 8/,
     );
+  });
+
+  it("points at --no-extensions when user extensions used up the shared snapshot budget", async () => {
+    const dir = await packageDir({ "index.ts": "export default () => {};\n" });
+    const source = await resolveToolExtensionSource(dir);
+    const storage = { agentDir: await createTempDir("pioneer-tool-agent-"), sessionDirs: [] };
+    const staging = await createTempDir("pioneer-tool-stage-");
+    await expect(
+      stageToolExtensions(
+        [source],
+        path.join(staging, "shared"),
+        storage,
+        undefined,
+        { entries: 40, bytes: 1024 ** 3 - 4 },
+        [],
+        { entries: 30, bytes: 1024 ** 3 - 1024 ** 2 },
+      ),
+    ).rejects.toThrow(
+      /1 GiB snapshot byte limit.*The limit is shared with 1023\.0 MiB in 30 entries of enabled user extensions; pass --no-extensions on the Pi command when this eval does not need them\./,
+    );
+    // Explicit -e extensions alone used the budget: --no-extensions is already there or moot.
+    const explicitOnly = await stageToolExtensions(
+      [source],
+      path.join(staging, "explicit"),
+      storage,
+      undefined,
+      { entries: 40, bytes: 1024 ** 3 - 4 },
+      [],
+    ).catch((reason: unknown) => reason);
+    expect(String(explicitOnly)).toContain(
+      "The limit is shared with 1024.0 MiB in 40 entries of explicit Pi extensions; drop or trim the -e extensions.",
+    );
+    expect(String(explicitOnly)).not.toContain("--no-extensions");
+    // Without a shared budget there is nothing to drop, so no hint. The file is sparse.
+    await truncate(path.join(dir, "index.ts"), 1024 ** 3 + 1);
+    const error = await stageToolExtensions(
+      [source],
+      path.join(staging, "alone"),
+      storage,
+      undefined,
+      { entries: 0, bytes: 0 },
+      [],
+    ).catch((reason: unknown) => reason);
+    expect(String(error)).toContain("1 GiB snapshot byte limit");
+    expect(String(error)).not.toContain("--no-extensions");
   });
 });

@@ -39,6 +39,22 @@ describe("Pi readiness", () => {
     expect(result.errors.join(" ")).toContain("pioneer doctor");
     expect(result.errors.join(" ")).not.toContain("private diagnostic");
   });
+  it("forwards the named extension load failure", async () => {
+    const detail =
+      "entry 1 (compose-pi/provider.ts): missing dependency @earendil-works/pi-ai/dist/compat.js/api/openai-completions";
+    const result = await checkPiReadiness({
+      runner: runnerWith([
+        { exitCode: 0, stdout: "0.87.1", stderr: "" },
+        {
+          exitCode: 1,
+          stdout: "",
+          stderr: `Error: [PI_EXTENSION_LOAD_FAILED] Enabled extension failures: ${detail}. Check the installed extension set with normal Pi.\n    at stack`,
+        },
+      ]),
+    });
+    expect(result.errors.join(" ")).toContain(`[PI_EXTENSION_LOAD_FAILED]`);
+    expect(result.errors.join(" ")).toContain(detail);
+  });
   const configuredAgentDir = path.resolve("/configured/pi-agent");
   it("passes cancellation to an in-flight Pi probe", async () => {
     const controller = new AbortController();

@@ -468,6 +468,35 @@ describe("extension snapshots", () => {
       ).rejects.toThrow("[PI_EXTENSION_RUNTIME_UNSUPPORTED]");
     },
   );
+  it("says which snapshot limit was exceeded and by how much", async () => {
+    const root = await createTempDir("limit-extensions-");
+    const pkg = path.join(root, "extension");
+    await mkdir(pkg);
+    await writeFile(path.join(pkg, "index.js"), "extension");
+    const resources = [
+      {
+        path: path.join(pkg, "index.js"),
+        enabled: true,
+        metadata: { scope: "user", origin: "package", baseDir: pkg },
+      },
+    ];
+    await expect(
+      snapshotExtensionResources(resources, path.join(root, "bytes"), undefined, undefined, {
+        entries: 3,
+        bytes: 1024 ** 3,
+      }),
+    ).rejects.toThrow(
+      /\[PI_EXTENSION_SNAPSHOT_LIMIT\] Extension code and dependencies exceed the 1 GiB snapshot byte limit \(1024\.0 MiB in 5 entries staged\)\./,
+    );
+    await expect(
+      snapshotExtensionResources(resources, path.join(root, "entries"), undefined, undefined, {
+        entries: 500_000,
+        bytes: 0,
+      }),
+    ).rejects.toThrow(
+      /exceed the 500000-entry snapshot limit \(500001 entries, 0\.0 MiB staged\)\./,
+    );
+  });
   it("preserves npm hoisted dependencies beside the installed package", async () => {
     const root = await createTempDir("npm-extensions-");
     const modules = path.join(root, "node_modules");

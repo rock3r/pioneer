@@ -3,6 +3,7 @@ import path from "node:path";
 import { diagnosticMessage } from "../diagnostics.js";
 import {
   type ExtensionResource,
+  ExtensionSnapshotBudgetError,
   mirroredExtensionStagePath,
   snapshotExtensionResources,
 } from "../pi-extension-snapshot.js";
@@ -136,6 +137,8 @@ export async function stageToolExtensions(
   signal: AbortSignal | undefined,
   budget: { readonly entries: number; readonly bytes: number },
   excludedPaths: readonly string[],
+  /** The part of `budget` used by enabled user extensions; the rest is explicit `-e` code. */
+  userExtensions: { readonly entries: number; readonly bytes: number } = { entries: 0, bytes: 0 },
 ): Promise<StagedToolExtensions> {
   if (sources.length === 0) return { paths: [], sourcePaths: [], ...budget };
   const resources: ExtensionResource[] = sources.flatMap((source) =>
@@ -148,14 +151,33 @@ export async function stageToolExtensions(
           : { scope: "user" },
     })),
   );
-  const snapshot = await snapshotExtensionResources(
-    resources,
-    destination,
-    signal,
-    storage,
-    budget,
-    excludedPaths,
-  );
+  let snapshot: Awaited<ReturnType<typeof snapshotExtensionResources>>;
+  try {
+    snapshot = await snapshotExtensionResources(
+      resources,
+      destination,
+      signal,
+      storage,
+      budget,
+      excludedPaths,
+    );
+  } catch (error) {
+    // The budget carries the user and explicit extensions staged before these tool sources.
+    if (!(error instanceof ExtensionSnapshotBudgetError)) throw error;
+    const share = (used: { readonly entries: number; readonly bytes: number }): string =>
+      `${(used.bytes / 1024 ** 2).toFixed(1)} MiB in ${used.entries} entries`;
+    if (userExtensions.entries > 0 || userExtensions.bytes > 0) {
+      throw new Error(
+        `${error.message} The limit is shared with ${share(userExtensions)} of enabled user extensions; pass --no-extensions on the Pi command when this eval does not need them.`,
+      );
+    }
+    if (budget.entries > 0 || budget.bytes > 0) {
+      throw new Error(
+        `${error.message} The limit is shared with ${share(budget)} of explicit Pi extensions; drop or trim the -e extensions.`,
+      );
+    }
+    throw error;
+  }
   const paths: string[] = [];
   for (const source of sources) {
     const staged = mirroredExtensionStagePath(destination, source.canonical);

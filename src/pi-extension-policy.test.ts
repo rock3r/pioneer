@@ -14,6 +14,60 @@ describe("extension capability policy", () => {
         ],
       }),
     ).toThrow("entry 1: sandbox access denied");
+    expect(() =>
+      restrictExtensionTools({
+        extensions: [],
+        errors: [
+          {
+            path: "/extensions/sk-abcdefghijklmnopqrstuvwxyz/index.ts",
+            error: "Cannot find module 'left-pad'",
+          },
+        ],
+      }),
+    ).toThrow(/entry 1: missing dependency left-pad\./);
+  });
+  it("names the failing extension and the missing module", () => {
+    const failure = (): unknown =>
+      restrictExtensionTools({
+        extensions: [],
+        errors: [
+          {
+            path: "/tmp/pioneer-eval-control-x/pi-extensions/extensions/tree/%2F/Users/u/.pi/agent/extensions/compose-pi/opencode_zen_free_provider.ts",
+            error:
+              "Failed to load extension: Cannot find module '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/compat.js/api/openai-completions'\nRequire stack:\n- /tmp/x.ts",
+          },
+          {
+            path: "/staged/tools/pi-mcp-adapter/index.ts",
+            error: "Cannot find package 'zod' imported from /staged/tools/pi-mcp-adapter/index.ts",
+          },
+        ],
+      });
+    expect(failure).toThrow(
+      "entry 1 (compose-pi/opencode_zen_free_provider.ts): missing dependency @earendil-works/pi-ai/dist/compat.js/api/openai-completions, entry 2 (pi-mcp-adapter/index.ts): missing dependency zod.",
+    );
+  });
+  it("omits credential-shaped or unusual names from load failures", () => {
+    for (const module of [
+      "sk-abcdefghijklmnopqrstuvwxyz0123",
+      "pkg/Zk3q9XvB7mT2pL8wR4nY6cD1fH5jK0sA",
+      "https://user:hunter2@example.com/pkg",
+      "has space",
+      "/Users/alice/confidential-client/provider.ts",
+    ]) {
+      let message = "";
+      try {
+        restrictExtensionTools({
+          extensions: [],
+          errors: [{ path: `/staged/${module}/index.ts`, error: `Cannot find module '${module}'` }],
+        });
+      } catch (error) {
+        message = String(error);
+      }
+      expect(message).toMatch(/entry 1( \([^)]*\))?: missing dependency\./);
+      expect(message).not.toContain(module);
+      expect(message).not.toContain("hunter2");
+      expect(message).not.toContain("confidential-client");
+    }
   });
   it("preserves provider hooks while removing write tools and builtin overrides", () => {
     const handlers = new Map([["session_start", [() => {}]]]);
