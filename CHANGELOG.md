@@ -9,6 +9,7 @@ All notable user-facing changes are recorded here. The project follows semantic 
 - Add `eval run --stdout-file FILE` and `--stderr-file FILE`. Pioneer streams that actor stream to a new file instead of memory, bounded at 1 GiB instead of 4 MiB or 64 KiB. Use them for `pi --mode json` runs, which repeat every image as base64. The file must be absent and outside every actor grant, like `--work-log`.
 - Name the stream in `[EVAL_OUTPUT_LIMIT]`, for example `Eval actor stdout exceeded the 4194304-byte limit; pass --stdout-file PATH to stream it to a file`.
 - Document why macOS Xcode shims such as `/usr/bin/git` print an `xcrun_db` cache warning in evals, and how an MCP server can read files from the real home directory.
+- Load an `eval run --pi-extension` only in the actor. Model discovery and the OAuth worker no longer initialize it. An extension that needs a `--env` value, a file in the run directory, a Pi argument such as `--mcp-config`, or an `--allow-loopback` port while it starts now passes readiness ([#91](https://github.com/rock3r/pioneer/issues/91)). Enabled user extensions and explicit `-e` extensions still take part in model discovery. If the `--pi-extension` cannot start in the actor, the run fails with `[PI_EXTENSION_LOAD_FAILED]`.
 
 ## 0.4.1 - 2026-09-29
 

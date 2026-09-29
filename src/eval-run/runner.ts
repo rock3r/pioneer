@@ -1014,6 +1014,10 @@ async function stageEvalPiExtensions(
     const resolved = resolvedSources[index];
     if (resolved !== undefined) replacements.set(resolved, staged);
   });
+  // This runtime drives model discovery and the OAuth worker. Tool extensions provide
+  // tools, not models, and may need the actor's --env values, run directory, Pi arguments
+  // or loopback ports to initialize. They load only in the actor, which the adapter fails
+  // with [PI_EXTENSION_LOAD_FAILED] when one cannot initialize.
   const runtime: PreparedReviewRuntime = {
     // Writable scratch must not contain the read-only extension tree. Bubblewrap
     // rejects, or hides, a read-only mount nested inside a later writable parent.
@@ -1022,9 +1026,7 @@ async function stageEvalPiExtensions(
     home: piHome,
     extensions,
     network: "public",
-    ...(explicitCopies.length === 0 && stagedTools.paths.length === 0
-      ? {}
-      : { capabilityExtensions: [...new Set([...explicitCopies, ...stagedTools.paths])] }),
+    ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: [...new Set(explicitCopies)] }),
   };
   let authBroker: Awaited<ReturnType<typeof prepareAuthBroker>>;
   try {
@@ -1217,8 +1219,8 @@ async function runEvalCommandWithInterruption(
   const allowedLoopbackPorts = parseLoopbackTargets(
     (spec.allowedLoopbackPorts ?? []).map(formatLoopbackTarget),
   );
-  const deferExtensionReadiness =
-    loadsUserExtensions || loadsExplicitExtensions || toolExtensionSources.length > 0;
+  // --pi-extension sources are not model providers and never join discovery (#91).
+  const deferExtensionReadiness = loadsUserExtensions || loadsExplicitExtensions;
   const initialReadinessOptions = {
     extensions: false as const,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
