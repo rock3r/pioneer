@@ -1,11 +1,16 @@
 import { closeSync, openSync } from "node:fs";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { nativeSandboxReadinessErrors } from "../sandbox/platform-readiness.js";
 import { evalIsolatedPiHomeWritablePaths } from "./isolation.js";
-import { buildEvalLaunchCommand, captureEvalProcess, runEvalCommand } from "./runner.js";
+import {
+  buildEvalLaunchCommand,
+  captureEvalProcess,
+  openEvalOutputFiles,
+  runEvalCommand,
+} from "./runner.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
@@ -206,6 +211,25 @@ describe("eval process capture", () => {
     }
     expect((await stat(target)).size).toBe(5 * 1024 * 1024);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "removes an output file it created when the other one cannot be created",
+    async () => {
+      const dir = await createTempDir("pioneer-eval-output-");
+      const locked = path.join(dir, "locked");
+      await mkdir(locked);
+      await chmod(locked, 0o500);
+      const stdoutTarget = path.join(dir, "stdout.jsonl");
+      try {
+        expect(() =>
+          openEvalOutputFiles({ stdout: stdoutTarget, stderr: path.join(locked, "stderr.log") }),
+        ).toThrow(/EVAL_OUTPUT_FILE_CREATE_FAILED.*stderr/);
+      } finally {
+        await chmod(locked, 0o700);
+      }
+      await expect(stat(stdoutTarget)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
 
   it("bounds a streamed file and names it in the diagnostic", async () => {
     const dir = await createTempDir("pioneer-eval-output-");

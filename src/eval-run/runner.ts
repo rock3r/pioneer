@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, createReadStream, openSync, writeSync } from "node:fs";
+import { closeSync, constants, createReadStream, openSync, rmSync, writeSync } from "node:fs";
 import {
   access,
   lstat,
@@ -582,8 +582,8 @@ async function sandboxAndCapture(
   );
 }
 
-/** Opens each requested output file create-only; closes any already opened on failure. */
-function openEvalOutputFiles(targets: {
+/** Opens each requested output file create-only; closes and removes any it created on failure. */
+export function openEvalOutputFiles(targets: {
   readonly stdout?: string;
   readonly stderr?: string;
 }): EvalOutputSinks {
@@ -607,6 +607,11 @@ function openEvalOutputFiles(targets: {
     }
   } catch (error) {
     closeEvalOutputFiles(opened);
+    // The actor never starts, so remove what this call created and let a retry reuse the paths.
+    for (const name of ["stdout", "stderr"] as const) {
+      const target = targets[name];
+      if (opened[name] !== undefined && target !== undefined) rmSync(target, { force: true });
+    }
     throw error;
   }
   return opened;
