@@ -196,7 +196,11 @@ export function buildLinuxSandboxArgv(
       ? ["--symlink", lib64Target, "/lib64"]
       : []),
     // A usrmerged /bin grant canonicalizes to /usr/bin; restore the alias so /bin/sh resolves.
-    ...(policy.readOnlyPaths.includes("/usr/bin") && !policy.readOnlyPaths.includes("/bin")
+    // A lexical grant beneath /bin (an actor named /bin/sh) needs a real /bin directory for
+    // its ancestor --dir, so keep the previous layout then.
+    ...(policy.readOnlyPaths.includes("/usr/bin") &&
+    !policy.readOnlyPaths.includes("/bin") &&
+    ![...policy.readOnlyPaths, ...policy.writablePaths].some((entry) => entry.startsWith("/bin/"))
       ? ["--symlink", "usr/bin", "/bin"]
       : []),
   ];

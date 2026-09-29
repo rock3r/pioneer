@@ -207,6 +207,18 @@ describe("direct sandbox launchers", () => {
     expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/bin", "/bin"]));
   });
 
+  it("does not alias /bin when a lexical path beneath it is granted", () => {
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, network: "none", readOnlyPaths: ["/repo", "/usr", "/usr/bin", "/bin/sh"] },
+      ["/bin/sh", "-c", "true"],
+      "/usr/bin/bwrap",
+    );
+
+    // Bubblewrap would otherwise try to create --dir /bin on top of the alias symlink.
+    expect(launch.argv.join("\0")).not.toContain("--symlink\0usr/bin\0/bin");
+    expect(launch.argv).toEqual(expect.arrayContaining(["--ro-bind", "/bin/sh", "/bin/sh"]));
+  });
+
   it("keeps a real /bin mount instead of aliasing it", () => {
     const launch = buildLinuxSandboxArgv(
       { ...policy, network: "none", readOnlyPaths: ["/repo", "/usr", "/usr/bin", "/bin"] },

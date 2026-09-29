@@ -122,6 +122,21 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor runtime", () => {
     }
   });
 
+  it("launches an actor named by its lexical /bin path on usrmerged Linux", async () => {
+    const { created, runDir } = await workspace("lexical-bin-actor");
+
+    const run = await runPioneer(created, [
+      ...evalRun(created, runDir, "lexical-bin-actor"),
+      "--",
+      "/bin/sh",
+      "-c",
+      "printf lexical-bin-ok",
+    ]);
+
+    expect(run.exitCode, run.stderr).toBe(0);
+    expect(run.stdout).toBe("lexical-bin-ok");
+  });
+
   it("reaches only the allowed host loopback ports, directly and outside the proxy (#88)", async () => {
     const { created, runDir } = await workspace("allow-loopback");
     const allowedPort = await hostListener("allowed-loopback-ok");
