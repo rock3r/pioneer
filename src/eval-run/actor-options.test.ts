@@ -38,6 +38,16 @@ describe("eval --allow-loopback targets (#88)", () => {
     expect(() => parseLoopbackTargets([value], "darwin")).toThrow(/EVAL_LOOPBACK_TARGET_INVALID/);
   });
 
+  it("bounds the number of distinct loopback ports", () => {
+    const targets = (count: number): string[] =>
+      Array.from({ length: count }, (_, index) => `127.0.0.1:${9000 + index}`);
+    expect(parseLoopbackTargets(targets(16), "darwin")).toHaveLength(16);
+    expect(parseLoopbackTargets([...targets(16), ...targets(16)], "darwin")).toHaveLength(16);
+    expect(() => parseLoopbackTargets(targets(17), "darwin")).toThrow(
+      /EVAL_LOOPBACK_TARGET_INVALID.*at most 16/,
+    );
+  });
+
   it("reserves the Linux in-namespace proxy relay port", () => {
     expect(() => parseLoopbackTargets(["127.0.0.1:3128"], "linux")).toThrow(
       /EVAL_LOOPBACK_TARGET_INVALID.*3128/,
@@ -99,12 +109,12 @@ describe("eval --env actor variables (#89)", () => {
   });
 
   it("caps the aggregate environment size so the actor spawn cannot hit E2BIG", () => {
-    const entry = (index: number): string => `NAME_${index}=${"x".repeat(32 * 1024)}`;
+    const entry = (index: number): string => `NAME_${index}=${"x".repeat(16 * 1024)}`;
     expect(() =>
-      parseActorEnvironment(Array.from({ length: 7 }, (_, i) => entry(i))),
+      parseActorEnvironment(Array.from({ length: 3 }, (_, i) => entry(i))),
     ).not.toThrow();
-    expect(() => parseActorEnvironment(Array.from({ length: 8 }, (_, i) => entry(i)))).toThrow(
-      /EVAL_ACTOR_ENV_INVALID.*262144 bytes in total/,
+    expect(() => parseActorEnvironment(Array.from({ length: 4 }, (_, i) => entry(i)))).toThrow(
+      /EVAL_ACTOR_ENV_INVALID.*65536 bytes in total/,
     );
   });
 

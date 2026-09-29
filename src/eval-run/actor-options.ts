@@ -3,6 +3,9 @@ import { diagnosticMessage } from "../diagnostics.js";
 /** Bubblewrap's in-namespace supervisor listens here to relay the authenticated proxy. */
 export const LINUX_PROXY_RELAY_PORT = 3128;
 
+/** Each port costs a Seatbelt rule on macOS and two relay sockets on Linux. */
+export const MAX_LOOPBACK_PORTS = 16;
+
 const LOOPBACK_TARGET = /^(127\.0\.0\.1|localhost):([1-9][0-9]{0,4})$/;
 
 function invalidLoopbackTarget(value: string, reason: string): Error {
@@ -38,7 +41,14 @@ export function parseLoopbackTargets(
         `uses port ${LINUX_PROXY_RELAY_PORT}, which the Linux sandbox reserves for its proxy relay`,
       );
     }
-    if (!ports.includes(port)) ports.push(port);
+    if (ports.includes(port)) continue;
+    if (ports.length === MAX_LOOPBACK_PORTS) {
+      throw invalidLoopbackTarget(
+        value,
+        `exceeds the limit: allow at most ${MAX_LOOPBACK_PORTS} ports`,
+      );
+    }
+    ports.push(port);
   }
   return ports;
 }
@@ -50,8 +60,9 @@ export function formatLoopbackTarget(port: number): string {
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_ACTOR_ENV_ENTRIES = 64;
 const MAX_ACTOR_ENV_VALUE_BYTES = 32 * 1024;
-// Well below common execve limits once Pioneer's own variables and argv are added.
-const MAX_ACTOR_ENV_TOTAL_BYTES = 256 * 1024;
+// Far below the smallest common execve limit (macOS allows 256 KiB for argv plus the whole
+// environment), leaving headroom for Pioneer's own variables and the actor command.
+const MAX_ACTOR_ENV_TOTAL_BYTES = 64 * 1024;
 // Pioneer owns these: the sanitized platform runtime, the isolated home and scratch, proxy
 // mediation, and Node preloading, which could bypass Pi's tool-stripping adapter.
 const RESERVED_ACTOR_ENV_NAMES = new Set(
