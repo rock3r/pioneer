@@ -22,7 +22,7 @@ describe("macOS system tool read paths (#87)", () => {
     ).resolves.toEqual(["/private/var/select", "/Library/Developer/CommandLineTools"]);
   });
 
-  it("accepts an Xcode application developer directory", async () => {
+  it("grants the whole Xcode bundle, whose tools load its Info.plist and SharedFrameworks", async () => {
     await expect(
       macosSystemToolReadPaths(
         "darwin",
@@ -31,7 +31,7 @@ describe("macOS system tool read paths (#87)", () => {
           "/private/var/select/developer_dir": "/Applications/Xcode-beta.app/Contents/Developer",
         }),
       ),
-    ).resolves.toEqual(["/private/var/select", "/Applications/Xcode-beta.app/Contents/Developer"]);
+    ).resolves.toEqual(["/private/var/select", "/Applications/Xcode-beta.app"]);
   });
 
   it.each([
