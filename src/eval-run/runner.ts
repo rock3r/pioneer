@@ -914,6 +914,7 @@ async function stageEvalPiExtensions(
     signal,
     { entries: copied.entries, bytes: copied.bytes },
     controllerOnlyPaths,
+    extensionsEnabled ? { entries: extensions.entries, bytes: extensions.bytes } : undefined,
   );
   const explicitCopies = resolvedSources.map((source) => {
     const staged = alreadyStaged.get(source);

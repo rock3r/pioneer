@@ -136,6 +136,8 @@ export async function stageToolExtensions(
   signal: AbortSignal | undefined,
   budget: { readonly entries: number; readonly bytes: number },
   excludedPaths: readonly string[],
+  /** The part of `budget` used by enabled user extensions; the rest is explicit `-e` code. */
+  userExtensions: { readonly entries: number; readonly bytes: number } = { entries: 0, bytes: 0 },
 ): Promise<StagedToolExtensions> {
   if (sources.length === 0) return { paths: [], sourcePaths: [], ...budget };
   const resources: ExtensionResource[] = sources.flatMap((source) =>
@@ -160,13 +162,19 @@ export async function stageToolExtensions(
     );
   } catch (error) {
     // The budget carries the user and explicit extensions staged before these tool sources.
-    if (
-      error instanceof Error &&
-      error.message.startsWith("[PI_EXTENSION_SNAPSHOT_LIMIT]") &&
-      (budget.entries > 0 || budget.bytes > 0)
-    ) {
+    if (!(error instanceof Error) || !error.message.startsWith("[PI_EXTENSION_SNAPSHOT_LIMIT]")) {
+      throw error;
+    }
+    const share = (used: { readonly entries: number; readonly bytes: number }): string =>
+      `${(used.bytes / 1024 ** 2).toFixed(1)} MiB in ${used.entries} entries`;
+    if (userExtensions.entries > 0 || userExtensions.bytes > 0) {
       throw new Error(
-        `${error.message} The limit is shared with ${(budget.bytes / 1024 ** 2).toFixed(1)} MiB in ${budget.entries} entries of other staged Pi extensions; pass --no-extensions on the Pi command when this eval does not need the enabled user extensions.`,
+        `${error.message} The limit is shared with ${share(userExtensions)} of enabled user extensions; pass --no-extensions on the Pi command when this eval does not need them.`,
+      );
+    }
+    if (budget.entries > 0 || budget.bytes > 0) {
+      throw new Error(
+        `${error.message} The limit is shared with ${share(budget)} of explicit Pi extensions; drop or trim the -e extensions.`,
       );
     }
     throw error;
