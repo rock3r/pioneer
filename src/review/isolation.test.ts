@@ -1,4 +1,4 @@
-import { link, lstat, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -71,6 +71,55 @@ describe("review path grants", () => {
 
     expect(result.reportPath).toBe(path.join(await realpath(reports), "review.md"));
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects report and work-log parents another user could replace (#98)",
+    async () => {
+      const root = await createTempDir("pi-review-shared-parent-");
+      const source = path.join(root, "source");
+      const shared = path.join(root, "shared");
+      const nested = path.join(shared, "nested");
+      await mkdir(source);
+      await mkdir(nested, { recursive: true });
+      await chmod(shared, 0o777);
+      try {
+        await expect(
+          validateReviewPaths({ sourceDir: source, reportPath: path.join(nested, "review.md") }),
+        ).rejects.toThrow(/Review report parent is writable by another user/);
+        await expect(
+          validateReviewPaths({ sourceDir: source, workLogPath: path.join(shared, "log.jsonl") }),
+        ).rejects.toThrow(/Review work log parent is writable by another user/);
+        await expect(
+          validateProspectiveReviewReportPath({
+            sourceDir: source,
+            reportPath: path.join(nested, "later", "review.md"),
+          }),
+        ).rejects.toThrow(/Review report ancestor is writable by another user/);
+        // A link below the shared folder must not hide it from the check.
+        const trusted = path.join(root, "trusted");
+        await mkdir(path.join(trusted, "inner"), { recursive: true });
+        await symlink(trusted, path.join(shared, "link"));
+        await expect(
+          validateReviewPaths({
+            sourceDir: source,
+            reportPath: path.join(shared, "link", "inner", "review.md"),
+          }),
+        ).rejects.toThrow(/writable by another user/);
+        await expect(
+          validateProspectiveReviewReportPath({
+            sourceDir: source,
+            reportPath: path.join(shared, "link", "later", "review.md"),
+          }),
+        ).rejects.toThrow(/writable by another user/);
+        await chmod(shared, 0o1777);
+        await expect(
+          validateReviewPaths({ sourceDir: source, reportPath: path.join(nested, "review.md") }),
+        ).resolves.toMatchObject({ reportPath: path.join(await realpath(nested), "review.md") });
+      } finally {
+        await chmod(shared, 0o700);
+      }
+    },
+  );
 
   it("accepts a controller-owned work log outside every actor-visible grant", async () => {
     const root = await createTempDir("pi-review-paths-");

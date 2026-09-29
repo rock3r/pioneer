@@ -1,4 +1,4 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -802,6 +802,40 @@ describe("validateEvalWorkLogPath", () => {
       validateEvalWorkLogPath(path.join(runDir, "eval.jsonl"), [runDir]),
     ).rejects.toThrow(/actor-visible/i);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects an output parent that another user could replace (#98)",
+    async () => {
+      const temp = await createTempDir("pioneer-eval-output-parent-");
+      const runDir = path.join(temp, "run");
+      const shared = path.join(temp, "shared");
+      const nested = path.join(shared, "nested");
+      await mkdir(runDir);
+      await mkdir(nested, { recursive: true });
+      await chmod(shared, 0o777);
+      try {
+        for (const target of [path.join(shared, "out.log"), path.join(nested, "out.log")]) {
+          await expect(
+            validateEvalWorkLogPath(target, [runDir], "Eval stdout file"),
+          ).rejects.toThrow(/Eval stdout file parent is writable by another user/);
+        }
+        // A link below the shared folder must not hide it from the check.
+        const trusted = path.join(temp, "trusted");
+        await mkdir(path.join(trusted, "inner"), { recursive: true });
+        await symlink(trusted, path.join(shared, "link"));
+        await expect(
+          validateEvalWorkLogPath(path.join(shared, "link", "inner", "out.log"), [runDir]),
+        ).rejects.toThrow(/writable by another user/);
+        // A sticky shared parent protects the caller's own entries, like /tmp.
+        await chmod(shared, 0o1777);
+        await expect(validateEvalWorkLogPath(path.join(nested, "out.log"), [runDir])).resolves.toBe(
+          path.join(await realpath(nested), "out.log"),
+        );
+      } finally {
+        await chmod(shared, 0o700);
+      }
+    },
+  );
 
   it("rejects a relative work log path", async () => {
     await expect(validateEvalWorkLogPath("eval.jsonl", [])).rejects.toThrow(/absolute/i);

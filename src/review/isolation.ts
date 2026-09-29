@@ -3,6 +3,10 @@ import { access, lstat, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { SandboxPolicy } from "../sandbox/launcher.js";
+import {
+  assertStableDirectoryChain,
+  assertStableProspectiveDirectory,
+} from "../stable-directory.js";
 
 /** Network modes accepted for a newly-started review. */
 export type ReviewNetworkMode = "full" | "public";
@@ -147,6 +151,11 @@ async function canonicalControllerOutputPath(candidate: string, kind: string): P
     throw new Error(`Review ${kind} parent is not writable: ${parent}`);
   }
   const canonicalParent = await realpath(parent);
+  // Only the caller or root may be able to rename a directory above the target (#98). Ownership
+  // is a property of this host's filesystem, so the check follows the host platform.
+  // The lexical parent: the helper walks it and its canonical form, so a link below a
+  // replaceable folder cannot hide that folder.
+  await assertStableDirectoryChain(parent, process.platform, `Review ${kind} parent`);
   const reportPath = path.join(canonicalParent, path.basename(absolute));
   try {
     await lstat(reportPath);
@@ -181,6 +190,12 @@ async function canonicalProspectiveControllerOutputPath(
   if (!ancestorStats.isDirectory()) {
     throw new Error(`Review ${kind} ancestor is not a directory: ${canonicalAncestor}`);
   }
+  // Every folder Pioneer will create lies below this one, so check it before anything changes.
+  await assertStableProspectiveDirectory(
+    existingAncestor,
+    process.platform,
+    `Review ${kind} ancestor`,
+  );
   return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
 }
 

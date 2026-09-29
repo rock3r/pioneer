@@ -1,4 +1,5 @@
-import { lstat, realpath } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { lstat, mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -27,7 +28,7 @@ export async function assertStableDirectoryChain(
   platform: NodeJS.Platform,
   label: string,
 ): Promise<void> {
-  if (platform === "win32") return;
+  if (platform === "win32" || process.platform === "win32") return;
   const stats = await lstat(directory);
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
     throw new Error(`${label} is not a stable directory: ${directory}`);
@@ -75,6 +76,114 @@ export async function assertStableDirectoryChain(
       }
       child = parent;
       childStats = parentStats;
+    }
+  }
+}
+
+interface ExistingAncestor {
+  readonly path: string;
+  readonly stats: Stats;
+  /** Folders below `path`, outermost first, that do not exist yet. */
+  readonly missing: readonly string[];
+}
+
+async function nearestExistingAncestor(target: string): Promise<ExistingAncestor> {
+  const missing: string[] = [];
+  let existing = path.resolve(target);
+  for (;;) {
+    try {
+      return { path: existing, stats: await lstat(existing), missing };
+    } catch (error) {
+      const parent = path.dirname(existing);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === existing) throw error;
+      missing.unshift(existing);
+      existing = parent;
+    }
+  }
+}
+
+async function assertStableExistingAncestor(
+  ancestor: ExistingAncestor,
+  platform: NodeJS.Platform,
+  label: string,
+  currentUid: number | undefined,
+): Promise<void> {
+  if (!ancestor.stats.isSymbolicLink()) {
+    await assertStableDirectoryChain(ancestor.path, platform, label);
+    return;
+  }
+  if (currentUid === undefined || !isTrustedApplicationDataOwner(ancestor.stats.uid, currentUid)) {
+    throw new Error(`${label} has an untrusted owner: ${ancestor.path}`);
+  }
+  await assertStableDirectoryChain(path.dirname(ancestor.path), platform, label);
+  await assertStableDirectoryChain(await realpath(ancestor.path), platform, label);
+}
+
+function hostLacksOwnership(platform: NodeJS.Platform): boolean {
+  // Ownership is a property of this host's filesystem; Windows has no POSIX owner or mode bits.
+  return platform === "win32" || process.platform === "win32";
+}
+
+/**
+ * The same rules for a path Pioneer will create: the nearest existing folder is checked through
+ * both its lexical and canonical chains before anything is created. A linked ancestor must itself
+ * belong to the caller or root, since a sticky folder above it only protects the caller's own
+ * entries; the folder holding the link and the link's target are then both checked.
+ */
+export async function assertStableProspectiveDirectory(
+  target: string,
+  platform: NodeJS.Platform,
+  label: string,
+  currentUid: number | undefined = process.getuid?.(),
+): Promise<void> {
+  if (hostLacksOwnership(platform)) return;
+  await assertStableExistingAncestor(
+    await nearestExistingAncestor(target),
+    platform,
+    label,
+    currentUid,
+  );
+}
+
+/**
+ * Creates a directory for private output one folder at a time. The existing part of the path is
+ * found and checked once; every folder below it is then created without recursion and inspected
+ * before the next, so a link or foreign folder that appears after the check is refused instead
+ * of followed. The hooks exist for tests that simulate those races.
+ */
+export async function createStableDirectory(
+  directory: string,
+  platform: NodeJS.Platform,
+  label: string,
+  currentUid: number | undefined = process.getuid?.(),
+  hooks: {
+    readonly afterCheck?: () => Promise<void>;
+    readonly beforeCreate?: (component: string) => Promise<void>;
+  } = {},
+): Promise<void> {
+  if (hostLacksOwnership(platform)) {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    return;
+  }
+  const ancestor = await nearestExistingAncestor(directory);
+  await assertStableExistingAncestor(ancestor, platform, label, currentUid);
+  await hooks.afterCheck?.();
+  for (const component of ancestor.missing) {
+    await hooks.beforeCreate?.(component);
+    try {
+      await mkdir(component, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    const stats = await lstat(component);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error(`${label} is not a stable directory: ${component}`);
+    }
+    if (currentUid === undefined || !isTrustedApplicationDataOwner(stats.uid, currentUid)) {
+      throw new Error(`${label} has an untrusted owner: ${component}`);
+    }
+    if ((stats.mode & 0o022) !== 0 && (stats.mode & 0o1000) === 0) {
+      throw new Error(`${label} is writable by another user: ${component}`);
     }
   }
 }

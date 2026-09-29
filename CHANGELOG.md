@@ -4,6 +4,10 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.4.3 - 2026-09-29
+
+- Refuse a `--report`, `--work-log`, `--stdout-file`, or `--stderr-file` target below a folder that another user owns or can change, unless the folder is sticky like `/tmp` ([#98](https://github.com/rock3r/pioneer/issues/98)). Before this, another user with write access to such a folder could swap it for a link into the sandboxed actor's files between Pioneer's check and the file creation. This applies to macOS and Linux reviews and evals. The error names the folder, for example `Eval stdout file parent is writable by another user: PATH`.
+
 ## 0.4.2 - 2026-09-29
 
 - Refuse `eval run --env __proto__=...` with `[EVAL_ACTOR_ENV_INVALID]`. It was accepted but silently dropped ([#93](https://github.com/rock3r/pioneer/issues/93)).

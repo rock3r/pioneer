@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { diagnosticMessage } from "../diagnostics.js";
 import type { SandboxPolicy } from "../sandbox/launcher.js";
+import { assertStableDirectoryChain } from "../stable-directory.js";
 
 export type EvalPlatform = "darwin" | "linux" | "win32";
 
@@ -959,6 +960,11 @@ export async function validateEvalWorkLogPath(
     throw new Error(`${label} parent is not a directory: ${parent}`);
   }
   const canonicalParent = await realpath(parent);
+  // Only the caller or root may be able to rename a directory above the target; otherwise
+  // another user could swap one for a link into the actor's run tree after this check (#98).
+  // The lexical parent: the helper walks it and its canonical form, so a link below a
+  // replaceable folder cannot hide that folder.
+  await assertStableDirectoryChain(parent, process.platform, `${label} parent`);
   const target = path.join(canonicalParent, path.basename(absolute));
   try {
     await lstat(target);
