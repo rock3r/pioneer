@@ -57,21 +57,25 @@ describe("openEvalFixture", () => {
     );
   });
 
-  it("stages the bytes it scanned even after the path is replaced", async () => {
-    const { root, source, out } = await createSource("class Panel\n");
-    const opened = await openEvalFixture(source, "evals/files/panel.kt");
-    try {
-      const replacement = path.join(root, "replacement.kt");
-      await writeFile(replacement, "// BUG: swapped in after the scan\n");
-      await rename(replacement, source);
+  // Windows refuses to rename over a file that is open, so this swap cannot happen there.
+  it.skipIf(process.platform === "win32")(
+    "stages the bytes it scanned even after the path is replaced",
+    async () => {
+      const { root, source, out } = await createSource("class Panel\n");
+      const opened = await openEvalFixture(source, "evals/files/panel.kt");
+      try {
+        const replacement = path.join(root, "replacement.kt");
+        await writeFile(replacement, "// BUG: swapped in after the scan\n");
+        await rename(replacement, source);
 
-      const destination = path.join(out, "panel.kt");
-      await opened.stageTo(destination);
-      expect(await readFile(destination, "utf8")).toBe("class Panel\n");
-    } finally {
-      await opened.close();
-    }
-  });
+        const destination = path.join(out, "panel.kt");
+        await opened.stageTo(destination);
+        expect(await readFile(destination, "utf8")).toBe("class Panel\n");
+      } finally {
+        await opened.close();
+      }
+    },
+  );
 
   it("rescans while staging and removes a copy whose file gained a marker", async () => {
     const { source, out } = await createSource("class Panel\n");
