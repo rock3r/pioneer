@@ -95,6 +95,22 @@ describe("review path grants", () => {
             reportPath: path.join(nested, "later", "review.md"),
           }),
         ).rejects.toThrow(/Review report ancestor is writable by another user/);
+        // A link below the shared folder must not hide it from the check.
+        const trusted = path.join(root, "trusted");
+        await mkdir(path.join(trusted, "inner"), { recursive: true });
+        await symlink(trusted, path.join(shared, "link"));
+        await expect(
+          validateReviewPaths({
+            sourceDir: source,
+            reportPath: path.join(shared, "link", "inner", "review.md"),
+          }),
+        ).rejects.toThrow(/writable by another user/);
+        await expect(
+          validateProspectiveReviewReportPath({
+            sourceDir: source,
+            reportPath: path.join(shared, "link", "later", "review.md"),
+          }),
+        ).rejects.toThrow(/writable by another user/);
         await chmod(shared, 0o1777);
         await expect(
           validateReviewPaths({ sourceDir: source, reportPath: path.join(nested, "review.md") }),

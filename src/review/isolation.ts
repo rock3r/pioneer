@@ -150,7 +150,9 @@ async function canonicalControllerOutputPath(candidate: string, kind: string): P
   const canonicalParent = await realpath(parent);
   // Only the caller or root may be able to rename a directory above the target (#98). Ownership
   // is a property of this host's filesystem, so the check follows the host platform.
-  await assertStableDirectoryChain(canonicalParent, process.platform, `Review ${kind} parent`);
+  // The lexical parent: the helper walks it and its canonical form, so a link below a
+  // replaceable folder cannot hide that folder.
+  await assertStableDirectoryChain(parent, process.platform, `Review ${kind} parent`);
   const reportPath = path.join(canonicalParent, path.basename(absolute));
   try {
     await lstat(reportPath);
@@ -181,11 +183,25 @@ async function canonicalProspectiveControllerOutputPath(
     }
   }
   const canonicalAncestor = await realpath(existingAncestor);
-  if (ancestorStats.isSymbolicLink()) ancestorStats = await lstat(canonicalAncestor);
+  const linkedAncestor = ancestorStats.isSymbolicLink();
+  if (linkedAncestor) ancestorStats = await lstat(canonicalAncestor);
   if (!ancestorStats.isDirectory()) {
     throw new Error(`Review ${kind} ancestor is not a directory: ${canonicalAncestor}`);
   }
-  await assertStableDirectoryChain(canonicalAncestor, process.platform, `Review ${kind} ancestor`);
+  // Check the lexical chain too. A linked ancestor (macOS /tmp, for one) is checked through
+  // its target and through the folder that holds the link.
+  await assertStableDirectoryChain(
+    linkedAncestor ? canonicalAncestor : existingAncestor,
+    process.platform,
+    `Review ${kind} ancestor`,
+  );
+  if (linkedAncestor) {
+    await assertStableDirectoryChain(
+      path.dirname(existingAncestor),
+      process.platform,
+      `Review ${kind} ancestor`,
+    );
+  }
   return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
 }
 

@@ -962,7 +962,9 @@ export async function validateEvalWorkLogPath(
   const canonicalParent = await realpath(parent);
   // Only the caller or root may be able to rename a directory above the target; otherwise
   // another user could swap one for a link into the actor's run tree after this check (#98).
-  await assertStableDirectoryChain(canonicalParent, process.platform, `${label} parent`);
+  // The lexical parent: the helper walks it and its canonical form, so a link below a
+  // replaceable folder cannot hide that folder.
+  await assertStableDirectoryChain(parent, process.platform, `${label} parent`);
   const target = path.join(canonicalParent, path.basename(absolute));
   try {
     await lstat(target);

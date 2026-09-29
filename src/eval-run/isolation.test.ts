@@ -1,4 +1,4 @@
-import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -819,6 +819,13 @@ describe("validateEvalWorkLogPath", () => {
             validateEvalWorkLogPath(target, [runDir], "Eval stdout file"),
           ).rejects.toThrow(/Eval stdout file parent is writable by another user/);
         }
+        // A link below the shared folder must not hide it from the check.
+        const trusted = path.join(temp, "trusted");
+        await mkdir(path.join(trusted, "inner"), { recursive: true });
+        await symlink(trusted, path.join(shared, "link"));
+        await expect(
+          validateEvalWorkLogPath(path.join(shared, "link", "inner", "out.log"), [runDir]),
+        ).rejects.toThrow(/writable by another user/);
         // A sticky shared parent protects the caller's own entries, like /tmp.
         await chmod(shared, 0o1777);
         await expect(validateEvalWorkLogPath(path.join(nested, "out.log"), [runDir])).resolves.toBe(
