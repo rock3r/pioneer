@@ -29,9 +29,16 @@ describe("macOS system tool read paths (#87)", () => {
         resolver({
           "/private/var/select": "/private/var/select",
           "/private/var/select/developer_dir": "/Applications/Xcode-beta.app/Contents/Developer",
+          "/Library/Preferences/com.apple.dt.Xcode.plist":
+            "/Library/Preferences/com.apple.dt.Xcode.plist",
         }),
       ),
-    ).resolves.toEqual(["/private/var/select", "/Applications/Xcode-beta.app"]);
+    ).resolves.toEqual([
+      "/private/var/select",
+      "/Applications/Xcode-beta.app",
+      // xcrun reads the Xcode license acceptance here and exits 69 when it cannot.
+      "/Library/Preferences/com.apple.dt.Xcode.plist",
+    ]);
   });
 
   it.each([
@@ -52,6 +59,18 @@ describe("macOS system tool read paths (#87)", () => {
         }),
       ),
     ).resolves.toEqual(["/private/var/select"]);
+  });
+
+  it("omits the Xcode preferences file when it is absent", async () => {
+    await expect(
+      macosSystemToolReadPaths(
+        "darwin",
+        resolver({
+          "/private/var/select": "/private/var/select",
+          "/private/var/select/developer_dir": "/Applications/Xcode.app/Contents/Developer",
+        }),
+      ),
+    ).resolves.toEqual(["/private/var/select", "/Applications/Xcode.app"]);
   });
 
   it("omits paths that are absent on the host", async () => {

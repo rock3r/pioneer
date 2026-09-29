@@ -117,7 +117,7 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor runtime", () => {
       // xcrun may still warn that it cannot write its cache in the shared per-user temp
       // directory, which stays ungranted; the #86/#87 failures must not recur.
       expect(report.git?.stderr).not.toMatch(/dev\/null|var\/select|developer_dir|Info\.plist/i);
-      expect(report.git).toMatchObject({ error: null, status: 0 });
+      expect(report.git, report.git?.stderr).toMatchObject({ error: null, status: 0 });
       expect(report.git?.stdout).toMatch(/^git version /);
     }
   });

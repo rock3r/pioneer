@@ -46,6 +46,7 @@ export async function macosRuntimeReadPaths(executable: string): Promise<string[
 
 const MACOS_SELECT_ROOT = "/private/var/select";
 const COMMAND_LINE_TOOLS = "/Library/Developer/CommandLineTools";
+const XCODE_PREFERENCES = "/Library/Preferences/com.apple.dt.Xcode.plist";
 const XCODE_DEVELOPER_DIR = /^(\/Applications\/[^/]+\.app)\/Contents\/Developer$/;
 
 /**
@@ -75,5 +76,11 @@ export async function macosSystemToolReadPaths(
   // Xcode's tools read the bundle's Info.plist and load its SharedFrameworks, so grant the
   // whole application bundle read-only rather than only Contents/Developer.
   const xcodeBundle = XCODE_DEVELOPER_DIR.exec(developerDir)?.[1];
-  return xcodeBundle === undefined ? [selectRoot] : [selectRoot, xcodeBundle];
+  if (xcodeBundle === undefined) return [selectRoot];
+  // xcrun checks Xcode license acceptance in this one preferences file and exits 69 when
+  // it cannot read it; Command Line Tools skip that check.
+  const preferences = await resolve(XCODE_PREFERENCES).catch(() => undefined);
+  return preferences === XCODE_PREFERENCES
+    ? [selectRoot, xcodeBundle, preferences]
+    : [selectRoot, xcodeBundle];
 }
