@@ -25,7 +25,7 @@ export function evalUsage(commandName: string): string {
   return `Usage:
   ${commandName} prepare --skill DIR --evals FILE --output DIR [--allow-fixture-name GLOB]...
   ${commandName} install-linux
-  ${commandName} run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] [--work-log FILE] [--allow-loopback HOST:PORT]... [--env NAME=VALUE]... [--pi-extension PATH]... -- COMMAND [ARG ...]`;
+  ${commandName} run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] [--work-log FILE] [--allow-loopback HOST:PORT]... [--env NAME=VALUE]... [--pi-extension PATH]... [--stdout-file FILE] [--stderr-file FILE] -- COMMAND [ARG ...]`;
 }
 
 function usage(commandName: string): never {
@@ -104,6 +104,8 @@ export async function runEvalCli(
     const loopbackTargets = takeRepeatedOption(args, "--allow-loopback", commandName);
     const environmentEntries = takeRepeatedOption(args, "--env", commandName);
     const toolExtensionPaths = takeRepeatedOption(args, "--pi-extension", commandName);
+    const stdoutPath = takeOption(args, "--stdout-file", commandName);
+    const stderrPath = takeOption(args, "--stderr-file", commandName);
     if (
       !runDir ||
       args.length > 0 ||
@@ -138,6 +140,8 @@ export async function runEvalCli(
         onWorkLogReady: (logPath) => output.stderr(`[PIONEER_EVAL_WORK_LOG] ${logPath}\n`),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(workLogPath === undefined ? {} : { workLogPath: path.resolve(workLogPath) }),
+        ...(stdoutPath === undefined ? {} : { stdoutPath: path.resolve(stdoutPath) }),
+        ...(stderrPath === undefined ? {} : { stderrPath: path.resolve(stderrPath) }),
       },
     );
     output.stdout(result.stdout);

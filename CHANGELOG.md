@@ -4,6 +4,21 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.4.2 - 2026-09-29
+
+- Refuse `eval run --env __proto__=...` with `[EVAL_ACTOR_ENV_INVALID]`. It was accepted but silently dropped ([#93](https://github.com/rock3r/pioneer/issues/93)).
+- Check a `--pi-extension` package's `package.json` before resolving its entries. It must be a regular file of at most 64 KiB with at most 32 `pi.extensions` entries. A FIFO named `package.json` no longer blocks preflight ([#92](https://github.com/rock3r/pioneer/issues/92)).
+- Add `eval run --stdout-file FILE` and `--stderr-file FILE`. Pioneer streams that actor stream to a new file instead of memory, bounded at 1 GiB instead of 4 MiB or 64 KiB. Use them for `pi --mode json` runs, which repeat every image as base64. The file must be absent and outside every actor grant, like `--work-log`.
+- Name the stream in `[EVAL_OUTPUT_LIMIT]`, for example `Eval actor stdout exceeded the 4194304-byte limit; pass --stdout-file PATH to stream it to a file`.
+- Document why macOS Xcode shims such as `/usr/bin/git` print an `xcrun_db` cache warning in evals, and how an MCP server can read files from the real home directory.
+- Load an `eval run --pi-extension` only in the actor. Model discovery and the OAuth worker no longer initialize it. An extension that needs a `--env` value, a file in the run directory, a Pi argument such as `--mcp-config`, or an `--allow-loopback` port while it starts now passes readiness ([#91](https://github.com/rock3r/pioneer/issues/91)). Enabled user extensions and explicit `-e` extensions still take part in model discovery. If the `--pi-extension` cannot start in the actor, the run fails with `[PI_EXTENSION_LOAD_FAILED]`.
+- `eval prepare` now rejects `bug:`, `todo:`, and `fixme` markers in fixture content in any letter case ([#73](https://github.com/rock3r/pioneer/issues/73)). Bare `TODO` and `XXX` still match in uppercase only, because lowercase "todo" and "xxx" are ordinary words. A fixture for a todo-list app still passes, and `DEBUG:` still does not match `BUG:`.
+- `eval prepare` now allows `fixture` inside a camelCase or PascalCase name, as it already did for `case` ([#74](https://github.com/rock3r/pioneer/issues/74)). `TestFixture.kt` is allowed. `Fixture.kt`, `test-fixture.kt`, and a `fixture/` directory are still rejected.
+- `eval prepare` now checks the staged path that the actor sees under `fixtures/`, as well as the `files[]` source path ([#69](https://github.com/rock3r/pioneer/issues/69)). An `--allow-fixture-name` glob can match either path or the basename.
+- `eval prepare` now limits each fixture to 64 MiB. A larger file fails with `[EVAL_FIXTURE_TOO_LARGE]` before output is created ([#70](https://github.com/rock3r/pioneer/issues/70)).
+- `eval prepare` now checks the file type and size of each fixture and scans its content from one open file. It then records the file's identity and closes it. Each staged copy reopens the file, fails with `[EVAL_FIXTURE_CHANGED]` if the file changed, and is scanned again while it is copied. Only one fixture is open at a time ([#68](https://github.com/rock3r/pioneer/issues/68)). The scan streams the content with bounded memory. If the source path changes during prepare, the staged files still contain the bytes that Pioneer checked.
+- Document the fixture rules in one place, including why `TODO-list.md` is an allowed path while a `TODO` marker in content is rejected ([#72](https://github.com/rock3r/pioneer/issues/72)). The security model now describes the fixture leak gate, the regular-file rule, and the size limit ([#75](https://github.com/rock3r/pioneer/issues/75)).
+
 ## 0.4.1 - 2026-09-29
 
 - Name the failing extension and the missing module in `[PI_EXTENSION_LOAD_FAILED]`, for example `entry 1 (compose-pi/provider.ts): missing dependency @earendil-works/pi-ai/dist/compat.js/api/openai-completions`. Pioneer still suppresses the raw error. It leaves out any name that looks like a credential or has unusual characters.

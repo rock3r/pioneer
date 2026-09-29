@@ -99,6 +99,14 @@ describe("eval --env actor variables (#89)", () => {
     );
   });
 
+  it("rejects __proto__ instead of silently dropping it (#93)", () => {
+    for (const values of [["__proto__=value"], ["__proto__=a", "__proto__=b"]]) {
+      expect(() => parseActorEnvironment(values)).toThrow(
+        /EVAL_ACTOR_ENV_INVALID.*__proto__.*not an environment variable name/,
+      );
+    }
+  });
+
   it("bounds the number and size of variables", () => {
     expect(() =>
       parseActorEnvironment(Array.from({ length: 65 }, (_, index) => `NAME_${index}=x`)),

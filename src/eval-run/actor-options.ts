@@ -111,6 +111,10 @@ export function parseActorEnvironment(values: readonly string[]): Record<string,
         "--env values must be NAME=VALUE with a name of letters, digits and underscores that does not start with a digit",
       );
     }
+    // Assigning __proto__ runs the prototype setter instead of adding a variable (#93).
+    if (name === "__proto__") {
+      throw invalidActorEnvironment("--env __proto__ is not an environment variable name");
+    }
     const folded = name.toUpperCase();
     if (
       RESERVED_ACTOR_ENV_NAMES.has(folded) ||

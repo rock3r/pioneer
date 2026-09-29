@@ -335,14 +335,212 @@ setTimeout(() => { socket.destroy(); process.stdout.write("timeout"); }, 3000).u
     expect(run.stderr).toContain("PI_EXTENSION_TOOL_SOURCE_INVALID");
     expect(existsSync(path.join(runDir, ACTOR_INVOCATION_FILE))).toBe(false);
   });
+
+  it("names the stream that overflows and streams large output to --stdout-file", async () => {
+    const { created, runDir } = await workspace("output-files");
+    // Pi's JSON mode repeats every image as base64, so one read can pass the 4 MiB bound.
+    const bigStdout = [
+      "node",
+      "-e",
+      "process.stdout.write('x'.repeat(5 * 1024 * 1024)); process.stderr.write('actor-stderr')",
+    ];
+
+    const bounded = await runPioneer(created, [
+      ...evalRun(created, runDir, "output-bounded"),
+      "--",
+      ...bigStdout,
+    ]);
+    expect(bounded.exitCode).not.toBe(0);
+    expect(bounded.stderr).toContain(
+      "[EVAL_OUTPUT_LIMIT] Eval actor stdout exceeded the 4194304-byte limit; pass --stdout-file PATH to stream it to a file",
+    );
+
+    const insideRun = await runPioneer(created, [
+      ...evalRun(created, runDir, "output-inside-run"),
+      "--stdout-file",
+      path.join(runDir, "stdout.txt"),
+      "--",
+      ...bigStdout,
+    ]);
+    expect(insideRun.exitCode).not.toBe(0);
+    expect(insideRun.stderr).toMatch(/EVAL_OUTPUT_FILE_CREATE_FAILED.*actor-visible/);
+
+    const stdoutFile = path.join(created.root, "actor-stdout.txt");
+    const streamed = await runPioneer(created, [
+      ...evalRun(created, runDir, "output-streamed"),
+      "--stdout-file",
+      stdoutFile,
+      "--",
+      ...bigStdout,
+    ]);
+    expect(streamed.stderr).not.toContain("[EVAL_");
+    expect(streamed.exitCode, streamed.stderr).toBe(0);
+    expect(streamed.stdout).toBe("");
+    expect(streamed.stderr).toContain("actor-stderr");
+    expect((await readFile(stdoutFile)).length).toBe(5 * 1024 * 1024);
+    const log = await readWorkLog(created.workLogPath("output-streamed"));
+    expect(log).toContainEqual(
+      expect.objectContaining({ type: "stage_started", stage: "actor", stdoutFile: true }),
+    );
+  });
+
+  it("initializes a --pi-extension only in the actor, with its --env values and run directory (#91)", async () => {
+    const { created, runDir } = await workspace("tool-extension-actor-init", false);
+    await writeExtensionHostingPi(created, { initializeExtensions: true });
+    const { adapterDir, providerEntry, configPath } = await writeInitializingExtensions(
+      created,
+      runDir,
+    );
+    const workLogPath = created.workLogPath("tool-extension-actor-init");
+
+    const run = await runPioneer(created, [
+      ...evalRun(created, runDir, "tool-extension-actor-init"),
+      "--pi-extension",
+      adapterDir,
+      "--env",
+      `TOOL_ADAPTER_TOKEN=${TOOL_ADAPTER_TOKEN}`,
+      "--env",
+      `TOOL_ADAPTER_CONFIG=${configPath}`,
+      "--",
+      "pi",
+      "--no-extensions",
+      "-e",
+      providerEntry,
+      // Resolves only if the explicit extension still took part in model discovery.
+      "--model",
+      "ext-provider/demo",
+      "--print",
+      "Say READY",
+    ]);
+
+    expect(run.stderr).not.toMatch(/PI_EXTENSION_|PI_OAUTH_/);
+    expect(run.exitCode, run.stderr).toBe(0);
+    const invocation = JSON.parse(
+      await readFile(path.join(runDir, ACTOR_INVOCATION_FILE), "utf8"),
+    ) as {
+      extensions: {
+        path: string;
+        tools: number;
+        init: { config?: string; models?: string[] } | null;
+      }[];
+    };
+    const adapter = invocation.extensions.find((entry) => entry.init?.config !== undefined);
+    const provider = invocation.extensions.find((entry) => entry.init?.models !== undefined);
+    expect(adapter?.init?.config).toBe(TOOL_ADAPTER_CONFIG);
+    expect(adapter?.tools).toBe(1);
+    expect(provider?.tools).toBe(0);
+    const records = await readWorkLog(workLogPath);
+    expect(
+      records.some(
+        (record) => record.type === "stage_completed" && record.stage === "pi_readiness",
+      ),
+    ).toBe(true);
+    const actorStage = records.find(
+      (record) => record.type === "stage_started" && record.stage === "actor",
+    );
+    expect(actorStage?.actorEnvironmentNames).toEqual([
+      "TOOL_ADAPTER_CONFIG",
+      "TOOL_ADAPTER_TOKEN",
+    ]);
+    expect(actorStage?.toolExtensionCount).toBe(1);
+    expect(await readFile(workLogPath, "utf8")).not.toContain(TOOL_ADAPTER_TOKEN);
+  });
+
+  it("fails the actor with PI_EXTENSION_LOAD_FAILED when a --pi-extension cannot initialize", async () => {
+    const { created, runDir } = await workspace("tool-extension-actor-load-failure", false);
+    await writeExtensionHostingPi(created, { initializeExtensions: true });
+    const { adapterDir, configPath } = await writeInitializingExtensions(created, runDir);
+    const workLogPath = created.workLogPath("tool-extension-actor-load-failure");
+
+    const run = await runPioneer(created, [
+      ...evalRun(created, runDir, "tool-extension-actor-load-failure"),
+      "--pi-extension",
+      adapterDir,
+      // TOOL_ADAPTER_TOKEN is deliberately missing, so the adapter throws while loading.
+      "--env",
+      `TOOL_ADAPTER_CONFIG=${configPath}`,
+      "--",
+      "pi",
+      "--no-extensions",
+      "--model",
+      "builtin/demo",
+      "--print",
+      "Say READY",
+    ]);
+
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toContain("[PI_EXTENSION_LOAD_FAILED]");
+    expect(run.stderr).toContain("tool-adapter/index.js");
+    // Raw initialization errors stay suppressed.
+    expect(run.stderr).not.toContain("is not set");
+    expect(existsSync(path.join(runDir, ACTOR_INVOCATION_FILE))).toBe(false);
+    const records = await readWorkLog(workLogPath);
+    expect(
+      records.some(
+        (record) => record.type === "stage_completed" && record.stage === "pi_readiness",
+      ),
+    ).toBe(true);
+    expect(
+      records.some((record) => record.type === "stage_started" && record.stage === "actor"),
+    ).toBe(true);
+  });
 });
+
+const TOOL_ADAPTER_TOKEN = "unmistakable-tool-adapter-token";
+const TOOL_ADAPTER_CONFIG = '{"server":"run-directory-config"}\n';
+
+/**
+ * A `--pi-extension` package that, like an MCP adapter, needs a `--env` value and a file in
+ * the run directory while it initializes, plus a plain explicit extension that registers a
+ * model provider. Both are CommonJS, so the scripted resource loader can run them.
+ */
+async function writeInitializingExtensions(
+  created: EvalWorkspace,
+  runDir: string,
+): Promise<{ adapterDir: string; providerEntry: string; configPath: string }> {
+  const adapterDir = path.join(created.root, "tool-adapter");
+  await mkdir(adapterDir);
+  await writeFile(
+    path.join(adapterDir, "package.json"),
+    `${JSON.stringify({ name: "fake-tool-adapter", pi: { extensions: ["./index.js"] } })}\n`,
+  );
+  await writeFile(
+    path.join(adapterDir, "index.js"),
+    `const fs = require("node:fs");
+module.exports = () => {
+  if (!process.env.TOOL_ADAPTER_TOKEN) throw new Error("TOOL_ADAPTER_TOKEN is not set");
+  return { config: fs.readFileSync(process.env.TOOL_ADAPTER_CONFIG, "utf8") };
+};
+`,
+  );
+  const providerDir = path.join(created.root, "model-provider");
+  await mkdir(providerDir);
+  const providerEntry = path.join(providerDir, "provider.cjs");
+  await writeFile(providerEntry, 'module.exports = () => ({ models: ["ext-provider/demo"] });\n');
+  const configPath = path.join(runDir, "tool-adapter.json");
+  await writeFile(configPath, TOOL_ADAPTER_CONFIG);
+  return { adapterDir, providerEntry, configPath };
+}
+
+interface ExtensionHostingPiOptions {
+  /**
+   * Run each extension's CommonJS entry while loading, like Pi does for both model
+   * discovery and the actor. `--list-models` then also lists the models an extension
+   * returns, and a throwing entry becomes a load error.
+   */
+  readonly initializeExtensions?: boolean;
+}
 
 /**
  * A trusted Pi package that can host Pioneer's extension adapter. Its resource loader
  * reports every `--extension` it was given, resolving a directory to its package entry the
  * way Pi does, with one tool each; the adapter decides which tools survive.
  */
-async function writeExtensionHostingPi(created: EvalWorkspace): Promise<void> {
+async function writeExtensionHostingPi(
+  created: EvalWorkspace,
+  options: ExtensionHostingPiOptions = {},
+): Promise<void> {
+  const initialize = options.initializeExtensions === true;
   const root = created.piPackageRoot;
   const cliPath = path.join(root, "dist", "cli.js");
   await mkdir(path.join(root, "dist", "core"), { recursive: true });
@@ -365,11 +563,18 @@ if (argv.includes("--version")) {
   process.stdout.write("0.84.2\\n");
   process.exit(0);
 }
+const { DefaultResourceLoader } = await import(new URL("./core/resource-loader.js", import.meta.url));
 if (argv.includes("--list-models")) {
-  process.stdout.write("provider  model  context  max-out  thinking  images\\nbuiltin  demo  1K  1K  no  no\\n");
+  const extensionModels = ${JSON.stringify(initialize)}
+    ? new DefaultResourceLoader()
+        .getExtensions()
+        .extensions.flatMap((extension) => extension.init?.models ?? [])
+        .map((model) => model.split("/").join("  ") + "  1K  1K  no  no\\n")
+        .join("")
+    : "";
+  process.stdout.write("provider  model  context  max-out  thinking  images\\nbuiltin  demo  1K  1K  no  no\\n" + extensionModels);
   process.exit(0);
 }
-const { DefaultResourceLoader } = await import(new URL("./core/resource-loader.js", import.meta.url));
 const loaded = new DefaultResourceLoader().getExtensions();
 fs.writeFileSync(
   path.join(process.cwd(), ${JSON.stringify(ACTOR_INVOCATION_FILE)}),
@@ -380,6 +585,7 @@ fs.writeFileSync(
       path: extension.path,
       tools: extension.tools.size,
       entry: fs.readFileSync(extension.path, "utf8"),
+      init: extension.init ?? null,
     })),
   }) + "\\n",
 );
@@ -399,7 +605,10 @@ process.stdout.write("READY\\n");
   await writeFile(
     path.join(root, "dist", "core", "resource-loader.js"),
     `import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
+const require = createRequire(import.meta.url);
+const initialize = ${JSON.stringify(initialize)};
 function entryFor(candidate) {
   if (!fs.statSync(candidate).isDirectory()) return candidate;
   const manifest = path.join(candidate, "package.json");
@@ -413,12 +622,23 @@ export class DefaultResourceLoader {
   getExtensions() {
     const argv = process.argv;
     const extensions = [];
+    const errors = [];
     argv.forEach((argument, index) => {
       if ((argument === "--extension" || argument === "-e") && argv[index + 1]) {
-        extensions.push({ path: entryFor(argv[index + 1]), tools: new Map([["mcp", {}]]) });
+        const entry = entryFor(argv[index + 1]);
+        let init;
+        if (initialize) {
+          try {
+            init = require(entry)();
+          } catch (error) {
+            errors.push({ path: entry, error: String(error) });
+            return;
+          }
+        }
+        extensions.push({ path: entry, tools: new Map([["mcp", {}]]), init });
       }
     });
-    return { extensions, errors: [] };
+    return { extensions, errors };
   }
 }
 `,

@@ -1,4 +1,5 @@
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 import { diagnosticMessage } from "../diagnostics.js";
 import {
@@ -44,13 +45,55 @@ async function existingEntry(candidate: string, root: string): Promise<string | 
   return canonical;
 }
 
+const MAX_MANIFEST_BYTES = 64 * 1024;
+const MAX_MANIFEST_ENTRIES = 32;
+
+/**
+ * Reads a package manifest as a bounded regular file. The descriptor is opened without
+ * following links or blocking, so a FIFO or a swapped path cannot stall preflight (#92).
+ */
+async function readManifestText(file: string): Promise<string | undefined> {
+  try {
+    if (!(await lstat(file)).isFile()) {
+      throw invalidToolSource("--pi-extension package.json must be a regular file");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  const handle = await open(
+    file,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
+  ).catch(() => {
+    throw invalidToolSource("--pi-extension package.json must be a regular file");
+  });
+  try {
+    const details = await handle.stat();
+    if (!details.isFile()) {
+      throw invalidToolSource("--pi-extension package.json must be a regular file");
+    }
+    const buffer = Buffer.alloc(MAX_MANIFEST_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > MAX_MANIFEST_BYTES) {
+      throw invalidToolSource(`--pi-extension package.json exceeds ${MAX_MANIFEST_BYTES} bytes`);
+    }
+    return buffer.subarray(0, length).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 /** Mirrors Pi's own directory resolution: a `pi.extensions` manifest, then index.ts/js. */
 async function packageEntries(dir: string): Promise<string[]> {
+  const text = await readManifestText(path.join(dir, "package.json"));
   let manifest: unknown;
   try {
-    manifest = JSON.parse(
-      (await readFile(path.join(dir, "package.json"), "utf8")).replace(/^﻿/, ""),
-    );
+    manifest = text === undefined ? undefined : JSON.parse(text.replace(/^\ufeff/, ""));
   } catch {
     manifest = undefined;
   }
@@ -65,6 +108,11 @@ async function packageEntries(dir: string): Promise<string[]> {
     manifest.pi.extensions.every((entry: unknown) => typeof entry === "string")
       ? (manifest.pi.extensions as string[])
       : [];
+  if (declared.length > MAX_MANIFEST_ENTRIES) {
+    throw invalidToolSource(
+      `--pi-extension package.json must declare at most ${MAX_MANIFEST_ENTRIES} pi.extensions entries`,
+    );
+  }
   const entries: string[] = [];
   for (const entry of declared) {
     const resolved = await existingEntry(path.resolve(dir, entry), dir);
@@ -187,6 +235,20 @@ export async function stageToolExtensions(
       (source.kind === "file" ? !details.isFile() : !details.isDirectory())
     ) {
       throw new Error("[PI_EXTENSION_TOOL_SOURCE_INVALID] --pi-extension was not staged");
+    }
+    if (source.kind === "directory") {
+      // The staged copy is what Pi loads: its manifest must still pass the bounds and name
+      // the entries preflight validated, or a rewrite after preflight would skip them.
+      const expected = source.entries.map((entry) => path.relative(source.canonical, entry));
+      const stagedSource = await resolveToolExtensionSource(staged).catch(() => undefined);
+      const actual = stagedSource?.entries.map((entry) =>
+        path.relative(stagedSource.canonical, entry),
+      );
+      if (actual === undefined || actual.join("\0") !== expected.join("\0")) {
+        throw new Error(
+          "[PI_EXTENSION_SNAPSHOT_CHANGED] --pi-extension package changed while it was being staged; retry after it is stable.",
+        );
+      }
     }
     paths.push(staged);
   }

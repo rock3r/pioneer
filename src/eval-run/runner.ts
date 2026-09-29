@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { closeSync, constants, createReadStream, openSync, writeSync } from "node:fs";
 import {
   access,
   lstat,
@@ -132,6 +132,12 @@ export interface RunEvalOptions {
    * validated against the same broad-and-protected rules as a writable run directory.
    */
   readonly controllerScratchBase?: string;
+  /**
+   * Create-only files that receive the actor's stdout or stderr instead of the bounded
+   * in-memory capture. Validated like the work log: absolute, new, and not actor-visible.
+   */
+  readonly stdoutPath?: string;
+  readonly stderrPath?: string;
 }
 
 const OUTSIDE_SENTINEL_CONTENT = "outside-root sentinel";
@@ -232,6 +238,18 @@ function sanitizedBrokerEnvironment(runtimeEnvironment: NodeJS.ProcessEnv): Node
 const EVAL_PIPE_CLOSE_GRACE_MS = 400;
 const EVAL_MAX_STDOUT_BYTES = 4 * 1024 * 1024;
 const EVAL_MAX_STDERR_BYTES = 64 * 1024;
+/** Disk bound for a stream written to a caller-owned file instead of memory. */
+export const EVAL_MAX_OUTPUT_FILE_BYTES = 1024 * 1024 * 1024;
+
+/**
+ * Open, controller-owned file descriptors that receive an actor stream instead of the
+ * in-memory buffer. The caller creates them before launch and closes them afterwards.
+ */
+export interface EvalOutputSinks {
+  readonly stdout?: number;
+  readonly stderr?: number;
+  readonly maxFileBytes?: number;
+}
 
 class EvalSetupInterrupted extends Error {
   readonly signal: NodeJS.Signals;
@@ -335,6 +353,7 @@ export async function captureEvalProcess(
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
   abortSignal?: AbortSignal,
+  sinks: EvalOutputSinks = {},
 ): Promise<EvalRunResult> {
   if (abortSignal?.aborted)
     return {
@@ -365,7 +384,7 @@ export async function captureEvalProcess(
     let childExited = false;
     let timedOut = false;
     let containmentFailure = false;
-    let outputLimit = false;
+    let outputFailure: string | undefined;
     let interrupted: NodeJS.Signals | undefined;
     let exitCode: number | null = null;
     let signal: NodeJS.Signals | null = null;
@@ -395,8 +414,8 @@ export async function captureEvalProcess(
         ? `[EVAL_TIMEOUT] Eval actor timed out after ${timeoutMs}ms`
         : containmentFailure
           ? "[EVAL_PROCESS_CONTAINMENT_FAILED] Pioneer could not prove the eval actor process tree stopped"
-          : outputLimit
-            ? `[EVAL_OUTPUT_LIMIT] Eval actor output exceeded the ${EVAL_MAX_STDOUT_BYTES}-byte stdout or ${EVAL_MAX_STDERR_BYTES}-byte stderr limit`
+          : outputFailure !== undefined
+            ? outputFailure
             : interrupted === undefined
               ? undefined
               : `[EVAL_INTERRUPTED] Eval actor interrupted by ${interrupted}`;
@@ -438,18 +457,45 @@ export async function captureEvalProcess(
       startGrace();
     };
 
+    const failOutput = (diagnostic: string): void => {
+      if (outputFailure !== undefined) return;
+      outputFailure = diagnostic;
+      terminateEvalProcessTree(child, "SIGKILL");
+      startGrace();
+    };
+    const maxFileBytes = sinks.maxFileBytes ?? EVAL_MAX_OUTPUT_FILE_BYTES;
     const appendOutput = (
+      name: "stdout" | "stderr",
       chunks: Buffer[],
       chunk: Buffer,
       retainedBytes: number,
       limit: number,
     ): number => {
+      const sink = sinks[name];
+      if (sink !== undefined) {
+        if (outputFailure !== undefined) return retainedBytes;
+        const accepted = chunk.subarray(0, Math.max(0, maxFileBytes - retainedBytes));
+        try {
+          for (let offset = 0; offset < accepted.length; ) {
+            offset += writeSync(sink, accepted, offset, accepted.length - offset);
+          }
+        } catch {
+          failOutput(`[EVAL_OUTPUT_WRITE_FAILED] Eval actor ${name} file could not be written`);
+          return retainedBytes;
+        }
+        if (retainedBytes + chunk.length > maxFileBytes) {
+          failOutput(
+            `[EVAL_OUTPUT_LIMIT] Eval actor ${name} file exceeded the ${maxFileBytes}-byte limit`,
+          );
+        }
+        return retainedBytes + accepted.length;
+      }
       const remaining = limit - retainedBytes;
       if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
-      if (retainedBytes + chunk.length > limit && !outputLimit) {
-        outputLimit = true;
-        terminateEvalProcessTree(child, "SIGKILL");
-        startGrace();
+      if (retainedBytes + chunk.length > limit) {
+        failOutput(
+          `[EVAL_OUTPUT_LIMIT] Eval actor ${name} exceeded the ${limit}-byte limit; pass --${name}-file PATH to stream it to a file`,
+        );
       }
       return retainedBytes + chunk.length;
     };
@@ -457,10 +503,10 @@ export async function captureEvalProcess(
     let stderrBytes = 0;
 
     childStdout.on("data", (chunk: Buffer) => {
-      stdoutBytes = appendOutput(stdout, chunk, stdoutBytes, EVAL_MAX_STDOUT_BYTES);
+      stdoutBytes = appendOutput("stdout", stdout, chunk, stdoutBytes, EVAL_MAX_STDOUT_BYTES);
     });
     childStderr.on("data", (chunk: Buffer) => {
-      stderrBytes = appendOutput(stderr, chunk, stderrBytes, EVAL_MAX_STDERR_BYTES);
+      stderrBytes = appendOutput("stderr", stderr, chunk, stderrBytes, EVAL_MAX_STDERR_BYTES);
     });
     child.once("error", (error) => {
       if (settled) return;
@@ -513,6 +559,7 @@ async function sandboxAndCapture(
   proxySocketPath?: string,
   runtimeExecutable = process.execPath,
   loopbackRelays: readonly LinuxLoopbackRelay[] = [],
+  sinks: EvalOutputSinks = {},
 ): Promise<EvalRunResult> {
   const launch =
     process.platform === "darwin"
@@ -530,7 +577,49 @@ async function sandboxAndCapture(
     runDir,
     { ...sanitizedBrokerEnvironment(process.env), ...launch.environment },
     timeoutMs,
+    undefined,
+    sinks,
   );
+}
+
+/**
+ * Opens each requested output file create-only. When a later file fails, the earlier ones
+ * are closed but kept: deleting by path could remove a file another process put there.
+ */
+export function openEvalOutputFiles(targets: {
+  readonly stdout?: string;
+  readonly stderr?: string;
+}): EvalOutputSinks {
+  const opened: { stdout?: number; stderr?: number } = {};
+  for (const name of ["stdout", "stderr"] as const) {
+    const target = targets[name];
+    if (target === undefined) continue;
+    try {
+      opened[name] = openSync(
+        target,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+        0o600,
+      );
+    } catch (error) {
+      closeEvalOutputFiles(opened);
+      const code = (error as NodeJS.ErrnoException).code ?? "unknown";
+      const left = name === "stderr" && opened.stdout !== undefined ? targets.stdout : undefined;
+      throw new Error(
+        `[EVAL_OUTPUT_FILE_CREATE_FAILED] Eval ${name} file could not be created (${code}): ${target}${
+          left === undefined
+            ? ""
+            : `. The stdout file was created and is left empty at ${left}; remove it before retrying`
+        }`,
+      );
+    }
+  }
+  return opened;
+}
+
+function closeEvalOutputFiles(sinks: EvalOutputSinks): void {
+  for (const descriptor of [sinks.stdout, sinks.stderr]) {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
 }
 
 export function buildEvalLaunchCommand(
@@ -929,6 +1018,10 @@ async function stageEvalPiExtensions(
     const resolved = resolvedSources[index];
     if (resolved !== undefined) replacements.set(resolved, staged);
   });
+  // This runtime drives model discovery and the OAuth worker. Tool extensions provide
+  // tools, not models, and may need the actor's --env values, run directory, Pi arguments
+  // or loopback ports to initialize. They load only in the actor, which the adapter fails
+  // with [PI_EXTENSION_LOAD_FAILED] when one cannot initialize.
   const runtime: PreparedReviewRuntime = {
     // Writable scratch must not contain the read-only extension tree. Bubblewrap
     // rejects, or hides, a read-only mount nested inside a later writable parent.
@@ -937,9 +1030,7 @@ async function stageEvalPiExtensions(
     home: piHome,
     extensions,
     network: "public",
-    ...(explicitCopies.length === 0 && stagedTools.paths.length === 0
-      ? {}
-      : { capabilityExtensions: [...new Set([...explicitCopies, ...stagedTools.paths])] }),
+    ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: [...new Set(explicitCopies)] }),
   };
   let authBroker: Awaited<ReturnType<typeof prepareAuthBroker>>;
   try {
@@ -1132,8 +1223,8 @@ async function runEvalCommandWithInterruption(
   const allowedLoopbackPorts = parseLoopbackTargets(
     (spec.allowedLoopbackPorts ?? []).map(formatLoopbackTarget),
   );
-  const deferExtensionReadiness =
-    loadsUserExtensions || loadsExplicitExtensions || toolExtensionSources.length > 0;
+  // --pi-extension sources are not model providers and never join discovery (#91).
+  const deferExtensionReadiness = loadsUserExtensions || loadsExplicitExtensions;
   const initialReadinessOptions = {
     extensions: false as const,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -1178,6 +1269,31 @@ async function runEvalCommandWithInterruption(
     ]);
   } catch (error) {
     throw evalWorkLogCreateError(requestedWorkLogPath, error);
+  }
+  const outputTargets: { stdout?: string; stderr?: string } = {};
+  for (const [name, requested] of [
+    ["stdout", options.stdoutPath],
+    ["stderr", options.stderrPath],
+  ] as const) {
+    if (requested === undefined) continue;
+    let target: string;
+    try {
+      target = await validateEvalWorkLogPath(
+        requested,
+        [validated.runDir, ...validated.runtimeReadPaths],
+        `Eval ${name} file`,
+      );
+    } catch (error) {
+      throw new Error(
+        `[EVAL_OUTPUT_FILE_CREATE_FAILED] ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (target === validatedWorkLogPath || Object.values(outputTargets).includes(target)) {
+      throw new Error(
+        `[EVAL_OUTPUT_FILE_CREATE_FAILED] Eval ${name} file must differ from the work log and the other output file: ${target}`,
+      );
+    }
+    outputTargets[name] = target;
   }
   let workLog: EvalWorkLog;
   try {
@@ -1264,6 +1380,19 @@ async function runEvalCommandWithInterruption(
       ]);
     } catch (error) {
       throw evalWorkLogCreateError(workLog.path, error);
+    }
+    for (const [name, target] of Object.entries(outputTargets)) {
+      try {
+        await assertEvalWorkLogNotActorVisible(
+          target,
+          [validated.runDir, ...completeActorReadPaths],
+          `Eval ${name} file`,
+        );
+      } catch (error) {
+        throw new Error(
+          `[EVAL_OUTPUT_FILE_CREATE_FAILED] ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
     const readinessOptions = {
       extensions: false,
@@ -1539,17 +1668,26 @@ async function runEvalCommandWithInterruption(
           stage: "actor",
           actorEnvironmentNames: Object.keys(actorExtraEnvironment).sort(),
           toolExtensionCount: toolExtensionSources.length,
+          stdoutFile: outputTargets.stdout !== undefined,
+          stderrFile: outputTargets.stderr !== undefined,
         });
-        const result = await sandboxAndCapture(
-          actorConfig,
-          [sandboxRuntimeExecutable, launcherScript, launchSpec],
-          validated.runDir,
-          timeoutMs,
-          linuxBwrapPath,
-          bridge?.socketPath,
-          sandboxRuntimeExecutable,
-          loopbackRelays,
-        );
+        const sinks = openEvalOutputFiles(outputTargets);
+        let result: EvalRunResult;
+        try {
+          result = await sandboxAndCapture(
+            actorConfig,
+            [sandboxRuntimeExecutable, launcherScript, launchSpec],
+            validated.runDir,
+            timeoutMs,
+            linuxBwrapPath,
+            bridge?.socketPath,
+            sandboxRuntimeExecutable,
+            loopbackRelays,
+            sinks,
+          );
+        } finally {
+          closeEvalOutputFiles(sinks);
+        }
         recordEvalWorkLog(workLog, "stage_completed", {
           stage: "actor",
           exitCode: result.exitCode,

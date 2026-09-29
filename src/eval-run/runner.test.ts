@@ -1,10 +1,16 @@
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { closeSync, openSync } from "node:fs";
+import { chmod, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { nativeSandboxReadinessErrors } from "../sandbox/platform-readiness.js";
 import { evalIsolatedPiHomeWritablePaths } from "./isolation.js";
-import { buildEvalLaunchCommand, captureEvalProcess, runEvalCommand } from "./runner.js";
+import {
+  buildEvalLaunchCommand,
+  captureEvalProcess,
+  openEvalOutputFiles,
+  runEvalCommand,
+} from "./runner.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
@@ -167,7 +173,92 @@ describe("eval process capture", () => {
 
     expect(result.exitCode).not.toBe(0);
     expect(Buffer.byteLength(result.stdout)).toBe(4 * 1024 * 1024);
-    expect(result.stderr).toContain("[EVAL_OUTPUT_LIMIT]");
+    expect(result.stderr).toContain(
+      "[EVAL_OUTPUT_LIMIT] Eval actor stdout exceeded the 4194304-byte limit; pass --stdout-file PATH to stream it to a file",
+    );
+  });
+
+  it("names stderr when stderr exceeds its bound", async () => {
+    const result = await captureEvalProcess(
+      actor("process.stderr.write('x'.repeat(64 * 1024 + 1))"),
+      process.cwd(),
+      process.env,
+      2_000,
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain(
+      "[EVAL_OUTPUT_LIMIT] Eval actor stderr exceeded the 65536-byte limit; pass --stderr-file PATH to stream it to a file",
+    );
+  });
+
+  it("streams a stream to its file without the in-memory bound", async () => {
+    const dir = await createTempDir("pioneer-eval-output-");
+    const target = path.join(dir, "stdout.jsonl");
+    const descriptor = openSync(target, "wx", 0o600);
+    try {
+      const result = await captureEvalProcess(
+        actor("process.stdout.write('x'.repeat(5 * 1024 * 1024)); process.stderr.write('err')"),
+        process.cwd(),
+        process.env,
+        5_000,
+        undefined,
+        { stdout: descriptor },
+      );
+      expect(result).toMatchObject({ exitCode: 0, stdout: "", stderr: "err" });
+    } finally {
+      closeSync(descriptor);
+    }
+    expect((await stat(target)).size).toBe(5 * 1024 * 1024);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "names an output file it created when the other one cannot be created",
+    async () => {
+      const dir = await createTempDir("pioneer-eval-output-");
+      const locked = path.join(dir, "locked");
+      await mkdir(locked);
+      await chmod(locked, 0o500);
+      const stdoutTarget = path.join(dir, "stdout.jsonl");
+      try {
+        let message = "";
+        try {
+          openEvalOutputFiles({ stdout: stdoutTarget, stderr: path.join(locked, "stderr.log") });
+        } catch (error) {
+          message = String(error);
+        }
+        expect(message).toMatch(/EVAL_OUTPUT_FILE_CREATE_FAILED.*stderr/);
+        // Deleting by path could remove a replacement, so the empty file stays and is named.
+        expect(message).toContain(`left empty at ${stdoutTarget}; remove it before retrying`);
+      } finally {
+        await chmod(locked, 0o700);
+      }
+      expect((await stat(stdoutTarget)).size).toBe(0);
+    },
+  );
+
+  it("bounds a streamed file and names it in the diagnostic", async () => {
+    const dir = await createTempDir("pioneer-eval-output-");
+    const target = path.join(dir, "stderr.log");
+    const descriptor = openSync(target, "wx", 0o600);
+    try {
+      const result = await captureEvalProcess(
+        actor("process.stderr.write('x'.repeat(4096)); setInterval(() => {}, 10_000)"),
+        process.cwd(),
+        process.env,
+        5_000,
+        undefined,
+        { stderr: descriptor, maxFileBytes: 1024 },
+      );
+      expect(result.exitCode).not.toBe(0);
+      expect(result.timedOut).toBeUndefined();
+      expect(result.stderr).toBe(
+        "[EVAL_OUTPUT_LIMIT] Eval actor stderr file exceeded the 1024-byte limit\n",
+      );
+    } finally {
+      closeSync(descriptor);
+    }
+    expect((await stat(target)).size).toBe(1024);
   });
 
   it("keeps terminal diagnostics inside the stderr byte bound", async () => {

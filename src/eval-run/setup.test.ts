@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -334,6 +334,120 @@ describe("prepareEvalBattery", () => {
         allowFixtureNameGlobs: ["parser.ts"],
       }),
     ).rejects.toThrow(/\[EVAL_FIXTURE_LEAK\].*TODO/);
+    await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
+  });
+
+  it("rejects a lowercase todo: marker before creating output", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    await writeFile(
+      path.join(fixture.skillDir, "evals", "files", "parser.ts"),
+      "// todo: the off-by-one\n",
+    );
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 1, prompt: "Review parser.ts", files: ["evals/files/parser.ts"] }],
+      }),
+    );
+    const outputRoot = path.join(fixture.root, "battery");
+
+    await expect(
+      prepareEvalBattery({ skillDir: fixture.skillDir, evalsPath, outputRoot }),
+    ).rejects.toThrow(/\[EVAL_FIXTURE_LEAK\].*TODO:/);
+    await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
+  });
+
+  it("prepares a todo-list app fixture and a TestFixture.kt class", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    await writeFile(
+      path.join(fixture.skillDir, "evals", "files", "TODO-list.md"),
+      "# A todo list app\n\nAdd a todo, then mark the todo done.\n",
+    );
+    await writeFile(
+      path.join(fixture.skillDir, "evals", "files", "TestFixture.kt"),
+      "class TestFixture\n",
+    );
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [
+          {
+            id: 1,
+            prompt: "Review TODO-list.md and TestFixture.kt",
+            files: ["evals/files/TODO-list.md", "evals/files/TestFixture.kt"],
+          },
+        ],
+      }),
+    );
+
+    const result = await prepareEvalBattery({
+      skillDir: fixture.skillDir,
+      evalsPath,
+      outputRoot: path.join(fixture.root, "battery"),
+    });
+    const fixturesDir = path.join(result.actorRunsDir, "eval-1", "baseline", "fixtures");
+    expect(await readFile(path.join(fixturesDir, "TODO-list.md"), "utf8")).toContain(
+      "todo list app",
+    );
+    expect(await readFile(path.join(fixturesDir, "TestFixture.kt"), "utf8")).toBe(
+      "class TestFixture\n",
+    );
+  });
+
+  it("stages one fixture shared by several evals into every arm", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [
+          { id: 1, prompt: "Review sample.txt", files: ["evals/files/sample.txt"] },
+          { id: 2, prompt: "Review sample.txt", files: ["evals/files/sample.txt"] },
+        ],
+      }),
+    );
+
+    const result = await prepareEvalBattery({
+      skillDir: fixture.skillDir,
+      evalsPath,
+      outputRoot: path.join(fixture.root, "battery"),
+    });
+    for (const id of [1, 2]) {
+      for (const arm of ["baseline", "with-skill"]) {
+        expect(
+          await readFile(
+            path.join(result.actorRunsDir, `eval-${id}`, arm, "fixtures", "sample.txt"),
+            "utf8",
+          ),
+        ).toBe("prompt-safe fixture");
+      }
+    }
+  });
+
+  it("rejects a fixture over the 64 MiB ceiling before creating output", async () => {
+    const fixture = await createSkillFixture();
+    const evalsPath = path.join(fixture.skillDir, "evals", "evals.json");
+    const huge = path.join(fixture.skillDir, "evals", "files", "huge.bin");
+    await writeFile(huge, "");
+    // Sparse, so the check must come from fstat rather than from reading 64 MiB.
+    await truncate(huge, 64 * 1024 * 1024 + 1);
+    await writeFile(
+      evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [{ id: 1, prompt: "Review huge.bin", files: ["evals/files/huge.bin"] }],
+      }),
+    );
+    const outputRoot = path.join(fixture.root, "battery");
+
+    await expect(
+      prepareEvalBattery({ skillDir: fixture.skillDir, evalsPath, outputRoot }),
+    ).rejects.toThrow(/\[EVAL_FIXTURE_TOO_LARGE\].*64 MiB.*evals\/files\/huge\.bin/);
     await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
   });
 

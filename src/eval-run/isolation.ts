@@ -936,12 +936,13 @@ export function assertPiHomeSeparatedFromActorGrants(
 export async function validateEvalWorkLogPath(
   workLogPath: string,
   actorGrantPaths: readonly string[],
+  label = "Eval work log",
 ): Promise<string> {
   if (workLogPath.length === 0 || workLogPath.includes("\0") || /[\p{Cc}]/u.test(workLogPath)) {
-    throw new Error("Eval work log path must be a non-empty path without control characters");
+    throw new Error(`${label} path must be a non-empty path without control characters`);
   }
   if (!path.isAbsolute(workLogPath)) {
-    throw new Error("Eval work log path must be absolute");
+    throw new Error(`${label} path must be absolute`);
   }
   const absolute = path.normalize(workLogPath);
   const parent = path.dirname(absolute);
@@ -949,29 +950,30 @@ export async function validateEvalWorkLogPath(
   try {
     parentStats = await lstat(parent);
   } catch {
-    throw new Error(`Eval work log parent is missing: ${parent}`);
+    throw new Error(`${label} parent is missing: ${parent}`);
   }
   if (parentStats.isSymbolicLink()) {
-    throw new Error(`Eval work log parent is a symbolic link: ${parent}`);
+    throw new Error(`${label} parent is a symbolic link: ${parent}`);
   }
   if (!parentStats.isDirectory()) {
-    throw new Error(`Eval work log parent is not a directory: ${parent}`);
+    throw new Error(`${label} parent is not a directory: ${parent}`);
   }
   const canonicalParent = await realpath(parent);
   const target = path.join(canonicalParent, path.basename(absolute));
   try {
     await lstat(target);
-    throw new Error(`Eval work log target already exists: ${target}`);
+    throw new Error(`${label} target already exists: ${target}`);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  await assertEvalWorkLogNotActorVisible(target, actorGrantPaths);
+  await assertEvalWorkLogNotActorVisible(target, actorGrantPaths, label);
   return target;
 }
 
 export async function assertEvalWorkLogNotActorVisible(
   workLogPath: string,
   actorGrantPaths: readonly string[],
+  label = "Eval work log",
 ): Promise<void> {
   let canonicalWorkLogPath = path.normalize(workLogPath);
   try {
@@ -991,7 +993,7 @@ export async function assertEvalWorkLogNotActorVisible(
     }
   }
   if (canonicalGrants.some((grantPath) => isWithin(grantPath, canonicalWorkLogPath))) {
-    throw new Error(`Eval work log target is actor-visible: ${workLogPath}`);
+    throw new Error(`${label} target is actor-visible: ${workLogPath}`);
   }
 }
 
