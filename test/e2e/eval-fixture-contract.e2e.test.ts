@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -116,6 +116,94 @@ describe("pioneer eval prepare stages fixtures where prompts name them", () => {
     expect(prepared.exitCode).not.toBe(0);
     expect(prepared.stderr).toContain("[EVAL_FIXTURE_LEAK]");
     expect(prepared.stderr).toContain("stale");
+    await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
+  });
+
+  it("rejects a lowercase todo: marker but stages a todo-list fixture", async () => {
+    const created = await workspace("prepare-marker-case");
+    const skill = await createSkillFixture(created, {
+      files: [
+        { relativePath: "parser.ts", contents: "// todo: the off-by-one\n" },
+        { relativePath: "TODO-list.md", contents: "# A todo list app\n\nAdd a todo.\n" },
+        { relativePath: "TestFixture.kt", contents: "class TestFixture\n" },
+      ],
+      cases: [{ id: 73, prompt: "Review parser.ts", files: ["evals/files/parser.ts"] }],
+    });
+    const leakingOutput = path.join(created.root, "leaking-battery");
+
+    const leaking = await runPioneer(created, [
+      "eval",
+      "prepare",
+      "--skill",
+      skill.skillDir,
+      "--evals",
+      skill.evalsPath,
+      "--output",
+      leakingOutput,
+    ]);
+
+    expect(leaking.exitCode).not.toBe(0);
+    expect(leaking.stderr).toContain("[EVAL_FIXTURE_LEAK]");
+    expect(leaking.stderr).toContain('"TODO:"');
+    await expect(
+      readFile(path.join(leakingOutput, "controller", "manifest.json")),
+    ).rejects.toThrow();
+
+    await writeFile(
+      skill.evalsPath,
+      JSON.stringify({
+        skill_name: "example-skill",
+        evals: [
+          {
+            id: 74,
+            prompt: "Review TODO-list.md and TestFixture.kt",
+            files: ["evals/files/TODO-list.md", "evals/files/TestFixture.kt"],
+          },
+        ],
+      }),
+    );
+    const allowed = await runPioneer(created, [
+      "eval",
+      "prepare",
+      "--skill",
+      skill.skillDir,
+      "--evals",
+      skill.evalsPath,
+      "--output",
+      path.join(created.root, "allowed-battery"),
+    ]);
+
+    expect(allowed.exitCode, allowed.stderr).toBe(0);
+    const preparedCase = await readPreparedCase(
+      parsePreparedBattery(allowed.stdout).runDir(74, "baseline"),
+    );
+    expect(preparedCase.files).toEqual(["fixtures/TODO-list.md", "fixtures/TestFixture.kt"]);
+  });
+
+  it("fails closed with [EVAL_FIXTURE_TOO_LARGE] before creating output", async () => {
+    const created = await workspace("prepare-too-large");
+    const skill = await createSkillFixture(created, {
+      files: [{ relativePath: "huge.bin", contents: "" }],
+      cases: [{ id: 70, prompt: "Review huge.bin", files: ["evals/files/huge.bin"] }],
+    });
+    // Sparse, so the ceiling is enforced from fstat without writing 64 MiB.
+    await truncate(path.join(skill.skillDir, "evals", "files", "huge.bin"), 64 * 1024 * 1024 + 1);
+    const outputRoot = path.join(created.root, "battery");
+
+    const prepared = await runPioneer(created, [
+      "eval",
+      "prepare",
+      "--skill",
+      skill.skillDir,
+      "--evals",
+      skill.evalsPath,
+      "--output",
+      outputRoot,
+    ]);
+
+    expect(prepared.exitCode).not.toBe(0);
+    expect(prepared.stderr).toContain("[EVAL_FIXTURE_TOO_LARGE]");
+    expect(prepared.stderr).toContain("64 MiB");
     await expect(readFile(path.join(outputRoot, "controller", "manifest.json"))).rejects.toThrow();
   });
 

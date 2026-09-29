@@ -6,12 +6,24 @@ import {
   type StagedEvalFixture,
   stagePromptFixtureReferences,
 } from "./actor-contract.js";
-import { assertFixtureContentDoesNotLeak, assertFixturePathDoesNotLeak } from "./fixture-leak.js";
+import { assertFixturePathDoesNotLeak } from "./fixture-leak.js";
+import { type OpenedEvalFixture, openEvalFixture } from "./fixture-source.js";
 
 interface EvalCase {
   readonly id: number;
   readonly prompt: string;
   readonly files: readonly string[];
+}
+
+interface ValidatedFixture {
+  readonly sourcePath: string;
+  readonly destinationRelative: string;
+  readonly opened: OpenedEvalFixture;
+}
+
+interface ValidatedEvalCase {
+  readonly evalCase: EvalCase;
+  readonly fixtures: readonly ValidatedFixture[];
 }
 
 export interface PrepareEvalBatteryOptions {
@@ -145,6 +157,7 @@ async function copySanitizedSkill(source: string, destination: string): Promise<
   }
 }
 
+/** Early, friendly rejection only; the binding check is `fstat` on the opened descriptor. */
 async function assertRegularFixtureFile(canonicalSource: string): Promise<void> {
   const details = await stat(canonicalSource);
   if (!details.isFile()) {
@@ -162,26 +175,64 @@ function fixtureDestination(relativeFile: string): string {
     : path.basename(normalized);
 }
 
+async function validateFixtures(
+  skillDir: string,
+  evals: readonly EvalCase[],
+  allowFixtureNameGlobs: readonly string[],
+  opened: Map<string, OpenedEvalFixture>,
+): Promise<ValidatedEvalCase[]> {
+  const validated: ValidatedEvalCase[] = [];
+  for (const evalCase of evals) {
+    const fixtures: ValidatedFixture[] = [];
+    for (const relativeFile of evalCase.files) {
+      const destinationRelative = fixtureDestination(relativeFile);
+      assertFixturePathDoesNotLeak(relativeFile, destinationRelative, allowFixtureNameGlobs);
+      const source = path.resolve(skillDir, relativeFile);
+      ensureWithin(skillDir, source, "fixture");
+      const canonicalSource = await realpath(source);
+      ensureWithin(skillDir, canonicalSource, "fixture");
+      await assertRegularFixtureFile(canonicalSource);
+      let fixture = opened.get(canonicalSource);
+      if (fixture === undefined) {
+        fixture = await openEvalFixture(canonicalSource, relativeFile);
+        opened.set(canonicalSource, fixture);
+      }
+      fixtures.push({ sourcePath: relativeFile, destinationRelative, opened: fixture });
+    }
+    validated.push({ evalCase, fixtures });
+  }
+  return validated;
+}
+
 export async function prepareEvalBattery(
   options: PrepareEvalBatteryOptions,
+): Promise<PreparedEvalBattery> {
+  // Each fixture is opened once; validation and every staged copy read that descriptor.
+  const opened = new Map<string, OpenedEvalFixture>();
+  try {
+    return await prepareWithOpenedFixtures(options, opened);
+  } finally {
+    await Promise.all(
+      [...opened.values()].map((fixture) => fixture.close().catch(() => undefined)),
+    );
+  }
+}
+
+async function prepareWithOpenedFixtures(
+  options: PrepareEvalBatteryOptions,
+  opened: Map<string, OpenedEvalFixture>,
 ): Promise<PreparedEvalBattery> {
   const skillDir = await realpath(options.skillDir);
   const evalsPath = await realpath(options.evalsPath);
   ensureWithin(skillDir, evalsPath, "evals path");
   await assertTreeHasNoSymlinks(skillDir);
   const parsed = parseEvalCases(JSON.parse(await readFile(evalsPath, "utf8")) as unknown);
-  const allowFixtureNameGlobs = options.allowFixtureNameGlobs ?? [];
-  for (const evalCase of parsed.evals) {
-    for (const relativeFile of evalCase.files) {
-      assertFixturePathDoesNotLeak(relativeFile, allowFixtureNameGlobs);
-      const source = path.resolve(skillDir, relativeFile);
-      ensureWithin(skillDir, source, "fixture");
-      const canonicalSource = await realpath(source);
-      ensureWithin(skillDir, canonicalSource, "fixture");
-      await assertRegularFixtureFile(canonicalSource);
-      assertFixtureContentDoesNotLeak(relativeFile, await readFile(canonicalSource, "utf8"));
-    }
-  }
+  const validatedCases = await validateFixtures(
+    skillDir,
+    parsed.evals,
+    options.allowFixtureNameGlobs ?? [],
+    opened,
+  );
 
   const requestedOutputRoot = path.resolve(options.outputRoot);
   const outputParent = await realpath(path.dirname(requestedOutputRoot));
@@ -204,7 +255,7 @@ export async function prepareEvalBattery(
   await mkdir(actorRunsDir);
   await mkdir(controllerDir);
 
-  for (const evalCase of parsed.evals) {
+  for (const { evalCase, fixtures } of validatedCases) {
     for (const arm of ["baseline", "with-skill"] as const) {
       const runDir = path.join(actorRunsDir, `eval-${evalCase.id}`, arm);
       await mkdir(path.join(runDir, EVAL_FIXTURES_DIR_NAME), { recursive: true });
@@ -213,19 +264,14 @@ export async function prepareEvalBattery(
       await mkdir(path.join(runDir, "work"), { recursive: true });
 
       const stagedFixtures: StagedEvalFixture[] = [];
-      for (const relativeFile of evalCase.files) {
-        const source = path.resolve(skillDir, relativeFile);
-        ensureWithin(skillDir, source, "fixture");
-        const canonicalSource = await realpath(source);
-        ensureWithin(skillDir, canonicalSource, "fixture");
-        const destinationRelative = fixtureDestination(relativeFile);
+      for (const { sourcePath, destinationRelative, opened: fixture } of fixtures) {
         const fixturesDir = path.join(runDir, EVAL_FIXTURES_DIR_NAME);
         const destination = path.join(fixturesDir, destinationRelative);
         ensureWithin(fixturesDir, destination, "fixture destination");
         await mkdir(path.dirname(destination), { recursive: true });
-        await cp(canonicalSource, destination, { force: false });
+        await fixture.stageTo(destination);
         stagedFixtures.push({
-          sourcePath: relativeFile,
+          sourcePath,
           stagedPath: path.posix.join(
             EVAL_FIXTURES_DIR_NAME,
             destinationRelative.split(path.sep).join("/"),
