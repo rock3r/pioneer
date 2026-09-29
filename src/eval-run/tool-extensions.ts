@@ -3,6 +3,7 @@ import path from "node:path";
 import { diagnosticMessage } from "../diagnostics.js";
 import {
   type ExtensionResource,
+  ExtensionSnapshotBudgetError,
   mirroredExtensionStagePath,
   snapshotExtensionResources,
 } from "../pi-extension-snapshot.js";
@@ -162,9 +163,7 @@ export async function stageToolExtensions(
     );
   } catch (error) {
     // The budget carries the user and explicit extensions staged before these tool sources.
-    if (!(error instanceof Error) || !error.message.startsWith("[PI_EXTENSION_SNAPSHOT_LIMIT]")) {
-      throw error;
-    }
+    if (!(error instanceof ExtensionSnapshotBudgetError)) throw error;
     const share = (used: { readonly entries: number; readonly bytes: number }): string =>
       `${(used.bytes / 1024 ** 2).toFixed(1)} MiB in ${used.entries} entries`;
     if (userExtensions.entries > 0 || userExtensions.bytes > 0) {

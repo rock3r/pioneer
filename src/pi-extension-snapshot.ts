@@ -24,12 +24,15 @@ import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
 const SNAPSHOT_ENTRY_LIMIT = 500_000;
 const SNAPSHOT_BYTE_LIMIT = 1024 ** 3;
 
+/** The staged totals, including an earlier caller budget, passed a snapshot limit. */
+export class ExtensionSnapshotBudgetError extends Error {}
+
 /** Names the exceeded limit with the running totals, which include any earlier staged budget. */
-function snapshotLimitError(entries: number, bytes?: number): Error {
-  const mebibytes = ((bytes ?? 0) / 1024 ** 2).toFixed(1);
-  return new Error(
+function snapshotLimitError(entries: number, bytes: number): Error {
+  const mebibytes = (bytes / 1024 ** 2).toFixed(1);
+  return new ExtensionSnapshotBudgetError(
     entries > SNAPSHOT_ENTRY_LIMIT
-      ? `[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the ${SNAPSHOT_ENTRY_LIMIT}-entry snapshot limit (${entries} entries${bytes === undefined ? "" : `, ${mebibytes} MiB`} staged).`
+      ? `[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the ${SNAPSHOT_ENTRY_LIMIT}-entry snapshot limit (${entries} entries, ${mebibytes} MiB staged).`
       : `[PI_EXTENSION_SNAPSHOT_LIMIT] Extension code and dependencies exceed the 1 GiB snapshot byte limit (${mebibytes} MiB in ${entries} entries staged).`,
   );
 }
@@ -473,7 +476,12 @@ export async function snapshotExtensionResources(
       return;
     }
     prepassVisits += 1;
-    if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) throw snapshotLimitError(prepassVisits);
+    // This scan also visits entries the copy skips, such as .git, and has no shared budget.
+    if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) {
+      throw new Error(
+        `[PI_EXTENSION_SNAPSHOT_LIMIT] The selected extension directories hold more than ${SNAPSHOT_ENTRY_LIMIT} entries to scan, including skipped metadata such as .git. Move the extension into a smaller dedicated directory.`,
+      );
+    }
     if (details.isSymbolicLink()) return;
     if (details.isFile()) {
       if (details.ino === 0n) return;
