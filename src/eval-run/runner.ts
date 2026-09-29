@@ -45,11 +45,21 @@ import {
 import {
   buildLinuxSandboxArgv,
   buildMacosSandboxArgv,
+  type LinuxLoopbackRelay,
   type SandboxPolicy,
 } from "../sandbox/launcher.js";
-import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
+import {
+  type LinuxProxyBridge,
+  startLinuxLoopbackBridge,
+  startLinuxProxyBridge,
+} from "../sandbox/linux-proxy-bridge.js";
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { executableRuntimeRoot } from "../sandbox/runtime-paths.js";
+import {
+  formatLoopbackTarget,
+  parseActorEnvironment,
+  parseLoopbackTargets,
+} from "./actor-options.js";
 import {
   assertEvalWorkLogNotActorVisible,
   assertPiHomeSeparatedFromActorGrants,
@@ -62,6 +72,7 @@ import {
   isSensitiveCredentialPath,
   isSensitiveSystemExtensionParent,
   isTrustedPiInstallation,
+  isWithin,
   pathsOverlap,
   protectedExtensionParents,
   type ResolvedEvalExecutable,
@@ -70,7 +81,7 @@ import {
   validateEvalWorkLogPath,
 } from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
-import { macosRuntimeReadPaths } from "./macos-runtime.js";
+import { macosRuntimeReadPaths, macosSystemToolReadPaths } from "./macos-runtime.js";
 import {
   isDeclaredPiExecutable,
   piPackageHostsAuthAdapter,
@@ -81,6 +92,11 @@ import {
   startEgressProxy,
   startPublicEgressProxy,
 } from "./public-egress-proxy.js";
+import {
+  resolveToolExtensionSource,
+  stageToolExtensions,
+  type ToolExtensionSource,
+} from "./tool-extensions.js";
 import {
   type EvalWorkLog,
   evalWorkLogCreateError,
@@ -185,7 +201,7 @@ async function existingRuntimePaths(): Promise<string[]> {
           ];
   const result: string[] = [];
   const nodeRuntime = await executableRuntimeRoot(process.execPath);
-  for (const candidate of [...candidates, nodeRuntime]) {
+  for (const candidate of [...candidates, ...(await macosSystemToolReadPaths()), nodeRuntime]) {
     try {
       await access(candidate, constants.R_OK);
       result.push(candidate);
@@ -494,11 +510,19 @@ async function sandboxAndCapture(
   bwrapPath?: string,
   proxySocketPath?: string,
   runtimeExecutable = process.execPath,
+  loopbackRelays: readonly LinuxLoopbackRelay[] = [],
 ): Promise<EvalRunResult> {
   const launch =
     process.platform === "darwin"
       ? buildMacosSandboxArgv(policy, command)
-      : buildLinuxSandboxArgv(policy, command, bwrapPath ?? "", proxySocketPath, runtimeExecutable);
+      : buildLinuxSandboxArgv(
+          policy,
+          command,
+          bwrapPath ?? "",
+          proxySocketPath,
+          runtimeExecutable,
+          loopbackRelays,
+        );
   return await captureEvalProcess(
     launch.argv,
     runDir,
@@ -517,22 +541,29 @@ export function buildEvalLaunchCommand(
   ] as [string, ...string[]];
 }
 
-async function listenForLanProbe(): Promise<{ port: number; close(): Promise<void> }> {
-  const server = net.createServer((socket) => socket.end());
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  if (address === null || typeof address === "string")
-    throw new Error("LAN isolation probe could not bind");
-  return {
-    port: address.port,
-    close: () =>
+/** The mandatory probe must target a listener the actor is not allowed to reach. */
+async function listenForLanProbe(
+  allowedPorts: readonly number[] = [],
+): Promise<{ port: number; close(): Promise<void> }> {
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    const server = net.createServer((socket) => socket.end());
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const close = (): Promise<void> =>
       new Promise((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
-      ),
-  };
+      );
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      await close();
+      throw new Error("LAN isolation probe could not bind");
+    }
+    if (!allowedPorts.includes(address.port)) return { port: address.port, close };
+    await close();
+  }
+  throw new Error("LAN isolation probe could not bind outside the allowed loopback ports");
 }
 
 function optionArguments(command: readonly string[]): readonly string[] {
@@ -671,10 +702,10 @@ async function stageExplicitExtensionFiles(
   destinationDir: string,
   sourceAgentDir: string,
   signal: AbortSignal | undefined,
-  budget?: { readonly entries: number; readonly bytes: number },
+  budget: { readonly entries: number; readonly bytes: number },
   excludedPaths: readonly string[] = [],
-): Promise<string[]> {
-  if (sources.length === 0) return [];
+): Promise<{ readonly paths: string[]; readonly entries: number; readonly bytes: number }> {
+  if (sources.length === 0) return { paths: [], ...budget };
   const blocked = await protectedExtensionRoots();
   const canonicals: string[] = [];
   const resources = [];
@@ -720,11 +751,15 @@ async function stageExplicitExtensionFiles(
     const staged = snapshot.paths[index];
     if (staged !== undefined) stagedBySource.set(source, staged);
   });
-  return canonicals.map((canonical) => {
-    const staged = stagedBySource.get(canonical);
-    if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
-    return staged;
-  });
+  return {
+    paths: canonicals.map((canonical) => {
+      const staged = stagedBySource.get(canonical);
+      if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
+      return staged;
+    }),
+    entries: snapshot.entries,
+    bytes: snapshot.bytes,
+  };
 }
 
 export { isSensitiveCredentialPath };
@@ -775,6 +810,7 @@ async function stageEvalPiExtensions(
   explicitExtensionSources: readonly string[],
   runDir: string,
   controllerOnlyPaths: readonly string[] = [],
+  toolExtensionSources: readonly ToolExtensionSource[] = [],
 ): Promise<{
   readonly authBroker?: PiAuthBroker;
   readonly readPaths: readonly string[];
@@ -853,9 +889,30 @@ async function stageEvalPiExtensions(
     controllerOnlyPaths,
   );
   pending.forEach((source, index) => {
-    const staged = copied[index];
+    const staged = copied.paths[index];
     if (staged !== undefined) alreadyStaged.set(source, staged);
   });
+  // A tool extension loaded a second time, tool-stripped, would register its providers,
+  // flags and hooks twice. Refuse the ambiguity rather than guess which copy wins.
+  for (const tool of toolExtensionSources) {
+    const loadedTwice = [
+      ...(extensionsEnabled ? extensions.sourcePaths : []),
+      ...resolvedSources,
+    ].some((source) => source === tool.canonical || isWithin(tool.canonical, source));
+    if (loadedTwice) {
+      throw new Error(
+        "[PI_EXTENSION_TOOL_SOURCE_INVALID] --pi-extension is also loaded as an enabled or explicit Pi extension. Pass --no-extensions on the Pi command or drop the duplicate -e.",
+      );
+    }
+  }
+  const stagedTools = await stageToolExtensions(
+    toolExtensionSources,
+    path.join(extensionRoot, "tool-extensions"),
+    await piRuntimeStorage(sourceAgentDir, path.join(sourceAgentDir, "settings.json"), process.env),
+    signal,
+    { entries: copied.entries, bytes: copied.bytes },
+    controllerOnlyPaths,
+  );
   const explicitCopies = resolvedSources.map((source) => {
     const staged = alreadyStaged.get(source);
     if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
@@ -877,7 +934,9 @@ async function stageEvalPiExtensions(
     home: piHome,
     extensions,
     network: "public",
-    ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: [...new Set(explicitCopies)] }),
+    ...(explicitCopies.length === 0 && stagedTools.paths.length === 0
+      ? {}
+      : { capabilityExtensions: [...new Set([...explicitCopies, ...stagedTools.paths])] }),
   };
   let authBroker: Awaited<ReturnType<typeof prepareAuthBroker>>;
   try {
@@ -900,9 +959,15 @@ async function stageEvalPiExtensions(
       optimizePiStartupCommand(flagCommand, {
         disableExtensions: true,
         disableSkills: true,
-        extensions: extensionsEnabled ? extensionPathsWithCapabilities(extensions, []) : [],
+        extensions: [
+          ...(extensionsEnabled ? extensionPathsWithCapabilities(extensions, []) : []),
+          ...stagedTools.paths,
+        ],
       }),
-      extensions.command,
+      [
+        ...extensions.command,
+        ...stagedTools.paths.flatMap((entry) => ["--pioneer-inspection-extension", entry]),
+      ],
     );
     const command = replaceExplicitExtensionPaths(optimized.command, replacements, runDir);
     const runtimeWithBroker: PreparedReviewRuntime =
@@ -1043,7 +1108,27 @@ async function runEvalCommandWithInterruption(
       "[PI_EXTENSION_RUNTIME_UNSUPPORTED] This Pi package cannot host the tool-stripping adapter. Pass --no-extensions to stay on built-in providers.",
     );
   }
-  const deferExtensionReadiness = loadsUserExtensions || loadsExplicitExtensions;
+  const toolExtensionPaths = spec.toolExtensionPaths ?? [];
+  if (
+    toolExtensionPaths.length > 0 &&
+    (!piActorInspection.trusted || !piActorInspection.hostsExtensionRuntime)
+  ) {
+    throw new Error(
+      "[PI_EXTENSION_RUNTIME_UNSUPPORTED] --pi-extension requires the trusted official Pi package as the eval actor, with a version that can host the extension adapter.",
+    );
+  }
+  const toolExtensionSources = await Promise.all(
+    toolExtensionPaths.map((entry) => resolveToolExtensionSource(entry)),
+  );
+  // Re-validate API callers exactly like the CLI; values never reach diagnostics or logs.
+  const actorExtraEnvironment = parseActorEnvironment(
+    Object.entries(spec.environment ?? {}).map(([name, value]) => `${name}=${value}`),
+  );
+  const allowedLoopbackPorts = parseLoopbackTargets(
+    (spec.allowedLoopbackPorts ?? []).map(formatLoopbackTarget),
+  );
+  const deferExtensionReadiness =
+    loadsUserExtensions || loadsExplicitExtensions || toolExtensionSources.length > 0;
   const initialReadinessOptions = {
     extensions: false as const,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -1232,6 +1317,8 @@ async function runEvalCommandWithInterruption(
       path.dirname(validated.runDir),
       `.escape-${randomBytes(8).toString("hex")}`,
     );
+    const loopbackBridges: LinuxProxyBridge[] = [];
+    const loopbackRelays: LinuxLoopbackRelay[] = [];
     let lanProbe: Awaited<ReturnType<typeof listenForLanProbe>> | undefined;
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
@@ -1290,6 +1377,7 @@ async function runEvalCommandWithInterruption(
       const stagePiAdapter =
         loadsUserExtensions ||
         needsAuthBroker ||
+        toolExtensionSources.length > 0 ||
         (explicitExtension && piActorInspection.trusted && piActorInspection.hostsExtensionRuntime);
       if (stagePiAdapter) {
         const staged = await stageEvalPiExtensions(
@@ -1304,6 +1392,7 @@ async function runEvalCommandWithInterruption(
           explicitExtensionPaths(validated.command.slice(1), validated.runDir),
           validated.runDir,
           [workLog.path, ...(options.deniedReadProbePaths ?? [])],
+          toolExtensionSources,
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
@@ -1338,13 +1427,14 @@ async function runEvalCommandWithInterruption(
         JSON.stringify({
           command: sandboxCommand,
           cwd: validated.runDir,
-          environment: actorEnvironment,
+          // Operator variables first, so every Pioneer-controlled value still wins.
+          environment: { ...actorExtraEnvironment, ...actorEnvironment },
         }),
         { flag: "wx", mode: 0o400 },
       );
       throwIfSetupInterrupted();
 
-      lanProbe = await listenForLanProbe();
+      lanProbe = await listenForLanProbe(allowedLoopbackPorts);
       throwIfSetupInterrupted();
       await writeFile(
         probeSpec,
@@ -1373,6 +1463,12 @@ async function runEvalCommandWithInterruption(
         bridgeRoot = await mkdtemp(path.join(controllerTempRoot, "pir-bridge-"));
         bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
         throwIfSetupInterrupted();
+        for (const port of allowedLoopbackPorts) {
+          const socketPath = path.join(bridgeRoot, `loopback-${port}.sock`);
+          loopbackBridges.push(await startLinuxLoopbackBridge(port, socketPath));
+          loopbackRelays.push({ port, socketPath });
+          throwIfSetupInterrupted();
+        }
       }
       const sharedRuntimeReadPaths = [
         ...validated.runtimeReadPaths,
@@ -1384,6 +1480,8 @@ async function runEvalCommandWithInterruption(
         runDir: validated.runDir,
         runtimeReadPaths: [...sharedRuntimeReadPaths, probeScript, probeSpec],
         parentProxyUrl: proxy.url,
+        // Probe under the actor's exact network policy, so an allowed port cannot widen it.
+        loopbackPorts: allowedLoopbackPorts,
       });
       const actorConfig = buildEvalSandboxConfig({
         platform: process.platform as "darwin" | "linux" | "win32",
@@ -1397,8 +1495,12 @@ async function runEvalCommandWithInterruption(
         ],
         writableScratchPaths: [...evalIsolatedPiHomeWritablePaths(piHome)],
         parentProxyUrl: proxy.url,
+        loopbackPorts: allowedLoopbackPorts,
       });
-      recordEvalWorkLog(workLog, "stage_completed", { stage: "network_proxy" });
+      recordEvalWorkLog(workLog, "stage_completed", {
+        stage: "network_proxy",
+        allowedLoopback: allowedLoopbackPorts.map(formatLoopbackTarget),
+      });
       process.env.PIONEER_HOST_SECRET = randomBytes(32).toString("hex");
       const timeoutMs = options.timeoutMs ?? 300_000;
       throwIfSetupInterrupted();
@@ -1411,6 +1513,7 @@ async function runEvalCommandWithInterruption(
         linuxBwrapPath,
         bridge?.socketPath,
         sandboxRuntimeExecutable,
+        loopbackRelays,
       );
       recordEvalWorkLog(workLog, "stage_completed", {
         stage: "isolation_probe",
@@ -1427,7 +1530,11 @@ async function runEvalCommandWithInterruption(
         throw new Error("Eval isolation probe failed closed: host sentinel was modified");
       } else {
         throwIfSetupInterrupted();
-        recordEvalWorkLog(workLog, "stage_started", { stage: "actor" });
+        recordEvalWorkLog(workLog, "stage_started", {
+          stage: "actor",
+          actorEnvironmentNames: Object.keys(actorExtraEnvironment).sort(),
+          toolExtensionCount: toolExtensionSources.length,
+        });
         const result = await sandboxAndCapture(
           actorConfig,
           [sandboxRuntimeExecutable, launcherScript, launchSpec],
@@ -1436,6 +1543,7 @@ async function runEvalCommandWithInterruption(
           linuxBwrapPath,
           bridge?.socketPath,
           sandboxRuntimeExecutable,
+          loopbackRelays,
         );
         recordEvalWorkLog(workLog, "stage_completed", {
           stage: "actor",
@@ -1469,6 +1577,7 @@ async function runEvalCommandWithInterruption(
       }
       const cleanupResults = await Promise.allSettled([
         bridge?.close(),
+        ...loopbackBridges.map((loopbackBridge) => loopbackBridge.close()),
         bridgeRoot === undefined ? undefined : rm(bridgeRoot, { recursive: true, force: true }),
         proxy?.close(),
         lanProbe?.close(),

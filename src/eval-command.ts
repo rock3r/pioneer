@@ -1,6 +1,7 @@
 import path from "node:path";
 import { CliUsageError } from "./diagnostics.js";
 import { formatEvalActorContract, readPreparedEvalCase } from "./eval-run/actor-contract.js";
+import { parseActorEnvironment, parseLoopbackTargets } from "./eval-run/actor-options.js";
 import { installLinuxSandboxSupport } from "./eval-run/linux-install.js";
 import { runEvalCommand } from "./eval-run/runner.js";
 import { prepareEvalBattery } from "./eval-run/setup.js";
@@ -24,7 +25,7 @@ export function evalUsage(commandName: string): string {
   return `Usage:
   ${commandName} prepare --skill DIR --evals FILE --output DIR [--allow-fixture-name GLOB]...
   ${commandName} install-linux
-  ${commandName} run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] [--work-log FILE] -- COMMAND [ARG ...]`;
+  ${commandName} run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] [--work-log FILE] [--allow-loopback HOST:PORT]... [--env NAME=VALUE]... [--pi-extension PATH]... -- COMMAND [ARG ...]`;
 }
 
 function usage(commandName: string): never {
@@ -100,6 +101,9 @@ export async function runEvalCli(
     const timeoutText = takeOption(args, "--timeout-ms", commandName);
     const timeoutMs = timeoutText === undefined ? undefined : Number(timeoutText);
     const workLogPath = takeOption(args, "--work-log", commandName);
+    const loopbackTargets = takeRepeatedOption(args, "--allow-loopback", commandName);
+    const environmentEntries = takeRepeatedOption(args, "--env", commandName);
+    const toolExtensionPaths = takeRepeatedOption(args, "--pi-extension", commandName);
     if (
       !runDir ||
       args.length > 0 ||
@@ -107,6 +111,9 @@ export async function runEvalCli(
       (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1))
     )
       usage(commandName);
+    // Reject malformed actor options before reading the run directory or starting anything.
+    const allowedLoopbackPorts = parseLoopbackTargets(loopbackTargets);
+    const environment = parseActorEnvironment(environmentEntries);
     const resolvedRunDir = path.resolve(runDir);
     for (const line of formatEvalActorContract(
       resolvedRunDir,
@@ -120,6 +127,11 @@ export async function runEvalCli(
         command: command as [string, ...string[]],
         runtimeReadPaths,
         ...(piHomeSource === undefined ? {} : { piHomeSource: path.resolve(piHomeSource) }),
+        ...(allowedLoopbackPorts.length === 0 ? {} : { allowedLoopbackPorts }),
+        ...(environmentEntries.length === 0 ? {} : { environment }),
+        ...(toolExtensionPaths.length === 0
+          ? {}
+          : { toolExtensionPaths: toolExtensionPaths.map((entry) => path.resolve(entry)) }),
       },
       {
         deniedReadProbePaths,

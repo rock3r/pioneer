@@ -7,7 +7,17 @@ export interface SandboxPolicy {
   readonly network: "proxy" | "none";
   readonly proxyUrl?: string;
   readonly allowProcessFork?: boolean;
+  /** Exact host loopback ports the actor may reach directly, bypassing the proxy. */
+  readonly loopbackPorts?: readonly number[];
 }
+
+export interface LinuxLoopbackRelay {
+  readonly port: number;
+  readonly socketPath: string;
+}
+
+/** Keep in sync with LINUX_PROXY_RELAY_PORT; the supervisor listens there in the namespace. */
+const LINUX_PROXY_RELAY_PORT = 3128;
 
 export interface SandboxLaunch {
   readonly argv: readonly [string, ...string[]];
@@ -38,7 +48,20 @@ function parsedProxy(policy: SandboxPolicy): URL | undefined {
   return parsed;
 }
 
-function proxyEnvironment(proxyUrl: string | undefined): Readonly<Record<string, string>> {
+function loopbackPorts(policy: SandboxPolicy): readonly number[] {
+  const ports = policy.loopbackPorts ?? [];
+  for (const port of ports) {
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new Error(`Sandbox loopback port is invalid: ${port}`);
+    }
+  }
+  return ports;
+}
+
+function proxyEnvironment(
+  proxyUrl: string | undefined,
+  directLoopback = false,
+): Readonly<Record<string, string>> {
   if (proxyUrl === undefined) {
     return {
       HTTP_PROXY: "",
@@ -51,6 +74,9 @@ function proxyEnvironment(proxyUrl: string | undefined): Readonly<Record<string,
       no_proxy: "",
     };
   }
+  // The proxy refuses loopback, so proxy-aware clients must reach allowed ports directly;
+  // the sandbox, not this hint, confines them to those ports.
+  const noProxy = directLoopback ? "127.0.0.1,localhost" : "";
   return {
     HTTP_PROXY: proxyUrl,
     HTTPS_PROXY: proxyUrl,
@@ -58,8 +84,8 @@ function proxyEnvironment(proxyUrl: string | undefined): Readonly<Record<string,
     https_proxy: proxyUrl,
     ALL_PROXY: "",
     all_proxy: "",
-    NO_PROXY: "",
-    no_proxy: "",
+    NO_PROXY: noProxy,
+    no_proxy: noProxy,
   };
 }
 
@@ -68,6 +94,7 @@ export function buildMacosSandboxArgv(
   command: readonly [string, ...string[]],
 ): SandboxLaunch & { readonly profile: string } {
   const port = parsedProxy(policy)?.port;
+  const directPorts = loopbackPorts(policy);
   const readable = [...new Set([...policy.readOnlyPaths, ...policy.writablePaths])];
   const readableAncestors = ancestorDirectories(readable);
   const profile = [
@@ -85,6 +112,9 @@ export function buildMacosSandboxArgv(
     ...readableAncestors.map((entry) => `(allow file-read-metadata (literal ${quoted(entry)}))`),
     ...readable.map((entry) => `(allow file-read* (subpath ${quoted(entry)}))`),
     ...policy.writablePaths.map((entry) => `(allow file-write* (subpath ${quoted(entry)}))`),
+    // libuv's posix_spawn opens /dev/null for every ignored stdio slot, and Git and shell
+    // redirections open it read-write. It is a sink, so allowing it exposes nothing.
+    '(allow file-read* file-write* (literal "/dev/null"))',
     '(allow file-ioctl (literal "/dev/null"))',
     '(allow file-ioctl (literal "/dev/zero"))',
     '(allow file-ioctl (literal "/dev/random"))',
@@ -95,10 +125,11 @@ export function buildMacosSandboxArgv(
     '(allow mach-lookup (global-name "com.apple.system.opendirectoryd.membership"))',
     '(allow mach-lookup (global-name "com.apple.SecurityServer"))',
     ...(port === undefined ? [] : [`(allow network-outbound (remote ip "localhost:${port}"))`]),
+    ...directPorts.map((entry) => `(allow network-outbound (remote ip "localhost:${entry}"))`),
   ].join("\n");
   return {
     argv: ["/usr/bin/sandbox-exec", "-p", profile, ...command],
-    environment: proxyEnvironment(policy.proxyUrl),
+    environment: proxyEnvironment(policy.proxyUrl, directPorts.length > 0),
     profile,
   };
 }
@@ -121,11 +152,22 @@ export function buildLinuxSandboxArgv(
   bwrapPath: string,
   proxySocketPath?: string,
   runtimeExecutable?: string,
+  loopbackRelays: readonly LinuxLoopbackRelay[] = [],
 ): SandboxLaunch {
   const proxy = parsedProxy(policy);
   if (policy.network === "proxy" && proxySocketPath === undefined) {
     throw new Error("Linux proxy sandbox is missing its Unix bridge socket");
   }
+  const relays = loopbackPorts(policy).map((port) => {
+    if (port === LINUX_PROXY_RELAY_PORT) {
+      throw new Error(`Linux sandbox reserves loopback port ${LINUX_PROXY_RELAY_PORT}`);
+    }
+    const relay = loopbackRelays.find((entry) => entry.port === port);
+    if (relay === undefined || proxySocketPath === undefined) {
+      throw new Error(`Linux loopback port ${port} is missing its relay socket`);
+    }
+    return relay;
+  });
   const supervisorPath = fileURLToPath(new URL("./linux-network-supervisor.js", import.meta.url));
   const paths = [
     ...policy.readOnlyPaths,
@@ -133,6 +175,7 @@ export function buildLinuxSandboxArgv(
     ...(proxySocketPath === undefined ? [] : [proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
     ...(runtimeExecutable === undefined ? [] : [runtimeExecutable]),
+    ...relays.map((relay) => relay.socketPath),
   ];
   const libTarget = policy.readOnlyPaths.includes("/usr/lib") ? "usr/lib" : undefined;
   const lib64Target = policy.readOnlyPaths.includes("/usr/lib64") ? "usr/lib64" : libTarget;
@@ -142,6 +185,10 @@ export function buildLinuxSandboxArgv(
       : []),
     ...(lib64Target !== undefined && !policy.readOnlyPaths.includes("/lib64")
       ? ["--symlink", lib64Target, "/lib64"]
+      : []),
+    // A usrmerged /bin grant canonicalizes to /usr/bin; restore the alias so /bin/sh resolves.
+    ...(policy.readOnlyPaths.includes("/usr/bin") && !policy.readOnlyPaths.includes("/bin")
+      ? ["--symlink", "usr/bin", "/bin"]
       : []),
   ];
   const args: string[] = [
@@ -164,13 +211,14 @@ export function buildLinuxSandboxArgv(
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", proxySocketPath, proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", supervisorPath, supervisorPath]),
+    ...relays.flatMap((relay) => ["--ro-bind", relay.socketPath, relay.socketPath]),
     "--proc",
     "/proc",
     "--dev",
     "/dev",
   ];
   if (proxy !== undefined) proxy.port = "3128";
-  const environment = proxyEnvironment(proxy?.toString());
+  const environment = proxyEnvironment(proxy?.toString(), relays.length > 0);
   if (proxySocketPath === undefined) {
     args.push("--", ...command);
   } else {
@@ -179,6 +227,7 @@ export function buildLinuxSandboxArgv(
       runtimeExecutable === undefined ? process.execPath : runtimeExecutable,
       supervisorPath,
       proxySocketPath,
+      ...relays.flatMap((relay) => ["--loopback", `${relay.port}:${relay.socketPath}`]),
       ...command,
     );
   }

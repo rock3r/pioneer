@@ -40,4 +40,29 @@ describe("extension capability policy", () => {
       expect(String(error)).not.toContain("secret");
     }
   });
+  it("keeps tools only for trusted extension files and package directories (#89)", () => {
+    const tools = (): Map<string, unknown> => new Map([["mcp", {}]]);
+    const inspection = { path: "/staged/inspection/index.ts", tools: tools() };
+    const packaged = { path: "/staged/tool/pi-mcp-adapter/dist/index.js", tools: tools() };
+    const sibling = { path: "/staged/tool/pi-mcp-adapter-evil/index.js", tools: tools() };
+    const user = { path: "/staged/user/provider.ts", tools: tools() };
+    restrictExtensionTools({ extensions: [inspection, packaged, sibling, user], errors: [] }, [
+      "/staged/inspection/index.ts",
+      "/staged/tool/pi-mcp-adapter",
+    ]);
+    expect(inspection.tools.size).toBe(1);
+    expect(packaged.tools.size).toBe(1);
+    expect(sibling.tools.size).toBe(0);
+    expect(user.tools.size).toBe(0);
+  });
+  it("still accepts one trusted inspection path", () => {
+    const trusted = { path: "/staged/inspection/index.ts", tools: new Map([["read", {}]]) };
+    const other = { path: "/staged/inspection/index.ts.bak", tools: new Map([["read", {}]]) };
+    restrictExtensionTools(
+      { extensions: [trusted, other], errors: [] },
+      "/staged/inspection/index.ts",
+    );
+    expect(trusted.tools.size).toBe(1);
+    expect(other.tools.size).toBe(0);
+  });
 });

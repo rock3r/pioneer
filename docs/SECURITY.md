@@ -83,18 +83,20 @@ All sandboxed network access is proxy-mediated and authenticated with a per-run 
 | Mode | Destinations | Intended use |
 | --- | --- | --- |
 | `full` | Public internet, LAN, and loopback through the proxy | Default review mode; allows probing a local deployment |
-| `public` | Globally routable destinations only | Reviews that do not need local services; all evals |
+| `public` | Globally routable destinations only | Reviews that do not need local services; all evals, apart from exact `--allow-loopback` ports |
 | `none` | No proxy and no outbound grant | Rejected for reviews because Pi cannot reach its configured model provider |
 
 Public-only resolution rejects local suffixes and non-global IPv4/IPv6 ranges. It requires every DNS answer to be public, then connects to a selected validated address rather than resolving again. This closes the normal DNS-rebinding window.
 
 On Linux, the actor has a private network namespace. A small Node supervisor exposes only a loopback port relayed to one mode-0600 Unix socket connected to the parent proxy. Raw host, LAN, or public TCP is unavailable; tools must honor standard HTTP(S) proxy variables.
 
+`eval run --allow-loopback 127.0.0.1:PORT` is an explicit operator exception for skills that drive a local desktop app through a local bridge. It opens raw TCP to exactly the named host loopback ports: a Seatbelt outbound rule per port on macOS, and on Linux a controller relay from a dedicated mode-0600 Unix socket to that one host port, surfaced inside the namespace by the supervisor. Ports are exact integers, hosts are IPv4 loopback only, and the actor gets `NO_PROXY=127.0.0.1,localhost`. The proxy itself keeps refusing loopback. The mandatory probe runs under the same policy against a listener outside the allow list, so a widened rule would still fail closed. Treat any service on an allowed port as reachable by the untrusted actor.
+
 ## Platform enforcement
 
 ### macOS
 
-The controller runs `/usr/bin/sandbox-exec` with a generated Seatbelt profile starting from `deny default`. Read/write grants and ancestor metadata traversal are explicit. Network access is limited to the authenticated loopback proxy port.
+The controller runs `/usr/bin/sandbox-exec` with a generated Seatbelt profile starting from `deny default`. Read/write grants and ancestor metadata traversal are explicit. `/dev/null` may be opened for reading and writing because process spawning with ignored stdio and Git require it; it discards writes and reads as empty. Network access is limited to the authenticated loopback proxy port and any eval `--allow-loopback` ports.
 
 macOS uses the legacy `sandbox-exec` interface, for which Apple provides no public drop-in replacement for dynamically sandboxing arbitrary CLI processes. Mandatory live smoke tests detect removal or semantic drift.
 
@@ -128,6 +130,8 @@ Pioneer checks only the fixed `@rock3r/pioneer` npm package name and public npm 
 - Review skills execute inside the sandbox and can still alter the review, exfiltrate any granted content, or consume provider quota. Deep review actors disable skill discovery entirely.
 - Deep review actors disable skill discovery, generic built-in tools, and unrestricted `bash`. They load the enabled user extension snapshot, Pioneer's bundled inspection extension, and explicitly pinned provider extensions selected from a trusted capability profile outside the reviewed source tree; each selected extension must declare a SHA-256 content digest verified before launch. Actors use `public` networking, never inherit `GITHUB_TOKEN`, and receive packet/candidate data only through typed extension tools bounded by the controller.
 - `full` review networking intentionally permits proxy access to LAN and loopback services.
+- `eval run --allow-loopback` gives the untrusted actor raw access to the named host loopback ports; the listening service must tolerate hostile input.
+- `eval run --env` values are visible to the actor and its tools, and `--pi-extension` code runs with its tools enabled. Pass neither a credential nor an untrusted extension.
 - A writable reference path is a real host write capability. Grant it sparingly.
 - Proxy-unaware tools cannot use Linux networking.
 - Windows reviews have no OS filesystem boundary.

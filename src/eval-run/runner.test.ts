@@ -316,3 +316,20 @@ process.stdout.write("pi-credential-lock-ok\\n");
     }
   });
 });
+
+describe("eval actor options through the API", () => {
+  it.each([
+    [{ allowedLoopbackPorts: [0] }, /EVAL_LOOPBACK_TARGET_INVALID/],
+    [{ allowedLoopbackPorts: [1.5] }, /EVAL_LOOPBACK_TARGET_INVALID/],
+    [{ environment: { PATH: "/tmp" } }, /EVAL_ACTOR_ENV_INVALID/],
+    [{ environment: { PIONEER_AUTH_BROKER_TOKEN: "x" } }, /EVAL_ACTOR_ENV_INVALID/],
+  ])("rejects unsafe actor options before any sandbox work: %j", async (options, expected) => {
+    const root = await createTempDir("pioneer-eval-api-options-");
+    await expect(
+      runEvalCommand(
+        { runDir: path.join(root, "absent-run"), command: actor("process.exit(0)"), ...options },
+        { controllerScratchBase: root },
+      ),
+    ).rejects.toThrow(expected);
+  });
+});
