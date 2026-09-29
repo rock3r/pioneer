@@ -98,6 +98,15 @@ export async function resolveToolExtensionSource(source: string): Promise<ToolEx
   return { canonical, kind: "directory", entries };
 }
 
+/** Few adapters are ever needed; the bound keeps resolution and the actor argv small. */
+export const MAX_TOOL_EXTENSIONS = 8;
+
+export function assertToolExtensionCount(paths: readonly string[]): void {
+  if (paths.length > MAX_TOOL_EXTENSIONS) {
+    throw invalidToolSource(`--pi-extension accepts at most ${MAX_TOOL_EXTENSIONS} extensions`);
+  }
+}
+
 /** Each tool extension must load once; a repeat or nested source would register it twice. */
 export function assertDistinctToolExtensionSources(sources: readonly ToolExtensionSource[]): void {
   sources.forEach((source, index) => {

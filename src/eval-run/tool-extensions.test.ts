@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   assertDistinctToolExtensionSources,
+  assertToolExtensionCount,
   resolveToolExtensionSource,
 } from "./tool-extensions.js";
 
@@ -116,5 +117,14 @@ describe("--pi-extension source resolution (#89)", () => {
         { canonical: second, kind: "directory", entries: [] },
       ]),
     ).not.toThrow();
+  });
+
+  it("bounds the number of tool extensions before resolving any of them", () => {
+    expect(() =>
+      assertToolExtensionCount(Array.from({ length: 8 }, (_, i) => `/x/${i}`)),
+    ).not.toThrow();
+    expect(() => assertToolExtensionCount(Array.from({ length: 9 }, (_, i) => `/x/${i}`))).toThrow(
+      /PI_EXTENSION_TOOL_SOURCE_INVALID.*at most 8/,
+    );
   });
 });

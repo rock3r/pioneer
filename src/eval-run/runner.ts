@@ -94,6 +94,7 @@ import {
 } from "./public-egress-proxy.js";
 import {
   assertDistinctToolExtensionSources,
+  assertToolExtensionCount,
   resolveToolExtensionSource,
   stageToolExtensions,
   type ToolExtensionSource,
@@ -1118,6 +1119,7 @@ async function runEvalCommandWithInterruption(
       "[PI_EXTENSION_RUNTIME_UNSUPPORTED] --pi-extension requires the trusted official Pi package as the eval actor, with a version that can host the extension adapter.",
     );
   }
+  assertToolExtensionCount(toolExtensionPaths);
   const toolExtensionSources = await Promise.all(
     toolExtensionPaths.map((entry) => resolveToolExtensionSource(entry)),
   );
