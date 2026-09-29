@@ -146,6 +146,30 @@ describe("--pi-extension source resolution (#89)", () => {
     },
   );
 
+  it("refuses a package whose manifest changed between preflight and staging", async () => {
+    const dir = await packageDir({
+      "package.json": JSON.stringify({ pi: { extensions: ["./index.js"] } }),
+      "index.js": "",
+      "other.js": "",
+    });
+    const source = await resolveToolExtensionSource(dir);
+    await writeFile(
+      path.join(dir, "package.json"),
+      JSON.stringify({ pi: { extensions: ["./index.js", "./other.js"] } }),
+    );
+    const staging = await createTempDir("pioneer-tool-stage-");
+    await expect(
+      stageToolExtensions(
+        [source],
+        path.join(staging, "stage"),
+        { agentDir: await createTempDir("pioneer-tool-agent-"), sessionDirs: [] },
+        undefined,
+        { entries: 0, bytes: 0 },
+        [],
+      ),
+    ).rejects.toThrow(/PI_EXTENSION_SNAPSHOT_CHANGED/);
+  });
+
   it("accepts distinct sibling tool extensions", async () => {
     const first = await packageDir({ "index.ts": "" });
     const second = await packageDir({ "index.js": "" });

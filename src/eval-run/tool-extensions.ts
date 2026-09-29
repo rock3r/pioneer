@@ -236,6 +236,20 @@ export async function stageToolExtensions(
     ) {
       throw new Error("[PI_EXTENSION_TOOL_SOURCE_INVALID] --pi-extension was not staged");
     }
+    if (source.kind === "directory") {
+      // The staged copy is what Pi loads: its manifest must still pass the bounds and name
+      // the entries preflight validated, or a rewrite after preflight would skip them.
+      const expected = source.entries.map((entry) => path.relative(source.canonical, entry));
+      const stagedSource = await resolveToolExtensionSource(staged).catch(() => undefined);
+      const actual = stagedSource?.entries.map((entry) =>
+        path.relative(stagedSource.canonical, entry),
+      );
+      if (actual === undefined || actual.join("\0") !== expected.join("\0")) {
+        throw new Error(
+          "[PI_EXTENSION_SNAPSHOT_CHANGED] --pi-extension package changed while it was being staged; retry after it is stable.",
+        );
+      }
+    }
     paths.push(staged);
   }
   return {
