@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -97,6 +97,27 @@ describe("eval work log", () => {
     const contents = await readFile(target, "utf8");
     expect(contents).toContain("work_log_truncated");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "checks the default directory's folders before creating it (#98)",
+    async () => {
+      const { chmod, lstat } = await import("node:fs/promises");
+      const root = await createTempDir("pioneer-eval-work-log-shared-");
+      const shared = path.join(root, "shared");
+      await mkdir(shared);
+      await chmod(shared, 0o777);
+      try {
+        await expect(
+          prepareDefaultEvalWorkLogDirectory(path.join(shared, "pioneer", "evals", "eval.jsonl")),
+        ).rejects.toThrow(/writable by another user/);
+        await expect(lstat(path.join(shared, "pioneer"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } finally {
+        await chmod(shared, 0o700);
+      }
+    },
+  );
 
   it("creates the default directory with owner-only mode", async () => {
     const root = await createTempDir("pioneer-eval-work-log-dir-");

@@ -3,7 +3,10 @@ import { access, lstat, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { SandboxPolicy } from "../sandbox/launcher.js";
-import { assertStableDirectoryChain } from "../stable-directory.js";
+import {
+  assertStableDirectoryChain,
+  assertStableProspectiveDirectory,
+} from "../stable-directory.js";
 
 /** Network modes accepted for a newly-started review. */
 export type ReviewNetworkMode = "full" | "public";
@@ -183,25 +186,16 @@ async function canonicalProspectiveControllerOutputPath(
     }
   }
   const canonicalAncestor = await realpath(existingAncestor);
-  const linkedAncestor = ancestorStats.isSymbolicLink();
-  if (linkedAncestor) ancestorStats = await lstat(canonicalAncestor);
+  if (ancestorStats.isSymbolicLink()) ancestorStats = await lstat(canonicalAncestor);
   if (!ancestorStats.isDirectory()) {
     throw new Error(`Review ${kind} ancestor is not a directory: ${canonicalAncestor}`);
   }
-  // Check the lexical chain too. A linked ancestor (macOS /tmp, for one) is checked through
-  // its target and through the folder that holds the link.
-  await assertStableDirectoryChain(
-    linkedAncestor ? canonicalAncestor : existingAncestor,
+  // Every folder Pioneer will create lies below this one, so check it before anything changes.
+  await assertStableProspectiveDirectory(
+    existingAncestor,
     process.platform,
     `Review ${kind} ancestor`,
   );
-  if (linkedAncestor) {
-    await assertStableDirectoryChain(
-      path.dirname(existingAncestor),
-      process.platform,
-      `Review ${kind} ancestor`,
-    );
-  }
   return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
 }
 

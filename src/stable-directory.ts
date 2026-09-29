@@ -78,3 +78,39 @@ export async function assertStableDirectoryChain(
     }
   }
 }
+
+/**
+ * The same rules for a path Pioneer will create: the nearest existing folder is checked through
+ * both its lexical and canonical chains before anything is created. A linked ancestor must itself
+ * belong to the caller or root, since a sticky folder above it only protects the caller's own
+ * entries; the folder holding the link and the link's target are then both checked.
+ */
+export async function assertStableProspectiveDirectory(
+  target: string,
+  platform: NodeJS.Platform,
+  label: string,
+  currentUid: number | undefined = process.getuid?.(),
+): Promise<void> {
+  if (platform === "win32") return;
+  let existing = path.resolve(target);
+  let stats: Awaited<ReturnType<typeof lstat>>;
+  for (;;) {
+    try {
+      stats = await lstat(existing);
+      break;
+    } catch (error) {
+      const parent = path.dirname(existing);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === existing) throw error;
+      existing = parent;
+    }
+  }
+  if (!stats.isSymbolicLink()) {
+    await assertStableDirectoryChain(existing, platform, label);
+    return;
+  }
+  if (currentUid === undefined || !isTrustedApplicationDataOwner(stats.uid, currentUid)) {
+    throw new Error(`${label} has an untrusted owner: ${existing}`);
+  }
+  await assertStableDirectoryChain(path.dirname(existing), platform, label);
+  await assertStableDirectoryChain(await realpath(existing), platform, label);
+}
