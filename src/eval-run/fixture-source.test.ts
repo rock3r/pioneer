@@ -1,5 +1,4 @@
 import {
-  access,
   appendFile,
   chmod,
   mkdir,
@@ -97,7 +96,7 @@ describe("openEvalFixture", () => {
     },
   );
 
-  it("rescans while staging and removes a copy whose file gained a marker", async () => {
+  it("rescans while staging and empties a copy whose file gained a marker", async () => {
     const { source, out } = await createSource("class Panel\n");
     const opened = await openEvalFixture(source, "evals/files/panel.kt");
     try {
@@ -105,13 +104,14 @@ describe("openEvalFixture", () => {
 
       const destination = path.join(out, "panel.kt");
       await expect(opened.stageTo(destination)).rejects.toThrow(/\[EVAL_FIXTURE_LEAK\].*FIXME/);
-      await expect(access(destination)).rejects.toThrow();
+      // Emptied through its descriptor, never removed by path.
+      expect((await stat(destination)).size).toBe(0);
     } finally {
       await opened.close();
     }
   });
 
-  it("removes a copy when the file changed while it was staged", async () => {
+  it("empties a copy when the file changed while it was staged", async () => {
     const { source, out } = await createSource("class Panel\n");
     const opened = await openEvalFixture(source, "evals/files/panel.kt");
     try {
@@ -121,7 +121,8 @@ describe("openEvalFixture", () => {
       await expect(opened.stageTo(destination)).rejects.toThrow(
         /\[EVAL_FIXTURE_CHANGED\].*evals\/files\/panel\.kt/,
       );
-      await expect(access(destination)).rejects.toThrow();
+      // Emptied through its descriptor, never removed by path.
+      expect((await stat(destination)).size).toBe(0);
     } finally {
       await opened.close();
     }

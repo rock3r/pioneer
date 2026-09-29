@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { type FileHandle, open, unlink } from "node:fs/promises";
+import { type FileHandle, open } from "node:fs/promises";
 import { createFixtureContentScanner, fixtureContentLeakError } from "./fixture-leak.js";
 
 const MIB = 1024 * 1024;
@@ -113,8 +113,10 @@ async function stageFromHandle(
     // The umask narrows the create mode; restore the source bits as a copy would.
     await target.chmod(mode);
   } catch (error) {
+    // Empty the invalid copy through its own descriptor. Removing it by path could delete a
+    // file another process put there; prepare fails, so its output must not be used anyway.
+    await target.truncate(0).catch(() => undefined);
     await target.close().catch(() => undefined);
-    await unlink(destination).catch(() => undefined);
     throw error;
   }
   await target.close();
