@@ -50,6 +50,8 @@ export function formatLoopbackTarget(port: number): string {
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_ACTOR_ENV_ENTRIES = 64;
 const MAX_ACTOR_ENV_VALUE_BYTES = 32 * 1024;
+// Well below common execve limits once Pioneer's own variables and argv are added.
+const MAX_ACTOR_ENV_TOTAL_BYTES = 256 * 1024;
 // Pioneer owns these: the sanitized platform runtime, the isolated home and scratch, proxy
 // mediation, and Node preloading, which could bypass Pi's tool-stripping adapter.
 const RESERVED_ACTOR_ENV_NAMES = new Set(
@@ -88,6 +90,7 @@ export function parseActorEnvironment(values: readonly string[]): Record<string,
     throw invalidActorEnvironment(`--env accepts at most ${MAX_ACTOR_ENV_ENTRIES} variables`);
   }
   const environment: Record<string, string> = {};
+  let totalBytes = 0;
   for (const entry of values) {
     const separator = entry.indexOf("=");
     const name = separator < 0 ? "" : entry.slice(0, separator);
@@ -113,6 +116,13 @@ export function parseActorEnvironment(values: readonly string[]): Record<string,
     }
     if (Object.hasOwn(environment, name)) {
       throw invalidActorEnvironment(`--env ${name} is given more than once`);
+    }
+    // NAME=VALUE plus the terminating NUL, as the entry occupies the process environment.
+    totalBytes += Buffer.byteLength(entry) + 1;
+    if (totalBytes > MAX_ACTOR_ENV_TOTAL_BYTES) {
+      throw invalidActorEnvironment(
+        `--env variables must not exceed ${MAX_ACTOR_ENV_TOTAL_BYTES} bytes in total`,
+      );
     }
     environment[name] = value;
   }

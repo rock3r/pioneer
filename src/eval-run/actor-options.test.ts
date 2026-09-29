@@ -98,6 +98,16 @@ describe("eval --env actor variables (#89)", () => {
     );
   });
 
+  it("caps the aggregate environment size so the actor spawn cannot hit E2BIG", () => {
+    const entry = (index: number): string => `NAME_${index}=${"x".repeat(32 * 1024)}`;
+    expect(() =>
+      parseActorEnvironment(Array.from({ length: 7 }, (_, i) => entry(i))),
+    ).not.toThrow();
+    expect(() => parseActorEnvironment(Array.from({ length: 8 }, (_, i) => entry(i)))).toThrow(
+      /EVAL_ACTOR_ENV_INVALID.*262144 bytes in total/,
+    );
+  });
+
   it("never echoes a rejected value", () => {
     expect(() => parseActorEnvironment(["PIONEER_TOKEN=super-secret-value"])).toThrow(
       /^(?!.*super-secret-value)/s,
