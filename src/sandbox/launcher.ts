@@ -97,6 +97,14 @@ export function buildMacosSandboxArgv(
   const directPorts = loopbackPorts(policy);
   const readable = [...new Set([...policy.readOnlyPaths, ...policy.writablePaths])];
   const readableAncestors = ancestorDirectories(readable);
+  // Grants are canonical /private paths, but tools often use the root aliases, e.g.
+  // xcode-select reads /var/select/developer_dir. Resolving the alias reads its symlink.
+  const privateAliases = ["/etc", "/tmp", "/var"].filter((alias) =>
+    readable.some((entry) => {
+      const relative = path.relative(`/private${alias}`, entry);
+      return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    }),
+  );
   const profile = [
     "(version 1)",
     "(deny default)",
@@ -110,6 +118,7 @@ export function buildMacosSandboxArgv(
     "(allow sysctl-read)",
     '(allow file-read* (literal "/"))',
     ...readableAncestors.map((entry) => `(allow file-read-metadata (literal ${quoted(entry)}))`),
+    ...privateAliases.map((alias) => `(allow file-read* (literal ${quoted(alias)}))`),
     ...readable.map((entry) => `(allow file-read* (subpath ${quoted(entry)}))`),
     ...policy.writablePaths.map((entry) => `(allow file-write* (subpath ${quoted(entry)}))`),
     // libuv's posix_spawn opens /dev/null for every ignored stdio slot, and Git and shell

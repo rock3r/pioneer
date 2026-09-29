@@ -30,6 +30,23 @@ describe("direct sandbox launchers", () => {
     expect(launch.profile).not.toMatch(/\(allow file-write\* \(subpath "\/dev"\)\)/);
   });
 
+  it("lets macOS resolve the /var alias for grants under /private/var (#87)", () => {
+    const launch = buildMacosSandboxArgv(
+      { ...policy, readOnlyPaths: [...policy.readOnlyPaths, "/private/var/select"] },
+      ["/usr/bin/node", "actor.mjs"],
+    );
+    // xcode-select reads /var/select/developer_dir, which traverses the root /var symlink.
+    expect(launch.profile).toContain('(allow file-read* (literal "/var"))');
+    expect(launch.profile).not.toContain('(literal "/etc")');
+    expect(launch.profile).not.toContain('(literal "/tmp")');
+    expect(launch.profile).not.toContain('(subpath "/var")');
+  });
+
+  it("adds no private-alias rule without a grant beneath it", () => {
+    const launch = buildMacosSandboxArgv(policy, ["/usr/bin/node", "actor.mjs"]);
+    expect(launch.profile).not.toContain('(literal "/var")');
+  });
+
   it("opens only the allowed macOS loopback ports and sends loopback traffic direct (#88)", () => {
     const launch = buildMacosSandboxArgv({ ...policy, loopbackPorts: [8722, 8723] }, [
       "/usr/bin/node",

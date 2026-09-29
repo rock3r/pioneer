@@ -5,7 +5,10 @@ function isTrusted(extensionPath: string | undefined, trusted: readonly string[]
   // A trusted file matches exactly; a trusted package directory covers the entries Pi
   // resolved inside it. The separator stops a sibling such as `dir-evil` from matching.
   return trusted.some(
-    (entry) => extensionPath === entry || extensionPath.startsWith(`${entry}${path.sep}`),
+    (entry) =>
+      extensionPath === entry ||
+      extensionPath.startsWith(`${entry}/`) ||
+      extensionPath.startsWith(`${entry}${path.sep}`),
   );
 }
 
