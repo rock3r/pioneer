@@ -2,7 +2,10 @@ import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
-import { resolveToolExtensionSource } from "./tool-extensions.js";
+import {
+  assertDistinctToolExtensionSources,
+  resolveToolExtensionSource,
+} from "./tool-extensions.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
@@ -85,5 +88,33 @@ describe("--pi-extension source resolution (#89)", () => {
     await expect(resolveToolExtensionSource(path.join(dir, "absent"))).rejects.toThrow(
       /PI_EXTENSION_TOOL_SOURCE_INVALID.*not found/,
     );
+  });
+
+  it("rejects a tool extension named twice or nested inside another", async () => {
+    const dir = await packageDir({ "index.ts": "", "nested/index.ts": "" });
+    const root = await resolveToolExtensionSource(dir);
+    const nested = await resolveToolExtensionSource(path.join(dir, "nested"));
+    const entry = await resolveToolExtensionSource(path.join(dir, "index.ts"));
+    for (const sources of [
+      [root, root],
+      [root, nested],
+      [nested, root],
+      [root, entry],
+    ]) {
+      expect(() => assertDistinctToolExtensionSources(sources)).toThrow(
+        /PI_EXTENSION_TOOL_SOURCE_INVALID.*more than once/,
+      );
+    }
+  });
+
+  it("accepts distinct sibling tool extensions", async () => {
+    const first = await packageDir({ "index.ts": "" });
+    const second = await packageDir({ "index.js": "" });
+    expect(() =>
+      assertDistinctToolExtensionSources([
+        { canonical: first, kind: "directory", entries: [] },
+        { canonical: second, kind: "directory", entries: [] },
+      ]),
+    ).not.toThrow();
   });
 });

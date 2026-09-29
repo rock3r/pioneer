@@ -98,6 +98,23 @@ export async function resolveToolExtensionSource(source: string): Promise<ToolEx
   return { canonical, kind: "directory", entries };
 }
 
+/** Each tool extension must load once; a repeat or nested source would register it twice. */
+export function assertDistinctToolExtensionSources(sources: readonly ToolExtensionSource[]): void {
+  sources.forEach((source, index) => {
+    const overlaps = sources.some(
+      (other, otherIndex) =>
+        otherIndex !== index &&
+        (isWithin(other.canonical, source.canonical) ||
+          isWithin(source.canonical, other.canonical)),
+    );
+    if (overlaps) {
+      throw invalidToolSource(
+        "--pi-extension names the same extension more than once, directly or inside another --pi-extension directory",
+      );
+    }
+  });
+}
+
 /**
  * Copies `--pi-extension` sources into a read-only snapshot like any explicit extension.
  * A package directory is staged whole, with its ancestor `node_modules`, and Pi resolves

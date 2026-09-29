@@ -93,6 +93,7 @@ import {
   startPublicEgressProxy,
 } from "./public-egress-proxy.js";
 import {
+  assertDistinctToolExtensionSources,
   resolveToolExtensionSource,
   stageToolExtensions,
   type ToolExtensionSource,
@@ -1120,6 +1121,7 @@ async function runEvalCommandWithInterruption(
   const toolExtensionSources = await Promise.all(
     toolExtensionPaths.map((entry) => resolveToolExtensionSource(entry)),
   );
+  assertDistinctToolExtensionSources(toolExtensionSources);
   // Re-validate API callers exactly like the CLI; values never reach diagnostics or logs.
   const actorExtraEnvironment = parseActorEnvironment(
     Object.entries(spec.environment ?? {}).map(([name, value]) => `${name}=${value}`),
