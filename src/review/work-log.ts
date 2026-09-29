@@ -13,12 +13,13 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { chmod, lstat, mkdir, unlink } from "node:fs/promises";
+import { chmod, lstat, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { sanitizeDiagnostic } from "../diagnostics.js";
+import { createStableDirectory } from "../stable-directory.js";
 
 const MAX_WORK_LOG_BYTES = 16 * 1024 * 1024;
 const MIN_WORK_LOG_BYTES = 1_024;
@@ -399,7 +400,8 @@ async function prepareDefaultReviewWorkLogDirectory(
 ): Promise<void> {
   const pathApi = platformPath(platform);
   const directory = pathApi.dirname(target);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  // Checked before anything is created, then created one folder at a time (#98).
+  await createStableDirectory(directory, platform, "Review work log directory");
   const directoryStats = await lstat(directory);
   if (directoryStats.isSymbolicLink()) {
     throw new Error(`Review work log directory is a symbolic link: ${directory}`);

@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, constants, fsyncSync, lstatSync, openSync, writeSync } from "node:fs";
-import { chmod, lstat, mkdir } from "node:fs/promises";
+import { chmod, lstat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { diagnosticMessage, isCredentialLabel, sanitizeDiagnostic } from "../diagnostics.js";
-import { assertStableProspectiveDirectory } from "../stable-directory.js";
+import { createStableDirectory } from "../stable-directory.js";
 
 const MAX_WORK_LOG_BYTES = 16 * 1024 * 1024;
 const MIN_WORK_LOG_BYTES = 1_024;
@@ -71,9 +71,8 @@ export async function prepareDefaultEvalWorkLogDirectory(
 ): Promise<void> {
   const pathApi = platform === "win32" ? path.win32 : path.posix;
   const directory = pathApi.dirname(target);
-  // Check before creating anything: mkdir and chmod must not run below a replaceable folder.
-  await assertStableProspectiveDirectory(directory, platform, "Eval work log directory");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
+  // Checked before anything is created, then created one folder at a time (#98).
+  await createStableDirectory(directory, platform, "Eval work log directory");
   const directoryStats = await lstat(directory);
   if (directoryStats.isSymbolicLink()) {
     throw new Error(`Eval work log directory is a symbolic link: ${directory}`);

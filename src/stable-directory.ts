@@ -1,4 +1,4 @@
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -113,4 +113,54 @@ export async function assertStableProspectiveDirectory(
   }
   await assertStableDirectoryChain(path.dirname(existing), platform, label);
   await assertStableDirectoryChain(await realpath(existing), platform, label);
+}
+
+/**
+ * Creates a directory for private output one folder at a time. The existing part of the path is
+ * checked first; each missing folder is then created without recursion and inspected before the
+ * next is created, so a link or foreign folder that appears after the check is refused instead
+ * of followed. `beforeCreate` exists for tests that simulate that race.
+ */
+export async function createStableDirectory(
+  directory: string,
+  platform: NodeJS.Platform,
+  label: string,
+  currentUid: number | undefined = process.getuid?.(),
+  hooks: { readonly beforeCreate?: (component: string) => Promise<void> } = {},
+): Promise<void> {
+  if (platform === "win32") {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    return;
+  }
+  await assertStableProspectiveDirectory(directory, platform, label, currentUid);
+  const missing: string[] = [];
+  for (let existing = path.resolve(directory); ; ) {
+    try {
+      await lstat(existing);
+      break;
+    } catch (error) {
+      const parent = path.dirname(existing);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === existing) throw error;
+      missing.unshift(existing);
+      existing = parent;
+    }
+  }
+  for (const component of missing) {
+    await hooks.beforeCreate?.(component);
+    try {
+      await mkdir(component, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    const stats = await lstat(component);
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new Error(`${label} is not a stable directory: ${component}`);
+    }
+    if (currentUid === undefined || !isTrustedApplicationDataOwner(stats.uid, currentUid)) {
+      throw new Error(`${label} has an untrusted owner: ${component}`);
+    }
+    if ((stats.mode & 0o022) !== 0 && (stats.mode & 0o1000) === 0) {
+      throw new Error(`${label} is writable by another user: ${component}`);
+    }
+  }
 }

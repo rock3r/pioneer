@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, realpath, symlink } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
-import { assertStableProspectiveDirectory } from "./stable-directory.js";
+import { assertStableProspectiveDirectory, createStableDirectory } from "./stable-directory.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
@@ -76,5 +76,33 @@ describe.skipIf(process.platform === "win32")("prospective output directories (#
     } finally {
       await chmod(shared, 0o700);
     }
+  });
+});
+
+describe.skipIf(process.platform === "win32")("creating output directories (#98)", () => {
+  it("creates each missing folder owner-only", async () => {
+    const root = await realpath(await createTempDir("pioneer-stable-create-"));
+    const directory = path.join(root, "a", "b", "c");
+    await createStableDirectory(directory, process.platform, "Label");
+    for (const part of ["a", "a/b", "a/b/c"]) {
+      const stats = await lstat(path.join(root, part));
+      expect(stats.isDirectory()).toBe(true);
+      expect(stats.mode & 0o777).toBe(0o700);
+    }
+  });
+
+  it("refuses a missing folder that turns into a link before it is created", async () => {
+    const root = await realpath(await createTempDir("pioneer-stable-create-race-"));
+    const elsewhere = path.join(root, "elsewhere");
+    await mkdir(elsewhere);
+    const directory = path.join(root, "raced", "logs");
+    await expect(
+      createStableDirectory(directory, process.platform, "Label", undefined, {
+        beforeCreate: async (component) => {
+          if (component === path.join(root, "raced")) await symlink(elsewhere, component);
+        },
+      }),
+    ).rejects.toThrow(/Label is not a stable directory/);
+    await expect(lstat(path.join(elsewhere, "logs"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
