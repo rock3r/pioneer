@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -335,6 +335,34 @@ setTimeout(() => { socket.destroy(); process.stdout.write("timeout"); }, 3000).u
     expect(run.stderr).toContain("PI_EXTENSION_TOOL_SOURCE_INVALID");
     expect(existsSync(path.join(runDir, ACTOR_INVOCATION_FILE))).toBe(false);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses output files below a folder another user could replace (#98)",
+    async () => {
+      const { created, runDir } = await workspace("output-shared-parent");
+      const shared = path.join(created.root, "shared");
+      await mkdir(shared);
+      await chmod(shared, 0o777);
+      try {
+        const run = await runPioneer(created, [
+          ...evalRun(created, runDir, "output-shared-parent"),
+          "--stdout-file",
+          path.join(shared, "stdout.txt"),
+          "--",
+          "node",
+          "-e",
+          "process.stdout.write('never')",
+        ]);
+        expect(run.exitCode).not.toBe(0);
+        expect(run.stderr).toMatch(
+          /EVAL_OUTPUT_FILE_CREATE_FAILED.*Eval stdout file parent is writable by another user/,
+        );
+        expect(existsSync(path.join(shared, "stdout.txt"))).toBe(false);
+      } finally {
+        await chmod(shared, 0o700);
+      }
+    },
+  );
 
   it("names the stream that overflows and streams large output to --stdout-file", async () => {
     const { created, runDir } = await workspace("output-files");

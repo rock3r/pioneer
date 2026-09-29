@@ -135,6 +135,10 @@ On macOS, an extension that starts a helper program, such as an MCP server, fail
 
 On macOS, `/usr/bin/git` and other Xcode shims print `couldn't create cache file '/var/folders/.../xcrun_db-...'` and `DVTFilePathFSEvents: Failed to start fs event stream`, then work. xcrun always writes its cache to the shared per-user temporary directory and ignores `TMPDIR`. Pioneer does not grant that directory, because the actor could then poison a tool-path cache that normal, unsandboxed commands trust. The messages are harmless.
 
+## An output path is rejected as writable by another user
+
+Pioneer refuses a `--report`, `--work-log`, `--stdout-file`, or `--stderr-file` target when any folder above it is owned by another user, or can be changed by other users without the sticky bit. The error names the folder, for example `Eval stdout file parent is writable by another user: /shared/out`. Another user could swap that folder for a link into the sandboxed actor's files. Pick a folder in your home directory, or remove group and world write access (`chmod go-w FOLDER`).
+
 ## A writable grant is rejected
 
 Writable grants must not overlap the source or any read-only grant. Create a dedicated artifact directory and grant only that directory. For the final report alone, use `--report /absolute/path/report.md` instead of granting a write capability.
