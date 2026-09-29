@@ -335,6 +335,54 @@ setTimeout(() => { socket.destroy(); process.stdout.write("timeout"); }, 3000).u
     expect(run.stderr).toContain("PI_EXTENSION_TOOL_SOURCE_INVALID");
     expect(existsSync(path.join(runDir, ACTOR_INVOCATION_FILE))).toBe(false);
   });
+
+  it("names the stream that overflows and streams large output to --stdout-file", async () => {
+    const { created, runDir } = await workspace("output-files");
+    // Pi's JSON mode repeats every image as base64, so one read can pass the 4 MiB bound.
+    const bigStdout = [
+      "node",
+      "-e",
+      "process.stdout.write('x'.repeat(5 * 1024 * 1024)); process.stderr.write('actor-stderr')",
+    ];
+
+    const bounded = await runPioneer(created, [
+      ...evalRun(created, runDir, "output-bounded"),
+      "--",
+      ...bigStdout,
+    ]);
+    expect(bounded.exitCode).not.toBe(0);
+    expect(bounded.stderr).toContain(
+      "[EVAL_OUTPUT_LIMIT] Eval actor stdout exceeded the 4194304-byte limit; pass --stdout-file PATH to stream it to a file",
+    );
+
+    const insideRun = await runPioneer(created, [
+      ...evalRun(created, runDir, "output-inside-run"),
+      "--stdout-file",
+      path.join(runDir, "stdout.txt"),
+      "--",
+      ...bigStdout,
+    ]);
+    expect(insideRun.exitCode).not.toBe(0);
+    expect(insideRun.stderr).toMatch(/EVAL_OUTPUT_FILE_CREATE_FAILED.*actor-visible/);
+
+    const stdoutFile = path.join(created.root, "actor-stdout.txt");
+    const streamed = await runPioneer(created, [
+      ...evalRun(created, runDir, "output-streamed"),
+      "--stdout-file",
+      stdoutFile,
+      "--",
+      ...bigStdout,
+    ]);
+    expect(streamed.stderr).not.toContain("[EVAL_");
+    expect(streamed.exitCode, streamed.stderr).toBe(0);
+    expect(streamed.stdout).toBe("");
+    expect(streamed.stderr).toContain("actor-stderr");
+    expect((await readFile(stdoutFile)).length).toBe(5 * 1024 * 1024);
+    const log = await readWorkLog(created.workLogPath("output-streamed"));
+    expect(log).toContainEqual(
+      expect.objectContaining({ type: "stage_started", stage: "actor", stdoutFile: true }),
+    );
+  });
 });
 
 /**

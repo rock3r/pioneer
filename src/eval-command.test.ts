@@ -146,6 +146,7 @@ describe("pioneer eval run actor options", () => {
     expect(usage).toContain("[--allow-loopback HOST:PORT]...");
     expect(usage).toContain("[--env NAME=VALUE]...");
     expect(usage).toContain("[--pi-extension PATH]...");
+    expect(usage).toContain("[--stdout-file FILE] [--stderr-file FILE]");
   });
 
   it.each([

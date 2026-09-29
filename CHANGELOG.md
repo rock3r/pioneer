@@ -4,6 +4,10 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Add `eval run --stdout-file FILE` and `--stderr-file FILE`. Pioneer streams that actor stream to a new file instead of memory, bounded at 1 GiB instead of 4 MiB or 64 KiB. Use them for `pi --mode json` runs, which repeat every image as base64. The file must be absent and outside every actor grant, like `--work-log`.
+- Name the stream in `[EVAL_OUTPUT_LIMIT]`, for example `Eval actor stdout exceeded the 4194304-byte limit; pass --stdout-file PATH to stream it to a file`.
+- Document why macOS Xcode shims such as `/usr/bin/git` print an `xcrun_db` cache warning in evals, and how an MCP server can read files from the real home directory.
+
 ## 0.4.1 - 2026-09-29
 
 - Name the failing extension and the missing module in `[PI_EXTENSION_LOAD_FAILED]`, for example `entry 1 (compose-pi/provider.ts): missing dependency @earendil-works/pi-ai/dist/compat.js/api/openai-completions`. Pioneer still suppresses the raw error. It leaves out any name that looks like a credential or has unusual characters.
