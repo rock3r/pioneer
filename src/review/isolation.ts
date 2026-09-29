@@ -124,11 +124,7 @@ function assertControllerOutputPathSyntax(candidate: string, kind: string): void
   }
 }
 
-async function canonicalControllerOutputPath(
-  candidate: string,
-  kind: string,
-  platform: NodeJS.Platform,
-): Promise<string> {
+async function canonicalControllerOutputPath(candidate: string, kind: string): Promise<string> {
   assertControllerOutputPathSyntax(candidate, kind);
   const absolute = path.normalize(candidate);
   const parent = path.dirname(absolute);
@@ -152,8 +148,9 @@ async function canonicalControllerOutputPath(
     throw new Error(`Review ${kind} parent is not writable: ${parent}`);
   }
   const canonicalParent = await realpath(parent);
-  // Only the caller or root may be able to rename a directory above the target (#98).
-  await assertStableDirectoryChain(canonicalParent, platform, `Review ${kind} parent`);
+  // Only the caller or root may be able to rename a directory above the target (#98). Ownership
+  // is a property of this host's filesystem, so the check follows the host platform.
+  await assertStableDirectoryChain(canonicalParent, process.platform, `Review ${kind} parent`);
   const reportPath = path.join(canonicalParent, path.basename(absolute));
   try {
     await lstat(reportPath);
@@ -167,7 +164,6 @@ async function canonicalControllerOutputPath(
 async function canonicalProspectiveControllerOutputPath(
   candidate: string,
   kind: string,
-  platform: NodeJS.Platform,
 ): Promise<string> {
   assertControllerOutputPathSyntax(candidate, kind);
   const absolute = path.normalize(candidate);
@@ -189,20 +185,18 @@ async function canonicalProspectiveControllerOutputPath(
   if (!ancestorStats.isDirectory()) {
     throw new Error(`Review ${kind} ancestor is not a directory: ${canonicalAncestor}`);
   }
-  await assertStableDirectoryChain(canonicalAncestor, platform, `Review ${kind} ancestor`);
+  await assertStableDirectoryChain(canonicalAncestor, process.platform, `Review ${kind} ancestor`);
   return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
 }
 
 async function canonicalProspectiveControllerDirectoryPath(
   candidate: string,
   kind: string,
-  platform: NodeJS.Platform,
 ): Promise<string> {
   return path.dirname(
     await canonicalProspectiveControllerOutputPath(
       path.join(candidate, ".pioneer-controller-directory"),
       kind,
-      platform,
     ),
   );
 }
@@ -223,14 +217,14 @@ async function validateReviewPathsInternal(
     spec.reportPath === undefined
       ? undefined
       : await (prospectiveReport
-          ? canonicalProspectiveControllerOutputPath(spec.reportPath, "report", platform)
-          : canonicalControllerOutputPath(spec.reportPath, "report", platform));
+          ? canonicalProspectiveControllerOutputPath(spec.reportPath, "report")
+          : canonicalControllerOutputPath(spec.reportPath, "report"));
   const workLogPath =
     spec.workLogPath === undefined
       ? undefined
       : await (prospectiveWorkLog
-          ? canonicalProspectiveControllerOutputPath(spec.workLogPath, "work log", platform)
-          : canonicalControllerOutputPath(spec.workLogPath, "work log", platform));
+          ? canonicalProspectiveControllerOutputPath(spec.workLogPath, "work log")
+          : canonicalControllerOutputPath(spec.workLogPath, "work log"));
   for (const writable of allowWritePaths) {
     if (
       overlaps(writable, sourceDir) ||
@@ -257,7 +251,6 @@ async function validateReviewPathsInternal(
     const directory = await canonicalProspectiveControllerDirectoryPath(
       candidate,
       "controller directory",
-      platform,
     );
     if (actorVisiblePaths.some((grant) => overlaps(directory, grant))) {
       throw new Error(`Review controller directory overlaps an actor-visible grant: ${directory}`);
