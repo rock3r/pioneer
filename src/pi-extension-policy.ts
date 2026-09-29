@@ -26,9 +26,8 @@ function missingModule(text: string): string | undefined {
   const normalized = specifier.replaceAll("\\", "/");
   const modules = normalized.lastIndexOf("/node_modules/");
   if (modules >= 0) return reportableName(normalized.slice(modules + "/node_modules/".length));
-  if (path.isAbsolute(specifier) || /^[A-Za-z]:\//.test(normalized)) {
-    return reportableName(normalized.split("/").filter(Boolean).slice(-2).join("/"));
-  }
+  // Any other absolute path is a local file whose name may reveal the operator's layout.
+  if (path.isAbsolute(specifier) || /^[A-Za-z]:\//.test(normalized)) return undefined;
   return reportableName(normalized);
 }
 

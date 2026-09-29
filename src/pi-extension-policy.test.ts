@@ -52,6 +52,7 @@ describe("extension capability policy", () => {
       "pkg/Zk3q9XvB7mT2pL8wR4nY6cD1fH5jK0sA",
       "https://user:hunter2@example.com/pkg",
       "has space",
+      "/Users/alice/confidential-client/provider.ts",
     ]) {
       let message = "";
       try {
@@ -62,9 +63,10 @@ describe("extension capability policy", () => {
       } catch (error) {
         message = String(error);
       }
-      expect(message).toMatch(/entry 1( \(pkg\/index\.ts\))?: missing dependency\./);
+      expect(message).toMatch(/entry 1( \([^)]*\))?: missing dependency\./);
       expect(message).not.toContain(module);
       expect(message).not.toContain("hunter2");
+      expect(message).not.toContain("confidential-client");
     }
   });
   it("preserves provider hooks while removing write tools and builtin overrides", () => {
