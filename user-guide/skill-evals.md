@@ -89,7 +89,22 @@ Repeat with the `with-skill` directory. Before the actor starts, Pioneer prints 
 
 `--deny-read-probe` is also repeatable. Use it for every controller-side answer key or sensitive reference whose invisibility you want the mandatory preflight to prove.
 
-The eval runner uses a fixed selective Pi-home snapshot outside the persistent actor run: required root configuration files are copied into an isolated `agentDir` that is writable so Pi can create lock directories beside credentials, configured skills and dependency/runtime fluff are excluded, writable home/tmp scratch is separate and ephemeral, and no Pi-home include option is available. The source Pi home is never mounted. Controller launch/probe files and the copied snapshot are removed on every exit path. When the actor executable is Pi, Pioneer adds fast-start and isolation flags automatically: `--offline`, `--no-session`, `--no-approve`, `--no-extensions`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`. It also stages the enabled user extensions from the trusted official Pi package and passes each one with `--extension`, so extension-registered model providers resolve inside the sandbox. Extension tools are not added. Put `--no-extensions` on the Pi command to stay on built-in providers. OAuth refresh still uses the broker when the snapshot has OAuth credentials and the package can host the auth adapter. An explicit `--extension` or `-e` on that command still loads through the tool-stripping adapter. There is still no Pi-home include flag. Driving Pi's RPC protocol and delivering `case.json` remains the adapter's job.
+Three more repeatable options adapt an arm to a skill that drives a local tool:
+
+- `--allow-loopback 127.0.0.1:PORT` lets the actor reach one local port directly, for example a desktop app's HTTP bridge. Every other loopback port stays closed. Only `127.0.0.1` and `localhost` are accepted.
+- `--env NAME=VALUE` passes a variable to the actor, such as a tool's configuration directory. Variables Pioneer controls, such as `PATH`, `HOME`, proxy variables, and `PI_*`/`PIONEER_*` names, are refused. The work log keeps names, not values.
+- `--pi-extension PATH` loads a Pi extension file or package directory whose tools the actor may use, for example an MCP adapter. The actor must be Pi. Put the adapter's configuration, such as `mcp.json`, in the run directory and pass its flag on the Pi command:
+
+```bash
+pioneer eval run \
+  --run-dir /absolute/path/to/battery/actor-runs/eval-1/mcp \
+  --allow-loopback 127.0.0.1:8722 \
+  --pi-extension /absolute/path/to/pi-mcp-adapter \
+  --runtime-read /absolute/path/to/mcp-server-runtime \
+  -- pi --no-extensions --mcp-config mcp.json --mode json -p "..."
+```
+
+The eval runner uses a fixed selective Pi-home snapshot outside the persistent actor run: required root configuration files are copied into an isolated `agentDir` that is writable so Pi can create lock directories beside credentials, configured skills and dependency/runtime fluff are excluded, writable home/tmp scratch is separate and ephemeral, and no Pi-home include option is available. The source Pi home is never mounted. Controller launch/probe files and the copied snapshot are removed on every exit path. When the actor executable is Pi, Pioneer adds fast-start and isolation flags automatically: `--offline`, `--no-session`, `--no-approve`, `--no-extensions`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`. It also stages the enabled user extensions from the trusted official Pi package and passes each one with `--extension`, so extension-registered model providers resolve inside the sandbox. Extension tools are not added, except for a `--pi-extension`. Put `--no-extensions` on the Pi command to stay on built-in providers. OAuth refresh still uses the broker when the snapshot has OAuth credentials and the package can host the auth adapter. An explicit `--extension` or `-e` on that command still loads through the tool-stripping adapter. There is still no Pi-home include flag. Driving Pi's RPC protocol and delivering `case.json` remains the adapter's job.
 
 Every run writes a controller-owned work log. Pioneer prints `[PIONEER_EVAL_WORK_LOG] ABSOLUTE_PATH` to stderr as soon as the file exists. Use `--work-log /absolute/path.jsonl` for a create-only custom target, or leave the default `eval-*.jsonl` file in the platform Pioneer evals log directory. The log records stages such as snapshot, probe, proxy, and actor launch; it does not contain prompts, credentials, or proxy URLs.
 

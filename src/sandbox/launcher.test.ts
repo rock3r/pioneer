@@ -21,6 +21,107 @@ describe("direct sandbox launchers", () => {
     expect(launch.argv.slice(-2)).toEqual(["/usr/bin/node", "actor.mjs"]);
   });
 
+  it("lets macOS actors open /dev/null for ignored stdio and Git (#86, #87)", () => {
+    const launch = buildMacosSandboxArgv(policy, ["/usr/bin/node", "actor.mjs"]);
+    // libuv's posix_spawn opens /dev/null for every "ignore" stdio slot, and Git opens
+    // it read-write; an ioctl-only grant made both fail with EPERM.
+    expect(launch.profile).toContain('(allow file-read* file-write* (literal "/dev/null"))');
+    expect(launch.profile).not.toContain('(allow file-write* (literal "/dev/zero"))');
+    expect(launch.profile).not.toMatch(/\(allow file-write\* \(subpath "\/dev"\)\)/);
+  });
+
+  it("lets macOS resolve the /var alias for grants under /private/var (#87)", () => {
+    const launch = buildMacosSandboxArgv(
+      { ...policy, readOnlyPaths: [...policy.readOnlyPaths, "/private/var/select"] },
+      ["/usr/bin/node", "actor.mjs"],
+    );
+    // xcode-select reads /var/select/developer_dir, which traverses the root /var symlink.
+    expect(launch.profile).toContain('(allow file-read* (literal "/var"))');
+    expect(launch.profile).not.toContain('(literal "/etc")');
+    expect(launch.profile).not.toContain('(literal "/tmp")');
+    expect(launch.profile).not.toContain('(subpath "/var")');
+  });
+
+  it("adds no private-alias rule without a grant beneath it", () => {
+    const launch = buildMacosSandboxArgv(policy, ["/usr/bin/node", "actor.mjs"]);
+    expect(launch.profile).not.toContain('(literal "/var")');
+  });
+
+  it("opens only the allowed macOS loopback ports and sends loopback traffic direct (#88)", () => {
+    const launch = buildMacosSandboxArgv({ ...policy, loopbackPorts: [8722, 8723] }, [
+      "/usr/bin/node",
+      "actor.mjs",
+    ]);
+    expect(launch.profile).toContain('(allow network-outbound (remote ip "localhost:8722"))');
+    expect(launch.profile).toContain('(allow network-outbound (remote ip "localhost:8723"))');
+    expect(launch.profile).toContain('(allow network-outbound (remote ip "localhost:43123"))');
+    expect(launch.profile).not.toContain('(remote ip "localhost:*")');
+    expect(launch.environment.NO_PROXY).toBe("127.0.0.1,localhost");
+    expect(launch.environment.no_proxy).toBe("127.0.0.1,localhost");
+  });
+
+  it("keeps every destination behind the proxy when no loopback port is allowed", () => {
+    const launch = buildMacosSandboxArgv(policy, ["/usr/bin/node", "actor.mjs"]);
+    expect(launch.environment.NO_PROXY).toBe("");
+    expect(launch.profile.match(/network-outbound/g)).toHaveLength(1);
+  });
+
+  it.each([0, 65_536, 1.5, Number.NaN])("rejects an invalid loopback port: %s", (port) => {
+    expect(() =>
+      buildMacosSandboxArgv({ ...policy, loopbackPorts: [port] }, ["/usr/bin/true"]),
+    ).toThrow(/loopback port/i);
+  });
+
+  it("relays allowed Linux loopback ports through bound Unix sockets (#88)", () => {
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, loopbackPorts: [8722] },
+      ["/usr/bin/node", "actor.mjs"],
+      "/usr/bin/bwrap",
+      "/scratch/egress.sock",
+      undefined,
+      [{ port: 8722, socketPath: "/bridge/loopback-8722.sock" }],
+    );
+    expect(launch.argv).toEqual(
+      expect.arrayContaining([
+        "--ro-bind",
+        "/bridge/loopback-8722.sock",
+        "/bridge/loopback-8722.sock",
+      ]),
+    );
+    const supervisor = launch.argv.findLastIndex((entry) =>
+      entry.endsWith("linux-network-supervisor.js"),
+    );
+    expect(launch.argv.slice(supervisor + 1)).toEqual([
+      "/scratch/egress.sock",
+      "--loopback",
+      "8722:/bridge/loopback-8722.sock",
+      "/usr/bin/node",
+      "actor.mjs",
+    ]);
+    expect(launch.environment.NO_PROXY).toBe("127.0.0.1,localhost");
+  });
+
+  it("refuses a Linux loopback port without its relay socket", () => {
+    expect(() =>
+      buildLinuxSandboxArgv(
+        { ...policy, loopbackPorts: [8722] },
+        ["/usr/bin/node", "actor.mjs"],
+        "/usr/bin/bwrap",
+        "/scratch/egress.sock",
+      ),
+    ).toThrow(/relay socket/i);
+    expect(() =>
+      buildLinuxSandboxArgv(
+        { ...policy, loopbackPorts: [3128] },
+        ["/usr/bin/node", "actor.mjs"],
+        "/usr/bin/bwrap",
+        "/scratch/egress.sock",
+        undefined,
+        [{ port: 3128, socketPath: "/bridge/loopback-3128.sock" }],
+      ),
+    ).toThrow(/3128/);
+  });
+
   it("builds a Linux rootless mount namespace without exposing the host root", () => {
     const launch = buildLinuxSandboxArgv(
       policy,
@@ -94,6 +195,39 @@ describe("direct sandbox launchers", () => {
 
     expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/lib", "/lib"]));
     expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/lib64", "/lib64"]));
+  });
+
+  it("restores /bin when usrmerge canonicalizes it to usr/bin, so /bin/sh resolves", () => {
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, network: "none", readOnlyPaths: ["/repo", "/usr", "/usr/bin"] },
+      ["/usr/bin/node", "actor.mjs"],
+      "/usr/bin/bwrap",
+    );
+
+    expect(launch.argv).toEqual(expect.arrayContaining(["--symlink", "usr/bin", "/bin"]));
+  });
+
+  it("does not alias /bin when a lexical path beneath it is granted", () => {
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, network: "none", readOnlyPaths: ["/repo", "/usr", "/usr/bin", "/bin/sh"] },
+      ["/bin/sh", "-c", "true"],
+      "/usr/bin/bwrap",
+    );
+
+    // Bubblewrap would otherwise try to create --dir /bin on top of the alias symlink.
+    expect(launch.argv.join("\0")).not.toContain("--symlink\0usr/bin\0/bin");
+    expect(launch.argv).toEqual(expect.arrayContaining(["--ro-bind", "/bin/sh", "/bin/sh"]));
+  });
+
+  it("keeps a real /bin mount instead of aliasing it", () => {
+    const launch = buildLinuxSandboxArgv(
+      { ...policy, network: "none", readOnlyPaths: ["/repo", "/usr", "/usr/bin", "/bin"] },
+      ["/usr/bin/node", "actor.mjs"],
+      "/usr/bin/bwrap",
+    );
+
+    expect(launch.argv.join("\0")).not.toContain("--symlink\0usr/bin\0/bin");
+    expect(launch.argv).toEqual(expect.arrayContaining(["--ro-bind", "/bin", "/bin"]));
   });
 
   it("restores lib64 when usrmerge canonicalizes it to usr/lib", () => {

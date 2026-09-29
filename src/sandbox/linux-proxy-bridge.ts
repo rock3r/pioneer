@@ -6,15 +6,7 @@ export interface LinuxProxyBridge {
   close(): Promise<void>;
 }
 
-export async function startLinuxProxyBridge(
-  proxyUrl: string,
-  socketPath: string,
-): Promise<LinuxProxyBridge> {
-  const target = new URL(proxyUrl);
-  const port = Number(target.port);
-  if (target.protocol !== "http:" || target.hostname !== "127.0.0.1" || !Number.isInteger(port)) {
-    throw new Error("Linux sandbox bridge target must be a loopback HTTP proxy");
-  }
+async function startUnixRelay(socketPath: string, port: number): Promise<LinuxProxyBridge> {
   await unlink(socketPath).catch(() => undefined);
   const connections = new Set<net.Socket>();
   const server = net.createServer((downstream) => {
@@ -50,4 +42,27 @@ export async function startLinuxProxyBridge(
       await unlink(socketPath).catch(() => undefined);
     },
   };
+}
+
+export async function startLinuxProxyBridge(
+  proxyUrl: string,
+  socketPath: string,
+): Promise<LinuxProxyBridge> {
+  const target = new URL(proxyUrl);
+  const port = Number(target.port);
+  if (target.protocol !== "http:" || target.hostname !== "127.0.0.1" || !Number.isInteger(port)) {
+    throw new Error("Linux sandbox bridge target must be a loopback HTTP proxy");
+  }
+  return await startUnixRelay(socketPath, port);
+}
+
+/** Relays one operator-allowed host loopback port into the actor's network namespace. */
+export async function startLinuxLoopbackBridge(
+  port: number,
+  socketPath: string,
+): Promise<LinuxProxyBridge> {
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`Linux sandbox loopback port is invalid: ${port}`);
+  }
+  return await startUnixRelay(socketPath, port);
 }

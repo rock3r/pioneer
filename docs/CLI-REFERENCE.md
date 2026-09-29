@@ -218,6 +218,9 @@ pioneer eval run --run-dir DIR
   [--deny-read-probe PATH]...
   [--timeout-ms N]
   [--work-log FILE]
+  [--allow-loopback HOST:PORT]...
+  [--env NAME=VALUE]...
+  [--pi-extension PATH]...
   -- COMMAND [ARG ...]
 ```
 
@@ -231,7 +234,13 @@ Immediately after opening the controller-owned work log, Pioneer prints `[PIONEE
 
 Eval failures return nonzero. Stable stderr diagnostics are `[EVAL_FIXTURE_LEAK]` when prepare would stage a path or content marker that leaks the expected finding, `[EVAL_TIMEOUT]` for timeout, `[EVAL_INTERRUPTED]` for SIGINT/SIGTERM, `[EVAL_SPAWN_FAILED]` for sandbox launch failure, `[EVAL_SHEBANG_RESOLUTION_FAILED]` for a cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` interpreter chain, `[EVAL_PROCESS_CONTAINMENT_FAILED]` when inherited pipes prevent proving the process tree stopped, `[EVAL_OUTPUT_LIMIT]` when the output bound is exceeded, and the work-log failures described above. These diagnostics do not print the actor environment, Pi configuration, or authenticated proxy URL.
 
-When the actor executable is Pi, fast-start flags are added automatically and skills are disabled. The writable run directory and read-only runtime paths must all be narrow and non-overlapping. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, temporary, variable-data, and home roots, are rejected after canonicalization; narrowly selected read-only system runtimes and disposable temporary descendants remain supported. Eval networking is always public-only.
+When the actor executable is Pi, fast-start flags are added automatically and skills are disabled. The writable run directory and read-only runtime paths must all be narrow and non-overlapping. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, temporary, variable-data, and home roots, are rejected after canonicalization; narrowly selected read-only system runtimes and disposable temporary descendants remain supported. Eval networking is public-only unless `--allow-loopback` opens exact host ports.
+
+`--allow-loopback HOST:PORT` is repeatable and lets the actor reach one host loopback port directly, for skills that drive a local app through a local bridge. `HOST` must be `127.0.0.1` or `localhost`; at most 16 distinct ports are accepted, and ranges, wildcards, other addresses, and IPv6 are rejected with `[EVAL_LOOPBACK_TARGET_INVALID]` before the run directory is read. On macOS the Seatbelt profile allows outbound TCP to exactly those loopback ports. On Linux a controller-owned Unix socket relays each port into the actor's network namespace, where the supervisor listens on `127.0.0.1:PORT`; port 3128 is reserved there for the proxy relay. The actor receives `NO_PROXY=127.0.0.1,localhost` so proxy-aware clients connect directly; the proxy still refuses loopback, and every unlisted port stays closed. The mandatory loopback probe still runs against a port outside the allow list, and the work log records the allowed targets.
+
+`--env NAME=VALUE` is repeatable and passes a variable to the actor only. Names must be letters, digits, and underscores; names Pioneer controls (`PATH`, `HOME`, `TMPDIR`, proxy variables, `NODE_OPTIONS`, TLS configuration, the Windows runtime variables, and every `PI_*` or `PIONEER_*` name, case-insensitively) and duplicates are rejected with `[EVAL_ACTOR_ENV_INVALID]`. At most 64 variables of up to 32 KiB each, and 64 KiB in total, are accepted. The work log records variable names, never values.
+
+`--pi-extension PATH` is repeatable, up to 8 times, and loads one Pi extension file or package directory that keeps its tools, for example an MCP adapter. It requires the trusted official Pi package as the actor. A directory resolves like Pi does, from a `package.json` `pi.extensions` list or an `index.ts`/`index.js`, and every entry must stay inside it. Pioneer stages the source read-only with its ancestor `node_modules`, under the same location policy as an explicit `--extension`, and passes the staged copy with `--extension`. Only that copy keeps its tools; enabled user extensions and `-e` extensions stay tool-stripped. The same extension may not also be enabled in Pi or passed with `-e` (`[PI_EXTENSION_TOOL_SOURCE_INVALID]`); add `--no-extensions` to the Pi command in that case. Put configuration the extension needs, such as an `mcp.json`, in the run directory and pass its flag on the Pi command.
 
 ## `pioneer eval install-linux`
 
@@ -253,7 +262,7 @@ The command must run as root. It installs a root-owned copy of `/usr/bin/bwrap` 
 | `LANG`, `LC_ALL` | Preserved when present |
 | `PIONEER_DEBUG` | Enables limited proxy diagnostics; never enable in routine use |
 
-Run-local `HOME`, `TMPDIR`, proxy variables, `PI_OFFLINE`, and `PI_TELEMETRY` are set by the controller. Arbitrary host environment variables are not passed into sandboxed actors.
+Run-local `HOME`, `TMPDIR`, proxy variables, `PI_OFFLINE`, and `PI_TELEMETRY` are set by the controller. Arbitrary host environment variables are not passed into sandboxed actors; `eval run --env` passes only the variables it names.
 
 ## `pioneer deep-review`
 

@@ -43,3 +43,44 @@ export async function macosRuntimeReadPaths(executable: string): Promise<string[
   }
   return [...roots];
 }
+
+const MACOS_SELECT_ROOT = "/private/var/select";
+const COMMAND_LINE_TOOLS = "/Library/Developer/CommandLineTools";
+const XCODE_PREFERENCES = "/Library/Preferences/com.apple.dt.Xcode.plist";
+const XCODE_DEVELOPER_DIR = /^(\/Applications\/[^/]+\.app)\/Contents\/Developer$/;
+
+/**
+ * `/bin/sh` reads its shell choice from `/private/var/select/sh`, and the `/usr/bin` Git
+ * shim reads `developer_dir` there and then runs the selected toolchain. Grant the selector
+ * and that toolchain read-only, but only for Command Line Tools or an Xcode bundle.
+ */
+export async function macosSystemToolReadPaths(
+  platform: NodeJS.Platform = process.platform,
+  resolve: (candidate: string) => Promise<string> = realpath,
+): Promise<string[]> {
+  if (platform !== "darwin") return [];
+  let selectRoot: string;
+  try {
+    selectRoot = await resolve(MACOS_SELECT_ROOT);
+  } catch {
+    return [];
+  }
+  if (selectRoot !== MACOS_SELECT_ROOT) return [];
+  let developerDir: string;
+  try {
+    developerDir = await resolve(path.posix.join(MACOS_SELECT_ROOT, "developer_dir"));
+  } catch {
+    return [selectRoot];
+  }
+  if (developerDir === COMMAND_LINE_TOOLS) return [selectRoot, developerDir];
+  // Xcode's tools read the bundle's Info.plist and load its SharedFrameworks, so grant the
+  // whole application bundle read-only rather than only Contents/Developer.
+  const xcodeBundle = XCODE_DEVELOPER_DIR.exec(developerDir)?.[1];
+  if (xcodeBundle === undefined) return [selectRoot];
+  // xcrun checks Xcode license acceptance in this one preferences file and exits 69 when
+  // it cannot read it; Command Line Tools skip that check.
+  const preferences = await resolve(XCODE_PREFERENCES).catch(() => undefined);
+  return preferences === XCODE_PREFERENCES
+    ? [selectRoot, xcodeBundle, preferences]
+    : [selectRoot, xcodeBundle];
+}

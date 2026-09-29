@@ -13,6 +13,12 @@ export interface EvalRunSpec {
   readonly command: readonly [string, ...string[]];
   readonly runtimeReadPaths?: readonly string[];
   readonly piHomeSource?: string;
+  /** Exact host loopback ports the actor may reach directly; see parseLoopbackTargets. */
+  readonly allowedLoopbackPorts?: readonly number[];
+  /** Extra actor variables from parseActorEnvironment; Pioneer-controlled names win. */
+  readonly environment?: Readonly<Record<string, string>>;
+  /** Pi extension files or package directories whose tools the actor keeps. */
+  readonly toolExtensionPaths?: readonly string[];
 }
 
 export interface ValidatedEvalRunSpec {
@@ -34,6 +40,7 @@ export interface EvalSandboxConfigOptions {
   readonly runtimeReadPaths: readonly string[];
   readonly writableScratchPaths?: readonly string[];
   readonly parentProxyUrl: string;
+  readonly loopbackPorts?: readonly number[];
 }
 
 export interface EvalIsolatedPiHomePaths {
@@ -1192,5 +1199,8 @@ export function buildEvalSandboxConfig(options: EvalSandboxConfigOptions): Sandb
     writablePaths: [options.runDir, ...writableScratchPaths],
     network: "proxy",
     proxyUrl: options.parentProxyUrl,
+    ...(options.loopbackPorts === undefined || options.loopbackPorts.length === 0
+      ? {}
+      : { loopbackPorts: options.loopbackPorts }),
   };
 }

@@ -4,6 +4,10 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Let `pioneer eval run` actors on macOS open `/dev/null`, so Pi's `bash` tool no longer fails with `spawn EPERM` and Git, shell redirections, and child processes with ignored stdio work ([#86](https://github.com/rock3r/pioneer/issues/86), [#87](https://github.com/rock3r/pioneer/issues/87)). Eval runs also grant `/private/var/select` and the selected Command Line Tools or Xcode developer directory read-only, so `/bin/sh` and `/usr/bin/git` work without extra `--runtime-read` flags. On usrmerged Linux, the sandbox restores the `/bin` alias so `/bin/sh` resolves.
+- Add repeatable `eval run --allow-loopback 127.0.0.1:PORT` to let an actor reach exact local ports, such as a desktop app's HTTP bridge ([#88](https://github.com/rock3r/pioneer/issues/88)). Other loopback ports stay closed, the mandatory loopback probe still runs, and the work log records the allowed ports.
+- Add repeatable `eval run --env NAME=VALUE` for actor variables, refusing names Pioneer controls and logging names only, and `eval run --pi-extension PATH` to load one Pi extension file or package directory, such as an MCP adapter, whose tools the actor keeps ([#89](https://github.com/rock3r/pioneer/issues/89)).
+
 ## 0.3.6 - 2026-09-24
 
 - Load enabled user extensions inside `pioneer eval run` so an extension-registered model provider that works in normal Pi also resolves in the eval sandbox. Ambient discovery stays off, extension tools stay stripped, and `--no-extensions` on the Pi command keeps built-in providers only. OAuth refresh uses the same broker as reviews, including that built-in-only opt-out. An explicit `--extension` or `-e` beside that opt-out still goes through the tool-stripping adapter. Built-in-only reviews launch Pi's canonical file so an external `pi` symlink is not required inside the sandbox. Eval snapshots still have no `--pi-home-include`.

@@ -135,3 +135,35 @@ describe("pioneer eval usage", () => {
     expect(output.stdout.join("")).toContain("run --run-dir DIR");
   });
 });
+
+describe("pioneer eval run actor options", () => {
+  it("documents the loopback, environment and tool-extension options", async () => {
+    const output = capture();
+
+    await runEvalCli(["--help"], "pioneer eval", output.write);
+
+    const usage = output.stdout.join("");
+    expect(usage).toContain("[--allow-loopback HOST:PORT]...");
+    expect(usage).toContain("[--env NAME=VALUE]...");
+    expect(usage).toContain("[--pi-extension PATH]...");
+  });
+
+  it.each([
+    ["--allow-loopback", "10.0.0.1:8722", /EVAL_LOOPBACK_TARGET_INVALID/],
+    ["--allow-loopback", "127.0.0.1:0", /EVAL_LOOPBACK_TARGET_INVALID/],
+    ["--env", "PATH=/tmp", /EVAL_ACTOR_ENV_INVALID/],
+    ["--env", "NO_EQUALS", /EVAL_ACTOR_ENV_INVALID/],
+  ])("rejects %s %s before touching the run directory", async (flag, value, expected) => {
+    const output = capture();
+    const missingRunDir = path.join(await createTempDir("pioneer-eval-cli-"), "absent");
+
+    await expect(
+      runEvalCli(
+        ["run", "--run-dir", missingRunDir, flag, value, "--", "node", "actor.mjs"],
+        "pioneer eval",
+        output.write,
+      ),
+    ).rejects.toThrow(expected);
+    expect(output.stderr).toEqual([]);
+  });
+});
