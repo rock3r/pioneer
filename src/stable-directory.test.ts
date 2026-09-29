@@ -91,6 +91,21 @@ describe.skipIf(process.platform === "win32")("creating output directories (#98)
     }
   });
 
+  it("refuses a missing folder that appears as a link right after the check", async () => {
+    const root = await realpath(await createTempDir("pioneer-stable-create-after-check-"));
+    const elsewhere = path.join(root, "elsewhere");
+    await mkdir(elsewhere);
+    const raced = path.join(root, "raced");
+    await expect(
+      createStableDirectory(path.join(raced, "logs"), process.platform, "Label", undefined, {
+        afterCheck: async () => {
+          await symlink(elsewhere, raced);
+        },
+      }),
+    ).rejects.toThrow(/Label is not a stable directory/);
+    await expect(lstat(path.join(elsewhere, "logs"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("refuses a missing folder that turns into a link before it is created", async () => {
     const root = await realpath(await createTempDir("pioneer-stable-create-race-"));
     const elsewhere = path.join(root, "elsewhere");

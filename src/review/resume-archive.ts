@@ -16,7 +16,7 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { assertStableDirectoryChain } from "../stable-directory.js";
+import { assertStableDirectoryChain, createStableDirectory } from "../stable-directory.js";
 import type { StoredReviewNetworkMode } from "./isolation.js";
 import {
   isActiveReviewReportReservation,
@@ -139,7 +139,9 @@ export async function prepareDefaultReviewResumeDirectory(
   const prospectiveRoot = await canonicalProspectivePathForContainment(resumeRoot);
   await assertResumeRootDisjoint(prospectiveRoot, options.actorVisiblePaths ?? []);
   const parent = pathApi.dirname(applicationDirectory);
-  if (options.create !== false) await mkdir(parent, { recursive: true, mode: 0o700 });
+  if (options.create !== false) {
+    await createStableDirectory(parent, platform, "Review application-data parent");
+  }
   await assertStableApplicationDataParent(parent, platform);
   if (options.create === false) {
     const stats = await lstat(applicationDirectory);
@@ -783,7 +785,7 @@ export async function prepareValidatedDefaultReviewReportPath(
   );
   await validateTarget(target, [applicationDirectory, directory]);
   const applicationParent = platformPath(platform).dirname(applicationDirectory);
-  await mkdir(applicationParent, { recursive: true, mode: 0o700 });
+  await createStableDirectory(applicationParent, platform, "Review application-data parent");
   await assertStableApplicationDataParent(applicationParent, platform);
   await privateDirectory(applicationDirectory);
   await assertStableApplicationDataParent(applicationParent, platform);

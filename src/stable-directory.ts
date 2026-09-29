@@ -1,3 +1,4 @@
+import type { Stats } from "node:fs";
 import { lstat, mkdir, realpath } from "node:fs/promises";
 import path from "node:path";
 
@@ -27,7 +28,7 @@ export async function assertStableDirectoryChain(
   platform: NodeJS.Platform,
   label: string,
 ): Promise<void> {
-  if (platform === "win32") return;
+  if (platform === "win32" || process.platform === "win32") return;
   const stats = await lstat(directory);
   if (stats.isSymbolicLink() || !stats.isDirectory()) {
     throw new Error(`${label} is not a stable directory: ${directory}`);
@@ -79,6 +80,50 @@ export async function assertStableDirectoryChain(
   }
 }
 
+interface ExistingAncestor {
+  readonly path: string;
+  readonly stats: Stats;
+  /** Folders below `path`, outermost first, that do not exist yet. */
+  readonly missing: readonly string[];
+}
+
+async function nearestExistingAncestor(target: string): Promise<ExistingAncestor> {
+  const missing: string[] = [];
+  let existing = path.resolve(target);
+  for (;;) {
+    try {
+      return { path: existing, stats: await lstat(existing), missing };
+    } catch (error) {
+      const parent = path.dirname(existing);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === existing) throw error;
+      missing.unshift(existing);
+      existing = parent;
+    }
+  }
+}
+
+async function assertStableExistingAncestor(
+  ancestor: ExistingAncestor,
+  platform: NodeJS.Platform,
+  label: string,
+  currentUid: number | undefined,
+): Promise<void> {
+  if (!ancestor.stats.isSymbolicLink()) {
+    await assertStableDirectoryChain(ancestor.path, platform, label);
+    return;
+  }
+  if (currentUid === undefined || !isTrustedApplicationDataOwner(ancestor.stats.uid, currentUid)) {
+    throw new Error(`${label} has an untrusted owner: ${ancestor.path}`);
+  }
+  await assertStableDirectoryChain(path.dirname(ancestor.path), platform, label);
+  await assertStableDirectoryChain(await realpath(ancestor.path), platform, label);
+}
+
+function hostLacksOwnership(platform: NodeJS.Platform): boolean {
+  // Ownership is a property of this host's filesystem; Windows has no POSIX owner or mode bits.
+  return platform === "win32" || process.platform === "win32";
+}
+
 /**
  * The same rules for a path Pioneer will create: the nearest existing folder is checked through
  * both its lexical and canonical chains before anything is created. A linked ancestor must itself
@@ -91,61 +136,39 @@ export async function assertStableProspectiveDirectory(
   label: string,
   currentUid: number | undefined = process.getuid?.(),
 ): Promise<void> {
-  if (platform === "win32") return;
-  let existing = path.resolve(target);
-  let stats: Awaited<ReturnType<typeof lstat>>;
-  for (;;) {
-    try {
-      stats = await lstat(existing);
-      break;
-    } catch (error) {
-      const parent = path.dirname(existing);
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === existing) throw error;
-      existing = parent;
-    }
-  }
-  if (!stats.isSymbolicLink()) {
-    await assertStableDirectoryChain(existing, platform, label);
-    return;
-  }
-  if (currentUid === undefined || !isTrustedApplicationDataOwner(stats.uid, currentUid)) {
-    throw new Error(`${label} has an untrusted owner: ${existing}`);
-  }
-  await assertStableDirectoryChain(path.dirname(existing), platform, label);
-  await assertStableDirectoryChain(await realpath(existing), platform, label);
+  if (hostLacksOwnership(platform)) return;
+  await assertStableExistingAncestor(
+    await nearestExistingAncestor(target),
+    platform,
+    label,
+    currentUid,
+  );
 }
 
 /**
  * Creates a directory for private output one folder at a time. The existing part of the path is
- * checked first; each missing folder is then created without recursion and inspected before the
- * next is created, so a link or foreign folder that appears after the check is refused instead
- * of followed. `beforeCreate` exists for tests that simulate that race.
+ * found and checked once; every folder below it is then created without recursion and inspected
+ * before the next, so a link or foreign folder that appears after the check is refused instead
+ * of followed. The hooks exist for tests that simulate those races.
  */
 export async function createStableDirectory(
   directory: string,
   platform: NodeJS.Platform,
   label: string,
   currentUid: number | undefined = process.getuid?.(),
-  hooks: { readonly beforeCreate?: (component: string) => Promise<void> } = {},
+  hooks: {
+    readonly afterCheck?: () => Promise<void>;
+    readonly beforeCreate?: (component: string) => Promise<void>;
+  } = {},
 ): Promise<void> {
-  if (platform === "win32") {
+  if (hostLacksOwnership(platform)) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     return;
   }
-  await assertStableProspectiveDirectory(directory, platform, label, currentUid);
-  const missing: string[] = [];
-  for (let existing = path.resolve(directory); ; ) {
-    try {
-      await lstat(existing);
-      break;
-    } catch (error) {
-      const parent = path.dirname(existing);
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || parent === existing) throw error;
-      missing.unshift(existing);
-      existing = parent;
-    }
-  }
-  for (const component of missing) {
+  const ancestor = await nearestExistingAncestor(directory);
+  await assertStableExistingAncestor(ancestor, platform, label, currentUid);
+  await hooks.afterCheck?.();
+  for (const component of ancestor.missing) {
     await hooks.beforeCreate?.(component);
     try {
       await mkdir(component, { mode: 0o700 });
