@@ -1,4 +1,4 @@
-import { constants } from "node:fs";
+import { type BigIntStats, constants } from "node:fs";
 import { type FileHandle, open } from "node:fs/promises";
 import { createFixtureContentScanner, fixtureContentLeakError } from "./fixture-leak.js";
 
@@ -85,9 +85,13 @@ function changedError(relativePath: string): Error {
   );
 }
 
+/** Everything a staged copy inherits: the file's identity, size, content time and mode. */
+function identityOf(details: BigIntStats): string {
+  return `${details.dev}:${details.ino}:${details.size}:${details.mtimeNs}:${details.mode & 0o777n}`;
+}
+
 async function fixtureIdentity(handle: FileHandle): Promise<string> {
-  const details = await handle.stat({ bigint: true });
-  return `${details.dev}:${details.ino}:${details.size}:${details.mtimeNs}`;
+  return identityOf(await handle.stat({ bigint: true }));
 }
 
 async function stageFromHandle(
@@ -147,7 +151,7 @@ export async function openEvalFixture(
       );
     }
     if (details.size > BigInt(maxBytes)) throw tooLargeError(relativePath, maxBytes);
-    identity = `${details.dev}:${details.ino}:${details.size}:${details.mtimeNs}`;
+    identity = identityOf(details);
     if (expectedIdentity !== undefined && identity !== expectedIdentity) {
       throw changedError(relativePath);
     }

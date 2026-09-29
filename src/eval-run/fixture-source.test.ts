@@ -68,6 +68,20 @@ describe("openEvalFixture", () => {
     ).rejects.toThrow(/\[EVAL_FIXTURE_CHANGED\].*evals\/files\/panel\.kt/);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "treats a permission change after validation as a changed fixture",
+    async () => {
+      const { source } = await createSource("#!/bin/sh\n");
+      const validated = await openEvalFixture(source, "evals/files/run.sh");
+      const identity = validated.identity;
+      await validated.close();
+      await chmod(source, 0o755);
+      await expect(
+        openEvalFixture(source, "evals/files/run.sh", undefined, identity),
+      ).rejects.toThrow(/\[EVAL_FIXTURE_CHANGED\]/);
+    },
+  );
+
   it("rejects a leaking content marker when it opens the fixture", async () => {
     const { source } = await createSource("// todo: the off-by-one\n");
 
