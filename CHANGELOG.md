@@ -4,6 +4,12 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.4.4 - 2026-09-29
+
+- Certify Pi `0.99.1` as the newest tested compatibility endpoint after reviewing the [0.99.0](https://github.com/earendil-works/pi/releases/tag/v0.99.0) and [0.99.1](https://github.com/earendil-works/pi/releases/tag/v0.99.1) releases. The required CLI options and thinking levels are unchanged, and the minimum stays `0.80.6`. The compatibility smoke, the extension integration test, a sandboxed review, and an eval run with `--stdout-file` all passed with Pi 0.99.1 on macOS.
+- Pi 0.99 adds built-in extensions (`builtin:mcp`, `builtin:codemode`, `builtin:tool-search`, and the `builtin:llama.cpp` provider), and its `--no-extensions` now disables them too. Pioneer always passes `--no-extensions` and loads only the staged user extensions, so these built-in extensions are not available in reviews or evals. A model from the llama.cpp provider therefore does not resolve through Pioneer.
+- 0.4.3 was tagged but not published: its release stopped at the check that requires the newest Pi to be certified. 0.4.4 is the first release with the 0.4.3 changes.
+
 ## 0.4.3 - 2026-09-29
 
 - Refuse a `--report`, `--work-log`, `--stdout-file`, or `--stderr-file` target below a folder that another user owns or can change, unless the folder is sticky like `/tmp` ([#98](https://github.com/rock3r/pioneer/issues/98)). Before this, another user with write access to such a folder could swap it for a link into the sandboxed actor's files between Pioneer's check and the file creation. This applies to macOS and Linux reviews and evals. The error names the folder, for example `Eval stdout file parent is writable by another user: PATH`.
