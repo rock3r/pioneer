@@ -1,15 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import {
-  closeSync,
-  constants,
-  createReadStream,
-  fstatSync,
-  lstatSync,
-  openSync,
-  unlinkSync,
-  writeSync,
-} from "node:fs";
+import { closeSync, constants, createReadStream, openSync, writeSync } from "node:fs";
 import {
   access,
   lstat,
@@ -591,46 +582,36 @@ async function sandboxAndCapture(
   );
 }
 
-/** Opens each requested output file create-only; closes and removes any it created on failure. */
+/**
+ * Opens each requested output file create-only. When a later file fails, the earlier ones
+ * are closed but kept: deleting by path could remove a file another process put there.
+ */
 export function openEvalOutputFiles(targets: {
   readonly stdout?: string;
   readonly stderr?: string;
 }): EvalOutputSinks {
   const opened: { stdout?: number; stderr?: number } = {};
-  const created = new Map<string, string>();
-  try {
-    for (const name of ["stdout", "stderr"] as const) {
-      const target = targets[name];
-      if (target === undefined) continue;
-      try {
-        const descriptor = openSync(
-          target,
-          constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-          0o600,
-        );
-        opened[name] = descriptor;
-        const identity = fstatSync(descriptor, { bigint: true });
-        created.set(target, `${identity.dev}:${identity.ino}`);
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code ?? "unknown";
-        throw new Error(
-          `[EVAL_OUTPUT_FILE_CREATE_FAILED] Eval ${name} file could not be created (${code}): ${target}`,
-        );
-      }
+  for (const name of ["stdout", "stderr"] as const) {
+    const target = targets[name];
+    if (target === undefined) continue;
+    try {
+      opened[name] = openSync(
+        target,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+        0o600,
+      );
+    } catch (error) {
+      closeEvalOutputFiles(opened);
+      const code = (error as NodeJS.ErrnoException).code ?? "unknown";
+      const left = name === "stderr" && opened.stdout !== undefined ? targets.stdout : undefined;
+      throw new Error(
+        `[EVAL_OUTPUT_FILE_CREATE_FAILED] Eval ${name} file could not be created (${code}): ${target}${
+          left === undefined
+            ? ""
+            : `. The stdout file was created and is left empty at ${left}; remove it before retrying`
+        }`,
+      );
     }
-  } catch (error) {
-    closeEvalOutputFiles(opened);
-    // The actor never starts, so remove what this call created and let a retry reuse the
-    // paths. A path that now names another file was replaced, and is left alone.
-    for (const [target, identity] of created) {
-      try {
-        const current = lstatSync(target, { bigint: true });
-        if (current.isFile() && `${current.dev}:${current.ino}` === identity) unlinkSync(target);
-      } catch {
-        // Already gone or unreadable: nothing of ours to remove.
-      }
-    }
-    throw error;
   }
   return opened;
 }

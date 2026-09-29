@@ -213,7 +213,7 @@ describe("eval process capture", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "removes an output file it created when the other one cannot be created",
+    "names an output file it created when the other one cannot be created",
     async () => {
       const dir = await createTempDir("pioneer-eval-output-");
       const locked = path.join(dir, "locked");
@@ -221,13 +221,19 @@ describe("eval process capture", () => {
       await chmod(locked, 0o500);
       const stdoutTarget = path.join(dir, "stdout.jsonl");
       try {
-        expect(() =>
-          openEvalOutputFiles({ stdout: stdoutTarget, stderr: path.join(locked, "stderr.log") }),
-        ).toThrow(/EVAL_OUTPUT_FILE_CREATE_FAILED.*stderr/);
+        let message = "";
+        try {
+          openEvalOutputFiles({ stdout: stdoutTarget, stderr: path.join(locked, "stderr.log") });
+        } catch (error) {
+          message = String(error);
+        }
+        expect(message).toMatch(/EVAL_OUTPUT_FILE_CREATE_FAILED.*stderr/);
+        // Deleting by path could remove a replacement, so the empty file stays and is named.
+        expect(message).toContain(`left empty at ${stdoutTarget}; remove it before retrying`);
       } finally {
         await chmod(locked, 0o700);
       }
-      await expect(stat(stdoutTarget)).rejects.toMatchObject({ code: "ENOENT" });
+      expect((await stat(stdoutTarget)).size).toBe(0);
     },
   );
 
