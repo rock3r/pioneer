@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   appendFile,
   chmod,
@@ -82,6 +83,28 @@ describe("openEvalFixture", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")(
+    "treats a same-length rewrite with a restored mtime as a changed fixture",
+    async () => {
+      const { root, source } = await createSource("class Panel\n");
+      const reference = path.join(root, "reference");
+      await writeFile(reference, "");
+      execFileSync("touch", ["-r", source, reference]);
+      const validated = await openEvalFixture(source, "evals/files/panel.kt");
+      const identity = validated.identity;
+      await validated.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await writeFile(source, "class Other\n");
+      execFileSync("touch", ["-r", reference, source]);
+      expect((await stat(source, { bigint: true })).mtimeNs).toBe(
+        (await stat(reference, { bigint: true })).mtimeNs,
+      );
+      await expect(
+        openEvalFixture(source, "evals/files/panel.kt", undefined, identity),
+      ).rejects.toThrow(/\[EVAL_FIXTURE_CHANGED\]/);
+    },
+  );
+
   it("rejects a leaking content marker when it opens the fixture", async () => {
     const { source } = await createSource("// todo: the off-by-one\n");
 
@@ -92,7 +115,7 @@ describe("openEvalFixture", () => {
 
   // Windows refuses to rename over a file that is open, so this swap cannot happen there.
   it.skipIf(process.platform === "win32")(
-    "stages the bytes it scanned even after the path is replaced",
+    "never stages a replacement swapped in at the path after the scan",
     async () => {
       const { root, source, out } = await createSource("class Panel\n");
       const opened = await openEvalFixture(source, "evals/files/panel.kt");
@@ -101,9 +124,11 @@ describe("openEvalFixture", () => {
         await writeFile(replacement, "// BUG: swapped in after the scan\n");
         await rename(replacement, source);
 
+        // The descriptor still reads the scanned file, but unlinking it changed its ctime,
+        // so prepare fails closed instead of staging bytes from a source that moved.
         const destination = path.join(out, "panel.kt");
-        await opened.stageTo(destination);
-        expect(await readFile(destination, "utf8")).toBe("class Panel\n");
+        await expect(opened.stageTo(destination)).rejects.toThrow(/\[EVAL_FIXTURE_CHANGED\]/);
+        expect(await readFile(destination, "utf8")).toBe("");
       } finally {
         await opened.close();
       }

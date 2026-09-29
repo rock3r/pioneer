@@ -85,9 +85,12 @@ function changedError(relativePath: string): Error {
   );
 }
 
-/** Everything a staged copy inherits: the file's identity, size, content time and mode. */
+/**
+ * Everything a staged copy inherits: the file's identity, size, and mode. ctime covers any
+ * write or chmod, including one that restores the modification time, since it cannot be set.
+ */
 function identityOf(details: BigIntStats): string {
-  return `${details.dev}:${details.ino}:${details.size}:${details.mtimeNs}:${details.mode & 0o777n}`;
+  return `${details.dev}:${details.ino}:${details.size}:${details.mtimeNs}:${details.ctimeNs}:${details.mode & 0o777n}`;
 }
 
 async function fixtureIdentity(handle: FileHandle): Promise<string> {
