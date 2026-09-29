@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, realpath, symlink, truncate, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -108,6 +109,42 @@ describe("--pi-extension source resolution (#89)", () => {
       );
     }
   });
+
+  it("bounds and type-checks a package manifest before resolving entries (#92)", async () => {
+    const oversized = await packageDir({
+      "package.json": JSON.stringify({
+        pi: { extensions: ["./index.js"] },
+        pad: "x".repeat(70_000),
+      }),
+      "index.js": "",
+    });
+    await expect(resolveToolExtensionSource(oversized)).rejects.toThrow(
+      /PI_EXTENSION_TOOL_SOURCE_INVALID.*package\.json.*65536 bytes/,
+    );
+    const manyEntries = await packageDir({
+      "package.json": JSON.stringify({
+        pi: { extensions: Array.from({ length: 33 }, (_, index) => `./e${index}.js`) },
+      }),
+    });
+    await expect(resolveToolExtensionSource(manyEntries)).rejects.toThrow(
+      /PI_EXTENSION_TOOL_SOURCE_INVALID.*at most 32 pi\.extensions entries/,
+    );
+    const directoryManifest = await packageDir({ "package.json/placeholder": "", "index.js": "" });
+    await expect(resolveToolExtensionSource(directoryManifest)).rejects.toThrow(
+      /PI_EXTENSION_TOOL_SOURCE_INVALID.*package\.json.*regular file/,
+    );
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a FIFO manifest without blocking on it (#92)",
+    async () => {
+      const dir = await packageDir({ "index.js": "" });
+      execFileSync("mkfifo", [path.join(dir, "package.json")]);
+      await expect(resolveToolExtensionSource(dir)).rejects.toThrow(
+        /PI_EXTENSION_TOOL_SOURCE_INVALID.*package\.json.*regular file/,
+      );
+    },
+  );
 
   it("accepts distinct sibling tool extensions", async () => {
     const first = await packageDir({ "index.ts": "" });

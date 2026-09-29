@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Refuse `eval run --env __proto__=...` with `[EVAL_ACTOR_ENV_INVALID]`. It was accepted but silently dropped ([#93](https://github.com/rock3r/pioneer/issues/93)).
+- Check a `--pi-extension` package's `package.json` before resolving its entries. It must be a regular file of at most 64 KiB with at most 32 `pi.extensions` entries. A FIFO named `package.json` no longer blocks preflight ([#92](https://github.com/rock3r/pioneer/issues/92)).
 - Add `eval run --stdout-file FILE` and `--stderr-file FILE`. Pioneer streams that actor stream to a new file instead of memory, bounded at 1 GiB instead of 4 MiB or 64 KiB. Use them for `pi --mode json` runs, which repeat every image as base64. The file must be absent and outside every actor grant, like `--work-log`.
 - Name the stream in `[EVAL_OUTPUT_LIMIT]`, for example `Eval actor stdout exceeded the 4194304-byte limit; pass --stdout-file PATH to stream it to a file`.
 - Document why macOS Xcode shims such as `/usr/bin/git` print an `xcrun_db` cache warning in evals, and how an MCP server can read files from the real home directory.
