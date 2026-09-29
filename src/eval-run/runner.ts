@@ -1,6 +1,15 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, createReadStream, openSync, rmSync, writeSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  createReadStream,
+  fstatSync,
+  lstatSync,
+  openSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import {
   access,
   lstat,
@@ -588,16 +597,20 @@ export function openEvalOutputFiles(targets: {
   readonly stderr?: string;
 }): EvalOutputSinks {
   const opened: { stdout?: number; stderr?: number } = {};
+  const created = new Map<string, string>();
   try {
     for (const name of ["stdout", "stderr"] as const) {
       const target = targets[name];
       if (target === undefined) continue;
       try {
-        opened[name] = openSync(
+        const descriptor = openSync(
           target,
           constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
           0o600,
         );
+        opened[name] = descriptor;
+        const identity = fstatSync(descriptor, { bigint: true });
+        created.set(target, `${identity.dev}:${identity.ino}`);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code ?? "unknown";
         throw new Error(
@@ -607,10 +620,15 @@ export function openEvalOutputFiles(targets: {
     }
   } catch (error) {
     closeEvalOutputFiles(opened);
-    // The actor never starts, so remove what this call created and let a retry reuse the paths.
-    for (const name of ["stdout", "stderr"] as const) {
-      const target = targets[name];
-      if (opened[name] !== undefined && target !== undefined) rmSync(target, { force: true });
+    // The actor never starts, so remove what this call created and let a retry reuse the
+    // paths. A path that now names another file was replaced, and is left alone.
+    for (const [target, identity] of created) {
+      try {
+        const current = lstatSync(target, { bigint: true });
+        if (current.isFile() && `${current.dev}:${current.ino}` === identity) unlinkSync(target);
+      } catch {
+        // Already gone or unreadable: nothing of ours to remove.
+      }
     }
     throw error;
   }

@@ -111,6 +111,22 @@ describe("openEvalFixture", () => {
     }
   });
 
+  it("removes a copy when the file changed while it was staged", async () => {
+    const { source, out } = await createSource("class Panel\n");
+    const opened = await openEvalFixture(source, "evals/files/panel.kt");
+    try {
+      await appendFile(source, "val clean = true\n");
+
+      const destination = path.join(out, "panel.kt");
+      await expect(opened.stageTo(destination)).rejects.toThrow(
+        /\[EVAL_FIXTURE_CHANGED\].*evals\/files\/panel\.kt/,
+      );
+      await expect(access(destination)).rejects.toThrow();
+    } finally {
+      await opened.close();
+    }
+  });
+
   it("stages the same opened file into several destinations", async () => {
     const { source, out } = await createSource("class Panel\n");
     const opened = await openEvalFixture(source, "evals/files/panel.kt");

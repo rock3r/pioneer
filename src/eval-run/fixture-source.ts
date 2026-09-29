@@ -79,11 +79,23 @@ async function writeFully(target: FileHandle, chunk: Buffer): Promise<void> {
   }
 }
 
+function changedError(relativePath: string): Error {
+  return new Error(
+    `[EVAL_FIXTURE_CHANGED] Fixture changed after validation; retry when it is stable: ${relativePath}`,
+  );
+}
+
+async function fixtureIdentity(handle: FileHandle): Promise<string> {
+  const details = await handle.stat({ bigint: true });
+  return `${details.dev}:${details.ino}:${details.size}:${details.mtimeNs}`;
+}
+
 async function stageFromHandle(
   source: FileHandle,
   relativePath: string,
   maxBytes: number,
   mode: number,
+  identity: string,
   destination: string,
 ): Promise<void> {
   let target: FileHandle;
@@ -96,6 +108,8 @@ async function stageFromHandle(
   }
   try {
     await scanEvalFixture(source, relativePath, maxBytes, (chunk) => writeFully(target, chunk));
+    // An in-place edit during the copy could mix old and new bytes; refuse that copy.
+    if ((await fixtureIdentity(source)) !== identity) throw changedError(relativePath);
     // The umask narrows the create mode; restore the source bits as a copy would.
     await target.chmod(mode);
   } catch (error) {
@@ -133,9 +147,7 @@ export async function openEvalFixture(
     if (details.size > BigInt(maxBytes)) throw tooLargeError(relativePath, maxBytes);
     identity = `${details.dev}:${details.ino}:${details.size}:${details.mtimeNs}`;
     if (expectedIdentity !== undefined && identity !== expectedIdentity) {
-      throw new Error(
-        `[EVAL_FIXTURE_CHANGED] Fixture changed after validation; retry when it is stable: ${relativePath}`,
-      );
+      throw changedError(relativePath);
     }
     // A reopened fixture is rescanned while it is staged, so only validation scans here.
     if (expectedIdentity === undefined) await scanEvalFixture(handle, relativePath, maxBytes);
@@ -146,7 +158,8 @@ export async function openEvalFixture(
   }
   return {
     identity,
-    stageTo: (destination) => stageFromHandle(handle, relativePath, maxBytes, mode, destination),
+    stageTo: (destination) =>
+      stageFromHandle(handle, relativePath, maxBytes, mode, identity, destination),
     close: () => handle.close(),
   };
 }
