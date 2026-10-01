@@ -44,7 +44,7 @@ describe("Pi readiness", () => {
       "entry 1 (compose-pi/provider.ts): missing dependency @earendil-works/pi-ai/dist/compat.js/api/openai-completions";
     const result = await checkPiReadiness({
       runner: runnerWith([
-        { exitCode: 0, stdout: "0.99.1", stderr: "" },
+        { exitCode: 0, stdout: "0.99.2", stderr: "" },
         {
           exitCode: 1,
           stdout: "",
@@ -219,7 +219,7 @@ else process.exitCode = 2;
 
   it("warns but remains ready for a newer untested Pi", async () => {
     const runner = runnerWith([
-      { exitCode: 0, stdout: "0.99.2\n", stderr: "" },
+      { exitCode: 0, stdout: "0.99.3\n", stderr: "" },
       {
         exitCode: 0,
         stdout:
@@ -237,7 +237,7 @@ else process.exitCode = 2;
 
   it("remains ready for the tested maximum without a warning", async () => {
     const runner = runnerWith([
-      { exitCode: 0, stdout: "0.99.1\n", stderr: "" },
+      { exitCode: 0, stdout: "0.99.2\n", stderr: "" },
       {
         exitCode: 0,
         stdout:
@@ -249,7 +249,7 @@ else process.exitCode = 2;
     const result = await checkPiReadiness({ runner });
 
     expect(result.ready).toBe(true);
-    expect(result.version).toBe("0.99.1");
+    expect(result.version).toBe("0.99.2");
     expect(result.warning).toBeUndefined();
     expect(result.errors).toEqual([]);
   });
