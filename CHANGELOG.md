@@ -4,6 +4,7 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Certify Pi `1.0.0` as the newest tested compatibility endpoint after reviewing the [1.0.0](https://github.com/earendil-works/pi/releases/tag/v1.0.0) release. The required CLI options and thinking levels are unchanged, and the minimum stays `0.80.6`. TUI fullscreen-by-default, `--tui-mode`, MCP OAuth/Radius, and codemode changes stay outside Pioneer because reviews and evals use `--mode rpc` and `--no-extensions`. `--provider` without `--model` now fails in Pi; Pioneer still selects a qualified `--model`. `npm run pi:compat:latest` and the compatibility smoke both passed for `0.80.6` and `1.0.0`.
 - Certify Pi `0.99.2` as the newest tested compatibility endpoint after reviewing the [0.99.2](https://github.com/earendil-works/pi/releases/tag/v0.99.2) release. The required CLI options and thinking levels are unchanged, and the minimum stays `0.80.6`. MCP, codemode, and `pi mcp` command additions stay disabled in Pioneer because reviews and evals pass `--no-extensions`. `npm run pi:compat:latest` and the compatibility smoke both passed for `0.80.6` and `0.99.2`.
 
 ## 0.4.4 - 2026-09-29
