@@ -105,7 +105,7 @@ async function launchStructuredActor(
     capabilityExtensions,
   );
   try {
-    await assertPiReady({
+    const readiness = await assertPiReady({
       command,
       preparedRuntime: runtime,
       environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -154,6 +154,7 @@ async function launchStructuredActor(
         noSession: false,
         sessionDir,
         tools: deepReviewActorTools(request.includePresidentTools),
+        piVersion: readiness.version,
       }),
       [...runtime.extensions.command, "--pioneer-inspection-extension", inspectionExtension],
     );

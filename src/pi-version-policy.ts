@@ -40,6 +40,8 @@ export const PI_MINIMUM_VERSION = policy.minimum;
 export const PI_TESTED_MAXIMUM_VERSION = policy.testedMaximum;
 export const PI_REQUIRED_CLI_OPTIONS = policy.requiredCliOptions as readonly string[];
 export const PI_REQUIRED_THINKING_LEVELS = policy.requiredThinkingLevels as readonly string[];
+/** Pi 1.0.4 introduced `--no-mcp`. Older endpoints in the supported range do not accept it. */
+const PI_NO_MCP_VERSION = "1.0.4";
 
 const SEMVER =
   /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -95,8 +97,16 @@ function requiredSemanticVersion(value: string): SemanticVersion {
 
 const parsedMinimum = requiredSemanticVersion(PI_MINIMUM_VERSION);
 const parsedMaximum = requiredSemanticVersion(PI_TESTED_MAXIMUM_VERSION);
+const parsedNoMcp = requiredSemanticVersion(PI_NO_MCP_VERSION);
 if (compareVersions(parsedMinimum, parsedMaximum) > 0) {
   throw new Error("Pi compatibility policy minimum exceeds its tested maximum");
+}
+
+export function piSupportsNoMcpFlag(version: string | undefined): boolean {
+  if (version === undefined) return false;
+  const parsed = parseSemanticVersion(version);
+  if (parsed === undefined) return false;
+  return compareVersions(parsed, parsedNoMcp) >= 0;
 }
 
 export function validatePiVersion(version: string): PiVersionValidation {

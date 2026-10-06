@@ -1,4 +1,5 @@
 import type { PiLaunchCommand } from "./pi-command.js";
+import { piSupportsNoMcpFlag } from "./pi-version-policy.js";
 
 export interface OptimizedPiStartup {
   readonly command: readonly [string, ...string[]];
@@ -13,6 +14,7 @@ export interface PiStartupOptions {
   readonly noSession?: boolean;
   readonly sessionDir?: string;
   readonly resumeSession?: string;
+  readonly piVersion?: string;
 }
 
 export function applyResolvedPiLaunch(
@@ -140,6 +142,9 @@ export function optimizePiStartupCommand(
     !hasAny(optionArgs, ["--tools", "-t", "--no-tools", "-nt", "--no-builtin-tools", "-nbt"])
   ) {
     additions.push("--tools", options.tools.join(","));
+  }
+  if (piSupportsNoMcpFlag(options.piVersion) && !hasAny(optionArgs, ["--no-mcp"])) {
+    additions.push("--no-mcp");
   }
   if (options.disableSkills && !hasAny(optionArgs, ["--no-skills", "--skill"])) {
     additions.push("--no-skills");

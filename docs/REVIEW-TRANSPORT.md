@@ -76,6 +76,7 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 - `--no-approve`;
 - `--no-extensions` plus explicit paths from the enabled user snapshot, preventing ambient or project-local discovery;
 - Linux: `--tools read,bash,grep,find,ls`; macOS and opt-in Windows: `--tools read,ls`;
+- `--no-mcp` on Pi 1.0.4 or newer, because `--tools` keeps MCP tools unless an entry starts with `mcp__`;
 - `--no-prompt-templates`;
 - `--no-themes`;
 - `PI_OFFLINE=1`;

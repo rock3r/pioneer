@@ -187,4 +187,42 @@ describe("Pi startup optimization", () => {
       }).command,
     ).not.toContain("--no-session");
   });
+
+  it("injects --no-mcp for Pi 1.0.4+ because --tools no longer drops MCP tools", () => {
+    expect(
+      optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+        disableExtensions: true,
+        tools: ["read", "ls"],
+        piVersion: "1.0.4",
+      }).command,
+    ).toEqual([
+      "pi",
+      "--offline",
+      "--no-session",
+      "--no-approve",
+      "--no-prompt-templates",
+      "--no-themes",
+      "--no-extensions",
+      "--tools",
+      "read,ls",
+      "--no-mcp",
+      "--mode",
+      "rpc",
+    ]);
+  });
+
+  it("does not inject --no-mcp below Pi 1.0.4 or when the command already has it", () => {
+    expect(
+      optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+        disableExtensions: true,
+        tools: ["read", "ls"],
+        piVersion: "1.0.3",
+      }).command,
+    ).not.toContain("--no-mcp");
+    expect(
+      optimizePiStartupCommand(["pi", "--mode", "rpc", "--no-mcp"], {
+        piVersion: "1.0.4",
+      }).command.filter((value) => value === "--no-mcp"),
+    ).toHaveLength(1);
+  });
 });

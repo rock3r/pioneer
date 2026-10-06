@@ -1587,6 +1587,7 @@ async function runReviewInternal(
           disableExtensions: true,
           extensions: preparedRuntime.extensions.paths,
           tools: reviewTools(),
+          piVersion: readiness.version,
           ...(resumeContext !== undefined && resumeArchive !== undefined
             ? { resumeSession: await findReviewResumeSessionFile(resumeArchive.activeAttemptDir) }
             : resumeArchive === undefined
