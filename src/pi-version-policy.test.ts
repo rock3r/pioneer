@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PI_MINIMUM_VERSION,
   PI_TESTED_MAXIMUM_VERSION,
+  piSupportsNoMcpFlag,
   validatePiVersion,
 } from "./pi-version-policy.js";
 
@@ -22,16 +23,16 @@ describe("Pi version policy", () => {
   });
 
   it("accepts the newly certified tested maximum without a warning", () => {
-    expect(validatePiVersion("1.0.2")).toEqual({
-      version: "1.0.2",
+    expect(validatePiVersion("1.0.4")).toEqual({
+      version: "1.0.4",
     });
   });
 
   it("warns without failing for versions newer than the tested maximum", () => {
-    expect(validatePiVersion("1.0.3")).toEqual({
-      version: "1.0.3",
+    expect(validatePiVersion("1.0.5")).toEqual({
+      version: "1.0.5",
       warning:
-        "[PI_VERSION_UNTESTED] Pi 1.0.3 is newer than the newest version tested with this Pioneer release (1.0.2). Continuing because the CLI contract may still be compatible.",
+        "[PI_VERSION_UNTESTED] Pi 1.0.5 is newer than the newest version tested with this Pioneer release (1.0.4). Continuing because the CLI contract may still be compatible.",
     });
   });
 
@@ -39,7 +40,16 @@ describe("Pi version policy", () => {
     expect(validatePiVersion("development")).toEqual({
       version: "development",
       error:
-        "[PI_VERSION_UNRECOGNIZED] Pi returned an unrecognized version: development. Install a released Pi version between 0.80.6 and 1.0.2, or newer with a compatibility warning.",
+        "[PI_VERSION_UNRECOGNIZED] Pi returned an unrecognized version: development. Install a released Pi version between 0.80.6 and 1.0.4, or newer with a compatibility warning.",
     });
+  });
+
+  it("reports --no-mcp support only for Pi 1.0.4 and newer", () => {
+    expect(piSupportsNoMcpFlag(undefined)).toBe(false);
+    expect(piSupportsNoMcpFlag("0.80.6")).toBe(false);
+    expect(piSupportsNoMcpFlag("1.0.3")).toBe(false);
+    expect(piSupportsNoMcpFlag("1.0.4")).toBe(true);
+    expect(piSupportsNoMcpFlag("1.0.5")).toBe(true);
+    expect(piSupportsNoMcpFlag("development")).toBe(false);
   });
 });

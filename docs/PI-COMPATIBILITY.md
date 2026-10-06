@@ -2,7 +2,7 @@
 
 Pioneer treats Pi's command-line interface as a versioned external contract. The authoritative range and required capabilities live in [`pi-compatibility.json`](../pi-compatibility.json).
 
-The current supported range is Pi `0.80.6` through `1.0.2`, inclusive. Older versions fail with `PI_VERSION_TOO_OLD`. A newer semantic version is allowed with `PI_VERSION_UNTESTED` on stderr and in doctor machine output so users are not blocked merely because Pi published first. Resumable reviews additionally require the stored exact Pi version to match on resume.
+The current supported range is Pi `0.80.6` through `1.0.4`, inclusive. Older versions fail with `PI_VERSION_TOO_OLD`. A newer semantic version is allowed with `PI_VERSION_UNTESTED` on stderr and in doctor machine output so users are not blocked merely because Pi published first. Resumable reviews additionally require the stored exact Pi version to match on resume.
 
 ## Why the minimum is 0.80.6
 
@@ -48,6 +48,6 @@ Pioneer parses the first line of `pi --version` as SemVer before model discovery
 
 Resume is stricter than a new review: the stored exact Pi version must match the current readiness version. A newer or older binary therefore receives `[REVIEW_RESUME_PI_VERSION_MISMATCH]` until a fresh review creates a new archive under the reviewed compatibility contract.
 
-Deep review loads Pioneer's bundled inspection extension with `--extension PATH` while `--no-extensions` disables discovery. Explicit `--extension` paths remain honored under disabled discovery. Deep review actors also pass `--no-builtin-tools` and a tool allowlist containing only inspection-extension tool names.
+Deep review loads Pioneer's bundled inspection extension with `--extension PATH` while `--no-extensions` disables discovery. Explicit `--extension` paths remain honored under disabled discovery. Deep review actors also pass `--no-builtin-tools` and a tool allowlist containing only inspection-extension tool names. Review, deep-review, and eval Pi actors pass `--no-mcp` on Pi 1.0.4 or newer; a tool-restricted Pi actor with no known version at launch fails closed with `[PI_NO_MCP_VERSION_UNKNOWN]`. Custom non-Pi eval actors are not given that flag.
 
 A binary claiming an in-range version but missing `--no-approve` fails with `PI_CLI_INCOMPATIBLE`. The compatibility smoke catches official-package regressions; users should reinstall an official Pi release if a custom or stale standalone binary diverges from its reported version.

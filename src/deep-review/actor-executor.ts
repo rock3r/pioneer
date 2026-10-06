@@ -9,7 +9,11 @@ import { cleanupReviewRuntime, prepareReviewRuntime } from "../pi-extension-disc
 import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
-import { applyResolvedPiLaunch, optimizePiStartupCommand } from "../pi-startup.js";
+import {
+  applyPiVersionToStartup,
+  applyResolvedPiLaunch,
+  optimizePiStartupCommand,
+} from "../pi-startup.js";
 import { buildReviewSandboxConfig, validateReviewPaths } from "../review/isolation.js";
 import {
   createReviewScratchDirectory,
@@ -105,7 +109,7 @@ async function launchStructuredActor(
     capabilityExtensions,
   );
   try {
-    await assertPiReady({
+    const readiness = await assertPiReady({
       command,
       preparedRuntime: runtime,
       environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -146,16 +150,20 @@ async function launchStructuredActor(
       actorEnvironment: {},
     });
 
-    const optimized = applyResolvedPiLaunch(
-      optimizePiStartupCommand(baseCommand, {
-        disableExtensions: true,
-        disableSkills: true,
-        extensions: extensionPathsWithCapabilities(runtime.extensions, capabilityExtensions),
-        noSession: false,
-        sessionDir,
-        tools: deepReviewActorTools(request.includePresidentTools),
-      }),
-      [...runtime.extensions.command, "--pioneer-inspection-extension", inspectionExtension],
+    const optimized = applyPiVersionToStartup(
+      applyResolvedPiLaunch(
+        optimizePiStartupCommand(baseCommand, {
+          disableExtensions: true,
+          disableSkills: true,
+          extensions: extensionPathsWithCapabilities(runtime.extensions, capabilityExtensions),
+          noSession: false,
+          sessionDir,
+          tools: deepReviewActorTools(request.includePresidentTools),
+          ...(readiness.version === undefined ? {} : { piVersion: readiness.version }),
+        }),
+        [...runtime.extensions.command, "--pioneer-inspection-extension", inspectionExtension],
+      ),
+      readiness.version,
     );
 
     const actorEnvironment = deepReviewActorEnvironment(
