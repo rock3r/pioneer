@@ -5,6 +5,11 @@ import { piSupportsNoMcpFlag } from "./pi-version-policy.js";
 export interface OptimizedPiStartup {
   readonly command: readonly [string, ...string[]];
   readonly environment: Readonly<Record<string, string>>;
+  /**
+   * True when Pioneer constructed this as a Pi actor command. Wrapping with a Node
+   * launcher preserves this flag so later `--no-mcp` injection does not sniff argv.
+   */
+  readonly piActor: boolean;
 }
 
 export interface PiStartupOptions {
@@ -28,6 +33,7 @@ export function applyResolvedPiLaunch(
   return {
     command: [...launcher, ...optimized.command.slice(1)],
     environment: optimized.environment,
+    piActor: true,
   };
 }
 
@@ -70,7 +76,7 @@ export function optimizePiStartupCommand(
   command: readonly [string, ...string[]],
   options: PiStartupOptions = {},
 ): OptimizedPiStartup {
-  if (!isPiExecutable(command[0])) return { command, environment: {} };
+  if (!isPiExecutable(command[0])) return { command, environment: {}, piActor: false };
 
   const args = command.slice(1);
   const delimiter = args.indexOf("--");
@@ -154,24 +160,13 @@ export function optimizePiStartupCommand(
   return {
     command: [command[0], ...additions, ...args],
     environment: PI_STARTUP_ENVIRONMENT,
+    piActor: true,
   };
 }
 
 function startupOptionArgs(command: readonly string[]): readonly string[] {
   const delimiter = command.indexOf("--");
   return delimiter < 0 ? command : command.slice(0, delimiter);
-}
-
-function requiresNoMcpPolicy(command: readonly [string, ...string[]]): boolean {
-  if (isPiExecutable(command[0])) return true;
-  return hasAny(startupOptionArgs(command), [
-    "--tools",
-    "-t",
-    "--no-builtin-tools",
-    "-nbt",
-    "--no-extensions",
-    "-ne",
-  ]);
 }
 
 function insertNoMcpFlag(command: readonly [string, ...string[]]): [string, ...string[]] {
@@ -190,17 +185,18 @@ function insertNoMcpFlag(command: readonly [string, ...string[]]): [string, ...s
  * that extension staging has wrapped with a Node launcher. Pioneer must call this after
  * readiness, including deferred eval extension readiness and `--pi-home` probes.
  *
- * Tool-restricted and Pioneer-hardened Pi actors fail closed when the version is still
- * unknown: Pi 1.0.4 keeps MCP tools under `--tools` unless an entry starts with `mcp__`,
- * so skipping `--no-mcp` would silently expose MCP.
+ * Identity comes from `piActor`, which wrapping preserves. Custom eval actors are not
+ * classified by flags such as `--tools`. Pioneer-hardened Pi actors fail closed when the
+ * version is still unknown: Pi 1.0.4 keeps MCP tools under `--tools` unless an entry
+ * starts with `mcp__`, so skipping `--no-mcp` would silently expose MCP.
  */
 export function applyPiVersionToStartup(
   optimized: OptimizedPiStartup,
   piVersion: string | undefined,
 ): OptimizedPiStartup {
   const command = [optimized.command[0], ...optimized.command.slice(1)] as [string, ...string[]];
+  if (!optimized.piActor) return optimized;
   if (hasAny(startupOptionArgs(command), ["--no-mcp"])) return optimized;
-  if (!requiresNoMcpPolicy(command)) return optimized;
   if (piVersion === undefined) {
     throw new Error(
       diagnosticMessage(
@@ -213,13 +209,15 @@ export function applyPiVersionToStartup(
   return {
     command: insertNoMcpFlag(command),
     environment: optimized.environment,
+    piActor: true,
   };
 }
 
 export function applyPiVersionToStartupCommand(
   command: readonly [string, ...string[]],
   piVersion: string | undefined,
+  piActor: boolean,
 ): [string, ...string[]] {
-  const next = applyPiVersionToStartup({ command, environment: {} }, piVersion).command;
+  const next = applyPiVersionToStartup({ command, environment: {}, piActor }, piVersion).command;
   return [next[0], ...next.slice(1)];
 }

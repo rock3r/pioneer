@@ -1413,7 +1413,11 @@ async function runEvalCommandWithInterruption(
         warning: readiness.warning !== undefined,
       });
       optimizedPi = applyPiVersionToStartup(optimizedPi, readiness.version);
-      sandboxCommand = applyPiVersionToStartupCommand(sandboxCommand, readiness.version);
+      sandboxCommand = applyPiVersionToStartupCommand(
+        sandboxCommand,
+        readiness.version,
+        optimizedPi.piActor,
+      );
     }
     throwIfEvalInterrupted(interruption);
     const controllerTempRoot =
@@ -1559,11 +1563,19 @@ async function runEvalCommandWithInterruption(
             warning: readiness.warning !== undefined,
           });
           optimizedPi = applyPiVersionToStartup(optimizedPi, readiness.version);
-          sandboxCommand = applyPiVersionToStartupCommand(sandboxCommand, readiness.version);
+          sandboxCommand = applyPiVersionToStartupCommand(
+            sandboxCommand,
+            readiness.version,
+            optimizedPi.piActor,
+          );
         }
       }
       throwIfSetupInterrupted();
-      sandboxCommand = applyPiVersionToStartupCommand(sandboxCommand, readiness?.version);
+      sandboxCommand = applyPiVersionToStartupCommand(
+        sandboxCommand,
+        readiness?.version,
+        optimizedPi.piActor,
+      );
       optimizedPi = applyPiVersionToStartup(optimizedPi, readiness?.version);
       await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
       await writeFile(probeScript, PROBE_SOURCE, { flag: "wx", mode: 0o500 });

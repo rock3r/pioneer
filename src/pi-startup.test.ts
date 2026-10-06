@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyPiVersionToStartup,
+  applyPiVersionToStartupCommand,
   applyResolvedPiLaunch,
   optimizePiStartupCommand,
 } from "./pi-startup.js";
@@ -19,6 +20,7 @@ describe("Pi startup optimization", () => {
         "rpc",
       ],
       environment: { PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+      piActor: true,
     });
   });
 
@@ -55,6 +57,7 @@ describe("Pi startup optimization", () => {
         "name",
       ],
       environment: { PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+      piActor: true,
     });
   });
 
@@ -83,6 +86,7 @@ describe("Pi startup optimization", () => {
     expect(optimizePiStartupCommand(command)).toEqual({
       command,
       environment: {},
+      piActor: false,
     });
   });
 
@@ -153,6 +157,7 @@ describe("Pi startup optimization", () => {
         "rpc",
       ],
       environment: { PI_OFFLINE: "1", PI_TELEMETRY: "0" },
+      piActor: true,
     });
   });
 
@@ -305,6 +310,7 @@ describe("applyPiVersionToStartup after eval readiness", () => {
     const actor = {
       command: [process.execPath, "-e", "process.exit(0)"] as const,
       environment: {},
+      piActor: false,
     };
     expect(applyPiVersionToStartup(actor, undefined)).toEqual(actor);
   });
@@ -344,5 +350,43 @@ describe("applyPiVersionToStartup after eval readiness", () => {
     expect(wrapped.command).not.toContain("--no-mcp");
     expect(applyPiVersionToStartup(wrapped, "1.0.4").command).toContain("--no-mcp");
     expect(applyPiVersionToStartup(wrapped, "1.0.2").command).not.toContain("--no-mcp");
+  });
+
+  it("does not treat custom actor flags as Pi identity", () => {
+    for (const extra of [["--tools", "read"], ["-t", "read"], ["--no-extensions"]] as const) {
+      const command = [process.execPath, "actor.mjs", ...extra] as [string, ...string[]];
+      const actor = optimizePiStartupCommand(command);
+      expect(applyPiVersionToStartup(actor, "1.0.4")).toEqual(actor);
+      expect(applyPiVersionToStartup(actor, undefined)).toEqual(actor);
+      expect(applyPiVersionToStartupCommand(command, "1.0.4", false)).toEqual(command);
+      expect(applyPiVersionToStartupCommand(command, undefined, false)).toEqual(command);
+    }
+  });
+
+  it("applies --no-mcp to wrapped argv only when Pi identity is carried", () => {
+    const wrapped = ["/usr/bin/node", "/tmp/adapter.js", "--no-extensions", "--no-skills"] as [
+      string,
+      ...string[],
+    ];
+    expect(applyPiVersionToStartupCommand(wrapped, "1.0.4", true)).toEqual(
+      expect.arrayContaining(["--no-mcp"]),
+    );
+    expect(applyPiVersionToStartupCommand(wrapped, "1.0.4", false)).toEqual(wrapped);
+    expect(() => applyPiVersionToStartupCommand(wrapped, undefined, false)).not.toThrow();
+  });
+
+  it("preserves Pi identity when a launcher wraps the command", () => {
+    const staged = applyResolvedPiLaunch(
+      optimizePiStartupCommand(["pi", "--print", "OK"], evalStartup),
+      ["/usr/bin/node", "/tmp/adapter.js"],
+    );
+    expect(staged.piActor).toBe(true);
+    expect(staged.command[0]).toBe("/usr/bin/node");
+    expect(applyPiVersionToStartupCommand(staged.command, "1.0.4", staged.piActor)).toContain(
+      "--no-mcp",
+    );
+    expect(() => applyPiVersionToStartup(staged, undefined)).toThrow(
+      /\[PI_NO_MCP_VERSION_UNKNOWN\]/,
+    );
   });
 });
