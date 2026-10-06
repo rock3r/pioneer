@@ -1,3 +1,4 @@
+import { diagnosticMessage } from "./diagnostics.js";
 import type { PiLaunchCommand } from "./pi-command.js";
 import { piSupportsNoMcpFlag } from "./pi-version-policy.js";
 
@@ -154,4 +155,71 @@ export function optimizePiStartupCommand(
     command: [command[0], ...additions, ...args],
     environment: PI_STARTUP_ENVIRONMENT,
   };
+}
+
+function startupOptionArgs(command: readonly string[]): readonly string[] {
+  const delimiter = command.indexOf("--");
+  return delimiter < 0 ? command : command.slice(0, delimiter);
+}
+
+function requiresNoMcpPolicy(command: readonly [string, ...string[]]): boolean {
+  if (isPiExecutable(command[0])) return true;
+  return hasAny(startupOptionArgs(command), [
+    "--tools",
+    "-t",
+    "--no-builtin-tools",
+    "-nbt",
+    "--no-extensions",
+    "-ne",
+  ]);
+}
+
+function insertNoMcpFlag(command: readonly [string, ...string[]]): [string, ...string[]] {
+  const delimiter = command.indexOf("--");
+  if (delimiter >= 0) {
+    return [...command.slice(0, delimiter), "--no-mcp", ...command.slice(delimiter)] as [
+      string,
+      ...string[],
+    ];
+  }
+  return [...command, "--no-mcp"];
+}
+
+/**
+ * Apply version-gated `--no-mcp` to an already-optimized Pi command, including commands
+ * that extension staging has wrapped with a Node launcher. Pioneer must call this after
+ * readiness, including deferred eval extension readiness and `--pi-home` probes.
+ *
+ * Tool-restricted and Pioneer-hardened Pi actors fail closed when the version is still
+ * unknown: Pi 1.0.4 keeps MCP tools under `--tools` unless an entry starts with `mcp__`,
+ * so skipping `--no-mcp` would silently expose MCP.
+ */
+export function applyPiVersionToStartup(
+  optimized: OptimizedPiStartup,
+  piVersion: string | undefined,
+): OptimizedPiStartup {
+  const command = [optimized.command[0], ...optimized.command.slice(1)] as [string, ...string[]];
+  if (hasAny(startupOptionArgs(command), ["--no-mcp"])) return optimized;
+  if (!requiresNoMcpPolicy(command)) return optimized;
+  if (piVersion === undefined) {
+    throw new Error(
+      diagnosticMessage(
+        "PI_NO_MCP_VERSION_UNKNOWN",
+        "Pioneer could not determine the Pi version before launching a tool-restricted actor, so it cannot decide whether `--no-mcp` is required.",
+      ),
+    );
+  }
+  if (!piSupportsNoMcpFlag(piVersion)) return optimized;
+  return {
+    command: insertNoMcpFlag(command),
+    environment: optimized.environment,
+  };
+}
+
+export function applyPiVersionToStartupCommand(
+  command: readonly [string, ...string[]],
+  piVersion: string | undefined,
+): [string, ...string[]] {
+  const next = applyPiVersionToStartup({ command, environment: {} }, piVersion).command;
+  return [next[0], ...next.slice(1)];
 }

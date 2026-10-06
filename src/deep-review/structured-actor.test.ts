@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { optimizePiStartupCommand } from "../pi-startup.js";
+import { applyPiVersionToStartup, optimizePiStartupCommand } from "../pi-startup.js";
 import { MIN_RPC_OUTPUT_BYTES, validateRpcOutputBytes } from "../review/rpc-limits.js";
 import { DEFAULT_MAX_MODEL_OUTPUT_BYTES } from "./config.js";
 import { deepReviewActorTools } from "./inspection-extension.js";
@@ -37,5 +37,26 @@ describe("buildStructuredActorPiCommand", () => {
     expect(optimized.command).toEqual(
       expect.arrayContaining(["--session-dir", "/scratch/session"]),
     );
+  });
+
+  it("adds --no-mcp after wrapping a 1.0.4 command and not a 1.0.2 command", () => {
+    const base = buildStructuredActorPiCommand("pi", {
+      model: "provider/model",
+      tools: deepReviewActorTools(false),
+      extensionPath: "/extensions/inspection.ts",
+      piHomeDir: "/scratch/pi-home/agent",
+      sessionDir: "/scratch/session",
+      actorEnvironment: {},
+    });
+    const optimized = optimizePiStartupCommand(base, {
+      disableExtensions: true,
+      disableSkills: true,
+      noSession: false,
+      sessionDir: "/scratch/session",
+      tools: deepReviewActorTools(false),
+    });
+    expect(optimized.command).not.toContain("--no-mcp");
+    expect(applyPiVersionToStartup(optimized, "1.0.4").command).toContain("--no-mcp");
+    expect(applyPiVersionToStartup(optimized, "1.0.2").command).not.toContain("--no-mcp");
   });
 });

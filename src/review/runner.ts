@@ -29,7 +29,11 @@ import { assertSameExtensionSnapshot } from "../pi-extension-snapshot.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
-import { applyResolvedPiLaunch, optimizePiStartupCommand } from "../pi-startup.js";
+import {
+  applyPiVersionToStartup,
+  applyResolvedPiLaunch,
+  optimizePiStartupCommand,
+} from "../pi-startup.js";
 import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../sandbox/launcher.js";
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
@@ -1582,19 +1586,22 @@ async function runReviewInternal(
       const command: [string, ...string[]] = ["pi", "--mode", "rpc"];
       if (model !== undefined) command.push("--model", model);
       if (thinking !== undefined) command.push("--thinking", thinking);
-      const optimized = applyResolvedPiLaunch(
-        optimizePiStartupCommand(command, {
-          disableExtensions: true,
-          extensions: preparedRuntime.extensions.paths,
-          tools: reviewTools(),
-          ...(readiness.version === undefined ? {} : { piVersion: readiness.version }),
-          ...(resumeContext !== undefined && resumeArchive !== undefined
-            ? { resumeSession: await findReviewResumeSessionFile(resumeArchive.activeAttemptDir) }
-            : resumeArchive === undefined
-              ? { noSession: true }
-              : { sessionDir: resumeArchive.activeAttemptDir }),
-        }),
-        preparedRuntime.extensions.command,
+      const optimized = applyPiVersionToStartup(
+        applyResolvedPiLaunch(
+          optimizePiStartupCommand(command, {
+            disableExtensions: true,
+            extensions: preparedRuntime.extensions.paths,
+            tools: reviewTools(),
+            ...(readiness.version === undefined ? {} : { piVersion: readiness.version }),
+            ...(resumeContext !== undefined && resumeArchive !== undefined
+              ? { resumeSession: await findReviewResumeSessionFile(resumeArchive.activeAttemptDir) }
+              : resumeArchive === undefined
+                ? { noSession: true }
+                : { sessionDir: resumeArchive.activeAttemptDir }),
+          }),
+          preparedRuntime.extensions.command,
+        ),
+        readiness.version,
       );
       const environment = {
         ...optimized.environment,

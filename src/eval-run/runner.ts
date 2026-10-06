@@ -37,6 +37,8 @@ import { defaultPiAgentDir, type PreparedPiHome, prepareIsolatedPiHome } from ".
 import { assertPiReady } from "../pi-readiness.js";
 import { piRuntimeStorage } from "../pi-runtime-storage.js";
 import {
+  applyPiVersionToStartup,
+  applyPiVersionToStartupCommand,
   applyResolvedPiLaunch,
   isPiExecutable,
   optimizePiStartupCommand,
@@ -902,6 +904,7 @@ async function stageEvalPiExtensions(
   runDir: string,
   controllerOnlyPaths: readonly string[] = [],
   toolExtensionSources: readonly ToolExtensionSource[] = [],
+  piVersion?: string,
 ): Promise<{
   readonly authBroker?: PiAuthBroker;
   readonly readPaths: readonly string[];
@@ -1057,6 +1060,7 @@ async function stageEvalPiExtensions(
           ...(extensionsEnabled ? extensionPathsWithCapabilities(extensions, []) : []),
           ...stagedTools.paths,
         ],
+        ...(piVersion === undefined ? {} : { piVersion }),
       }),
       [
         ...extensions.command,
@@ -1408,6 +1412,8 @@ async function runEvalCommandWithInterruption(
         stage: "pi_readiness",
         warning: readiness.warning !== undefined,
       });
+      optimizedPi = applyPiVersionToStartup(optimizedPi, readiness.version);
+      sandboxCommand = applyPiVersionToStartupCommand(sandboxCommand, readiness.version);
     }
     throwIfEvalInterrupted(interruption);
     const controllerTempRoot =
@@ -1528,6 +1534,7 @@ async function runEvalCommandWithInterruption(
           validated.runDir,
           [workLog.path, ...(options.deniedReadProbePaths ?? [])],
           toolExtensionSources,
+          readiness?.version,
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
@@ -1551,9 +1558,13 @@ async function runEvalCommandWithInterruption(
             stage: "pi_readiness",
             warning: readiness.warning !== undefined,
           });
+          optimizedPi = applyPiVersionToStartup(optimizedPi, readiness.version);
+          sandboxCommand = applyPiVersionToStartupCommand(sandboxCommand, readiness.version);
         }
       }
       throwIfSetupInterrupted();
+      sandboxCommand = applyPiVersionToStartupCommand(sandboxCommand, readiness?.version);
+      optimizedPi = applyPiVersionToStartup(optimizedPi, readiness?.version);
       await writeFile(deniedWritePath, OUTSIDE_SENTINEL_CONTENT, { flag: "wx", mode: 0o600 });
       await writeFile(probeScript, PROBE_SOURCE, { flag: "wx", mode: 0o500 });
       await writeFile(launcherScript, LAUNCHER_SOURCE, { flag: "wx", mode: 0o500 });

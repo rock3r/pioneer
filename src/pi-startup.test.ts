@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { applyResolvedPiLaunch, optimizePiStartupCommand } from "./pi-startup.js";
+import {
+  applyPiVersionToStartup,
+  applyResolvedPiLaunch,
+  optimizePiStartupCommand,
+} from "./pi-startup.js";
 
 describe("Pi startup optimization", () => {
   it("adds safe fast-start flags to Pi RPC commands", () => {
@@ -224,5 +228,121 @@ describe("Pi startup optimization", () => {
         piVersion: "1.0.4",
       }).command.filter((value) => value === "--no-mcp"),
     ).toHaveLength(1);
+  });
+});
+
+describe("applyPiVersionToStartup after eval readiness", () => {
+  const evalStartup = {
+    disableExtensions: true,
+    disableSkills: true,
+  } as const;
+
+  it("adds --no-mcp after deferred eval readiness discovers Pi 1.0.4", () => {
+    const beforeReadiness = optimizePiStartupCommand(["pi", "--print", "OK"], evalStartup);
+    expect(beforeReadiness.command).not.toContain("--no-mcp");
+
+    expect(applyPiVersionToStartup(beforeReadiness, "1.0.4").command).toEqual(
+      expect.arrayContaining(["--no-mcp"]),
+    );
+  });
+
+  it("adds --no-mcp after --pi-home eval readiness discovers Pi 1.0.4", () => {
+    const beforeReadiness = optimizePiStartupCommand(
+      ["pi", "--no-extensions", "--model", "scripted/fake-model"],
+      evalStartup,
+    );
+    expect(beforeReadiness.command).not.toContain("--no-mcp");
+
+    expect(applyPiVersionToStartup(beforeReadiness, "1.0.4").command).toContain("--no-mcp");
+  });
+
+  it("keeps --no-mcp when extension staging wraps a 1.0.4 command", () => {
+    const optimized = optimizePiStartupCommand(["pi", "--print", "OK"], evalStartup);
+    const staged = applyResolvedPiLaunch(optimized, [
+      "/usr/bin/node",
+      "/tmp/pi-extensions/adapter.js",
+    ]);
+    expect(staged.command[0]).toBe("/usr/bin/node");
+    expect(staged.command).not.toContain("--no-mcp");
+
+    expect(applyPiVersionToStartup(staged, "1.0.4").command).toEqual(
+      expect.arrayContaining(["--no-mcp", "--no-extensions", "--no-skills"]),
+    );
+    expect(applyPiVersionToStartup(staged, "1.0.4").command[0]).toBe("/usr/bin/node");
+  });
+
+  it("does not add --no-mcp for Pi 1.0.2 on deferred, --pi-home, and staged paths", () => {
+    const deferred = optimizePiStartupCommand(["pi", "--print", "OK"], evalStartup);
+    const piHome = optimizePiStartupCommand(
+      ["pi", "--no-extensions", "--model", "scripted/fake-model"],
+      evalStartup,
+    );
+    const staged = applyResolvedPiLaunch(
+      optimizePiStartupCommand(["pi", "--print", "OK"], evalStartup),
+      ["/usr/bin/node", "/tmp/pi-extensions/adapter.js"],
+    );
+
+    expect(applyPiVersionToStartup(deferred, "1.0.2").command).not.toContain("--no-mcp");
+    expect(applyPiVersionToStartup(piHome, "1.0.2").command).not.toContain("--no-mcp");
+    expect(applyPiVersionToStartup(staged, "1.0.2").command).not.toContain("--no-mcp");
+  });
+
+  it("fails closed when a tool-restricted actor still has no Pi version at launch", () => {
+    const restricted = optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+      disableExtensions: true,
+      tools: ["read", "ls"],
+    });
+    expect(() => applyPiVersionToStartup(restricted, undefined)).toThrow(
+      /\[PI_NO_MCP_VERSION_UNKNOWN\].*--no-mcp/,
+    );
+    const evalHardened = optimizePiStartupCommand(["pi", "--print", "OK"], evalStartup);
+    expect(() => applyPiVersionToStartup(evalHardened, undefined)).toThrow(
+      /\[PI_NO_MCP_VERSION_UNKNOWN\]/,
+    );
+  });
+
+  it("leaves non-Pi eval actors unchanged when the version is unknown", () => {
+    const actor = {
+      command: [process.execPath, "-e", "process.exit(0)"] as const,
+      environment: {},
+    };
+    expect(applyPiVersionToStartup(actor, undefined)).toEqual(actor);
+  });
+
+  it("does not duplicate --no-mcp when the command already has it", () => {
+    const command = optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+      disableExtensions: true,
+      tools: ["read", "ls"],
+      piVersion: "1.0.4",
+    });
+    expect(
+      applyPiVersionToStartup(command, "1.0.4").command.filter((value) => value === "--no-mcp"),
+    ).toHaveLength(1);
+  });
+
+  it("inserts --no-mcp before a `--` delimiter on a staged command", () => {
+    const staged = applyResolvedPiLaunch(
+      optimizePiStartupCommand(["pi", "--", "--no-extensions"], {
+        disableExtensions: true,
+        disableSkills: true,
+      }),
+      ["/usr/bin/node", "/tmp/adapter.js"],
+    );
+    const applied = applyPiVersionToStartup(staged, "1.0.4").command;
+    expect(applied.indexOf("--no-mcp")).toBeLessThan(applied.indexOf("--"));
+    expect(applied).toContain("--no-mcp");
+  });
+
+  it("adds --no-mcp after a review launcher wrap for Pi 1.0.4 and not for 1.0.2", () => {
+    const wrapped = applyResolvedPiLaunch(
+      optimizePiStartupCommand(["pi", "--mode", "rpc"], {
+        disableExtensions: true,
+        tools: ["read", "ls"],
+      }),
+      ["/usr/bin/node", "/pi/dist/cli.js"],
+    );
+    expect(wrapped.command).not.toContain("--no-mcp");
+    expect(applyPiVersionToStartup(wrapped, "1.0.4").command).toContain("--no-mcp");
+    expect(applyPiVersionToStartup(wrapped, "1.0.2").command).not.toContain("--no-mcp");
   });
 });
