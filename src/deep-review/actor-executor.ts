@@ -154,7 +154,7 @@ async function launchStructuredActor(
         noSession: false,
         sessionDir,
         tools: deepReviewActorTools(request.includePresidentTools),
-        piVersion: readiness.version,
+        ...(readiness.version === undefined ? {} : { piVersion: readiness.version }),
       }),
       [...runtime.extensions.command, "--pioneer-inspection-extension", inspectionExtension],
     );

@@ -1326,7 +1326,7 @@ async function runEvalCommandWithInterruption(
     let optimizedPi = optimizePiStartupCommand(startupCommand, {
       disableExtensions: true,
       disableSkills: true,
-      piVersion: readiness?.version,
+      ...(readiness?.version === undefined ? {} : { piVersion: readiness.version }),
     });
     const resolvedExecutable = await resolveEvalExecutable(
       validated.command[0],
