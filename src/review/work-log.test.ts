@@ -1124,15 +1124,17 @@ describe("review work log", () => {
     expect(sanitizeWorkLogDiagnostic("x".repeat(800))).toHaveLength(500);
   });
 
-  it("names unknown Pi event types without echoing arbitrary values", () => {
-    expect(summarizePiEvent({ type: "future_event", payload: "private" })).toEqual({
+  it("names known Pi event types it does not summarize and hashes any other type", () => {
+    expect(summarizePiEvent({ type: "queue_update", steering: ["private"] })).toEqual({
       eventType: "unrecognized",
-      unrecognizedEventType: "future_event",
+      unrecognizedEventType: "queue_update",
     });
-    expect(summarizePiEvent({ type: "token=secret-value" })).toEqual({
+    const unknown = summarizePiEvent({ type: "private_refresh_token" });
+    expect(unknown).toEqual({
       eventType: "unrecognized",
+      unrecognizedEventTypeHash: expect.stringMatching(/^[0-9a-f]{16}$/),
     });
-    expect(summarizePiEvent({ type: "x".repeat(65) })).toEqual({ eventType: "unrecognized" });
+    expect(JSON.stringify(unknown)).not.toContain("refresh");
     expect(summarizePiEvent({ payload: "no type" })).toEqual({ eventType: "unrecognized" });
   });
 

@@ -84,8 +84,16 @@ const PI_EXTENSION_UI_METHODS = new Set([
   "setTitle",
   "setWidget",
 ]);
-// A protocol identifier, not free text: short snake case only, so it cannot carry a credential.
-const UNRECOGNIZED_EVENT_TYPE_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+// Pi 1.x session event types that the work log does not summarize. Only these names are
+// logged as text; any other type is untrusted and logged as a hash.
+const PI_UNSUMMARIZED_EVENT_TYPES = new Set([
+  "compaction_end",
+  "compaction_start",
+  "entry_appended",
+  "queue_update",
+  "session_info_changed",
+  "thinking_level_changed",
+]);
 const PI_MESSAGE_UPDATE_TYPES = new Set([
   "done",
   "error",
@@ -747,9 +755,10 @@ export function summarizePiEvent(
     eventType,
   };
   if (eventType === "unrecognized") {
-    return rawEventType !== undefined && UNRECOGNIZED_EVENT_TYPE_NAME.test(rawEventType)
+    if (rawEventType === undefined) return base;
+    return PI_UNSUMMARIZED_EVENT_TYPES.has(rawEventType)
       ? { ...base, unrecognizedEventType: rawEventType }
-      : base;
+      : { ...base, unrecognizedEventTypeHash: hashedStringField(record, "type") };
   }
   if (eventType === "extension_ui_request") {
     return definedFields({
