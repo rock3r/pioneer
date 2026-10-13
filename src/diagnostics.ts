@@ -346,7 +346,8 @@ const STDERR_ERROR_HEADER = /^(?:[A-Za-z]*Error\b|Uncaught\b|\[[A-Z][A-Z0-9_]*\]
 /**
  * A short, redacted view of why Pi stopped: the last error header and its first two stack
  * frames, or the last three lines when Pi printed no recognizable error. Dependency paths
- * keep only their part below `node_modules`, and other absolute paths their last two
+ * keep only their part below `node_modules`, and other absolute paths (including Windows drive
+ * and UNC paths) their last two
  * segments, so the excerpt names the failing package without the operator's layout. Lines
  * that echo part of a sensitive value are dropped before redaction.
  */
@@ -395,9 +396,14 @@ export function stderrExcerpt(stderr: string, secrets: readonly string[] = []): 
     .filter((line) => !echoesSensitiveValue(line, secrets))
     .map((line) =>
       sanitizeDiagnostic(
+        // Windows separators become `/` first, so drive and UNC paths shorten the same way.
         line
+          .replaceAll("\\", "/")
           .replaceAll(/[^\s()]*\/node_modules\//g, "node_modules/")
-          .replaceAll(/(?<![\w.])\/(?:[^\s/():]+\/)+([^\s/():]+\/[^\s/()]+)/g, ".../$1"),
+          .replaceAll(
+            /(?<![\w.])(?:[A-Za-z]:)?\/+(?:[^\s/():]+\/)+([^\s/():]+\/[^\s/()]+)/g,
+            ".../$1",
+          ),
         secrets,
       ),
     )

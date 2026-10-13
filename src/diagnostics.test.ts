@@ -4,6 +4,7 @@ import {
   diagnosticMessage,
   parseDiagnostic,
   sanitizeDiagnostic,
+  stderrExcerpt,
 } from "./diagnostics.js";
 
 /**
@@ -859,5 +860,21 @@ describe("diagnostics", () => {
     expect(sanitized).not.toContain("private-material");
     expect(sanitized).toContain("[REDACTED]");
     expect(sanitized).toContain("request failed");
+  });
+});
+
+describe("stderr excerpts", () => {
+  it("shortens Windows drive, UNC, and node_modules paths", () => {
+    const excerpt = stderrExcerpt(
+      [
+        "Error: Cannot load C:\\Users\\Alice\\private-project\\extension.js",
+        "    at load (C:\\Users\\Alice\\AppData\\Roaming\\npm\\node_modules\\pi-subagents\\src\\a.js:1:2)",
+        "    at run (\\\\fileserver\\share\\Alice\\tools\\b.js:3:4)",
+      ].join("\r\n"),
+    );
+    expect(excerpt).toBe(
+      "Error: Cannot load .../private-project/extension.js | at load (node_modules/pi-subagents/src/a.js:1:2) | at run (.../tools/b.js:3:4)",
+    );
+    expect(excerpt).not.toMatch(/Alice|fileserver|C:/);
   });
 });

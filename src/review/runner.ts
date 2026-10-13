@@ -424,6 +424,8 @@ export interface RunReviewRpcOptions {
   readonly escalateProcess?: (child: ReturnType<typeof spawn>) => void;
   readonly startupFailureGraceMs?: number;
   readonly maxRpcOutputBytes?: number;
+  /** Receives each distinct controller-validated actor warning, such as a denied subprocess. */
+  readonly onActorWarning?: (warning: string) => void;
 }
 
 const REVIEW_NETWORK_DISABLED_MESSAGE =
@@ -765,6 +767,12 @@ function recordAssistantEventFailure(value: unknown, diagnostics: string[]): voi
   diagnostics.push(`assistant stopReason=${event.reason}`);
 }
 
+// Stderr is untrusted, so only the exact text that the extension adapter writes is accepted.
+const ACTOR_WARNING =
+  /^\[PI_EXTENSION_SUBPROCESS_DENIED\] (?:An extension|Extension [A-Za-z0-9@._~/+-]{1,160}) tried to start a subprocess, which the sandbox denies\. Pioneer kept Pi running; extension features that need subprocesses are unavailable\.$/;
+const MAX_ACTOR_WARNINGS = 8;
+const MAX_STDERR_LINE_CHARACTERS = 4096;
+
 function processOutcomeContext(
   exitCode: number | null,
   signal: NodeJS.Signals | null,
@@ -849,6 +857,24 @@ export async function runReviewRpc(
     let lastPiEvent = "process_started";
     let lastPiEventAt = Date.now();
     let stderrBytes = 0;
+    let stderrLine = "";
+    const actorWarnings = new Set<string>();
+    const acceptStderrLines = (text: string): void => {
+      const lines = (stderrLine + text).split("\n");
+      stderrLine = (lines.pop() ?? "").slice(-MAX_STDERR_LINE_CHARACTERS);
+      for (const line of lines) {
+        const warning = line.trim();
+        if (
+          !ACTOR_WARNING.test(warning) ||
+          actorWarnings.has(warning) ||
+          actorWarnings.size >= MAX_ACTOR_WARNINGS
+        )
+          continue;
+        actorWarnings.add(warning);
+        recordWorkLog("pi_actor_warning", { diagnosticCode: "PI_EXTENSION_SUBPROCESS_DENIED" });
+        options.onActorWarning?.(warning);
+      }
+    };
     const nearLimitReported = new Set<number>();
     const stopProcess = options.terminateProcess ?? terminateProcessTree;
     const escalateProcess =
@@ -1042,7 +1068,9 @@ export async function runReviewRpc(
     child.stderr.on("data", (chunk: Buffer) => {
       stderrBytes += chunk.length;
       recordWorkLog("pi_stderr", { chunkBytes: chunk.length, totalBytes: stderrBytes });
-      stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
+      const text = chunk.toString("utf8");
+      stderr = (stderr + text).slice(-64 * 1024);
+      acceptStderrLines(text);
     });
     child.once("error", (error) => {
       recordWorkLog("pi_process_error", {
@@ -1622,6 +1650,7 @@ async function runReviewInternal(
         gitContextText,
       );
       let report: string;
+      const actorWarnings: string[] = [];
       let sandboxed: boolean;
       if (windows) {
         recordReviewWorkLog(workLog, "stage_started", { stage: "pi_rpc" });
@@ -1634,6 +1663,7 @@ async function runReviewInternal(
           {
             workLog,
             sensitiveValues: [request.prompt],
+            onActorWarning: (warning) => actorWarnings.push(warning),
             maxRpcOutputBytes,
           },
         );
@@ -1691,6 +1721,7 @@ async function runReviewInternal(
           {
             workLog,
             sensitiveValues: [request.prompt],
+            onActorWarning: (warning) => actorWarnings.push(warning),
             maxRpcOutputBytes,
           },
         );
@@ -1734,11 +1765,14 @@ async function runReviewInternal(
         sandboxed,
         workLogPath: workLog.path,
         reportPath: paths.reportPath ?? "",
-        ...(windows
-          ? { warning: combineWarnings(WINDOWS_WARNING, readiness.warning) ?? WINDOWS_WARNING }
-          : readiness.warning === undefined
-            ? {}
-            : { warning: readiness.warning }),
+        ...(() => {
+          const warning = combineWarnings(
+            windows ? WINDOWS_WARNING : undefined,
+            readiness.warning,
+            ...actorWarnings,
+          );
+          return warning === undefined ? {} : { warning };
+        })(),
         ...(model === undefined ? {} : { model }),
         ...(thinking === undefined ? {} : { thinking }),
         ...(reportWriteError === undefined ? {} : { reportWriteError }),
