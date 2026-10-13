@@ -873,7 +873,13 @@ export async function runReviewRpc(
           continue;
         actorWarnings.add(warning);
         recordWorkLog("pi_actor_warning", { diagnosticCode: "PI_EXTENSION_SUBPROCESS_DENIED" });
-        options.onActorWarning?.(warning);
+        try {
+          options.onActorWarning?.(warning);
+        } catch (error) {
+          // This runs in a stream event handler, so a throw would bypass cleanup entirely.
+          terminate(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
       }
     };
     const nearLimitReported = new Set<number>();

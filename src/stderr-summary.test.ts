@@ -43,7 +43,15 @@ describe("stderr summary", () => {
         "  syscall: 'private_call'",
       ].join("\n"),
     );
-    expect(summary).toBe("error=TokenError");
+    expect(summary).toBe("error=Error");
+  });
+
+  it("drops codes, classes and diagnostics outside the fixed allowlists", () => {
+    expect(
+      stderrSummary(
+        "[PI_PRIVATE_REFRESH_TOKEN] x\nPrivateTokenError [ERR_PRIVATE_REFRESH_TOKEN]: failure\n  code: 'ERR_SECRET_VALUE'",
+      ),
+    ).toBe("error=Error");
   });
 
   it("returns nothing when stderr has no recognizable error", () => {

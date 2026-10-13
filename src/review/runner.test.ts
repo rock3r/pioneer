@@ -908,6 +908,24 @@ process.stdin.once("data", () => {
     expect(warnings).toEqual([warning]);
   });
 
+  it("fails the RPC instead of crashing when the actor-warning callback throws", async () => {
+    const warning =
+      "[PI_EXTENSION_SUBPROCESS_DENIED] An extension tried to start a subprocess, which the sandbox denies. Pioneer kept Pi running; extension features that need subprocesses are unavailable.";
+    const source = `
+process.stdin.once("data", () => {
+  process.stderr.write(${JSON.stringify(`${warning}\n`)});
+  setTimeout(() => process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n"), 200);
+});
+`;
+    await expect(
+      runReviewRpc([process.execPath, "-e", source], process.cwd(), process.env, "prompt", 2_000, {
+        onActorWarning: () => {
+          throw new Error("[DEEP_REVIEW_WORK_LOG_WRITE_FAILED] write failed");
+        },
+      }),
+    ).rejects.toThrow("[DEEP_REVIEW_WORK_LOG_WRITE_FAILED]");
+  });
+
   it("redacts a long prompt echoed to stderr before retaining the diagnostic tail", async () => {
     const prompt = `private prompt ${"x".repeat(70 * 1024)}`;
     let message = "";

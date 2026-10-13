@@ -54,17 +54,55 @@ const SYSCALLS = new Set([
   "unlink",
   "write",
 ]);
-const NODE_ERROR_CODE = /^ERR_[A-Z0-9_]{1,60}$/;
+// Node's own error codes that explain a failed Pi or extension start.
+const NODE_ERROR_CODES = new Set([
+  "ERR_IMPORT_ATTRIBUTE_MISSING",
+  "ERR_INTERNAL_ASSERTION",
+  "ERR_INVALID_ARG_TYPE",
+  "ERR_INVALID_ARG_VALUE",
+  "ERR_INVALID_PACKAGE_CONFIG",
+  "ERR_INVALID_URL",
+  "ERR_MODULE_NOT_FOUND",
+  "ERR_OUT_OF_RANGE",
+  "ERR_PACKAGE_IMPORT_NOT_DEFINED",
+  "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  "ERR_REQUIRE_ESM",
+  "ERR_STREAM_PREMATURE_CLOSE",
+  "ERR_STRING_TOO_LONG",
+  "ERR_UNHANDLED_REJECTION",
+  "ERR_UNKNOWN_FILE_EXTENSION",
+  "ERR_UNSUPPORTED_DIR_IMPORT",
+  "ERR_WORKER_OUT_OF_MEMORY",
+]);
+const ERROR_CLASSES = new Set([
+  "AbortError",
+  "AggregateError",
+  "Error",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "SystemError",
+  "TypeError",
+  "URIError",
+]);
+// The codes that Pioneer's own in-sandbox adapter and authentication client write to stderr.
+const PIONEER_CODES = new Set([
+  "PI_EXTENSION_LOAD_FAILED",
+  "PI_EXTENSION_RUNTIME_UNSUPPORTED",
+  "PI_EXTENSION_SUBPROCESS_DENIED",
+  "PI_OAUTH_REFRESH_FAILED",
+]);
 const MAX_DIAGNOSTIC_CODES = 3;
 
 function knownCode(value: string | undefined): string | undefined {
-  return value !== undefined && (ERRNO_CODES.has(value) || NODE_ERROR_CODE.test(value))
+  return value !== undefined && (ERRNO_CODES.has(value) || NODE_ERROR_CODES.has(value))
     ? value
     : undefined;
 }
 
 /**
- * Why Pi stopped, built only from allowlisted tokens: the error class, a known Node error
+ * Why Pi stopped, built only from fixed allowlists: the error class, a known Node error
  * code and syscall, the npm package in the stack, a missing module below `node_modules`, and
  * Pioneer diagnostic codes. Stderr is untrusted and can hold credentials that no pattern
  * redaction recognizes, so no free text, path, or message from it is ever returned.
@@ -98,7 +136,10 @@ export function stderrSummary(stderr: string): string {
     const frames = after.filter((entry) => entry.startsWith("at ")).join("\n");
     const extensionPackage = stackPackage(frames);
     const module = /Cannot find (?:module|package) '/.test(line) ? missingModule(line) : undefined;
-    fields.push(`error=${match?.[1] ?? "Error"}`);
+    const errorClass = match?.[1];
+    fields.push(
+      `error=${errorClass !== undefined && ERROR_CLASSES.has(errorClass) ? errorClass : "Error"}`,
+    );
     if (code !== undefined) fields.push(`code=${code}`);
     if (syscall !== undefined) fields.push(`syscall=${syscall}`);
     if (extensionPackage !== undefined) fields.push(`package=${extensionPackage}`);
@@ -106,7 +147,9 @@ export function stderrSummary(stderr: string): string {
   }
   const codes = [
     ...new Set(
-      [...stderr.matchAll(/\[((?:PI|REVIEW|EVAL)_[A-Z0-9_]{1,60})\]/g)].map((match) => match[1]),
+      [...stderr.matchAll(/\[([A-Z0-9_]{1,60})\]/g)]
+        .map((match) => match[1])
+        .filter((code) => code !== undefined && PIONEER_CODES.has(code)),
     ),
   ].slice(0, MAX_DIAGNOSTIC_CODES);
   if (codes.length > 0) fields.push(`diagnostics=${codes.join(",")}`);
