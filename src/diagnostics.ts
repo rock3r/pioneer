@@ -339,3 +339,69 @@ export function parseDiagnostic(
     ? { id: "UNCLASSIFIED_ERROR", severity, message }
     : { id: match[1] ?? "UNCLASSIFIED_ERROR", severity, message: match[2] ?? message };
 }
+
+const STDERR_EXCERPT_MAX_LENGTH = 300;
+const STDERR_ERROR_HEADER = /^(?:[A-Za-z]*Error\b|Uncaught\b|\[[A-Z][A-Z0-9_]*\])/;
+
+/**
+ * A short, redacted view of why Pi stopped: the last error header and its first two stack
+ * frames, or the last three lines when Pi printed no recognizable error. Dependency paths
+ * keep only their part below `node_modules`, and other absolute paths their last two
+ * segments, so the excerpt names the failing package without the operator's layout. Lines
+ * that echo part of a sensitive value are dropped before redaction.
+ */
+const ECHO_WINDOW = 32;
+const ECHO_STEP = 16;
+
+/**
+ * True when the line repeats at least 48 consecutive characters of a sensitive value. A
+ * provider or extension can echo a truncated prompt that exact-secret redaction misses.
+ */
+function echoesSensitiveValue(line: string, secrets: readonly string[]): boolean {
+  const long = secrets.filter((secret) => secret.length >= ECHO_WINDOW);
+  if (long.length === 0) return false;
+  for (let start = 0; start + ECHO_WINDOW <= line.length; start += ECHO_STEP) {
+    const window = line.slice(start, start + ECHO_WINDOW);
+    if (long.some((secret) => secret.includes(window))) return true;
+  }
+  return false;
+}
+
+export function stderrExcerpt(stderr: string, secrets: readonly string[] = []): string {
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  let header = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (STDERR_ERROR_HEADER.test(lines[index] ?? "")) {
+      header = index;
+      break;
+    }
+  }
+  const selected =
+    header < 0
+      ? lines.slice(-3)
+      : [
+          lines[header] ?? "",
+          ...lines
+            .slice(header + 1)
+            .filter((line) => line.startsWith("at "))
+            .slice(0, 2),
+        ];
+  // Sanitize each line on its own: a redacted credential assignment consumes the rest of
+  // its line, which must not swallow the stack frames that name the failing package.
+  return selected
+    .filter((line) => !echoesSensitiveValue(line, secrets))
+    .map((line) =>
+      sanitizeDiagnostic(
+        line
+          .replaceAll(/[^\s()]*\/node_modules\//g, "node_modules/")
+          .replaceAll(/(?<![\w.])\/(?:[^\s/():]+\/)+([^\s/():]+\/[^\s/()]+)/g, ".../$1"),
+        secrets,
+      ),
+    )
+    .filter(Boolean)
+    .join(" | ")
+    .slice(0, STDERR_EXCERPT_MAX_LENGTH);
+}

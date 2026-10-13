@@ -1124,6 +1124,33 @@ describe("review work log", () => {
     expect(sanitizeWorkLogDiagnostic("x".repeat(800))).toHaveLength(500);
   });
 
+  it("names unknown Pi event types without echoing arbitrary values", () => {
+    expect(summarizePiEvent({ type: "future_event", payload: "private" })).toEqual({
+      eventType: "unrecognized",
+      unrecognizedEventType: "future_event",
+    });
+    expect(summarizePiEvent({ type: "token=secret-value" })).toEqual({
+      eventType: "unrecognized",
+    });
+    expect(summarizePiEvent({ type: "x".repeat(65) })).toEqual({ eventType: "unrecognized" });
+    expect(summarizePiEvent({ payload: "no type" })).toEqual({ eventType: "unrecognized" });
+  });
+
+  it("summarizes extension UI requests by method only", () => {
+    expect(
+      summarizePiEvent({
+        type: "extension_ui_request",
+        id: "58b281c3",
+        method: "setWidget",
+        widgetKey: "subagent-async",
+        widgetLines: ["private"],
+      }),
+    ).toEqual({ eventType: "extension_ui_request", extensionUiMethod: "setWidget" });
+    expect(
+      summarizePiEvent({ type: "extension_ui_request", id: "1", method: "private method" }),
+    ).toEqual({ eventType: "extension_ui_request", extensionUiMethod: "unrecognized" });
+  });
+
   it("summarizes Pi events without prompt, model text, tool arguments, or tool output", () => {
     expect(
       summarizePiEvent({

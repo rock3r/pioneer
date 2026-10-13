@@ -8,6 +8,7 @@ import {
   containsStandaloneCredential,
   diagnosticMessage,
   sanitizeDiagnostic,
+  stderrExcerpt,
 } from "./diagnostics.js";
 import { type PiLaunchCommand, resolvePiCommand } from "./pi-command.js";
 import {
@@ -163,11 +164,19 @@ function outerSandboxIndicator(environment: Readonly<NodeJS.ProcessEnv>): string
   );
 }
 
+function withOutputExcerpt(message: string, output: string): string {
+  const excerpt = stderrExcerpt(output);
+  return excerpt ? `${message}. Pi output excerpt: ${excerpt}` : message;
+}
+
 function summarizeFailure(result: PiProbeResult): string {
   const output = result.stderr || result.stdout;
   return diagnosticMessage(
     "PI_PROBE_FAILED",
-    `Pi could not start successfully (exit ${result.exitCode ?? "unknown"}; output: ${output.trim() ? "present" : "none"})`,
+    withOutputExcerpt(
+      `Pi could not start successfully (exit ${result.exitCode ?? "unknown"}; output: ${output.trim() ? "present" : "none"})`,
+      output,
+    ),
   );
 }
 

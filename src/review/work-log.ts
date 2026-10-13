@@ -60,6 +60,7 @@ const PI_EVENT_TYPES = new Set([
   "auto_retry_start",
   "error",
   "extension_error",
+  "extension_ui_request",
   "message_end",
   "message_start",
   "message_update",
@@ -70,6 +71,21 @@ const PI_EVENT_TYPES = new Set([
   "turn_end",
   "turn_start",
 ]);
+// Pi RPC extension UI methods. Dialog methods wait for a client response; the others are
+// fire-and-forget status updates.
+const PI_EXTENSION_UI_METHODS = new Set([
+  "confirm",
+  "editor",
+  "input",
+  "notify",
+  "select",
+  "set_editor_text",
+  "setStatus",
+  "setTitle",
+  "setWidget",
+]);
+// A protocol identifier, not free text: short snake case only, so it cannot carry a credential.
+const UNRECOGNIZED_EVENT_TYPE_NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const PI_MESSAGE_UPDATE_TYPES = new Set([
   "done",
   "error",
@@ -730,6 +746,17 @@ export function summarizePiEvent(
   const base: Record<string, unknown> = {
     eventType,
   };
+  if (eventType === "unrecognized") {
+    return rawEventType !== undefined && UNRECOGNIZED_EVENT_TYPE_NAME.test(rawEventType)
+      ? { ...base, unrecognizedEventType: rawEventType }
+      : base;
+  }
+  if (eventType === "extension_ui_request") {
+    return definedFields({
+      ...base,
+      extensionUiMethod: allowlistedStringField(record, "method", PI_EXTENSION_UI_METHODS),
+    });
+  }
 
   if (eventType === "message_update") {
     const update = record.assistantMessageEvent;

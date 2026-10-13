@@ -2,6 +2,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { installAuthBrokerClient } from "./pi-auth-client.js";
 import { restrictExtensionTools } from "./pi-extension-policy.js";
+import { containSandboxSubprocessDenials } from "./pi-extension-subprocess-guard.js";
 
 // The controller selects and validates the installed Pi root. This adapter runs only
 // in the actor sandbox. Import the real CLI once to retain its dispatcher/startup semantics.
@@ -19,6 +20,9 @@ while (process.argv[piArgumentsStart] === "--pioneer-inspection-extension") {
   piArgumentsStart += 2;
 }
 if (root === undefined) throw new Error("[PI_EXTENSION_RUNTIME_UNSUPPORTED] Missing Pi runtime");
+// Extensions run with subprocess creation denied on macOS. One that starts a background child
+// without handling that failure must not stop the whole Pi process.
+containSandboxSubprocessDenials(process, (text) => process.stderr.write(text));
 await installAuthBrokerClient(root);
 const loader = (await import(
   pathToFileURL(path.join(root, "dist/core/resource-loader.js")).href

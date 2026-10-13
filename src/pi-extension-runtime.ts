@@ -100,6 +100,22 @@ export interface PreparedExtensions extends ExtensionSnapshot {
   readonly runtimeRoot?: string;
 }
 
+/**
+ * Compiled modules staged beside the extension snapshot, as `[source, staged name]`. The
+ * adapter runs from this private copy inside the sandbox, so every relative import of a
+ * staged module must also be staged. The policy reuses the credential detectors in
+ * `diagnostics.js` to decide which load-failure names to report.
+ */
+export const EXTENSION_ADAPTER_FILES: readonly (readonly [string, string])[] = [
+  ["pi-extension-entry.js", "entry.mjs"],
+  ["pi-extension-policy.js", "pi-extension-policy.js"],
+  ["pi-extension-subprocess-guard.js", "pi-extension-subprocess-guard.js"],
+  ["diagnostics.js", "diagnostics.js"],
+  ["pi-auth-client.js", "pi-auth-client.js"],
+  ["pi-provider-id.js", "pi-provider-id.js"],
+  ["pi-auth-worker.js", "auth-worker.mjs"],
+];
+
 export async function preparePiExtensions(
   command: PiLaunchCommand,
   sourceAgentDir: string,
@@ -151,27 +167,13 @@ export async function preparePiExtensions(
     }
     throw new Error("Pi extension could not be staged");
   }
+  for (const [source, target] of EXTENSION_ADAPTER_FILES) {
+    await copyFile(
+      fileURLToPath(new URL(`./${source}`, import.meta.url)),
+      path.join(destination, target),
+    );
+  }
   const entry = path.join(destination, "entry.mjs");
-  const policy = path.join(destination, "pi-extension-policy.js");
-  await copyFile(fileURLToPath(new URL("./pi-extension-entry.js", import.meta.url)), entry);
-  await copyFile(fileURLToPath(new URL("./pi-extension-policy.js", import.meta.url)), policy);
-  // The policy reuses the credential detectors to decide which load-failure names to report.
-  await copyFile(
-    fileURLToPath(new URL("./diagnostics.js", import.meta.url)),
-    path.join(destination, "diagnostics.js"),
-  );
-  await copyFile(
-    fileURLToPath(new URL("./pi-auth-client.js", import.meta.url)),
-    path.join(destination, "pi-auth-client.js"),
-  );
-  await copyFile(
-    fileURLToPath(new URL("./pi-provider-id.js", import.meta.url)),
-    path.join(destination, "pi-provider-id.js"),
-  );
-  await copyFile(
-    fileURLToPath(new URL("./pi-auth-worker.js", import.meta.url)),
-    path.join(destination, "auth-worker.mjs"),
-  );
   await writeFile(path.join(destination, "package.json"), '{"type":"module"}', { mode: 0o600 });
   return {
     ...snapshot,

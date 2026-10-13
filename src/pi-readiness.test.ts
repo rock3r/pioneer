@@ -39,6 +39,25 @@ describe("Pi readiness", () => {
     expect(result.errors.join(" ")).toContain("pioneer doctor");
     expect(result.errors.join(" ")).not.toContain("private diagnostic");
   });
+  it("names a redacted excerpt of an unexpected model-discovery failure", async () => {
+    const result = await checkPiReadiness({
+      runner: runnerWith([
+        { exitCode: 0, stdout: "1.0.1", stderr: "" },
+        {
+          exitCode: 1,
+          stdout: "",
+          stderr:
+            "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/private/tmp/pir-x/extensions/guard.js' token=abc123secret\n    at finalizeResolution (node:internal/modules/esm/resolve:241:11)",
+        },
+      ]),
+    });
+    const message = result.errors.join(" ");
+    expect(message).toContain(
+      "[PI_PROBE_FAILED] Pi could not start successfully (exit 1; output: present). Pi output excerpt: Error [ERR_MODULE_NOT_FOUND]: Cannot find module '.../extensions/guard.js' token=[REDACTED]",
+    );
+    expect(message).not.toContain("abc123secret");
+    expect(message).not.toContain("/private/tmp");
+  });
   it("forwards the named extension load failure", async () => {
     const detail =
       "entry 1 (compose-pi/provider.ts): missing dependency @earendil-works/pi-ai/dist/compat.js/api/openai-completions";

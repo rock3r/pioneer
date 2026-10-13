@@ -77,6 +77,87 @@ describe("review RPC completion", () => {
     );
   });
 
+  it("names a bounded, redacted stderr excerpt when Pi exits early", () => {
+    const stderr = [
+      'Warning: No models match pattern "meta/example"',
+      "node:internal/child_process:486",
+      "    throw new ErrnoException(err, 'spawn');",
+      "          ^",
+      "",
+      "Error: spawn EPERM token=sk-live-secret-value",
+      "    at ChildProcess.spawn (node:internal/child_process:486:11)",
+      "    at /private/tmp/pir-abc/extensions/tree/%2F/Users/someone/.pi/agent/npm/node_modules/pi-subagents/src/watchdog/diff-tool.js:32:37",
+      "    at new Promise (<anonymous>)",
+      "    at startWatchdogDiffBaselineCapture (/private/tmp/pir-abc/node_modules/pi-subagents/src/x.js:31:10)",
+      "{",
+      "  errno: -1,",
+      "  code: 'EPERM',",
+      "}",
+      "",
+      "Node.js v26.10.0",
+    ].join("\n");
+    let message = "";
+    try {
+      completeReviewRpc({
+        completed: false,
+        report: "",
+        exitCode: 1,
+        signal: null,
+        eventTypes: ["extension_ui_request"],
+        diagnostics: [],
+        stderr,
+        sensitiveValues: ["private-run-secret"],
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain(
+      "[REVIEW_RPC_INCOMPLETE] Pi exited before completing the review (exit 1; events: 1; diagnostics: 0; stderr: present). Pi stderr excerpt: Error: spawn EPERM token=[REDACTED] | at ChildProcess.spawn (node:internal/child_process:486:11) | at node_modules/pi-subagents/src/watchdog/diff-tool.js:32:37",
+    );
+    expect(message).not.toContain("sk-live-secret-value");
+    expect(message).not.toContain("/Users/someone");
+    expect(message.length).toBeLessThan(600);
+  });
+
+  it("drops stderr lines that echo part of a sensitive value such as the prompt", () => {
+    const prompt = `private prompt ${"y".repeat(700)}`;
+    let message = "";
+    try {
+      completeReviewRpc({
+        completed: false,
+        report: "",
+        exitCode: 1,
+        signal: null,
+        eventTypes: [],
+        diagnostics: [],
+        stderr: `Error: request failed for ${prompt.slice(0, 400)}\n    at send (node_modules/provider/index.js:1:1)`,
+        sensitiveValues: [prompt],
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain("Pi stderr excerpt: at send (node_modules/provider/index.js:1:1)");
+    expect(message).not.toContain("private prompt");
+    expect(message).not.toContain("y".repeat(40));
+  });
+
+  it("falls back to the last stderr lines and drops credentials and run secrets", () => {
+    expect(() =>
+      completeReviewRpc({
+        completed: false,
+        report: "",
+        exitCode: 2,
+        signal: null,
+        eventTypes: [],
+        diagnostics: [],
+        stderr: `first line\nsecond private-run-secret line\nthird Bearer abc.def\n${"x".repeat(900)}`,
+        sensitiveValues: ["private-run-secret"],
+      }),
+    ).toThrow(
+      /Pi stderr excerpt: second \[REDACTED\] line \| third Bearer \[REDACTED\] \| x{50,}$/,
+    );
+  });
+
   it("rejects a report when the settled Pi process exits nonzero", () => {
     expect(() =>
       completeReviewRpc({

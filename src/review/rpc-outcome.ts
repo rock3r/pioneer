@@ -1,4 +1,4 @@
-import { diagnosticMessage } from "../diagnostics.js";
+import { diagnosticMessage, stderrExcerpt } from "../diagnostics.js";
 
 interface ReviewRpcOutcome {
   readonly completed: boolean;
@@ -9,6 +9,11 @@ interface ReviewRpcOutcome {
   readonly diagnostics: readonly string[];
   readonly stderr: string;
   readonly sensitiveValues?: readonly string[];
+}
+
+function withStderrExcerpt(message: string, stderr: string, secrets: readonly string[]): string {
+  const excerpt = stderrExcerpt(stderr, secrets);
+  return excerpt ? `${message}. Pi stderr excerpt: ${excerpt}` : message;
 }
 
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
@@ -37,7 +42,11 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
     throw new Error(
       diagnosticMessage(
         "REVIEW_PROCESS_FAILED",
-        `Pi exited unsuccessfully after settling (exit ${outcome.exitCode ?? "unknown"}; signal: ${outcome.signal ?? "none"}; ${context})`,
+        withStderrExcerpt(
+          `Pi exited unsuccessfully after settling (exit ${outcome.exitCode ?? "unknown"}; signal: ${outcome.signal ?? "none"}; ${context})`,
+          outcome.stderr,
+          outcome.sensitiveValues ?? [],
+        ),
       ),
     );
   }
@@ -57,7 +66,11 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
   throw new Error(
     diagnosticMessage(
       "REVIEW_RPC_INCOMPLETE",
-      `Pi exited before completing the review (exit ${outcome.exitCode ?? "unknown"}; ${context})`,
+      withStderrExcerpt(
+        `Pi exited before completing the review (exit ${outcome.exitCode ?? "unknown"}; ${context})`,
+        outcome.stderr,
+        outcome.sensitiveValues ?? [],
+      ),
     ),
   );
 }
