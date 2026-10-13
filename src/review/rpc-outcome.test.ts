@@ -97,6 +97,7 @@ describe("review RPC completion", () => {
         eventTypes: ["extension_ui_request"],
         diagnostics: [],
         stderr,
+        extensionPackages: new Set(["pi-subagents"]),
       });
     } catch (error) {
       message = (error as Error).message;

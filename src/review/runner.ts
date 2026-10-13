@@ -27,7 +27,10 @@ import {
 } from "../pi-extension-discovery.js";
 import { withNoForkSandbox } from "../pi-extension-runtime.js";
 import { assertSameExtensionSnapshot } from "../pi-extension-snapshot.js";
-import { SUBPROCESS_DENIED_WARNING } from "../pi-extension-subprocess-guard.js";
+import {
+  extensionPackageNames,
+  validatedSubprocessDenialWarning,
+} from "../pi-extension-subprocess-guard.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
@@ -428,6 +431,8 @@ export interface RunReviewRpcOptions {
   readonly maxRpcOutputBytes?: number;
   /** Receives each distinct controller-validated actor warning, such as a denied subprocess. */
   readonly onActorWarning?: (warning: string) => void;
+  /** Staged extension packages; warnings and stderr summaries name only these. */
+  readonly extensionPackages?: ReadonlySet<string>;
 }
 
 const REVIEW_NETWORK_DISABLED_MESSAGE =
@@ -864,9 +869,12 @@ export async function runReviewRpc(
       const lines = (stderrLine + text).split("\n");
       stderrLine = (lines.pop() ?? "").slice(-MAX_STDERR_LINE_CHARACTERS);
       for (const line of lines) {
-        const warning = line.trim();
+        const warning = validatedSubprocessDenialWarning(
+          line,
+          options.extensionPackages ?? new Set(),
+        );
         if (
-          !SUBPROCESS_DENIED_WARNING.test(warning) ||
+          warning === undefined ||
           actorWarnings.has(warning) ||
           actorWarnings.size >= MAX_ACTOR_WARNINGS
         )
@@ -1175,6 +1183,9 @@ export async function runReviewRpc(
           diagnostics,
           stderr,
           sensitiveValues: workLogSecrets,
+          ...(options.extensionPackages === undefined
+            ? {}
+            : { extensionPackages: options.extensionPackages }),
         });
         finish();
       } catch (error) {
@@ -1671,6 +1682,10 @@ async function runReviewInternal(
             workLog,
             sensitiveValues: [request.prompt],
             onActorWarning: (warning) => actorWarnings.push(warning),
+            extensionPackages: extensionPackageNames([
+              ...preparedRuntime.extensions.paths,
+              ...preparedRuntime.extensions.sourcePaths,
+            ]),
             maxRpcOutputBytes,
           },
         );
@@ -1729,6 +1744,10 @@ async function runReviewInternal(
             workLog,
             sensitiveValues: [request.prompt],
             onActorWarning: (warning) => actorWarnings.push(warning),
+            extensionPackages: extensionPackageNames([
+              ...preparedRuntime.extensions.paths,
+              ...preparedRuntime.extensions.sourcePaths,
+            ]),
             maxRpcOutputBytes,
           },
         );

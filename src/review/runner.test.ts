@@ -903,6 +903,7 @@ process.stdin.once("data", () => {
     await expect(
       runReviewRpc([process.execPath, "-e", source], process.cwd(), process.env, "prompt", 2_000, {
         onActorWarning: (text) => warnings.push(text),
+        extensionPackages: new Set(["pi-subagents"]),
       }),
     ).resolves.toBe("Done");
     expect(warnings).toEqual([warning]);

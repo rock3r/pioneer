@@ -18,19 +18,18 @@ describe("stderr summary", () => {
       "  syscall: 'spawn'",
       "}",
     ].join("\n");
-    expect(stderrSummary(stderr)).toBe(
+    expect(stderrSummary(stderr, new Set(["pi-subagents"]))).toBe(
       "error=Error; code=EPERM; syscall=spawn; package=pi-subagents",
     );
+    expect(stderrSummary(stderr)).toBe("error=Error; code=EPERM; syscall=spawn");
   });
 
-  it("names a missing module below node_modules and Pioneer diagnostic codes", () => {
+  it("names the module-resolution code and Pioneer diagnostic codes, never the module", () => {
     expect(
       stderrSummary(
         "[PI_EXTENSION_LOAD_FAILED] private text\nError [ERR_MODULE_NOT_FOUND]: Cannot find module '/a/node_modules/left-pad/index.js' imported from /b/c.js",
       ),
-    ).toBe(
-      "error=Error; code=ERR_MODULE_NOT_FOUND; module=left-pad/index.js; diagnostics=PI_EXTENSION_LOAD_FAILED",
-    );
+    ).toBe("error=Error; code=ERR_MODULE_NOT_FOUND; diagnostics=PI_EXTENSION_LOAD_FAILED");
   });
 
   it("never returns free text, paths, or credential-shaped names", () => {

@@ -10,10 +10,16 @@ interface ReviewRpcOutcome {
   readonly diagnostics: readonly string[];
   readonly stderr: string;
   readonly sensitiveValues?: readonly string[];
+  /** Staged extension packages; the summary names only these. */
+  readonly extensionPackages?: ReadonlySet<string>;
 }
 
-function withStderrSummary(message: string, stderr: string): string {
-  const summary = stderrSummary(stderr);
+function withStderrSummary(
+  message: string,
+  stderr: string,
+  extensionPackages: ReadonlySet<string> | undefined,
+): string {
+  const summary = stderrSummary(stderr, extensionPackages);
   return summary ? `${message}. Pi stderr summary: ${summary}` : message;
 }
 
@@ -21,7 +27,7 @@ function withStderrSummary(message: string, stderr: string): string {
 function withFailedExitSummary(message: string, outcome: ReviewRpcOutcome): string {
   return outcome.exitCode === 0 && outcome.signal === null
     ? message
-    : withStderrSummary(message, outcome.stderr);
+    : withStderrSummary(message, outcome.stderr, outcome.extensionPackages);
 }
 
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
@@ -53,6 +59,7 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
         withStderrSummary(
           `Pi exited unsuccessfully after settling (exit ${outcome.exitCode ?? "unknown"}; signal: ${outcome.signal ?? "none"}; ${context})`,
           outcome.stderr,
+          outcome.extensionPackages,
         ),
       ),
     );
@@ -82,6 +89,7 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
       withStderrSummary(
         `Pi exited before completing the review (exit ${outcome.exitCode ?? "unknown"}; ${context})`,
         outcome.stderr,
+        outcome.extensionPackages,
       ),
     ),
   );

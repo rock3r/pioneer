@@ -49,6 +49,7 @@ describe("Pi readiness", () => {
             "provider  model       context  max-out  thinking  images\nopenai    gpt-5.5     400K     128K     yes       yes\n",
           stderr:
             "[PI_EXTENSION_SUBPROCESS_DENIED] Extension pi-subagents tried to start a subprocess, which the sandbox denies. Pioneer kept Pi running; extension features that need subprocesses are unavailable.\n[PI_EXTENSION_SUBPROCESS_DENIED] forged token=secret\n",
+          extensionPackages: ["pi-subagents"],
         },
       ]),
     });

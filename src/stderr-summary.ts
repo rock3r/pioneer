@@ -1,4 +1,3 @@
-import { missingModule } from "./pi-extension-policy.js";
 import { stackPackage } from "./pi-extension-subprocess-guard.js";
 
 const ERROR_HEADER =
@@ -103,11 +102,14 @@ function knownCode(value: string | undefined): string | undefined {
 
 /**
  * Why Pi stopped, built only from fixed allowlists: the error class, a known Node error
- * code and syscall, the npm package in the stack, a missing module below `node_modules`, and
- * Pioneer diagnostic codes. Stderr is untrusted and can hold credentials that no pattern
+ * code and syscall, the stack's npm package when the controller staged it, and Pioneer
+ * diagnostic codes. Stderr is untrusted and can hold credentials that no pattern
  * redaction recognizes, so no free text, path, or message from it is ever returned.
  */
-export function stderrSummary(stderr: string): string {
+export function stderrSummary(
+  stderr: string,
+  extensionPackages: ReadonlySet<string> = new Set(),
+): string {
   const lines = stderr.split(/\r?\n/).map((line) => line.trim());
   let header = -1;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -134,8 +136,9 @@ export function stderrSummary(stderr: string): string {
         ? syscallCandidate
         : undefined;
     const frames = after.filter((entry) => entry.startsWith("at ")).join("\n");
-    const extensionPackage = stackPackage(frames);
-    const module = /Cannot find (?:module|package) '/.test(line) ? missingModule(line) : undefined;
+    const stackName = stackPackage(frames);
+    const extensionPackage =
+      stackName !== undefined && extensionPackages.has(stackName) ? stackName : undefined;
     const errorClass = match?.[1];
     fields.push(
       `error=${errorClass !== undefined && ERROR_CLASSES.has(errorClass) ? errorClass : "Error"}`,
@@ -143,7 +146,6 @@ export function stderrSummary(stderr: string): string {
     if (code !== undefined) fields.push(`code=${code}`);
     if (syscall !== undefined) fields.push(`syscall=${syscall}`);
     if (extensionPackage !== undefined) fields.push(`package=${extensionPackage}`);
-    if (module !== undefined) fields.push(`module=${module}`);
   }
   const codes = [
     ...new Set(

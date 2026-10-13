@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import {
   containSandboxSubprocessDenials,
+  extensionPackageNames,
   isSandboxSubprocessDenial,
   subprocessDenialWarnings,
 } from "./pi-extension-subprocess-guard.js";
@@ -85,13 +86,26 @@ describe("sandbox subprocess denial guard", () => {
     expect(seen).toEqual([failure]);
   });
 
-  it("accepts only the exact warning format from untrusted stderr", () => {
-    const warning =
+  it("accepts only the exact warning format and only staged package names", () => {
+    const named =
       "[PI_EXTENSION_SUBPROCESS_DENIED] Extension pi-subagents tried to start a subprocess, which the sandbox denies. Pioneer kept Pi running; extension features that need subprocesses are unavailable.";
+    const forgedName = named.replace("pi-subagents", "hunter2");
+    const generic = named.replace("Extension pi-subagents", "An extension");
     expect(
       subprocessDenialWarnings(
-        `noise\n${warning}\r\n${warning}\n[PI_EXTENSION_SUBPROCESS_DENIED] token=secret forged\n`,
+        `noise\n${named}\r\n${named}\n${forgedName}\n[PI_EXTENSION_SUBPROCESS_DENIED] token=secret forged\n`,
+        new Set(["pi-subagents"]),
       ),
-    ).toEqual([warning]);
+    ).toEqual([named, generic]);
+  });
+
+  it("collects npm package names from staged extension paths", () => {
+    expect([
+      ...extensionPackageNames([
+        "/tmp/pir-x/extensions/tree/%2F/Users/a/.pi/agent/npm/node_modules/pi-subagents/src/index.js",
+        "C:\\Users\\a\\npm\\node_modules\\@scope\\ext\\index.js",
+        "/Users/a/.pi/agent/extensions/local/index.ts",
+      ]),
+    ]).toEqual(["pi-subagents", "@scope/ext"]);
   });
 });

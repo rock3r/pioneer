@@ -8,7 +8,10 @@ import { resolvePiCommand } from "../pi-command.js";
 import { cleanupReviewRuntime, prepareReviewRuntime } from "../pi-extension-discovery.js";
 import { withNoForkSandbox } from "../pi-extension-runtime.js";
 import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
-import { subprocessDenialWarnings } from "../pi-extension-subprocess-guard.js";
+import {
+  extensionPackageNames,
+  subprocessDenialWarnings,
+} from "../pi-extension-subprocess-guard.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
 import {
@@ -256,7 +259,13 @@ async function launchStructuredActor(
         reviewProcessEnvironment(launch.environment, environment),
         request.prompt,
         request.timeoutMs,
-        { onActorWarning: (warning) => options.onActorWarning?.(request.member.id, warning) },
+        {
+          onActorWarning: (warning) => options.onActorWarning?.(request.member.id, warning),
+          extensionPackages: extensionPackageNames([
+            ...runtime.extensions.paths,
+            ...runtime.extensions.sourcePaths,
+          ]),
+        },
       );
     } finally {
       await bridge?.close();

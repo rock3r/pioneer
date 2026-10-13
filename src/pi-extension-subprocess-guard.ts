@@ -10,24 +10,56 @@ const MAX_WARNINGS = 8;
 
 /**
  * The exact warning text the adapter writes. Controllers accept only this format from the
- * untrusted stderr stream; the package name uses the same safe character set as the guard.
+ * untrusted stderr stream, and keep the package name only when they staged that package.
  */
-export const SUBPROCESS_DENIED_WARNING =
-  /^\[PI_EXTENSION_SUBPROCESS_DENIED\] (?:An extension|Extension [A-Za-z0-9@._~/+-]{1,160}) tried to start a subprocess, which the sandbox denies\. Pioneer kept Pi running; extension features that need subprocesses are unavailable\.$/;
+const SUBPROCESS_DENIED_WARNING =
+  /^\[PI_EXTENSION_SUBPROCESS_DENIED\] (?:An extension|Extension ([A-Za-z0-9@._~/+-]{1,160})) tried to start a subprocess, which the sandbox denies\. Pioneer kept Pi running; extension features that need subprocesses are unavailable\.$/;
 
 function subprocessDenialWarning(name: string | undefined): string {
   return `[PI_EXTENSION_SUBPROCESS_DENIED] ${name === undefined ? "An extension" : `Extension ${name}`} tried to start a subprocess, which the sandbox denies. Pioneer kept Pi running; extension features that need subprocesses are unavailable.`;
 }
 
+/** The warning rebuilt from a validated stderr line, naming only a staged package. */
+export function validatedSubprocessDenialWarning(
+  line: string,
+  extensionPackages: ReadonlySet<string>,
+): string | undefined {
+  const match = SUBPROCESS_DENIED_WARNING.exec(line.trim());
+  if (match === null) return undefined;
+  const name = match[1];
+  return subprocessDenialWarning(
+    name !== undefined && extensionPackages.has(name) ? name : undefined,
+  );
+}
+
 /** Distinct validated warnings from complete stderr text, at most eight. */
-export function subprocessDenialWarnings(stderr: string): string[] {
+export function subprocessDenialWarnings(
+  stderr: string,
+  extensionPackages: ReadonlySet<string> = new Set(),
+): string[] {
   const warnings = new Set<string>();
   for (const line of stderr.split("\n")) {
-    const warning = line.trim();
-    if (SUBPROCESS_DENIED_WARNING.test(warning)) warnings.add(warning);
+    const warning = validatedSubprocessDenialWarning(line, extensionPackages);
+    if (warning !== undefined) warnings.add(warning);
     if (warnings.size >= MAX_WARNINGS) break;
   }
   return [...warnings];
+}
+
+/** npm package names of the staged extensions, which the controller itself selected. */
+export function extensionPackageNames(paths: readonly string[]): ReadonlySet<string> {
+  const names = new Set<string>();
+  for (const entry of paths) {
+    const normalized = entry.replaceAll("\\", "/");
+    const index = normalized.lastIndexOf("/node_modules/");
+    if (index < 0) continue;
+    const name = /^((?:@[^/]+\/)?[^/]+)/.exec(
+      normalized.slice(index + "/node_modules/".length),
+    )?.[1];
+    const reportable = name === undefined ? undefined : reportableName(name);
+    if (reportable !== undefined) names.add(reportable);
+  }
+  return names;
 }
 
 /** Seatbelt refuses process creation with EPERM; Node then throws from `spawn` itself. */
