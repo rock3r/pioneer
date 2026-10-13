@@ -141,6 +141,33 @@ describe("review RPC completion", () => {
     expect(message).not.toContain("y".repeat(40));
   });
 
+  it("adds the stderr excerpt when Pi settles without a report and then exits nonzero", () => {
+    expect(() =>
+      completeReviewRpc({
+        completed: true,
+        report: "",
+        exitCode: 1,
+        signal: null,
+        eventTypes: ["agent_settled"],
+        diagnostics: [],
+        stderr: "Error: cleanup failed",
+      }),
+    ).toThrow(
+      "[REVIEW_REPORT_MISSING] Pi settled without a review report (events: 1; diagnostics: 0; stderr: present). Pi stderr excerpt: Error: cleanup failed",
+    );
+    expect(() =>
+      completeReviewRpc({
+        completed: true,
+        report: "",
+        exitCode: 0,
+        signal: null,
+        eventTypes: ["agent_settled"],
+        diagnostics: [],
+        stderr: "Warning: harmless",
+      }),
+    ).toThrow(/stderr: present\)$/);
+  });
+
   it("falls back to the last stderr lines and drops credentials and run secrets", () => {
     expect(() =>
       completeReviewRpc({

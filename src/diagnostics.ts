@@ -1,3 +1,4 @@
+import os from "node:os";
 export type DiagnosticSeverity = "error" | "warning";
 
 export interface Diagnostic {
@@ -342,15 +343,6 @@ export function parseDiagnostic(
 
 const STDERR_EXCERPT_MAX_LENGTH = 300;
 const STDERR_ERROR_HEADER = /^(?:[A-Za-z]*Error\b|Uncaught\b|\[[A-Z][A-Z0-9_]*\])/;
-
-/**
- * A short, redacted view of why Pi stopped: the last error header and its first two stack
- * frames, or the last three lines when Pi printed no recognizable error. Dependency paths
- * keep only their part below `node_modules`, and other absolute paths (including Windows drive
- * and UNC paths) their last two
- * segments, so the excerpt names the failing package without the operator's layout. Lines
- * that echo part of a sensitive value are dropped before redaction.
- */
 const ECHO_WINDOW = 32;
 const ECHO_STEP = 16;
 
@@ -368,7 +360,58 @@ function echoesSensitiveValue(line: string, secrets: readonly string[]): boolean
   return false;
 }
 
-export function stderrExcerpt(stderr: string, secrets: readonly string[] = []): string {
+function escapeRegExp(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function defaultPrivateRoots(): readonly string[] {
+  try {
+    return [os.homedir()];
+  } catch {
+    return [];
+  }
+}
+
+/** Separators become `/`, so drive, UNC and POSIX paths shorten the same way. */
+function shortenPaths(line: string, privateRoots: readonly string[]): string {
+  let shortened = line.replaceAll("\\", "/");
+  // A home directory can contain spaces, which the unquoted path rule below cannot span.
+  for (const root of privateRoots) {
+    const normalized = root.replaceAll("\\", "/").replace(/\/+$/, "");
+    if (normalized.length < 2) continue;
+    shortened = shortened.replaceAll(
+      new RegExp(`${escapeRegExp(normalized)}(?=/|$|[\\s)"'\`:])`, "gi"),
+      "~",
+    );
+  }
+  return (
+    shortened
+      // A quoted absolute path may contain spaces; keep its last two segments.
+      .replaceAll(
+        /(["'`])(?:[A-Za-z]:)?\/[^"'`]*\/([^"'`/]+\/[^"'`/]+)\1/g,
+        (_match, quote: string, tail: string) => `${quote}.../${tail}${quote}`,
+      )
+      .replaceAll(/[^\s()"'`]*\/node_modules\//g, "node_modules/")
+      .replaceAll(
+        /(?<![\w.~])(?:[A-Za-z]:)?\/+(?:[^\s/():"'`]+\/)+([^\s/():"'`]+\/[^\s/()"'`]+)/g,
+        ".../$1",
+      )
+  );
+}
+
+/**
+ * A short, redacted view of why Pi stopped: the last error header and its first two stack
+ * frames, or the last three lines when Pi printed no recognizable error. The operator's home
+ * directory becomes `~`, dependency paths keep only their part below `node_modules`, and
+ * other absolute paths keep their last two segments, so the excerpt names the failing package
+ * without the operator's layout. Lines that echo part of a sensitive value are dropped
+ * before redaction.
+ */
+export function stderrExcerpt(
+  stderr: string,
+  secrets: readonly string[] = [],
+  privateRoots: readonly string[] = defaultPrivateRoots(),
+): string {
   const lines = stderr
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -394,19 +437,7 @@ export function stderrExcerpt(stderr: string, secrets: readonly string[] = []): 
   // its line, which must not swallow the stack frames that name the failing package.
   return selected
     .filter((line) => !echoesSensitiveValue(line, secrets))
-    .map((line) =>
-      sanitizeDiagnostic(
-        // Windows separators become `/` first, so drive and UNC paths shorten the same way.
-        line
-          .replaceAll("\\", "/")
-          .replaceAll(/[^\s()]*\/node_modules\//g, "node_modules/")
-          .replaceAll(
-            /(?<![\w.])(?:[A-Za-z]:)?\/+(?:[^\s/():]+\/)+([^\s/():]+\/[^\s/()]+)/g,
-            ".../$1",
-          ),
-        secrets,
-      ),
-    )
+    .map((line) => sanitizeDiagnostic(shortenPaths(line, privateRoots), secrets))
     .filter(Boolean)
     .join(" | ")
     .slice(0, STDERR_EXCERPT_MAX_LENGTH);

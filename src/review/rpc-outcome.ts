@@ -16,6 +16,13 @@ function withStderrExcerpt(message: string, stderr: string, secrets: readonly st
   return excerpt ? `${message}. Pi stderr excerpt: ${excerpt}` : message;
 }
 
+/** A settled run that then exits nonzero or by signal may explain itself on stderr. */
+function withFailedExitExcerpt(message: string, outcome: ReviewRpcOutcome): string {
+  return outcome.exitCode === 0 && outcome.signal === null
+    ? message
+    : withStderrExcerpt(message, outcome.stderr, outcome.sensitiveValues ?? []);
+}
+
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
   if (outcome.diagnostics.includes("extension_error")) {
     throw new Error(
@@ -55,12 +62,18 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
       throw new Error(
         diagnosticMessage(
           "REVIEW_ASSISTANT_FAILED",
-          `Pi reported an assistant failure without a review report (${context})`,
+          withFailedExitExcerpt(
+            `Pi reported an assistant failure without a review report (${context})`,
+            outcome,
+          ),
         ),
       );
     }
     throw new Error(
-      diagnosticMessage("REVIEW_REPORT_MISSING", `Pi settled without a review report (${context})`),
+      diagnosticMessage(
+        "REVIEW_REPORT_MISSING",
+        withFailedExitExcerpt(`Pi settled without a review report (${context})`, outcome),
+      ),
     );
   }
   throw new Error(

@@ -877,4 +877,19 @@ describe("stderr excerpts", () => {
     );
     expect(excerpt).not.toMatch(/Alice|fileserver|C:/);
   });
+
+  it("hides the home directory and quoted paths that contain spaces", () => {
+    const excerpt = stderrExcerpt(
+      [
+        "Error: Cannot load C:\\Users\\Alice Smith\\private-project\\extension.js",
+        "    at a (/Users/Alice Smith/.pi/agent/npm/b.js:1:1)",
+        '    at c ("/Volumes/My Disk/work/tools/d.js")',
+      ].join("\n"),
+      [],
+      ["C:\\Users\\Alice Smith", "/Users/Alice Smith"],
+    );
+    expect(excerpt).toBe(
+      'Error: Cannot load ~/private-project/extension.js | at a (~/.pi/agent/npm/b.js:1:1) | at c (".../tools/d.js")',
+    );
+  });
 });
