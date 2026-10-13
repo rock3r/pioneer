@@ -13,6 +13,7 @@ import {
   canonicalReviewPiHomeSource,
   cleanupCompletedReviewResumeArchive,
   cleanupUnavailableReviewResumeArchive,
+  combineWarnings,
   createReviewScratchDirectory,
   finalizeReviewWorkLog,
   markReviewCleanupFailure,
@@ -882,6 +883,56 @@ describe("review RPC runner", () => {
     expect(message).toContain("Pi RPC rejected the review prompt");
     expect(message).not.toContain("Project Falcon");
     expect(JSON.stringify(records)).not.toContain("Project Falcon");
+  });
+
+  it("surfaces validated subprocess-denial warnings from a successful review", async () => {
+    const warning =
+      "[PI_EXTENSION_SUBPROCESS_DENIED] Extension pi-subagents tried to start a subprocess, which the sandbox denies. Pioneer kept Pi running; extension features that need subprocesses are unavailable.";
+    const forged = "[PI_EXTENSION_SUBPROCESS_DENIED] token=secret-value forged text";
+    const source = `
+process.stdin.once("data", () => {
+  process.stderr.write(${JSON.stringify(warning.slice(0, 40))});
+  process.stderr.write(${JSON.stringify(`${warning.slice(40)}\n${warning}\n${forged}\n`)}, () => {
+    for (const event of [
+      { type: "message_end", message: { role: "assistant", stopReason: "stop", content: "Done" } },
+      { type: "agent_settled" },
+    ]) process.stdout.write(JSON.stringify(event) + "\\n");
+  });
+});
+`;
+    const warnings: string[] = [];
+    await expect(
+      runReviewRpc([process.execPath, "-e", source], process.cwd(), process.env, "prompt", 2_000, {
+        onActorWarning: (text) => warnings.push(text),
+        extensionPackages: new Set(["pi-subagents"]),
+      }),
+    ).resolves.toBe("Done");
+    expect(warnings).toEqual([warning]);
+  });
+
+  it("merges repeated warning lines from readiness and the actor", () => {
+    expect(
+      combineWarnings("[PI_VERSION_UNTESTED] newer\n[DENIED] a", undefined, "[DENIED] a"),
+    ).toBe("[PI_VERSION_UNTESTED] newer\n[DENIED] a");
+    expect(combineWarnings(undefined)).toBeUndefined();
+  });
+
+  it("fails the RPC instead of crashing when the actor-warning callback throws", async () => {
+    const warning =
+      "[PI_EXTENSION_SUBPROCESS_DENIED] An extension tried to start a subprocess, which the sandbox denies. Pioneer kept Pi running; extension features that need subprocesses are unavailable.";
+    const source = `
+process.stdin.once("data", () => {
+  process.stderr.write(${JSON.stringify(`${warning}\n`)});
+  setTimeout(() => process.stdout.write(JSON.stringify({ type: "agent_settled" }) + "\\n"), 200);
+});
+`;
+    await expect(
+      runReviewRpc([process.execPath, "-e", source], process.cwd(), process.env, "prompt", 2_000, {
+        onActorWarning: () => {
+          throw new Error("[DEEP_REVIEW_WORK_LOG_WRITE_FAILED] write failed");
+        },
+      }),
+    ).rejects.toThrow("[DEEP_REVIEW_WORK_LOG_WRITE_FAILED]");
   });
 
   it("redacts a long prompt echoed to stderr before retaining the diagnostic tail", async () => {

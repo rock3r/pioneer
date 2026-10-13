@@ -1,4 +1,5 @@
 import { diagnosticMessage } from "../diagnostics.js";
+import { stderrSummary } from "../stderr-summary.js";
 
 interface ReviewRpcOutcome {
   readonly completed: boolean;
@@ -9,6 +10,24 @@ interface ReviewRpcOutcome {
   readonly diagnostics: readonly string[];
   readonly stderr: string;
   readonly sensitiveValues?: readonly string[];
+  /** Staged extension packages; the summary names only these. */
+  readonly extensionPackages?: ReadonlySet<string>;
+}
+
+function withStderrSummary(
+  message: string,
+  stderr: string,
+  extensionPackages: ReadonlySet<string> | undefined,
+): string {
+  const summary = stderrSummary(stderr, extensionPackages);
+  return summary ? `${message}. Pi stderr summary: ${summary}` : message;
+}
+
+/** A settled run that then exits nonzero or by signal may explain itself on stderr. */
+function withFailedExitSummary(message: string, outcome: ReviewRpcOutcome): string {
+  return outcome.exitCode === 0 && outcome.signal === null
+    ? message
+    : withStderrSummary(message, outcome.stderr, outcome.extensionPackages);
 }
 
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
@@ -37,7 +56,11 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
     throw new Error(
       diagnosticMessage(
         "REVIEW_PROCESS_FAILED",
-        `Pi exited unsuccessfully after settling (exit ${outcome.exitCode ?? "unknown"}; signal: ${outcome.signal ?? "none"}; ${context})`,
+        withStderrSummary(
+          `Pi exited unsuccessfully after settling (exit ${outcome.exitCode ?? "unknown"}; signal: ${outcome.signal ?? "none"}; ${context})`,
+          outcome.stderr,
+          outcome.extensionPackages,
+        ),
       ),
     );
   }
@@ -46,18 +69,28 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
       throw new Error(
         diagnosticMessage(
           "REVIEW_ASSISTANT_FAILED",
-          `Pi reported an assistant failure without a review report (${context})`,
+          withFailedExitSummary(
+            `Pi reported an assistant failure without a review report (${context})`,
+            outcome,
+          ),
         ),
       );
     }
     throw new Error(
-      diagnosticMessage("REVIEW_REPORT_MISSING", `Pi settled without a review report (${context})`),
+      diagnosticMessage(
+        "REVIEW_REPORT_MISSING",
+        withFailedExitSummary(`Pi settled without a review report (${context})`, outcome),
+      ),
     );
   }
   throw new Error(
     diagnosticMessage(
       "REVIEW_RPC_INCOMPLETE",
-      `Pi exited before completing the review (exit ${outcome.exitCode ?? "unknown"}; ${context})`,
+      withStderrSummary(
+        `Pi exited before completing the review (exit ${outcome.exitCode ?? "unknown"}; ${context})`,
+        outcome.stderr,
+        outcome.extensionPackages,
+      ),
     ),
   );
 }

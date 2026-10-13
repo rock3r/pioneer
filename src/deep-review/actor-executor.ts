@@ -6,7 +6,12 @@ import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import { resolvePublicTarget, startEgressProxy } from "../eval-run/public-egress-proxy.js";
 import { resolvePiCommand } from "../pi-command.js";
 import { cleanupReviewRuntime, prepareReviewRuntime } from "../pi-extension-discovery.js";
+import { withNoForkSandbox } from "../pi-extension-runtime.js";
 import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
+import {
+  extensionPackageNames,
+  subprocessDenialWarnings,
+} from "../pi-extension-subprocess-guard.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
 import {
@@ -49,6 +54,8 @@ export interface CreateDeepReviewActorExecutorOptions {
   readonly piHomeSource?: string;
   readonly packageRoot?: string;
   readonly config: DeepReviewConfigV1;
+  /** Receives each controller-validated actor warning with the council member that raised it. */
+  readonly onActorWarning?: (memberId: string, warning: string) => void;
 }
 
 async function stageActorStoreFile(
@@ -116,6 +123,14 @@ async function launchStructuredActor(
       requestedModel: request.member.model,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     });
+    // Discovery may already have contained a subprocess denial that the actor never repeats.
+    const extensionPackages = extensionPackageNames([
+      ...runtime.extensions.paths,
+      ...runtime.extensions.sourcePaths,
+    ]);
+    for (const warning of subprocessDenialWarnings(readiness.warning ?? "", extensionPackages)) {
+      options.onActorWarning?.(request.member.id, warning);
+    }
     await assertNativeSandboxReady();
 
     const runtimeReadPaths = [
@@ -161,7 +176,11 @@ async function launchStructuredActor(
           tools: deepReviewActorTools(request.includePresidentTools),
           ...(readiness.version === undefined ? {} : { piVersion: readiness.version }),
         }),
-        [...runtime.extensions.command, "--pioneer-inspection-extension", inspectionExtension],
+        [
+          ...withNoForkSandbox(runtime.extensions.command),
+          "--pioneer-inspection-extension",
+          inspectionExtension,
+        ],
       ),
       readiness.version,
     );
@@ -244,6 +263,10 @@ async function launchStructuredActor(
         reviewProcessEnvironment(launch.environment, environment),
         request.prompt,
         request.timeoutMs,
+        {
+          onActorWarning: (warning) => options.onActorWarning?.(request.member.id, warning),
+          extensionPackages,
+        },
       );
     } finally {
       await bridge?.close();

@@ -11,7 +11,11 @@ import { captureEvalProcess } from "./eval-run/runner.js";
 import type { PiAuthBroker } from "./pi-auth-broker.js";
 import { prepareAuthBroker, snapshotOAuthProviders } from "./pi-auth-runtime.js";
 import type { PiLaunchCommand } from "./pi-command.js";
-import { type PreparedExtensions, preparePiExtensions } from "./pi-extension-runtime.js";
+import {
+  type PreparedExtensions,
+  preparePiExtensions,
+  withNoForkSandbox,
+} from "./pi-extension-runtime.js";
 import { extensionPathsWithCapabilities } from "./pi-extension-snapshot.js";
 import { type PreparedPiHome, prepareIsolatedPiHome } from "./pi-home.js";
 import type { PiProbeResult } from "./pi-readiness.js";
@@ -122,7 +126,7 @@ export async function discoverPreparedExtensions(
   return await runPreparedPiCommand(
     runtime,
     [
-      ...runtime.extensions.command,
+      ...withNoForkSandbox(runtime.extensions.command),
       "--offline",
       "--no-approve",
       "--no-extensions",

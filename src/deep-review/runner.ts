@@ -47,7 +47,12 @@ import {
 import { buildPresidentPrompt, buildWorkerPrompt } from "./prompt.js";
 import type { PresidentOutcomeV1, WorkerOutcomeV1 } from "./result.js";
 import { type DeepReviewResultV1, persistDeepReviewResult } from "./result-output.js";
-import { diagnosticRecord, newRunId, openDeepReviewWorkLog } from "./work-log.js";
+import {
+  createActorWarningCollector,
+  diagnosticRecord,
+  newRunId,
+  openDeepReviewWorkLog,
+} from "./work-log.js";
 
 export interface DeepReviewRequest {
   readonly sourceDir: string;
@@ -198,8 +203,13 @@ export async function runDeepReview(request: DeepReviewRequest): Promise<DeepRev
       await chmod(packetPath, 0o600);
     }
 
+    const actorWarnings = createActorWarningCollector(workLog);
     const executor =
-      request.actorExecutor ?? createDeepReviewActorExecutor({ config: request.config });
+      request.actorExecutor ??
+      createDeepReviewActorExecutor({
+        config: request.config,
+        onActorWarning: actorWarnings.onActorWarning,
+      });
 
     const { workerOutcomes, candidates, candidateRecords, successfulMemberIds, workerDiagnostics } =
       await runCouncilWorkers({
@@ -336,7 +346,7 @@ export async function runDeepReview(request: DeepReviewRequest): Promise<DeepRev
       president: presidentOutcome,
       publishableFindings,
       artifactFindings,
-      diagnostics,
+      diagnostics: [...diagnostics, ...actorWarnings.diagnostics()],
     };
 
     await persistDeepReviewResult({

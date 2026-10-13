@@ -77,6 +77,63 @@ describe("review RPC completion", () => {
     );
   });
 
+  it("names an allowlisted stderr summary when Pi exits early", () => {
+    const stderr = [
+      "Error: spawn EPERM token=sk-live-secret-value",
+      "    at ChildProcess.spawn (node:internal/child_process:486:11)",
+      "    at /private/tmp/pir-abc/extensions/tree/%2F/Users/someone/.pi/agent/npm/node_modules/pi-subagents/src/watchdog/diff-tool.js:32:37",
+      "{",
+      "  code: 'EPERM',",
+      "  syscall: 'spawn'",
+      "}",
+    ].join("\n");
+    let message = "";
+    try {
+      completeReviewRpc({
+        completed: false,
+        report: "",
+        exitCode: 1,
+        signal: null,
+        eventTypes: ["extension_ui_request"],
+        diagnostics: [],
+        stderr,
+        extensionPackages: new Set(["pi-subagents"]),
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toBe(
+      "[REVIEW_RPC_INCOMPLETE] Pi exited before completing the review (exit 1; events: 1; diagnostics: 0; stderr: present). Pi stderr summary: error=Error; code=EPERM; syscall=spawn; package=pi-subagents",
+    );
+  });
+
+  it("adds the stderr summary when Pi settles without a report and then exits nonzero", () => {
+    expect(() =>
+      completeReviewRpc({
+        completed: true,
+        report: "",
+        exitCode: 1,
+        signal: null,
+        eventTypes: ["agent_settled"],
+        diagnostics: [],
+        stderr: "TypeError: cleanup failed for hunter2",
+      }),
+    ).toThrow(
+      /^\[REVIEW_REPORT_MISSING\] Pi settled without a review report \(events: 1; diagnostics: 0; stderr: present\)\. Pi stderr summary: error=TypeError$/,
+    );
+    expect(() =>
+      completeReviewRpc({
+        completed: true,
+        report: "",
+        exitCode: 0,
+        signal: null,
+        eventTypes: ["agent_settled"],
+        diagnostics: [],
+        stderr: "Error: harmless",
+      }),
+    ).toThrow(/stderr: present\)$/);
+  });
+
   it("rejects a report when the settled Pi process exits nonzero", () => {
     expect(() =>
       completeReviewRpc({

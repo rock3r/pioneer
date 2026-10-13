@@ -5,7 +5,7 @@ import { containsStandaloneCredential, isCredentialLabel } from "./diagnostics.j
  * A package or file name that is safe to echo. Raw load errors stay suppressed; only names
  * with a plain character set and no credential or long opaque segment are reported.
  */
-function reportableName(value: string): string | undefined {
+export function reportableName(value: string): string | undefined {
   if (!/^[A-Za-z0-9@._~/+-]{1,160}$/.test(value)) return undefined;
   if (/[A-Za-z0-9]{24,}/.test(value) || containsStandaloneCredential(value)) return undefined;
   if (value.split("/").some((segment) => isCredentialLabel(segment))) return undefined;
@@ -20,7 +20,7 @@ function extensionLabel(value: unknown): string | undefined {
 }
 
 /** The module Node could not resolve, relative to its innermost `node_modules`. */
-function missingModule(text: string): string | undefined {
+export function missingModule(text: string): string | undefined {
   const specifier = /Cannot find (?:module|package) '([^'\n]+)'/.exec(text)?.[1];
   if (specifier === undefined) return undefined;
   const normalized = specifier.replaceAll("\\", "/");

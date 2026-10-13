@@ -25,7 +25,12 @@ import {
   type PreparedReviewRuntime,
   prepareReviewRuntime,
 } from "../pi-extension-discovery.js";
+import { withNoForkSandbox } from "../pi-extension-runtime.js";
 import { assertSameExtensionSnapshot } from "../pi-extension-snapshot.js";
+import {
+  extensionPackageNames,
+  validatedSubprocessDenialWarning,
+} from "../pi-extension-subprocess-guard.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
@@ -424,6 +429,10 @@ export interface RunReviewRpcOptions {
   readonly escalateProcess?: (child: ReturnType<typeof spawn>) => void;
   readonly startupFailureGraceMs?: number;
   readonly maxRpcOutputBytes?: number;
+  /** Receives each distinct controller-validated actor warning, such as a denied subprocess. */
+  readonly onActorWarning?: (warning: string) => void;
+  /** Staged extension packages; warnings and stderr summaries name only these. */
+  readonly extensionPackages?: ReadonlySet<string>;
 }
 
 const REVIEW_NETWORK_DISABLED_MESSAGE =
@@ -566,9 +575,12 @@ export function buildReviewPrompt(
   ].join("\n\n");
 }
 
-function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
-  const present = warnings.filter((warning): warning is string => warning !== undefined);
-  return present.length === 0 ? undefined : present.join("\n");
+/** Joins warnings and drops repeated lines, which discovery and the actor can both report. */
+export function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
+  const lines = [
+    ...new Set(warnings.flatMap((warning) => (warning === undefined ? [] : warning.split("\n")))),
+  ];
+  return lines.length === 0 ? undefined : lines.join("\n");
 }
 
 function isPiCommandName(executable: string): boolean {
@@ -765,6 +777,9 @@ function recordAssistantEventFailure(value: unknown, diagnostics: string[]): voi
   diagnostics.push(`assistant stopReason=${event.reason}`);
 }
 
+const MAX_ACTOR_WARNINGS = 8;
+const MAX_STDERR_LINE_CHARACTERS = 4096;
+
 function processOutcomeContext(
   exitCode: number | null,
   signal: NodeJS.Signals | null,
@@ -849,6 +864,33 @@ export async function runReviewRpc(
     let lastPiEvent = "process_started";
     let lastPiEventAt = Date.now();
     let stderrBytes = 0;
+    let stderrLine = "";
+    const actorWarnings = new Set<string>();
+    const acceptStderrLines = (text: string): void => {
+      const lines = (stderrLine + text).split("\n");
+      stderrLine = (lines.pop() ?? "").slice(-MAX_STDERR_LINE_CHARACTERS);
+      for (const line of lines) {
+        const warning = validatedSubprocessDenialWarning(
+          line,
+          options.extensionPackages ?? new Set(),
+        );
+        if (
+          warning === undefined ||
+          actorWarnings.has(warning) ||
+          actorWarnings.size >= MAX_ACTOR_WARNINGS
+        )
+          continue;
+        actorWarnings.add(warning);
+        recordWorkLog("pi_actor_warning", { diagnosticCode: "PI_EXTENSION_SUBPROCESS_DENIED" });
+        try {
+          options.onActorWarning?.(warning);
+        } catch (error) {
+          // This runs in a stream event handler, so a throw would bypass cleanup entirely.
+          terminate(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
+      }
+    };
     const nearLimitReported = new Set<number>();
     const stopProcess = options.terminateProcess ?? terminateProcessTree;
     const escalateProcess =
@@ -1042,7 +1084,9 @@ export async function runReviewRpc(
     child.stderr.on("data", (chunk: Buffer) => {
       stderrBytes += chunk.length;
       recordWorkLog("pi_stderr", { chunkBytes: chunk.length, totalBytes: stderrBytes });
-      stderr = (stderr + chunk.toString("utf8")).slice(-64 * 1024);
+      const text = chunk.toString("utf8");
+      stderr = (stderr + text).slice(-64 * 1024);
+      acceptStderrLines(text);
     });
     child.once("error", (error) => {
       recordWorkLog("pi_process_error", {
@@ -1140,6 +1184,9 @@ export async function runReviewRpc(
           diagnostics,
           stderr,
           sensitiveValues: workLogSecrets,
+          ...(options.extensionPackages === undefined
+            ? {}
+            : { extensionPackages: options.extensionPackages }),
         });
         finish();
       } catch (error) {
@@ -1599,7 +1646,7 @@ async function runReviewInternal(
                 ? { noSession: true }
                 : { sessionDir: resumeArchive.activeAttemptDir }),
           }),
-          preparedRuntime.extensions.command,
+          withNoForkSandbox(preparedRuntime.extensions.command),
         ),
         readiness.version,
       );
@@ -1622,6 +1669,7 @@ async function runReviewInternal(
         gitContextText,
       );
       let report: string;
+      const actorWarnings: string[] = [];
       let sandboxed: boolean;
       if (windows) {
         recordReviewWorkLog(workLog, "stage_started", { stage: "pi_rpc" });
@@ -1634,6 +1682,11 @@ async function runReviewInternal(
           {
             workLog,
             sensitiveValues: [request.prompt],
+            onActorWarning: (warning) => actorWarnings.push(warning),
+            extensionPackages: extensionPackageNames([
+              ...preparedRuntime.extensions.paths,
+              ...preparedRuntime.extensions.sourcePaths,
+            ]),
             maxRpcOutputBytes,
           },
         );
@@ -1691,6 +1744,11 @@ async function runReviewInternal(
           {
             workLog,
             sensitiveValues: [request.prompt],
+            onActorWarning: (warning) => actorWarnings.push(warning),
+            extensionPackages: extensionPackageNames([
+              ...preparedRuntime.extensions.paths,
+              ...preparedRuntime.extensions.sourcePaths,
+            ]),
             maxRpcOutputBytes,
           },
         );
@@ -1734,11 +1792,14 @@ async function runReviewInternal(
         sandboxed,
         workLogPath: workLog.path,
         reportPath: paths.reportPath ?? "",
-        ...(windows
-          ? { warning: combineWarnings(WINDOWS_WARNING, readiness.warning) ?? WINDOWS_WARNING }
-          : readiness.warning === undefined
-            ? {}
-            : { warning: readiness.warning }),
+        ...(() => {
+          const warning = combineWarnings(
+            windows ? WINDOWS_WARNING : undefined,
+            readiness.warning,
+            ...actorWarnings,
+          );
+          return warning === undefined ? {} : { warning };
+        })(),
         ...(model === undefined ? {} : { model }),
         ...(thinking === undefined ? {} : { thinking }),
         ...(reportWriteError === undefined ? {} : { reportWriteError }),

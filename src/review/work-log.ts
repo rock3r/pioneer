@@ -60,6 +60,7 @@ const PI_EVENT_TYPES = new Set([
   "auto_retry_start",
   "error",
   "extension_error",
+  "extension_ui_request",
   "message_end",
   "message_start",
   "message_update",
@@ -69,6 +70,29 @@ const PI_EVENT_TYPES = new Set([
   "tool_execution_update",
   "turn_end",
   "turn_start",
+]);
+// Pi RPC extension UI methods. Dialog methods wait for a client response; the others are
+// fire-and-forget status updates.
+const PI_EXTENSION_UI_METHODS = new Set([
+  "confirm",
+  "editor",
+  "input",
+  "notify",
+  "select",
+  "set_editor_text",
+  "setStatus",
+  "setTitle",
+  "setWidget",
+]);
+// Pi 1.x session event types that the work log does not summarize. Only these names are
+// logged as text; any other type is untrusted and logged as a hash.
+const PI_UNSUMMARIZED_EVENT_TYPES = new Set([
+  "compaction_end",
+  "compaction_start",
+  "entry_appended",
+  "queue_update",
+  "session_info_changed",
+  "thinking_level_changed",
 ]);
 const PI_MESSAGE_UPDATE_TYPES = new Set([
   "done",
@@ -730,6 +754,18 @@ export function summarizePiEvent(
   const base: Record<string, unknown> = {
     eventType,
   };
+  if (eventType === "unrecognized") {
+    if (rawEventType === undefined) return base;
+    return PI_UNSUMMARIZED_EVENT_TYPES.has(rawEventType)
+      ? { ...base, unrecognizedEventType: rawEventType }
+      : { ...base, unrecognizedEventTypeHash: hashedStringField(record, "type") };
+  }
+  if (eventType === "extension_ui_request") {
+    return definedFields({
+      ...base,
+      extensionUiMethod: allowlistedStringField(record, "method", PI_EXTENSION_UI_METHODS),
+    });
+  }
 
   if (eventType === "message_update") {
     const update = record.assistantMessageEvent;

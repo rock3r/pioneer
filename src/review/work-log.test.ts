@@ -1124,6 +1124,35 @@ describe("review work log", () => {
     expect(sanitizeWorkLogDiagnostic("x".repeat(800))).toHaveLength(500);
   });
 
+  it("names known Pi event types it does not summarize and hashes any other type", () => {
+    expect(summarizePiEvent({ type: "queue_update", steering: ["private"] })).toEqual({
+      eventType: "unrecognized",
+      unrecognizedEventType: "queue_update",
+    });
+    const unknown = summarizePiEvent({ type: "private_refresh_token" });
+    expect(unknown).toEqual({
+      eventType: "unrecognized",
+      unrecognizedEventTypeHash: expect.stringMatching(/^[0-9a-f]{16}$/),
+    });
+    expect(JSON.stringify(unknown)).not.toContain("refresh");
+    expect(summarizePiEvent({ payload: "no type" })).toEqual({ eventType: "unrecognized" });
+  });
+
+  it("summarizes extension UI requests by method only", () => {
+    expect(
+      summarizePiEvent({
+        type: "extension_ui_request",
+        id: "58b281c3",
+        method: "setWidget",
+        widgetKey: "subagent-async",
+        widgetLines: ["private"],
+      }),
+    ).toEqual({ eventType: "extension_ui_request", extensionUiMethod: "setWidget" });
+    expect(
+      summarizePiEvent({ type: "extension_ui_request", id: "1", method: "private method" }),
+    ).toEqual({ eventType: "extension_ui_request", extensionUiMethod: "unrecognized" });
+  });
+
   it("summarizes Pi events without prompt, model text, tool arguments, or tool output", () => {
     expect(
       summarizePiEvent({

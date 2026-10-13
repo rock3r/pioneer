@@ -1,7 +1,11 @@
 import { chmod, readFile, unlink } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
-import { openDeepReviewWorkLog } from "./work-log.js";
+import {
+  createActorWarningCollector,
+  type DeepReviewWorkLog,
+  openDeepReviewWorkLog,
+} from "./work-log.js";
 
 describe("deep review work log", () => {
   const { reserveTempPath } = registerManagedTempPaths();
@@ -42,4 +46,39 @@ describe("deep review work log", () => {
       await unlink(logPath);
     },
   );
+});
+
+describe("deep-review actor warnings", () => {
+  it("records each distinct member warning once and returns it as a warning diagnostic", () => {
+    const records: [string, unknown][] = [];
+    const collector = createActorWarningCollector({
+      path: "/unused",
+      record: (type: string, details?: unknown) => records.push([type, details]),
+      close: async () => undefined,
+    } as unknown as DeepReviewWorkLog);
+    const warning =
+      "[PI_EXTENSION_SUBPROCESS_DENIED] Extension pi-subagents tried to start a subprocess, which the sandbox denies. Pioneer kept Pi running; extension features that need subprocesses are unavailable.";
+    collector.onActorWarning("worker-a", warning);
+    collector.onActorWarning("worker-a", warning);
+    collector.onActorWarning("president", warning);
+    expect(collector.diagnostics()).toEqual([
+      {
+        id: "pi-extension-subprocess-denied",
+        severity: "warning",
+        message: `${warning} Council member: worker-a.`,
+      },
+      {
+        id: "pi-extension-subprocess-denied",
+        severity: "warning",
+        message: `${warning} Council member: president.`,
+      },
+    ]);
+    expect(records).toEqual([
+      ["actor_warning", { memberId: "worker-a", diagnosticCode: "PI_EXTENSION_SUBPROCESS_DENIED" }],
+      [
+        "actor_warning",
+        { memberId: "president", diagnosticCode: "PI_EXTENSION_SUBPROCESS_DENIED" },
+      ],
+    ]);
+  });
 });

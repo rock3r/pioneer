@@ -81,3 +81,32 @@ export function diagnosticRecord(id: string, message: string): SafeDiagnosticV1 
 export function newRunId(): string {
   return randomUUID();
 }
+
+export interface ActorWarningCollector {
+  readonly onActorWarning: (memberId: string, warning: string) => void;
+  readonly diagnostics: () => readonly SafeDiagnosticV1[];
+}
+
+/**
+ * Collects controller-validated actor warnings, such as a contained subprocess denial, so a
+ * worker or president that still succeeds does not hide the degraded extension.
+ */
+export function createActorWarningCollector(workLog: DeepReviewWorkLog): ActorWarningCollector {
+  const collected = new Map<string, SafeDiagnosticV1>();
+  return {
+    onActorWarning(memberId, warning) {
+      const key = `${memberId}\n${warning}`;
+      if (collected.has(key)) return;
+      workLog.record("actor_warning", {
+        memberId,
+        diagnosticCode: "PI_EXTENSION_SUBPROCESS_DENIED",
+      });
+      collected.set(key, {
+        id: "pi-extension-subprocess-denied",
+        severity: "warning",
+        message: `${warning} Council member: ${memberId}.`.slice(0, 500),
+      });
+    },
+    diagnostics: () => [...collected.values()],
+  };
+}

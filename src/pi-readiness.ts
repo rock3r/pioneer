@@ -16,10 +16,15 @@ import {
   type PreparedReviewRuntime,
   prepareReviewRuntime,
 } from "./pi-extension-discovery.js";
+import {
+  extensionPackageNames,
+  subprocessDenialWarnings,
+} from "./pi-extension-subprocess-guard.js";
 import { defaultPiAgentDir } from "./pi-home.js";
 import { type PiConfiguredModel, resolvePiModel } from "./pi-model-selection.js";
 import { PI_PROVIDER_FIELD } from "./pi-provider-id.js";
 import { validatePiVersion } from "./pi-version-policy.js";
+import { stderrSummary } from "./stderr-summary.js";
 
 export const PI_NOT_FOUND_ERROR = diagnosticMessage(
   "PI_NOT_FOUND",
@@ -55,6 +60,8 @@ export interface PiProbeResult {
   readonly stdout: string;
   readonly stderr: string;
   readonly errorCode?: string;
+  /** Packages of the extensions that discovery staged; diagnostics name only these. */
+  readonly extensionPackages?: readonly string[];
 }
 
 export type PiProbeRunner = (
@@ -163,11 +170,24 @@ function outerSandboxIndicator(environment: Readonly<NodeJS.ProcessEnv>): string
   );
 }
 
+function withOutputSummary(
+  message: string,
+  output: string,
+  extensionPackages: readonly string[] | undefined,
+): string {
+  const summary = stderrSummary(output, new Set(extensionPackages));
+  return summary ? `${message}. Pi output summary: ${summary}` : message;
+}
+
 function summarizeFailure(result: PiProbeResult): string {
   const output = result.stderr || result.stdout;
   return diagnosticMessage(
     "PI_PROBE_FAILED",
-    `Pi could not start successfully (exit ${result.exitCode ?? "unknown"}; output: ${output.trim() ? "present" : "none"})`,
+    withOutputSummary(
+      `Pi could not start successfully (exit ${result.exitCode ?? "unknown"}; output: ${output.trim() ? "present" : "none"})`,
+      output,
+      result.extensionPackages,
+    ),
   );
 }
 
@@ -338,7 +358,16 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
           "full",
           signal,
         );
-        return await discoverPreparedExtensions(runtime, options.timeoutMs, signal);
+        const discovery = await discoverPreparedExtensions(runtime, options.timeoutMs, signal);
+        return {
+          ...discovery,
+          extensionPackages: [
+            ...extensionPackageNames([
+              ...runtime.extensions.paths,
+              ...runtime.extensions.sourcePaths,
+            ]),
+          ],
+        };
       } catch (error) {
         const code =
           error instanceof Error
@@ -382,7 +411,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     };
   }
   const version = sanitizeDiagnostic(probedVersion);
-  const versionWarning =
+  let versionWarning: { warning?: string } =
     versionValidation.warning === undefined
       ? {}
       : { warning: sanitizeDiagnostic(versionValidation.warning) };
@@ -392,7 +421,10 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     "--no-extensions",
     "--list-models",
   ]);
-  const extensionFailure = /\[(PI_EXTENSION_[A-Z_]+)\]/.exec(modelsResult.stderr)?.[1];
+  // A contained subprocess denial is a warning, not a startup failure.
+  const extensionFailure = [...modelsResult.stderr.matchAll(/\[(PI_EXTENSION_[A-Z_]+)\]/g)]
+    .map((match) => match[1])
+    .find((code) => code !== "PI_EXTENSION_SUBPROCESS_DENIED");
   if (extensionFailure !== undefined) {
     const guidance =
       extensionFailure === "PI_EXTENSION_DISCOVERY_UNSUPPORTED"
@@ -447,6 +479,18 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     };
   }
 
+  // Discovery initializes extensions; a contained subprocess denial still succeeds.
+  const extensionWarnings = subprocessDenialWarnings(
+    modelsResult.stderr,
+    new Set(modelsResult.extensionPackages),
+  );
+  if (extensionWarnings.length > 0) {
+    versionWarning = {
+      warning: [versionWarning.warning, ...extensionWarnings]
+        .filter((warning) => warning !== undefined)
+        .join("\n"),
+    };
+  }
   const probedModels = configuredModels(modelsResult.stdout);
   const models = probedModels;
   if (models?.length === 0) {
