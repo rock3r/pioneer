@@ -393,7 +393,8 @@ function shortenPaths(line: string, privateRoots: readonly string[]): string {
       )
       .replaceAll(/[^\s()"'`]*\/node_modules\//g, "node_modules/")
       .replaceAll(
-        /(?<![\w.~])(?:[A-Za-z]:)?\/+(?:[^\s/():"'`]+\/)+([^\s/():"'`]+\/[^\s/()"'`]+)/g,
+        // Directory segments may contain spaces; the last two segments may not.
+        /(?<![\w.~])(?:[A-Za-z]:)?\/+(?:[^/():"'`|]+\/)+([^\s/():"'`]+\/[^\s/()"'`]+)/g,
         ".../$1",
       )
   );

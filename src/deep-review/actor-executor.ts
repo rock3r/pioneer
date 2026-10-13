@@ -6,6 +6,7 @@ import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import { resolvePublicTarget, startEgressProxy } from "../eval-run/public-egress-proxy.js";
 import { resolvePiCommand } from "../pi-command.js";
 import { cleanupReviewRuntime, prepareReviewRuntime } from "../pi-extension-discovery.js";
+import { withNoForkSandbox } from "../pi-extension-runtime.js";
 import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
@@ -161,7 +162,11 @@ async function launchStructuredActor(
           tools: deepReviewActorTools(request.includePresidentTools),
           ...(readiness.version === undefined ? {} : { piVersion: readiness.version }),
         }),
-        [...runtime.extensions.command, "--pioneer-inspection-extension", inspectionExtension],
+        [
+          ...withNoForkSandbox(runtime.extensions.command),
+          "--pioneer-inspection-extension",
+          inspectionExtension,
+        ],
       ),
       readiness.version,
     );

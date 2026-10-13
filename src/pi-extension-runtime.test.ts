@@ -2,9 +2,20 @@ import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
-import { EXTENSION_ADAPTER_FILES, installedPiRoot } from "./pi-extension-runtime.js";
+import {
+  EXTENSION_ADAPTER_FILES,
+  installedPiRoot,
+  withNoForkSandbox,
+} from "./pi-extension-runtime.js";
 
 const { createTempDir } = registerManagedTempPaths();
+
+it("marks only macOS adapter commands as running without process creation", () => {
+  const command = ["/node", "/staged/entry.mjs", "/pi"] as const;
+  expect(withNoForkSandbox(command, "darwin")).toEqual([...command, "--pioneer-no-fork-sandbox"]);
+  expect(withNoForkSandbox(command, "linux")).toEqual(command);
+  expect(withNoForkSandbox(command, "win32")).toEqual(command);
+});
 
 it("stages every module that the sandboxed extension adapter imports", async () => {
   const staged = new Set(EXTENSION_ADAPTER_FILES.map(([source]) => source));

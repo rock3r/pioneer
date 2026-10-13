@@ -25,6 +25,7 @@ import {
   type PreparedReviewRuntime,
   prepareReviewRuntime,
 } from "../pi-extension-discovery.js";
+import { withNoForkSandbox } from "../pi-extension-runtime.js";
 import { assertSameExtensionSnapshot } from "../pi-extension-snapshot.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
@@ -1627,7 +1628,7 @@ async function runReviewInternal(
                 ? { noSession: true }
                 : { sessionDir: resumeArchive.activeAttemptDir }),
           }),
-          preparedRuntime.extensions.command,
+          withNoForkSandbox(preparedRuntime.extensions.command),
         ),
         readiness.version,
       );

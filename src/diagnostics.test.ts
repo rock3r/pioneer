@@ -892,4 +892,14 @@ describe("stderr excerpts", () => {
       'Error: Cannot load ~/private-project/extension.js | at a (~/.pi/agent/npm/b.js:1:1) | at c (".../tools/d.js")',
     );
   });
+
+  it("shortens unquoted paths with spaces outside the home directory", () => {
+    expect(
+      stderrExcerpt(
+        "Error: Cannot load /Volumes/Work Disk/private-project/extension.js from D:\\Shared Drive\\team\\a\\b.js",
+        [],
+        [],
+      ),
+    ).toBe("Error: Cannot load .../private-project/extension.js from .../a/b.js");
+  });
 });

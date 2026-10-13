@@ -10,19 +10,30 @@ const root = process.argv[2];
 // Each `--pioneer-inspection-extension PATH` pair names a controller-staged extension file or
 // package directory whose tools survive: deep review's inspection tools or an eval's
 // `--pi-extension`. Every other extension keeps only its provider and lifecycle hooks.
+// `--pioneer-no-fork-sandbox` marks an actor that the controller launched without process
+// creation (macOS reviews, discovery and deep review).
 const trustedToolPaths: string[] = [];
+let noForkSandbox = false;
 let piArgumentsStart = 3;
-while (process.argv[piArgumentsStart] === "--pioneer-inspection-extension") {
-  const trustedPath = process.argv[piArgumentsStart + 1];
-  if (trustedPath === undefined)
-    throw new Error("[PI_EXTENSION_RUNTIME_UNSUPPORTED] Missing trusted extension path");
-  trustedToolPaths.push(trustedPath);
-  piArgumentsStart += 2;
+for (;;) {
+  const flag = process.argv[piArgumentsStart];
+  if (flag === "--pioneer-no-fork-sandbox") {
+    noForkSandbox = true;
+    piArgumentsStart += 1;
+  } else if (flag === "--pioneer-inspection-extension") {
+    const trustedPath = process.argv[piArgumentsStart + 1];
+    if (trustedPath === undefined)
+      throw new Error("[PI_EXTENSION_RUNTIME_UNSUPPORTED] Missing trusted extension path");
+    trustedToolPaths.push(trustedPath);
+    piArgumentsStart += 2;
+  } else {
+    break;
+  }
 }
 if (root === undefined) throw new Error("[PI_EXTENSION_RUNTIME_UNSUPPORTED] Missing Pi runtime");
-// Extensions run with subprocess creation denied on macOS. One that starts a background child
-// without handling that failure must not stop the whole Pi process.
-containSandboxSubprocessDenials(process, (text) => process.stderr.write(text));
+// In a no-fork sandbox, an extension that starts a background child without handling the
+// denial must not stop the whole Pi process.
+if (noForkSandbox) containSandboxSubprocessDenials(process, (text) => process.stderr.write(text));
 await installAuthBrokerClient(root);
 const loader = (await import(
   pathToFileURL(path.join(root, "dist/core/resource-loader.js")).href
