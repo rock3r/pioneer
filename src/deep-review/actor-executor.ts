@@ -124,7 +124,11 @@ async function launchStructuredActor(
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     });
     // Discovery may already have contained a subprocess denial that the actor never repeats.
-    for (const warning of subprocessDenialWarnings(readiness.warning ?? "")) {
+    const extensionPackages = extensionPackageNames([
+      ...runtime.extensions.paths,
+      ...runtime.extensions.sourcePaths,
+    ]);
+    for (const warning of subprocessDenialWarnings(readiness.warning ?? "", extensionPackages)) {
       options.onActorWarning?.(request.member.id, warning);
     }
     await assertNativeSandboxReady();
@@ -261,10 +265,7 @@ async function launchStructuredActor(
         request.timeoutMs,
         {
           onActorWarning: (warning) => options.onActorWarning?.(request.member.id, warning),
-          extensionPackages: extensionPackageNames([
-            ...runtime.extensions.paths,
-            ...runtime.extensions.sourcePaths,
-          ]),
+          extensionPackages,
         },
       );
     } finally {
