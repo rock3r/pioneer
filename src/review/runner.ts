@@ -777,6 +777,9 @@ function recordAssistantEventFailure(value: unknown, diagnostics: string[]): voi
   diagnostics.push(`assistant stopReason=${event.reason}`);
 }
 
+// Pi RPC extension UI methods that block until the client answers.
+const EXTENSION_DIALOG_METHODS = new Set(["confirm", "editor", "input", "select"]);
+const MAX_EXTENSION_DIALOG_ID_LENGTH = 256;
 const MAX_ACTOR_WARNINGS = 8;
 const MAX_STDERR_LINE_CHARACTERS = 4096;
 
@@ -1008,6 +1011,21 @@ export async function runReviewRpc(
         deltaBatcher.accept(eventSummary);
         if (workLogFailure !== undefined) return;
         if (typeof record.type === "string") eventTypes.add(record.type);
+        if (
+          record.type === "extension_ui_request" &&
+          typeof record.method === "string" &&
+          EXTENSION_DIALOG_METHODS.has(record.method) &&
+          typeof record.id === "string" &&
+          record.id.length <= MAX_EXTENSION_DIALOG_ID_LENGTH &&
+          child.stdin.writable
+        ) {
+          // A review has no user to answer an extension dialog, and Pi waits for an answer.
+          // Cancelling gives the extension its documented "no answer" value at once.
+          child.stdin.write(
+            `${JSON.stringify({ type: "extension_ui_response", id: record.id, cancelled: true })}\n`,
+          );
+          recordWorkLog("pi_extension_dialog_cancelled", { method: record.method });
+        }
         if (record.type === "response" && record.success === false) {
           terminate(
             classifyReviewResumeFailure(

@@ -910,6 +910,37 @@ process.stdin.once("data", () => {
     expect(warnings).toEqual([warning]);
   });
 
+  it("cancels extension dialogs so a non-interactive review cannot wait on them", async () => {
+    const source = `
+let buffer = "";
+let prompted = false;
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split("\\n");
+  buffer = lines.pop();
+  for (const line of lines) {
+    const record = JSON.parse(line);
+    if (record.type === "prompt" && !prompted) {
+      prompted = true;
+      for (const method of ["setWidget", "confirm"]) {
+        process.stdout.write(JSON.stringify({ type: "extension_ui_request", id: "ui-" + method, method, title: "t" }) + "\\n");
+      }
+    }
+    if (record.type === "extension_ui_response") {
+      const text = JSON.stringify(record);
+      for (const event of [
+        { type: "message_end", message: { role: "assistant", stopReason: "stop", content: text } },
+        { type: "agent_settled" },
+      ]) process.stdout.write(JSON.stringify(event) + "\\n");
+    }
+  }
+});
+`;
+    await expect(
+      runReviewRpc([process.execPath, "-e", source], process.cwd(), process.env, "prompt", 2_000),
+    ).resolves.toBe('{"type":"extension_ui_response","id":"ui-confirm","cancelled":true}');
+  });
+
   it("merges repeated warning lines from readiness and the actor", () => {
     expect(
       combineWarnings("[PI_VERSION_UNTESTED] newer\n[DENIED] a", undefined, "[DENIED] a"),

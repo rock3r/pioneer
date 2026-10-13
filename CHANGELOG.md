@@ -4,6 +4,11 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.4.6 - 2026-10-13
+
+- Cancel extension dialogs (`select`, `confirm`, `input`, `editor`) in reviews and deep reviews. Pi waits for an answer to these requests over RPC, so an extension that asked a question would hold the review until its timeout. Pioneer now answers each one with a cancellation at once, and the extension receives its normal "no answer" value. The work log records `pi_extension_dialog_cancelled`.
+- `pioneer update --yes` (or `-y`) now installs without any prompt and skips the changelog. Before, it still asked whether to show the changelog and failed without an interactive terminal. Add `--changelog` to print the changelog as well.
+
 ## 0.4.5 - 2026-10-13
 
 - Keep reviews running when an enabled extension starts a background subprocess that the macOS sandbox denies. `pi-subagents` 0.75 starts `git` at session start without handling a failed spawn. Under the sandbox that spawn fails with `EPERM`, the unhandled promise rejection stopped Pi about one second after the prompt, and every review with extensions on failed with `[REVIEW_RPC_INCOMPLETE]`. Models that come from an extension, such as `opencode-go/*`, could not be used at all. The cause was not a change in Pi's RPC contract. Pioneer's in-sandbox extension adapter now turns that specific denial into one `[PI_EXTENSION_SUBPROCESS_DENIED]` warning that names the package, and Pioneer reports it as a warning: with the review result, also when the review succeeds, in `models` and `doctor` readiness, and as a deep-review warning diagnostic that names the council member. The guard is installed only for macOS review, discovery and deep-review actors, which run without process creation. Every other unhandled rejection still stops Pi.
