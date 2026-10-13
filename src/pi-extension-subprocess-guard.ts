@@ -38,7 +38,7 @@ export function isSandboxSubprocessDenial(reason: unknown): reason is Error {
 }
 
 /** The first npm package in the stack other than Pi itself, for example `pi-subagents`. */
-function stackPackage(stack: unknown): string | undefined {
+export function stackPackage(stack: unknown): string | undefined {
   if (typeof stack !== "string") return undefined;
   for (const match of stack
     .replaceAll("\\", "/")

@@ -20,7 +20,7 @@ function extensionLabel(value: unknown): string | undefined {
 }
 
 /** The module Node could not resolve, relative to its innermost `node_modules`. */
-function missingModule(text: string): string | undefined {
+export function missingModule(text: string): string | undefined {
   const specifier = /Cannot find (?:module|package) '([^'\n]+)'/.exec(text)?.[1];
   if (specifier === undefined) return undefined;
   const normalized = specifier.replaceAll("\\", "/");

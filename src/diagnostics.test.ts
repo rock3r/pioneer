@@ -4,7 +4,6 @@ import {
   diagnosticMessage,
   parseDiagnostic,
   sanitizeDiagnostic,
-  stderrExcerpt,
 } from "./diagnostics.js";
 
 /**
@@ -860,56 +859,5 @@ describe("diagnostics", () => {
     expect(sanitized).not.toContain("private-material");
     expect(sanitized).toContain("[REDACTED]");
     expect(sanitized).toContain("request failed");
-  });
-});
-
-describe("stderr excerpts", () => {
-  it("shortens Windows drive, UNC, and node_modules paths", () => {
-    const excerpt = stderrExcerpt(
-      [
-        "Error: Cannot load C:\\Users\\Alice\\private-project\\extension.js",
-        "    at load (C:\\Users\\Alice\\AppData\\Roaming\\npm\\node_modules\\pi-subagents\\src\\a.js:1:2)",
-        "    at run (\\\\fileserver\\share\\Alice\\tools\\b.js:3:4)",
-      ].join("\r\n"),
-    );
-    expect(excerpt).toBe(
-      "Error: Cannot load .../private-project/extension.js | at load (node_modules/pi-subagents/src/a.js:1:2) | at run (.../tools/b.js:3:4)",
-    );
-    expect(excerpt).not.toMatch(/Alice|fileserver|C:/);
-  });
-
-  it("hides the home directory and quoted paths that contain spaces", () => {
-    const excerpt = stderrExcerpt(
-      [
-        "Error: Cannot load C:\\Users\\Alice Smith\\private-project\\extension.js",
-        "    at a (/Users/Alice Smith/.pi/agent/npm/b.js:1:1)",
-        '    at c ("/Volumes/My Disk/work/tools/d.js")',
-      ].join("\n"),
-      [],
-      ["C:\\Users\\Alice Smith", "/Users/Alice Smith"],
-    );
-    expect(excerpt).toBe(
-      'Error: Cannot load ~/private-project/extension.js | at a (~/.pi/agent/npm/b.js:1:1) | at c (".../tools/d.js")',
-    );
-  });
-
-  it("shortens unquoted paths with spaces outside the home directory", () => {
-    expect(
-      stderrExcerpt(
-        "Error: Cannot load /Volumes/Work Disk/private-project/extension.js from D:\\Shared Drive\\team\\a\\b.js",
-        [],
-        [],
-      ),
-    ).toBe("Error: Cannot load .../private-project/extension.js from .../a/b.js");
-  });
-
-  it("redacts exact sensitive values before shortening paths", () => {
-    expect(
-      stderrExcerpt(
-        "Error: Review codename alpha\\beta and /home/alice/Project Falcon",
-        ["Review codename alpha\\beta", "/home/alice/Project Falcon"],
-        ["/home/alice"],
-      ),
-    ).toBe("Error: [REDACTED] and [REDACTED]");
   });
 });

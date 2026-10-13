@@ -59,7 +59,7 @@ describe("Pi readiness", () => {
     );
   });
 
-  it("names a redacted excerpt of an unexpected model-discovery failure", async () => {
+  it("names an allowlisted summary of an unexpected model-discovery failure", async () => {
     const result = await checkPiReadiness({
       runner: runnerWith([
         { exitCode: 0, stdout: "1.0.1", stderr: "" },
@@ -73,7 +73,7 @@ describe("Pi readiness", () => {
     });
     const message = result.errors.join(" ");
     expect(message).toContain(
-      "[PI_PROBE_FAILED] Pi could not start successfully (exit 1; output: present). Pi output excerpt: Error [ERR_MODULE_NOT_FOUND]: Cannot find module '.../extensions/guard.js' token=[REDACTED]",
+      "[PI_PROBE_FAILED] Pi could not start successfully (exit 1; output: present). Pi output summary: error=Error; code=ERR_MODULE_NOT_FOUND",
     );
     expect(message).not.toContain("abc123secret");
     expect(message).not.toContain("/private/tmp");

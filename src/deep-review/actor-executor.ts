@@ -8,6 +8,7 @@ import { resolvePiCommand } from "../pi-command.js";
 import { cleanupReviewRuntime, prepareReviewRuntime } from "../pi-extension-discovery.js";
 import { withNoForkSandbox } from "../pi-extension-runtime.js";
 import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
+import { subprocessDenialWarnings } from "../pi-extension-subprocess-guard.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
 import {
@@ -119,6 +120,10 @@ async function launchStructuredActor(
       requestedModel: request.member.model,
       ...(request.signal === undefined ? {} : { signal: request.signal }),
     });
+    // Discovery may already have contained a subprocess denial that the actor never repeats.
+    for (const warning of subprocessDenialWarnings(readiness.warning ?? "")) {
+      options.onActorWarning?.(request.member.id, warning);
+    }
     await assertNativeSandboxReady();
 
     const runtimeReadPaths = [

@@ -8,7 +8,6 @@ import {
   containsStandaloneCredential,
   diagnosticMessage,
   sanitizeDiagnostic,
-  stderrExcerpt,
 } from "./diagnostics.js";
 import { type PiLaunchCommand, resolvePiCommand } from "./pi-command.js";
 import {
@@ -22,6 +21,7 @@ import { defaultPiAgentDir } from "./pi-home.js";
 import { type PiConfiguredModel, resolvePiModel } from "./pi-model-selection.js";
 import { PI_PROVIDER_FIELD } from "./pi-provider-id.js";
 import { validatePiVersion } from "./pi-version-policy.js";
+import { stderrSummary } from "./stderr-summary.js";
 
 export const PI_NOT_FOUND_ERROR = diagnosticMessage(
   "PI_NOT_FOUND",
@@ -165,16 +165,16 @@ function outerSandboxIndicator(environment: Readonly<NodeJS.ProcessEnv>): string
   );
 }
 
-function withOutputExcerpt(message: string, output: string): string {
-  const excerpt = stderrExcerpt(output);
-  return excerpt ? `${message}. Pi output excerpt: ${excerpt}` : message;
+function withOutputSummary(message: string, output: string): string {
+  const summary = stderrSummary(output);
+  return summary ? `${message}. Pi output summary: ${summary}` : message;
 }
 
 function summarizeFailure(result: PiProbeResult): string {
   const output = result.stderr || result.stdout;
   return diagnosticMessage(
     "PI_PROBE_FAILED",
-    withOutputExcerpt(
+    withOutputSummary(
       `Pi could not start successfully (exit ${result.exitCode ?? "unknown"}; output: ${output.trim() ? "present" : "none"})`,
       output,
     ),

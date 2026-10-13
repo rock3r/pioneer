@@ -1,4 +1,5 @@
-import { diagnosticMessage, stderrExcerpt } from "../diagnostics.js";
+import { diagnosticMessage } from "../diagnostics.js";
+import { stderrSummary } from "../stderr-summary.js";
 
 interface ReviewRpcOutcome {
   readonly completed: boolean;
@@ -11,16 +12,16 @@ interface ReviewRpcOutcome {
   readonly sensitiveValues?: readonly string[];
 }
 
-function withStderrExcerpt(message: string, stderr: string, secrets: readonly string[]): string {
-  const excerpt = stderrExcerpt(stderr, secrets);
-  return excerpt ? `${message}. Pi stderr excerpt: ${excerpt}` : message;
+function withStderrSummary(message: string, stderr: string): string {
+  const summary = stderrSummary(stderr);
+  return summary ? `${message}. Pi stderr summary: ${summary}` : message;
 }
 
 /** A settled run that then exits nonzero or by signal may explain itself on stderr. */
-function withFailedExitExcerpt(message: string, outcome: ReviewRpcOutcome): string {
+function withFailedExitSummary(message: string, outcome: ReviewRpcOutcome): string {
   return outcome.exitCode === 0 && outcome.signal === null
     ? message
-    : withStderrExcerpt(message, outcome.stderr, outcome.sensitiveValues ?? []);
+    : withStderrSummary(message, outcome.stderr);
 }
 
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
@@ -49,10 +50,9 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
     throw new Error(
       diagnosticMessage(
         "REVIEW_PROCESS_FAILED",
-        withStderrExcerpt(
+        withStderrSummary(
           `Pi exited unsuccessfully after settling (exit ${outcome.exitCode ?? "unknown"}; signal: ${outcome.signal ?? "none"}; ${context})`,
           outcome.stderr,
-          outcome.sensitiveValues ?? [],
         ),
       ),
     );
@@ -62,7 +62,7 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
       throw new Error(
         diagnosticMessage(
           "REVIEW_ASSISTANT_FAILED",
-          withFailedExitExcerpt(
+          withFailedExitSummary(
             `Pi reported an assistant failure without a review report (${context})`,
             outcome,
           ),
@@ -72,17 +72,16 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
     throw new Error(
       diagnosticMessage(
         "REVIEW_REPORT_MISSING",
-        withFailedExitExcerpt(`Pi settled without a review report (${context})`, outcome),
+        withFailedExitSummary(`Pi settled without a review report (${context})`, outcome),
       ),
     );
   }
   throw new Error(
     diagnosticMessage(
       "REVIEW_RPC_INCOMPLETE",
-      withStderrExcerpt(
+      withStderrSummary(
         `Pi exited before completing the review (exit ${outcome.exitCode ?? "unknown"}; ${context})`,
         outcome.stderr,
-        outcome.sensitiveValues ?? [],
       ),
     ),
   );
