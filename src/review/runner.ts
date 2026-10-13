@@ -575,11 +575,12 @@ export function buildReviewPrompt(
   ].join("\n\n");
 }
 
-function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
-  const present = [
-    ...new Set(warnings.filter((warning): warning is string => warning !== undefined)),
+/** Joins warnings and drops repeated lines, which discovery and the actor can both report. */
+export function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
+  const lines = [
+    ...new Set(warnings.flatMap((warning) => (warning === undefined ? [] : warning.split("\n")))),
   ];
-  return present.length === 0 ? undefined : present.join("\n");
+  return lines.length === 0 ? undefined : lines.join("\n");
 }
 
 function isPiCommandName(executable: string): boolean {

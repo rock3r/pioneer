@@ -13,6 +13,7 @@ import {
   canonicalReviewPiHomeSource,
   cleanupCompletedReviewResumeArchive,
   cleanupUnavailableReviewResumeArchive,
+  combineWarnings,
   createReviewScratchDirectory,
   finalizeReviewWorkLog,
   markReviewCleanupFailure,
@@ -907,6 +908,13 @@ process.stdin.once("data", () => {
       }),
     ).resolves.toBe("Done");
     expect(warnings).toEqual([warning]);
+  });
+
+  it("merges repeated warning lines from readiness and the actor", () => {
+    expect(
+      combineWarnings("[PI_VERSION_UNTESTED] newer\n[DENIED] a", undefined, "[DENIED] a"),
+    ).toBe("[PI_VERSION_UNTESTED] newer\n[DENIED] a");
+    expect(combineWarnings(undefined)).toBeUndefined();
   });
 
   it("fails the RPC instead of crashing when the actor-warning callback throws", async () => {
