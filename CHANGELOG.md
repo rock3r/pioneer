@@ -4,6 +4,9 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.4.6 - 2026-10-13
+
+- Cancel extension dialogs (`select`, `confirm`, `input`, `editor`) in reviews and deep reviews. Pi waits for an answer to these requests over RPC, so an extension that asked a question would hold the review until its timeout. Pioneer now answers each one with a cancellation at once, and the extension receives its normal "no answer" value. The work log records `pi_extension_dialog_cancelled`.
 - `pioneer update --yes` (or `-y`) now installs without any prompt and skips the changelog. Before, it still asked whether to show the changelog and failed without an interactive terminal. Add `--changelog` to print the changelog as well.
 
 ## 0.4.5 - 2026-10-13
