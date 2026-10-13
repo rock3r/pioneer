@@ -55,6 +55,28 @@ describe("pioneer update", () => {
     ]);
   });
 
+  it("installs without any prompt or changelog when only --yes is given", async () => {
+    for (const flag of ["--yes", "-y"]) {
+      const output: string[] = [];
+      const installs: Array<readonly string[]> = [];
+      await runUpdateCommand([flag], {
+        check: async () => ({ checked: true, latestVersion: "0.2.0", updateAvailable: true }),
+        changelog: async () => {
+          throw new Error("should not fetch the changelog");
+        },
+        confirm: async () => {
+          throw new Error("should not prompt");
+        },
+        install: async (args) => {
+          installs.push(args);
+        },
+        write: (message) => output.push(message),
+      });
+      expect(output.join("")).not.toContain("changelog");
+      expect(installs).toHaveLength(1);
+    }
+  });
+
   it("does not prompt or install when the installed version is current", async () => {
     const output: string[] = [];
     await runUpdateCommand([], {

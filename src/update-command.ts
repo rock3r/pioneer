@@ -142,7 +142,12 @@ export async function runUpdateCommand(
   }
 
   dependencies.write(`Update available: Pioneer ${PIONEER_VERSION} -> ${result.latestVersion}.\n`);
-  if (automaticChangelog || (await dependencies.confirm("Show the changelog? [y/N] "))) {
+  // `--yes` is non-interactive: it installs without asking, and shows the changelog only with
+  // `--changelog`.
+  if (
+    automaticChangelog ||
+    (!automaticUpdate && (await dependencies.confirm("Show the changelog? [y/N] ")))
+  ) {
     dependencies.write(`${(await dependencies.changelog(result.latestVersion)).trimEnd()}\n`);
   }
   if (!automaticUpdate && !(await dependencies.confirm("Update Pioneer now? [y/N] "))) {

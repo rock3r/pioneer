@@ -38,7 +38,7 @@ pioneer update
 pioneer update --changelog --yes
 ```
 
-`--changelog` answers yes to the changelog prompt; `--yes` (or `-y`) answers yes to the installation prompt. Use both flags in non-interactive automation.
+`--yes` (or `-y`) installs without any prompt and does not print the changelog. `--changelog` prints the changelog without asking. Add `--changelog` to `--yes` to print it before a non-interactive install.
 
 ## `pioneer review`
 
