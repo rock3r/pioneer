@@ -902,4 +902,14 @@ describe("stderr excerpts", () => {
       ),
     ).toBe("Error: Cannot load .../private-project/extension.js from .../a/b.js");
   });
+
+  it("redacts exact sensitive values before shortening paths", () => {
+    expect(
+      stderrExcerpt(
+        "Error: Review codename alpha\\beta and /home/alice/Project Falcon",
+        ["Review codename alpha\\beta", "/home/alice/Project Falcon"],
+        ["/home/alice"],
+      ),
+    ).toBe("Error: [REDACTED] and [REDACTED]");
+  });
 });

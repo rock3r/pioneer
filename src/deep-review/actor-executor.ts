@@ -50,6 +50,8 @@ export interface CreateDeepReviewActorExecutorOptions {
   readonly piHomeSource?: string;
   readonly packageRoot?: string;
   readonly config: DeepReviewConfigV1;
+  /** Receives each controller-validated actor warning with the council member that raised it. */
+  readonly onActorWarning?: (memberId: string, warning: string) => void;
 }
 
 async function stageActorStoreFile(
@@ -249,6 +251,7 @@ async function launchStructuredActor(
         reviewProcessEnvironment(launch.environment, environment),
         request.prompt,
         request.timeoutMs,
+        { onActorWarning: (warning) => options.onActorWarning?.(request.member.id, warning) },
       );
     } finally {
       await bridge?.close();

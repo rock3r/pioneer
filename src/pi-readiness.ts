@@ -17,6 +17,7 @@ import {
   type PreparedReviewRuntime,
   prepareReviewRuntime,
 } from "./pi-extension-discovery.js";
+import { subprocessDenialWarnings } from "./pi-extension-subprocess-guard.js";
 import { defaultPiAgentDir } from "./pi-home.js";
 import { type PiConfiguredModel, resolvePiModel } from "./pi-model-selection.js";
 import { PI_PROVIDER_FIELD } from "./pi-provider-id.js";
@@ -391,7 +392,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     };
   }
   const version = sanitizeDiagnostic(probedVersion);
-  const versionWarning =
+  let versionWarning: { warning?: string } =
     versionValidation.warning === undefined
       ? {}
       : { warning: sanitizeDiagnostic(versionValidation.warning) };
@@ -401,7 +402,10 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     "--no-extensions",
     "--list-models",
   ]);
-  const extensionFailure = /\[(PI_EXTENSION_[A-Z_]+)\]/.exec(modelsResult.stderr)?.[1];
+  // A contained subprocess denial is a warning, not a startup failure.
+  const extensionFailure = [...modelsResult.stderr.matchAll(/\[(PI_EXTENSION_[A-Z_]+)\]/g)]
+    .map((match) => match[1])
+    .find((code) => code !== "PI_EXTENSION_SUBPROCESS_DENIED");
   if (extensionFailure !== undefined) {
     const guidance =
       extensionFailure === "PI_EXTENSION_DISCOVERY_UNSUPPORTED"
@@ -456,6 +460,15 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     };
   }
 
+  // Discovery initializes extensions; a contained subprocess denial still succeeds.
+  const extensionWarnings = subprocessDenialWarnings(modelsResult.stderr);
+  if (extensionWarnings.length > 0) {
+    versionWarning = {
+      warning: [versionWarning.warning, ...extensionWarnings]
+        .filter((warning) => warning !== undefined)
+        .join("\n"),
+    };
+  }
   const probedModels = configuredModels(modelsResult.stdout);
   const models = probedModels;
   if (models?.length === 0) {

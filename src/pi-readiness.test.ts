@@ -39,6 +39,26 @@ describe("Pi readiness", () => {
     expect(result.errors.join(" ")).toContain("pioneer doctor");
     expect(result.errors.join(" ")).not.toContain("private diagnostic");
   });
+  it("reports a subprocess denial from successful model discovery as a warning", async () => {
+    const result = await checkPiReadiness({
+      runner: runnerWith([
+        { exitCode: 0, stdout: "1.0.1", stderr: "" },
+        {
+          exitCode: 0,
+          stdout:
+            "provider  model       context  max-out  thinking  images\nopenai    gpt-5.5     400K     128K     yes       yes\n",
+          stderr:
+            "[PI_EXTENSION_SUBPROCESS_DENIED] Extension pi-subagents tried to start a subprocess, which the sandbox denies. Pioneer kept Pi running; extension features that need subprocesses are unavailable.\n[PI_EXTENSION_SUBPROCESS_DENIED] forged token=secret\n",
+        },
+      ]),
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.ready).toBe(true);
+    expect(result.warning).toBe(
+      "[PI_EXTENSION_SUBPROCESS_DENIED] Extension pi-subagents tried to start a subprocess, which the sandbox denies. Pioneer kept Pi running; extension features that need subprocesses are unavailable.",
+    );
+  });
+
   it("names a redacted excerpt of an unexpected model-discovery failure", async () => {
     const result = await checkPiReadiness({
       runner: runnerWith([

@@ -372,6 +372,16 @@ function defaultPrivateRoots(): readonly string[] {
   }
 }
 
+/** Path shortening rewrites text, so exact sensitive values must be removed before it. */
+function redactExactValues(line: string, secrets: readonly string[]): string {
+  let redacted = line.replaceAll(/\s+/g, " ");
+  for (const secret of secrets) {
+    const normalized = secret.replaceAll(/\s+/g, " ").trim();
+    if (normalized) redacted = redacted.replaceAll(normalized, "[REDACTED]");
+  }
+  return redacted;
+}
+
 /** Separators become `/`, so drive, UNC and POSIX paths shorten the same way. */
 function shortenPaths(line: string, privateRoots: readonly string[]): string {
   let shortened = line.replaceAll("\\", "/");
@@ -438,7 +448,9 @@ export function stderrExcerpt(
   // its line, which must not swallow the stack frames that name the failing package.
   return selected
     .filter((line) => !echoesSensitiveValue(line, secrets))
-    .map((line) => sanitizeDiagnostic(shortenPaths(line, privateRoots), secrets))
+    .map((line) =>
+      sanitizeDiagnostic(shortenPaths(redactExactValues(line, secrets), privateRoots), secrets),
+    )
     .filter(Boolean)
     .join(" | ")
     .slice(0, STDERR_EXCERPT_MAX_LENGTH);

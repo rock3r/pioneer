@@ -27,6 +27,7 @@ import {
 } from "../pi-extension-discovery.js";
 import { withNoForkSandbox } from "../pi-extension-runtime.js";
 import { assertSameExtensionSnapshot } from "../pi-extension-snapshot.js";
+import { SUBPROCESS_DENIED_WARNING } from "../pi-extension-subprocess-guard.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
@@ -570,7 +571,9 @@ export function buildReviewPrompt(
 }
 
 function combineWarnings(...warnings: readonly (string | undefined)[]): string | undefined {
-  const present = warnings.filter((warning): warning is string => warning !== undefined);
+  const present = [
+    ...new Set(warnings.filter((warning): warning is string => warning !== undefined)),
+  ];
   return present.length === 0 ? undefined : present.join("\n");
 }
 
@@ -768,9 +771,6 @@ function recordAssistantEventFailure(value: unknown, diagnostics: string[]): voi
   diagnostics.push(`assistant stopReason=${event.reason}`);
 }
 
-// Stderr is untrusted, so only the exact text that the extension adapter writes is accepted.
-const ACTOR_WARNING =
-  /^\[PI_EXTENSION_SUBPROCESS_DENIED\] (?:An extension|Extension [A-Za-z0-9@._~/+-]{1,160}) tried to start a subprocess, which the sandbox denies\. Pioneer kept Pi running; extension features that need subprocesses are unavailable\.$/;
 const MAX_ACTOR_WARNINGS = 8;
 const MAX_STDERR_LINE_CHARACTERS = 4096;
 
@@ -866,7 +866,7 @@ export async function runReviewRpc(
       for (const line of lines) {
         const warning = line.trim();
         if (
-          !ACTOR_WARNING.test(warning) ||
+          !SUBPROCESS_DENIED_WARNING.test(warning) ||
           actorWarnings.has(warning) ||
           actorWarnings.size >= MAX_ACTOR_WARNINGS
         )

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   containSandboxSubprocessDenials,
   isSandboxSubprocessDenial,
+  subprocessDenialWarnings,
 } from "./pi-extension-subprocess-guard.js";
 
 function spawnDenial(stack: string): Error {
@@ -82,5 +83,15 @@ describe("sandbox subprocess denial guard", () => {
     const failure = new Error("handled elsewhere");
     expect(() => target.emit("unhandledRejection", failure, Promise.resolve())).not.toThrow();
     expect(seen).toEqual([failure]);
+  });
+
+  it("accepts only the exact warning format from untrusted stderr", () => {
+    const warning =
+      "[PI_EXTENSION_SUBPROCESS_DENIED] Extension pi-subagents tried to start a subprocess, which the sandbox denies. Pioneer kept Pi running; extension features that need subprocesses are unavailable.";
+    expect(
+      subprocessDenialWarnings(
+        `noise\n${warning}\r\n${warning}\n[PI_EXTENSION_SUBPROCESS_DENIED] token=secret forged\n`,
+      ),
+    ).toEqual([warning]);
   });
 });
