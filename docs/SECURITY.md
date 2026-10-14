@@ -71,6 +71,7 @@ The two snapshots handle a detected file as follows:
 | --- | --- | --- |
 | Session file found while traversing a directory | Skipped | Skipped |
 | Link to a session file | Skipped | Refused with `PI_HOME_SYMLINK_TARGET_EXCLUDED` |
+| Default root file, such as `AGENTS.md`, that is a link to a session file | Not applicable | Skipped |
 | `--pi-home-include` names a session file | Not applicable | Refused with `PI_HOME_INCLUDE_INVALID` |
 | Copied file is session history, because it changed after the check | Refused with `PI_EXTENSION_SNAPSHOT_CHANGED` | Refused with `PI_HOME_SNAPSHOT_CHANGED` |
 

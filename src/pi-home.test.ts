@@ -478,6 +478,26 @@ describe("prepareIsolatedPiHome", () => {
     ).rejects.toThrow(/hard-excluded/i);
   });
 
+  it("does not copy a default root file that is a hard link to a Pi session file", async () => {
+    const { source, destination } = await fixture();
+    const history = path.join(source, "unknown-directory", "2026_a.jsonl");
+    await writeFile(history, `${JSON.stringify({ type: "session", id: "s", cwd: "/work" })}\n`);
+    await unlink(path.join(source, "AGENTS.md"));
+    await link(history, path.join(source, "AGENTS.md"));
+
+    const prepared = await prepareIsolatedPiHome({
+      sourceDir: source,
+      destination,
+      mode: "review",
+      environment: {},
+    });
+
+    await expect(lstat(path.join(prepared.agentDir, "AGENTS.md"))).rejects.toThrow();
+    await expect(readFile(path.join(prepared.agentDir, "settings.json"), "utf8")).resolves.toBe(
+      "{}",
+    );
+  });
+
   it("excludes Pi session files that an unseen project-level sessionDir placed in the snapshot", async () => {
     const { source, destination } = await fixture();
     const header = `${JSON.stringify({

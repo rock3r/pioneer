@@ -15,14 +15,16 @@ export const PI_SESSION_SCAN_BYTE_LIMIT = 1024 * 1024;
  * and requires only `type: "session"`, which is broader than Pi's own header check. Pass every
  * name the file is reached by, such as a link and its canonical target, in `names`. A file with
  * more than one hard link is checked whatever its names, because another name can be `.jsonl`.
+ * When `filePath` is a copy, pass the source's link count as `linkCount`.
  */
 export async function isPiSessionFile(
   filePath: string,
   names: readonly string[] = [filePath],
+  linkCount?: number,
 ): Promise<boolean> {
   const named = names.some((name) => path.basename(name).toLowerCase().endsWith(".jsonl"));
   const details = await stat(filePath);
-  if (!details.isFile() || (!named && details.nlink <= 1)) return false;
+  if (!details.isFile() || (!named && (linkCount ?? details.nlink) <= 1)) return false;
   const handle = await open(filePath, "r");
   try {
     const decoder = new StringDecoder("utf8");

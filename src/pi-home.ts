@@ -426,6 +426,11 @@ async function collectDefaultFile(
   relative: string,
   state: SelectionState,
 ): Promise<void> {
+  // A default file can be a hard link or symlink to session history stored elsewhere.
+  const source = path.join(sourceRoot, relative);
+  const target = await realpath(source).catch(() => undefined);
+  state.checkAborted();
+  if (target !== undefined && (await isPiSessionFile(target, [source, target]))) return;
   const entry = await selectedEntry(sourceRoot, relative, state);
   if (entry.kind === "directory") {
     throw new Error(`[PI_HOME_SPECIAL_FILE] Pi home default path is not a file: ${relative}`);
@@ -550,7 +555,7 @@ async function copySelection(
         constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
       );
       await chmod(destination, Number(entry.stats.mode) & 0o777);
-      if (await isPiSessionFile(destination, [entry.sourcePath]))
+      if (await isPiSessionFile(destination, [entry.sourcePath], Number(entry.stats.nlink)))
         throw new Error(
           `[PI_HOME_SNAPSHOT_CHANGED] Pi home file ${entry.relativePath} became Pi session history while it was being copied; retry.`,
         );

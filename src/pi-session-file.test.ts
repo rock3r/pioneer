@@ -60,6 +60,10 @@ describe("isPiSessionFile", () => {
     await writeFile(path.join(root, "single.txt"), `${header}\n`);
     await expect(isPiSessionFile(path.join(root, "notes.txt"))).resolves.toBe(true);
     await expect(isPiSessionFile(path.join(root, "single.txt"))).resolves.toBe(false);
+    // A one-link copy of a hard-linked source is checked when the source's link count is given.
+    await expect(
+      isPiSessionFile(path.join(root, "single.txt"), [path.join(root, "single.txt")], 2),
+    ).resolves.toBe(true);
   });
 
   it("does not classify directories", async () => {
