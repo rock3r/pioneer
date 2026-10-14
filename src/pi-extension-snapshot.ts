@@ -20,6 +20,7 @@ import {
   protectedExtensionParents,
 } from "./eval-run/isolation.js";
 import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
+import { isPiSessionFile } from "./pi-session-file.js";
 
 const SNAPSHOT_ENTRY_LIMIT = 500_000;
 const SNAPSHOT_BYTE_LIMIT = 1024 ** 3;
@@ -363,6 +364,8 @@ export async function snapshotExtensionResources(
       throw new Error("Explicit Pi extension uses an unsupported hard-link layout");
     }
     if (await isPrivateStorage(canonical)) return;
+    // Session history can sit anywhere a sessionDir Pioneer cannot see points, so check content.
+    if (await isPiSessionFile(canonical, [source, canonical])) return;
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency link escapes the selected code directories. Install its dependencies inside the package before retrying.",
@@ -458,6 +461,10 @@ export async function snapshotExtensionResources(
           "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
         );
       }
+      if (await isPiSessionFile(target, [source, canonical]))
+        throw new Error(
+          "[PI_EXTENSION_SNAPSHOT_CHANGED] A file became Pi session history while it was being copied; retry.",
+        );
       await chmod(target, details.mode & 0o100 ? 0o700 : 0o600);
       for await (const chunk of createReadStream(target)) digest.update(chunk as Buffer);
     } else

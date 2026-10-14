@@ -13,6 +13,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { piRuntimeStorage } from "./pi-runtime-storage.js";
+import { isPiSessionFile } from "./pi-session-file.js";
 
 export type PiHomeMode = "review" | "eval";
 
@@ -282,6 +283,10 @@ async function collectEntry(
         continue;
       if (traversal !== "default" && isHardExcluded(childParts, childKind, state.privatePaths))
         continue;
+      // A sessionDir from project settings or flags that Pioneer cannot see can place history here.
+      if (childKind === "file" && (await isPiSessionFile(path.join(entry.sourcePath, name))))
+        continue;
+      state.checkAborted();
       await collectEntry(sourceRoot, childRelative, state, traversal);
       state.checkAborted();
     }
@@ -354,6 +359,9 @@ async function validateExplicitInclude(
     throw error;
   }
   assertNotHardExcluded(relativeCanonical.split("/"), include, lexicalKind, state.privatePaths);
+  if (await isPiSessionFile(canonicalCandidate, [candidate, canonicalCandidate]))
+    throw invalidInclude(include, "is Pi session history");
+  state.checkAborted();
   for (let index = 1; index < parts.length; index += 1) {
     await collectEntry(sourceRoot, relativePath(parts.slice(0, index)), state, "scaffold");
   }
@@ -386,8 +394,9 @@ async function validateSelectedSymlinks(sourceRoot: string, state: SelectionStat
       const targetStats = await lstat(target);
       const targetKind = entryKind(targetStats);
       if (
-        targetKind !== undefined &&
-        isHardExcluded(targetRelative.split("/"), targetKind, state.privatePaths)
+        (targetKind !== undefined &&
+          isHardExcluded(targetRelative.split("/"), targetKind, state.privatePaths)) ||
+        (await isPiSessionFile(target, [entry.sourcePath, target]))
       ) {
         throw new Error(
           `[PI_HOME_SYMLINK_TARGET_EXCLUDED] Selected Pi home symlink ${entry.relativePath} targets hard-excluded path ${targetRelative}`,
@@ -541,6 +550,10 @@ async function copySelection(
         constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
       );
       await chmod(destination, Number(entry.stats.mode) & 0o777);
+      if (await isPiSessionFile(destination, [entry.sourcePath]))
+        throw new Error(
+          `[PI_HOME_SNAPSHOT_CHANGED] Pi home file ${entry.relativePath} became Pi session history while it was being copied; retry.`,
+        );
       state.checkAborted();
     } else {
       const target = await realpath(entry.sourcePath);

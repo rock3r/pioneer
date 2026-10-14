@@ -477,6 +477,73 @@ describe("prepareIsolatedPiHome", () => {
     ).rejects.toThrow(/hard-excluded/i);
   });
 
+  it("excludes Pi session files that an unseen project-level sessionDir placed in the snapshot", async () => {
+    const { source, destination } = await fixture();
+    const header = `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "s",
+      cwd: "/work",
+    })}\n`;
+    const skillHistory = path.join(source, "skills", "review", "project-history");
+    const dependencyHistory = path.join(source, "node_modules", "root-package", "history");
+    await mkdir(skillHistory);
+    await mkdir(dependencyHistory);
+    await writeFile(path.join(skillHistory, "2026_a.jsonl"), `${header}{"type":"message"}\n`);
+    await writeFile(path.join(skillHistory, "dataset.jsonl"), '{"type":"example"}\n');
+    await writeFile(path.join(dependencyHistory, "2026_b.jsonl"), header);
+
+    const prepared = await prepareIsolatedPiHome({
+      sourceDir: source,
+      destination,
+      mode: "review",
+      piHomeIncludes: ["node_modules/root-package"],
+      environment: {},
+    });
+
+    await expect(
+      lstat(path.join(prepared.agentDir, "skills", "review", "project-history", "2026_a.jsonl")),
+    ).rejects.toThrow();
+    await expect(
+      readFile(
+        path.join(prepared.agentDir, "skills", "review", "project-history", "dataset.jsonl"),
+        "utf8",
+      ),
+    ).resolves.toBe('{"type":"example"}\n');
+    await expect(
+      lstat(
+        path.join(prepared.agentDir, "node_modules", "root-package", "history", "2026_b.jsonl"),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      readFile(path.join(prepared.agentDir, "node_modules", "root-package", "index.js"), "utf8"),
+    ).resolves.toBe("root dependency");
+    await expect(
+      prepareIsolatedPiHome({
+        sourceDir: source,
+        destination: `${destination}-explicit`,
+        mode: "review",
+        piHomeIncludes: ["node_modules/root-package/history/2026_b.jsonl"],
+        environment: {},
+      }),
+    ).rejects.toThrow(/\[PI_HOME_INCLUDE_INVALID\].*Pi session history/u);
+    if (process.platform !== "win32") {
+      await symlink(
+        path.join("history", "2026_b.jsonl"),
+        path.join(source, "node_modules", "root-package", "latest.txt"),
+      );
+      await expect(
+        prepareIsolatedPiHome({
+          sourceDir: source,
+          destination: `${destination}-linked`,
+          mode: "review",
+          piHomeIncludes: ["node_modules/root-package"],
+          environment: {},
+        }),
+      ).rejects.toThrow("[PI_HOME_SYMLINK_TARGET_EXCLUDED]");
+    }
+  });
+
   it.skipIf(process.platform === "win32")(
     "excludes the canonical targets of linked default session and log storage",
     async () => {

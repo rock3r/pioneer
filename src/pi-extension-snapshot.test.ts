@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import {
   chmod,
   link,
+  lstat,
   mkdir,
   readFile,
   readlink,
@@ -652,6 +653,46 @@ describe("extension snapshots", () => {
         { agentDir, sessionDirs: [history] },
       ),
     ).rejects.toThrow("Pi agent directory");
+  });
+
+  it("excludes Pi session files that an unseen project-level sessionDir placed in a selected root", async () => {
+    const root = await createTempDir("extension-project-session-dir-");
+    const extension = path.join(root, "extensions", "reviewer");
+    const history = path.join(extension, "history");
+    await mkdir(history, { recursive: true });
+    await writeFile(path.join(extension, "index.ts"), "extension");
+    await writeFile(
+      path.join(history, "2026_a.jsonl"),
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "s",
+        cwd: "/work",
+      })}\n{"type":"message"}\n`,
+    );
+    await writeFile(path.join(extension, "fixtures.jsonl"), '{"type":"example"}\n');
+    if (process.platform !== "win32")
+      await symlink(path.join("history", "2026_a.jsonl"), path.join(extension, "latest"));
+
+    const result = await snapshotExtensionResources(
+      [
+        {
+          path: path.join(extension, "index.ts"),
+          enabled: true,
+          metadata: { scope: "user" },
+        },
+      ],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir: path.join(root, "agent"), sessionDirs: [] },
+    );
+
+    const staged = path.dirname(result.paths[0] ?? "");
+    await expect(lstat(path.join(staged, "history", "2026_a.jsonl"))).rejects.toThrow();
+    await expect(lstat(path.join(staged, "latest"))).rejects.toThrow();
+    await expect(readFile(path.join(staged, "fixtures.jsonl"), "utf8")).resolves.toBe(
+      '{"type":"example"}\n',
+    );
   });
 
   it("refuses an extension stored inside private Pi session storage", async () => {
