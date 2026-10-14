@@ -478,6 +478,23 @@ describe("prepareIsolatedPiHome", () => {
     ).rejects.toThrow(/hard-excluded/i);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "refuses a .jsonl link to a selected file that holds a Pi session",
+    async () => {
+      const { source, destination } = await fixture();
+      const skill = path.join(source, "skills", "review");
+      await writeFile(
+        path.join(skill, "notes.txt"),
+        `${JSON.stringify({ type: "session", id: "s", cwd: "/work" })}\n`,
+      );
+      await symlink("notes.txt", path.join(skill, "latest.jsonl"));
+
+      await expect(
+        prepareIsolatedPiHome({ sourceDir: source, destination, mode: "review", environment: {} }),
+      ).rejects.toThrow("[PI_HOME_SYMLINK_TARGET_EXCLUDED]");
+    },
+  );
+
   it("does not copy a default root file that is a hard link to a Pi session file", async () => {
     const { source, destination } = await fixture();
     const history = path.join(source, "unknown-directory", "2026_a.jsonl");

@@ -391,13 +391,15 @@ async function validateSelectedSymlinks(sourceRoot: string, state: SelectionStat
       );
     }
     const targetRelative = symlinkTargetRelative(sourceRoot, entry.relativePath, target);
-    if (!state.entries.has(selectionKey(targetRelative))) {
+    // A .jsonl link name makes its target session history even when the target is selected.
+    const sessionTarget = await isPiSessionFile(target, [entry.sourcePath, target]);
+    if (sessionTarget || !state.entries.has(selectionKey(targetRelative))) {
       const targetStats = await lstat(target);
       const targetKind = entryKind(targetStats);
       if (
         (targetKind !== undefined &&
           isHardExcluded(targetRelative.split("/"), targetKind, state.privatePaths)) ||
-        (await isPiSessionFile(target, [entry.sourcePath, target]))
+        sessionTarget
       ) {
         throw new Error(
           `[PI_HOME_SYMLINK_TARGET_EXCLUDED] Selected Pi home symlink ${entry.relativePath} targets hard-excluded path ${targetRelative}`,
@@ -556,9 +558,14 @@ async function copySelection(
         constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
       );
       await chmod(destination, Number(entry.stats.mode) & 0o777);
-      if (await isPiSessionFile(destination, [entry.sourcePath], Number(entry.stats.nlink)))
+      const after = await lstat(entry.sourcePath);
+      if (
+        after.dev !== entry.stats.dev ||
+        after.ino !== entry.stats.ino ||
+        (await isPiSessionFile(destination, [entry.sourcePath], Number(after.nlink)))
+      )
         throw new Error(
-          `[PI_HOME_SNAPSHOT_CHANGED] Pi home file ${entry.relativePath} became Pi session history while it was being copied; retry.`,
+          `[PI_HOME_SNAPSHOT_CHANGED] Pi home file ${entry.relativePath} was replaced or became Pi session history while it was being copied; retry.`,
         );
       state.checkAborted();
     } else {
