@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import {
+  link,
   lstat,
   mkdir,
   readFile,
@@ -475,6 +476,117 @@ describe("prepareIsolatedPiHome", () => {
         environment: { PI_CODING_AGENT_SESSION_DIR: dependencySessions },
       }),
     ).rejects.toThrow(/hard-excluded/i);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a .jsonl link to a selected file that holds a Pi session",
+    async () => {
+      const { source, destination } = await fixture();
+      const skill = path.join(source, "skills", "review");
+      await writeFile(
+        path.join(skill, "notes.txt"),
+        `${JSON.stringify({ type: "session", id: "s", cwd: "/work" })}\n`,
+      );
+      await symlink("notes.txt", path.join(skill, "latest.jsonl"));
+
+      await expect(
+        prepareIsolatedPiHome({ sourceDir: source, destination, mode: "review", environment: {} }),
+      ).rejects.toThrow("[PI_HOME_SYMLINK_TARGET_EXCLUDED]");
+    },
+  );
+
+  it("does not copy a default root file that is a hard link to a Pi session file", async () => {
+    const { source, destination } = await fixture();
+    const history = path.join(source, "unknown-directory", "2026_a.jsonl");
+    await writeFile(history, `${JSON.stringify({ type: "session", id: "s", cwd: "/work" })}\n`);
+    await unlink(path.join(source, "AGENTS.md"));
+    await link(history, path.join(source, "AGENTS.md"));
+
+    const prepared = await prepareIsolatedPiHome({
+      sourceDir: source,
+      destination,
+      mode: "review",
+      environment: {},
+    });
+
+    await expect(lstat(path.join(prepared.agentDir, "AGENTS.md"))).rejects.toThrow();
+    await expect(readFile(path.join(prepared.agentDir, "settings.json"), "utf8")).resolves.toBe(
+      "{}",
+    );
+  });
+
+  it("excludes Pi session files that an unseen project-level sessionDir placed in the snapshot", async () => {
+    const { source, destination } = await fixture();
+    const header = `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "s",
+      cwd: "/work",
+    })}\n`;
+    const skillHistory = path.join(source, "skills", "review", "project-history");
+    const dependencyHistory = path.join(source, "node_modules", "root-package", "history");
+    await mkdir(skillHistory);
+    await mkdir(dependencyHistory);
+    await writeFile(path.join(skillHistory, "2026_a.jsonl"), `${header}{"type":"message"}\n`);
+    await writeFile(path.join(skillHistory, "dataset.jsonl"), '{"type":"example"}\n');
+    await writeFile(path.join(dependencyHistory, "2026_b.jsonl"), header);
+    await link(
+      path.join(dependencyHistory, "2026_b.jsonl"),
+      path.join(source, "node_modules", "root-package", "notes.txt"),
+    );
+
+    const prepared = await prepareIsolatedPiHome({
+      sourceDir: source,
+      destination,
+      mode: "review",
+      piHomeIncludes: ["node_modules/root-package"],
+      environment: {},
+    });
+
+    await expect(
+      lstat(path.join(prepared.agentDir, "skills", "review", "project-history", "2026_a.jsonl")),
+    ).rejects.toThrow();
+    await expect(
+      readFile(
+        path.join(prepared.agentDir, "skills", "review", "project-history", "dataset.jsonl"),
+        "utf8",
+      ),
+    ).resolves.toBe('{"type":"example"}\n');
+    await expect(
+      lstat(
+        path.join(prepared.agentDir, "node_modules", "root-package", "history", "2026_b.jsonl"),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      lstat(path.join(prepared.agentDir, "node_modules", "root-package", "notes.txt")),
+    ).rejects.toThrow();
+    await expect(
+      readFile(path.join(prepared.agentDir, "node_modules", "root-package", "index.js"), "utf8"),
+    ).resolves.toBe("root dependency");
+    await expect(
+      prepareIsolatedPiHome({
+        sourceDir: source,
+        destination: `${destination}-explicit`,
+        mode: "review",
+        piHomeIncludes: ["node_modules/root-package/history/2026_b.jsonl"],
+        environment: {},
+      }),
+    ).rejects.toThrow(/\[PI_HOME_INCLUDE_INVALID\].*Pi session history/u);
+    if (process.platform !== "win32") {
+      await symlink(
+        path.join("history", "2026_b.jsonl"),
+        path.join(source, "node_modules", "root-package", "latest.txt"),
+      );
+      await expect(
+        prepareIsolatedPiHome({
+          sourceDir: source,
+          destination: `${destination}-linked`,
+          mode: "review",
+          piHomeIncludes: ["node_modules/root-package"],
+          environment: {},
+        }),
+      ).rejects.toThrow("[PI_HOME_SYMLINK_TARGET_EXCLUDED]");
+    }
   });
 
   it.skipIf(process.platform === "win32")(

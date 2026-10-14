@@ -13,6 +13,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { piRuntimeStorage } from "./pi-runtime-storage.js";
+import { isPiSessionFile } from "./pi-session-file.js";
 
 export type PiHomeMode = "review" | "eval";
 
@@ -267,13 +268,15 @@ async function collectEntry(
       const name = child.name;
       const childRelative = `${relative}/${name}`;
       const childParts = childRelative.split("/");
+      const childPath = path.join(entry.sourcePath, name);
+      // Some FUSE and network filesystems report an unknown entry type, so ask lstat instead.
       const childKind = child.isDirectory()
         ? "directory"
         : child.isFile()
           ? "file"
           : child.isSymbolicLink()
             ? "symlink"
-            : undefined;
+            : await lstat(childPath).then(entryKind, () => undefined);
       if (childKind === undefined) {
         await collectEntry(sourceRoot, childRelative, state, traversal);
         continue;
@@ -282,6 +285,9 @@ async function collectEntry(
         continue;
       if (traversal !== "default" && isHardExcluded(childParts, childKind, state.privatePaths))
         continue;
+      // A sessionDir from project settings or flags that Pioneer cannot see can place history here.
+      if (childKind === "file" && (await isPiSessionFile(childPath))) continue;
+      state.checkAborted();
       await collectEntry(sourceRoot, childRelative, state, traversal);
       state.checkAborted();
     }
@@ -354,6 +360,9 @@ async function validateExplicitInclude(
     throw error;
   }
   assertNotHardExcluded(relativeCanonical.split("/"), include, lexicalKind, state.privatePaths);
+  if (await isPiSessionFile(canonicalCandidate, [candidate, canonicalCandidate]))
+    throw invalidInclude(include, "is Pi session history");
+  state.checkAborted();
   for (let index = 1; index < parts.length; index += 1) {
     await collectEntry(sourceRoot, relativePath(parts.slice(0, index)), state, "scaffold");
   }
@@ -382,12 +391,15 @@ async function validateSelectedSymlinks(sourceRoot: string, state: SelectionStat
       );
     }
     const targetRelative = symlinkTargetRelative(sourceRoot, entry.relativePath, target);
-    if (!state.entries.has(selectionKey(targetRelative))) {
+    // A .jsonl link name makes its target session history even when the target is selected.
+    const sessionTarget = await isPiSessionFile(target, [entry.sourcePath, target]);
+    if (sessionTarget || !state.entries.has(selectionKey(targetRelative))) {
       const targetStats = await lstat(target);
       const targetKind = entryKind(targetStats);
       if (
-        targetKind !== undefined &&
-        isHardExcluded(targetRelative.split("/"), targetKind, state.privatePaths)
+        (targetKind !== undefined &&
+          isHardExcluded(targetRelative.split("/"), targetKind, state.privatePaths)) ||
+        sessionTarget
       ) {
         throw new Error(
           `[PI_HOME_SYMLINK_TARGET_EXCLUDED] Selected Pi home symlink ${entry.relativePath} targets hard-excluded path ${targetRelative}`,
@@ -417,6 +429,11 @@ async function collectDefaultFile(
   relative: string,
   state: SelectionState,
 ): Promise<void> {
+  // A default file can be a hard link or symlink to session history stored elsewhere.
+  const source = path.join(sourceRoot, relative);
+  const target = await realpath(source).catch(() => undefined);
+  state.checkAborted();
+  if (target !== undefined && (await isPiSessionFile(target, [source, target]))) return;
   const entry = await selectedEntry(sourceRoot, relative, state);
   if (entry.kind === "directory") {
     throw new Error(`[PI_HOME_SPECIAL_FILE] Pi home default path is not a file: ${relative}`);
@@ -541,6 +558,19 @@ async function copySelection(
         constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
       );
       await chmod(destination, Number(entry.stats.mode) & 0o777);
+      const after = await lstat(entry.sourcePath);
+      if (
+        after.dev !== entry.stats.dev ||
+        after.ino !== entry.stats.ino ||
+        (await isPiSessionFile(
+          destination,
+          [entry.sourcePath],
+          Math.max(Number(entry.stats.nlink), Number(after.nlink)),
+        ))
+      )
+        throw new Error(
+          `[PI_HOME_SNAPSHOT_CHANGED] Pi home file ${entry.relativePath} was replaced or became Pi session history while it was being copied; retry.`,
+        );
       state.checkAborted();
     } else {
       const target = await realpath(entry.sourcePath);
@@ -552,6 +582,11 @@ async function copySelection(
           `[PI_HOME_SYMLINK_TARGET_MISSING] Selected Pi home symlink ${entry.relativePath} targets ${targetRelative}, which is not selected`,
         );
       }
+      // The link may have been repointed since validation, so check its name and target again.
+      if (await isPiSessionFile(target, [entry.sourcePath, target]))
+        throw new Error(
+          `[PI_HOME_SNAPSHOT_CHANGED] Pi home symlink ${entry.relativePath} was repointed to Pi session history while it was being copied; retry.`,
+        );
       const targetDestination = path.join(
         destinationRoot,
         ...selectedTarget.relativePath.split("/"),
