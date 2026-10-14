@@ -562,7 +562,11 @@ async function copySelection(
       if (
         after.dev !== entry.stats.dev ||
         after.ino !== entry.stats.ino ||
-        (await isPiSessionFile(destination, [entry.sourcePath], Number(after.nlink)))
+        (await isPiSessionFile(
+          destination,
+          [entry.sourcePath],
+          Math.max(Number(entry.stats.nlink), Number(after.nlink)),
+        ))
       )
         throw new Error(
           `[PI_HOME_SNAPSHOT_CHANGED] Pi home file ${entry.relativePath} was replaced or became Pi session history while it was being copied; retry.`,
@@ -578,6 +582,11 @@ async function copySelection(
           `[PI_HOME_SYMLINK_TARGET_MISSING] Selected Pi home symlink ${entry.relativePath} targets ${targetRelative}, which is not selected`,
         );
       }
+      // The link may have been repointed since validation, so check its name and target again.
+      if (await isPiSessionFile(target, [entry.sourcePath, target]))
+        throw new Error(
+          `[PI_HOME_SNAPSHOT_CHANGED] Pi home symlink ${entry.relativePath} was repointed to Pi session history while it was being copied; retry.`,
+        );
       const targetDestination = path.join(
         destinationRoot,
         ...selectedTarget.relativePath.split("/"),

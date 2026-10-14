@@ -461,7 +461,7 @@ export async function snapshotExtensionResources(
           "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
         );
       }
-      if (await isPiSessionFile(target, [source, canonical], details.nlink))
+      if (await isPiSessionFile(target, [source, canonical], Math.max(details.nlink, after.nlink)))
         throw new Error(
           "[PI_EXTENSION_SNAPSHOT_CHANGED] A file became Pi session history while it was being copied; retry.",
         );
