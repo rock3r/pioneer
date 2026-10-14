@@ -2,8 +2,8 @@ import { open, stat } from "node:fs/promises";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-/** A first parseable line longer than this is treated as history rather than read further. */
-export const PI_SESSION_SCAN_LINE_LIMIT = 1024 * 1024;
+/** Bytes read while looking for the header. A file still undecided after this is history. */
+export const PI_SESSION_SCAN_BYTE_LIMIT = 1024 * 1024;
 
 /**
  * Whether a file is Pi session history, judged by content.
@@ -13,27 +13,30 @@ export const PI_SESSION_SCAN_LINE_LIMIT = 1024 * 1024;
  * stores sessions only as `.jsonl` files and takes the first parseable line as the header,
  * skipping blank and malformed lines. This mirrors that, accepts any case of the extension,
  * and requires only `type: "session"`, which is broader than Pi's own header check. Pass every
- * name the file is reached by, such as a link and its canonical target, in `names`.
+ * name the file is reached by, such as a link and its canonical target, in `names`. A file with
+ * more than one hard link is checked whatever its names, because another name can be `.jsonl`.
  */
 export async function isPiSessionFile(
   filePath: string,
   names: readonly string[] = [filePath],
 ): Promise<boolean> {
-  if (!names.some((name) => path.basename(name).toLowerCase().endsWith(".jsonl"))) return false;
-  if (!(await stat(filePath)).isFile()) return false;
+  const named = names.some((name) => path.basename(name).toLowerCase().endsWith(".jsonl"));
+  const details = await stat(filePath);
+  if (!details.isFile() || (!named && details.nlink <= 1)) return false;
   const handle = await open(filePath, "r");
   try {
     const decoder = new StringDecoder("utf8");
     const buffer = Buffer.allocUnsafe(64 * 1024);
     let pending = "";
-    for (;;) {
+    let scanned = 0;
+    while (scanned <= PI_SESSION_SCAN_BYTE_LIMIT) {
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      scanned += bytesRead;
       pending += bytesRead === 0 ? decoder.end() : decoder.write(buffer.subarray(0, bytesRead));
       let newline = pending.indexOf("\n");
       while (newline >= 0 || (bytesRead === 0 && pending.length > 0)) {
         const line = newline >= 0 ? pending.slice(0, newline) : pending;
         pending = newline >= 0 ? pending.slice(newline + 1) : "";
-        if (line.length > PI_SESSION_SCAN_LINE_LIMIT) return true;
         const header = parseLine(line);
         if (header)
           return (
@@ -41,9 +44,9 @@ export async function isPiSessionFile(
           );
         newline = pending.indexOf("\n");
       }
-      if (pending.length > PI_SESSION_SCAN_LINE_LIMIT) return true;
       if (bytesRead === 0) return false;
     }
+    return true;
   } finally {
     await handle.close();
   }

@@ -671,6 +671,7 @@ describe("extension snapshots", () => {
       })}\n{"type":"message"}\n`,
     );
     await writeFile(path.join(extension, "fixtures.jsonl"), '{"type":"example"}\n');
+    await link(path.join(history, "2026_a.jsonl"), path.join(extension, "notes.txt"));
     if (process.platform !== "win32")
       await symlink(path.join("history", "2026_a.jsonl"), path.join(extension, "latest"));
 
@@ -690,6 +691,7 @@ describe("extension snapshots", () => {
     const staged = path.dirname(result.paths[0] ?? "");
     await expect(lstat(path.join(staged, "history", "2026_a.jsonl"))).rejects.toThrow();
     await expect(lstat(path.join(staged, "latest"))).rejects.toThrow();
+    await expect(lstat(path.join(staged, "notes.txt"))).rejects.toThrow();
     await expect(readFile(path.join(staged, "fixtures.jsonl"), "utf8")).resolves.toBe(
       '{"type":"example"}\n',
     );

@@ -1,8 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { link, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
-import { isPiSessionFile, PI_SESSION_SCAN_LINE_LIMIT } from "./pi-session-file.js";
+import { isPiSessionFile, PI_SESSION_SCAN_BYTE_LIMIT } from "./pi-session-file.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
@@ -39,8 +39,27 @@ describe("isPiSessionFile", () => {
   it("treats a first line too long to classify as private history", async () => {
     const root = await createTempDir("pi-session-file-long-");
     const file = path.join(root, "long.jsonl");
-    await writeFile(file, `"${"x".repeat(PI_SESSION_SCAN_LINE_LIMIT)}"\n`);
+    await writeFile(file, `"${"x".repeat(PI_SESSION_SCAN_BYTE_LIMIT * 2)}"\n`);
     await expect(isPiSessionFile(file)).resolves.toBe(true);
+  });
+
+  it("bounds the total scan and treats an undecided file as private history", async () => {
+    const root = await createTempDir("pi-session-file-skipped-lines-");
+    const file = path.join(root, "padded.jsonl");
+    await writeFile(
+      file,
+      `${"not json\n".repeat(PI_SESSION_SCAN_BYTE_LIMIT / 8)}{"type":"record"}\n`,
+    );
+    await expect(isPiSessionFile(file)).resolves.toBe(true);
+  });
+
+  it("checks the content of a hard-linked file whatever its name", async () => {
+    const root = await createTempDir("pi-session-file-hard-link-");
+    await writeFile(path.join(root, "history.jsonl"), `${header}\n`);
+    await link(path.join(root, "history.jsonl"), path.join(root, "notes.txt"));
+    await writeFile(path.join(root, "single.txt"), `${header}\n`);
+    await expect(isPiSessionFile(path.join(root, "notes.txt"))).resolves.toBe(true);
+    await expect(isPiSessionFile(path.join(root, "single.txt"))).resolves.toBe(false);
   });
 
   it("does not classify directories", async () => {

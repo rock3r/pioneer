@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import {
+  link,
   lstat,
   mkdir,
   readFile,
@@ -492,6 +493,10 @@ describe("prepareIsolatedPiHome", () => {
     await writeFile(path.join(skillHistory, "2026_a.jsonl"), `${header}{"type":"message"}\n`);
     await writeFile(path.join(skillHistory, "dataset.jsonl"), '{"type":"example"}\n');
     await writeFile(path.join(dependencyHistory, "2026_b.jsonl"), header);
+    await link(
+      path.join(dependencyHistory, "2026_b.jsonl"),
+      path.join(source, "node_modules", "root-package", "notes.txt"),
+    );
 
     const prepared = await prepareIsolatedPiHome({
       sourceDir: source,
@@ -514,6 +519,9 @@ describe("prepareIsolatedPiHome", () => {
       lstat(
         path.join(prepared.agentDir, "node_modules", "root-package", "history", "2026_b.jsonl"),
       ),
+    ).rejects.toThrow();
+    await expect(
+      lstat(path.join(prepared.agentDir, "node_modules", "root-package", "notes.txt")),
     ).rejects.toThrow();
     await expect(
       readFile(path.join(prepared.agentDir, "node_modules", "root-package", "index.js"), "utf8"),
