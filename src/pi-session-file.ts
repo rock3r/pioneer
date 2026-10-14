@@ -6,6 +6,50 @@ import { StringDecoder } from "node:string_decoder";
 export const PI_SESSION_SCAN_BYTE_LIMIT = 1024 * 1024;
 
 /**
+ * Totals of the header scans in one snapshot. The per-file limit does not bound the total, so
+ * every scan charges the files it opens and the bytes it reads here, and fails closed past a limit.
+ */
+export interface PiSessionScanBudget {
+  readonly maxFiles: number;
+  readonly maxBytes: number;
+  files: number;
+  bytes: number;
+  /** Builds the snapshot's own error from a description of the exceeded limit and the totals. */
+  readonly limitError: (detail: string) => Error;
+}
+
+/** Defaults to the snapshot backstops for selected content: 500,000 files and 1 GiB. */
+export function createPiSessionScanBudget(
+  limitError: (detail: string) => Error,
+  limits: { readonly files: number; readonly bytes: number } = {
+    files: 500_000,
+    bytes: 1024 ** 3,
+  },
+): PiSessionScanBudget {
+  return { maxFiles: limits.files, maxBytes: limits.bytes, files: 0, bytes: 0, limitError };
+}
+
+function charge(budget: PiSessionScanBudget, files: number, bytes: number): void {
+  budget.files += files;
+  budget.bytes += bytes;
+  const fileCount = `${budget.files} ${budget.files === 1 ? "file" : "files"}`;
+  const read = `${(budget.bytes / 1024 ** 2).toFixed(1)} MiB`;
+  if (budget.files > budget.maxFiles)
+    throw budget.limitError(
+      `session-history scans exceed the ${budget.maxFiles}-file limit (${fileCount}, ${read} read).`,
+    );
+  if (budget.bytes > budget.maxBytes) {
+    const limit =
+      budget.maxBytes % 1024 ** 3 === 0
+        ? `${budget.maxBytes / 1024 ** 3} GiB`
+        : `${(budget.maxBytes / 1024 ** 2).toFixed(1)} MiB`;
+    throw budget.limitError(
+      `session-history scans exceed the ${limit} read limit (${read} read from ${fileCount}).`,
+    );
+  }
+}
+
+/**
  * Whether a file is Pi session history, judged by content.
  *
  * Pi's `sessionDir` can come from a project's `.pi/settings.json`, `--session-dir`, or other
@@ -15,16 +59,19 @@ export const PI_SESSION_SCAN_BYTE_LIMIT = 1024 * 1024;
  * and requires only `type: "session"`, which is broader than Pi's own header check. Pass every
  * name the file is reached by, such as a link and its canonical target, in `names`. A file with
  * more than one hard link is checked whatever its names, because another name can be `.jsonl`.
- * When `filePath` is a copy, pass the source's link count as `linkCount`.
+ * When `filePath` is a copy, pass the source's link count as `linkCount`. Each opened file and
+ * every byte read is charged to `budget`, which throws once a cumulative limit is passed.
  */
 export async function isPiSessionFile(
   filePath: string,
+  budget: PiSessionScanBudget,
   names: readonly string[] = [filePath],
   linkCount?: number,
 ): Promise<boolean> {
   const named = names.some((name) => path.basename(name).toLowerCase().endsWith(".jsonl"));
   const details = await stat(filePath);
   if (!details.isFile() || (!named && (linkCount ?? details.nlink) <= 1)) return false;
+  charge(budget, 1, 0);
   const handle = await open(filePath, "r");
   try {
     const decoder = new StringDecoder("utf8");
@@ -34,6 +81,7 @@ export async function isPiSessionFile(
     while (scanned <= PI_SESSION_SCAN_BYTE_LIMIT) {
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
       scanned += bytesRead;
+      charge(budget, 0, bytesRead);
       pending += bytesRead === 0 ? decoder.end() : decoder.write(buffer.subarray(0, bytesRead));
       let newline = pending.indexOf("\n");
       while (newline >= 0 || (bytesRead === 0 && pending.length > 0)) {
