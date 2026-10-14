@@ -1,4 +1,4 @@
-import { link, mkdir, realpath, symlink, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, realpath, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
@@ -7,9 +7,12 @@ import { prepareIsolatedPiHome } from "./pi-home.js";
 const { createTempDir } = registerManagedTempPaths();
 const race = vi.hoisted(() => ({
   before: undefined as undefined | { readonly file: string; readonly run: () => Promise<void> },
+  after: undefined as
+    | undefined
+    | { readonly file: string; readonly run: (copy: string) => Promise<void> },
 }));
 
-// Change the Pi home between selection and copy, which real timing cannot do reliably.
+// Change the Pi home just before or just after a copy, which real timing cannot do reliably.
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
   return {
@@ -20,12 +23,22 @@ vi.mock("node:fs/promises", async (original) => {
         race.before = undefined;
         await before.run();
       }
-      return await fs.copyFile(...args);
+      await fs.copyFile(...args);
+      const after = race.after;
+      if (after !== undefined && args[0] === after.file) {
+        race.after = undefined;
+        await after.run(String(args[1]));
+      }
     },
   };
 });
 
 const header = `${JSON.stringify({ type: "session", id: "s", cwd: "/work" })}\n`;
+
+// Keep the copy's size, so only the session check can tell that its bytes changed.
+async function becomeSession(copy: string): Promise<void> {
+  await writeFile(copy, header.padEnd((await stat(copy)).size, " "));
+}
 
 async function piHome(): Promise<{ root: string; source: string; skill: string }> {
   const root = await createTempDir("pi-home-copy-race-");
@@ -88,3 +101,29 @@ it.skipIf(process.platform === "win32")(
     expect(race.before).toBeUndefined();
   },
 );
+
+it("refuses a .jsonl file whose copy gains a session header", async () => {
+  const { root, source, skill } = await piHome();
+  const dataset = path.join(skill, "dataset.jsonl");
+  await writeFile(dataset, '{"type":"example"}\n'.repeat(4));
+  race.after = { file: dataset, run: becomeSession };
+
+  await expect(prepare(root, source)).rejects.toThrow(
+    "[PI_HOME_SNAPSHOT_CHANGED] Pi home file skills/review/dataset.jsonl was replaced or became Pi session history",
+  );
+  expect(race.after).toBeUndefined();
+});
+
+it("checks the copy of a hard-linked file by the source's link count", async () => {
+  const { root, source, skill } = await piHome();
+  const outside = path.join(root, "notes-elsewhere.txt");
+  await writeFile(outside, "plain notes that are long enough to hold a session header\n");
+  const notes = path.join(skill, "notes.txt");
+  await link(outside, notes);
+  race.after = { file: notes, run: becomeSession };
+
+  await expect(prepare(root, source)).rejects.toThrow(
+    "[PI_HOME_SNAPSHOT_CHANGED] Pi home file skills/review/notes.txt was replaced or became Pi session history",
+  );
+  expect(race.after).toBeUndefined();
+});
