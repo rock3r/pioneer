@@ -268,13 +268,15 @@ async function collectEntry(
       const name = child.name;
       const childRelative = `${relative}/${name}`;
       const childParts = childRelative.split("/");
+      const childPath = path.join(entry.sourcePath, name);
+      // Some FUSE and network filesystems report an unknown entry type, so ask lstat instead.
       const childKind = child.isDirectory()
         ? "directory"
         : child.isFile()
           ? "file"
           : child.isSymbolicLink()
             ? "symlink"
-            : undefined;
+            : await lstat(childPath).then(entryKind, () => undefined);
       if (childKind === undefined) {
         await collectEntry(sourceRoot, childRelative, state, traversal);
         continue;
@@ -284,8 +286,7 @@ async function collectEntry(
       if (traversal !== "default" && isHardExcluded(childParts, childKind, state.privatePaths))
         continue;
       // A sessionDir from project settings or flags that Pioneer cannot see can place history here.
-      if (childKind === "file" && (await isPiSessionFile(path.join(entry.sourcePath, name))))
-        continue;
+      if (childKind === "file" && (await isPiSessionFile(childPath))) continue;
       state.checkAborted();
       await collectEntry(sourceRoot, childRelative, state, traversal);
       state.checkAborted();
