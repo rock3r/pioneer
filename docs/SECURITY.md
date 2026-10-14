@@ -74,11 +74,11 @@ The two snapshots handle a detected file as follows:
 | Default root file, such as `AGENTS.md`, that is a link to a session file | Not applicable | Skipped |
 | `--pi-home-include` names a session file | Not applicable | Refused with `PI_HOME_INCLUDE_INVALID` |
 | Copied file is session history, because it changed after the check | Refused with `PI_EXTENSION_SNAPSHOT_CHANGED` | Refused with `PI_HOME_SNAPSHOT_CHANGED` |
-| Selected file was replaced by another file before the copy | Refused with `PI_EXTENSION_SNAPSHOT_CHANGED` | Refused with `PI_HOME_SNAPSHOT_CHANGED` |
+| Selected file was replaced, gained a `.jsonl` hard link, or a selected link was repointed to session history before the copy | Refused with `PI_EXTENSION_SNAPSHOT_CHANGED` | Refused with `PI_HOME_SNAPSHOT_CHANGED` |
 
 Pioneer does not read the reviewed repository's `.pi/settings.json` for this. The content rule does not need it, and trusting it would let a repository change snapshot policy or fail a review with an invalid value. The reviewed repository's settings also cannot redirect the review's own session: Pioneer always passes `--session-dir`, `--session`, or `--no-session`, and Pi gives those flags precedence over settings.
 
-Residual limits: a session file renamed away from `.jsonl`, or edited so that its first parseable line is no longer a session header, is not detected. Pi would not list such a file as a session either. Operators should still keep session storage outside extension, dependency, and skill directories.
+Residual limits: Pioneer limits each file's header scan to about 1 MiB, but not the total across files. A selected tree with many large `.jsonl` files that have no parseable line near the start can make snapshot preparation slow. A session file renamed away from `.jsonl`, or edited so that its first parseable line is no longer a session header, is not detected. Pi would not list such a file as a session either. Operators should still keep session storage outside extension, dependency, and skill directories.
 
 ## Environment policy
 
