@@ -20,7 +20,7 @@ import {
   protectedExtensionParents,
 } from "./eval-run/isolation.js";
 import type { PiRuntimeStorage } from "./pi-runtime-storage.js";
-import { isPiSessionFile } from "./pi-session-file.js";
+import { createPiSessionScanBudget, isPiSessionFile } from "./pi-session-file.js";
 
 const SNAPSHOT_ENTRY_LIMIT = 500_000;
 const SNAPSHOT_BYTE_LIMIT = 1024 ** 3;
@@ -335,6 +335,13 @@ export async function snapshotExtensionResources(
   await mkdir(destination, { recursive: true, mode: 0o700 });
   let entries = budget?.entries ?? 0;
   let bytes = budget?.bytes ?? 0;
+  // Session-header scans have their own bound, because skipped files are never staged or counted.
+  const scans = createPiSessionScanBudget(
+    (detail) =>
+      new Error(
+        `[PI_EXTENSION_SNAPSHOT_LIMIT] Extension ${detail} Move session history and large .jsonl files out of extension directories.`,
+      ),
+  );
   const digest = createHash("sha256");
   const mapped = new Map<string, string>();
   const stagedPath = (source: string): string => mirroredExtensionStagePath(destination, source);
@@ -365,7 +372,7 @@ export async function snapshotExtensionResources(
     }
     if (await isPrivateStorage(canonical)) return;
     // Session history can sit anywhere a sessionDir Pioneer cannot see points, so check content.
-    if (await isPiSessionFile(canonical, [source, canonical])) return;
+    if (await isPiSessionFile(canonical, scans, [source, canonical])) return;
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency link escapes the selected code directories. Install its dependencies inside the package before retrying.",
@@ -461,7 +468,14 @@ export async function snapshotExtensionResources(
           "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
         );
       }
-      if (await isPiSessionFile(target, [source, canonical], Math.max(details.nlink, after.nlink)))
+      if (
+        await isPiSessionFile(
+          target,
+          scans,
+          [source, canonical],
+          Math.max(details.nlink, after.nlink),
+        )
+      )
         throw new Error(
           "[PI_EXTENSION_SNAPSHOT_CHANGED] A file became Pi session history while it was being copied; retry.",
         );
