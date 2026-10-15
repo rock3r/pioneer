@@ -153,7 +153,7 @@ export function openEvalWorkLog(target: string, options: OpenEvalWorkLogOptions 
     if (written + buffer.length > limit) return false;
     const bytesWritten = writeSync(descriptor, buffer, 0, buffer.length);
     if (bytesWritten !== buffer.length) {
-      throw new Error(`Eval work log short write at ${target}`);
+      throw new Error(`Pioneer could not write the complete eval work-log record to ${target}`);
     }
     written += bytesWritten;
     fsyncSync(descriptor);

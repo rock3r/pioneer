@@ -23,7 +23,11 @@ Place an `evals/evals.json` file inside the skill directory:
 }
 ```
 
-`skill_name` must be one non-empty portable path component of at most 255 UTF-8 bytes without `/` or `\\`; absolute paths, dot names, Windows reserved device names and invalid characters, and names ending in a dot or space are rejected. `id` must be an integer unique within the file. `prompt` is required. `files` is optional and contains paths below the skill directory; every entry must resolve to a regular file of at most 64 MiB (directories, special files such as FIFOs, and larger files are rejected before output is created). Controller-only fields such as `expected_output` and `expectations` may coexist in the source definition, but Pioneer never stages them into an actor run. The converse is also true and easy to miss: **expectations are protected; paths are not.** Every `files[]` path is copied into the actor-visible `fixtures/` tree, listed in `case.json`, and printed on `eval run` as `[PIONEER_EVAL_FIXTURES]`. A filename or directory that states the expected finding hands the actor the answer.
+`skill_name` must be one non-empty portable path component of at most 255 UTF-8 bytes without `/` or `\\`. Pioneer rejects absolute paths, dot names, Windows reserved device names and invalid characters, and names ending in a dot or space. `id` must be an integer unique within the file. `prompt` is required.
+
+`files` is optional and contains paths below the skill directory. Every entry must resolve to a regular file of at most 64 MiB. Pioneer rejects directories, special files such as FIFOs, and larger files before creating output.
+
+Controller-only fields such as `expected_output` and `expectations` can appear in the source definition. Pioneer never stages them into an actor run. Every `files[]` path is actor-visible: Pioneer copies it into `fixtures/`, lists it in `case.json`, and prints it on `eval run` as `[PIONEER_EVAL_FIXTURES]`. Avoid filenames and directories that reveal the expected finding.
 
 The complete source skill must be free of symbolic links. Generated eval workspaces and `evals/` content are excluded from the with-skill copy. The actor must see only what a developer would see in a real checkout.
 
@@ -142,6 +146,6 @@ batteries/config-stale/actor-runs/eval-10/{baseline,with-skill}/fixtures/CONFIG.
 batteries/config-absent/actor-runs/eval-10/{baseline,with-skill}/
 ```
 
-That yields the 2×2 that makes a skill's value measurable: whether behaviour *changes* when the input factor changes, rather than merely whether the skill emits output. One non-obvious cell is worth running: **factor absent, but the skill told it is present.** That catches a skill inventing conventions from a file that was never staged.
+Compare baseline and with-skill behaviour for each input condition. Also test a missing input that the skill says is present. This checks whether the skill invents conventions from a file that was never staged.
 
 For lower-level mechanics and the verified platform matrix, see [Isolated skill evals](../docs/EVALS.md).

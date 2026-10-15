@@ -11,7 +11,7 @@ The current product surface is:
 - native macOS Seatbelt and Linux Bubblewrap transports;
 - one shared Agent Skill packaged for Agent Plugins v1, Codex, and Claude Code.
 
-Background jobs, cancellation APIs, structured finding schemas, MCP transport, and automated eval grading are not implemented. They are extension points, not current behavior.
+Background jobs, cancellation APIs, structured finding schemas, MCP transport, and automated eval grading remain possible extensions. Pioneer does not currently implement them.
 
 Deep review adds a versioned council/president workflow with strict JSON boundaries, a bundled path-scoped inspection extension, and a separate GitHub adapter for packet collection and inline publication. Slice 10 focused command execution remains disabled.
 

@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are applied to the latest published `0.1.x` release and the `main` branch.
+The project applies security fixes to the latest published `0.4.x` release and the `main` branch.
 
 ## Reporting a vulnerability
 

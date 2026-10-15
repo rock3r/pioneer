@@ -81,7 +81,10 @@ describe("Pioneer distribution identity", () => {
     expect(skill).toContain("Preserve the command's exit status, stdout, and stderr");
     expect(skill).toContain("session ID");
     expect(skill).toContain("does not use `fs.watch`");
-    expect(skill).toContain("not a semantic verdict");
+    expect(skill).toContain("Read the report to determine the findings");
+    expect(skill).toContain(
+      "A no-findings result must explicitly say that the review found no issues",
+    );
     expect(skill).toContain("Windows custom targets inherit their parent directory ACL");
   });
 

@@ -1203,7 +1203,7 @@ async function runEvalCommandWithInterruption(
     !commandDisablesExtensions(spec.command.slice(1))
   ) {
     throw new Error(
-      "[PI_EXTENSION_RUNTIME_UNSUPPORTED] This Pi package cannot host the tool-stripping adapter. Pass --no-extensions to stay on built-in providers.",
+      "[PI_EXTENSION_RUNTIME_UNSUPPORTED] This Pi package cannot run the adapter that restricts extension tools. Pass --no-extensions to use only built-in providers.",
     );
   }
   const toolExtensionPaths = spec.toolExtensionPaths ?? [];
