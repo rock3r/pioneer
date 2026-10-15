@@ -10,7 +10,7 @@ Use the `pioneer` CLI to run an independent review through the operator's existi
 
 ## Preconditions
 
-1. Run the `pioneer` controller outside any enclosing agent sandbox. It must reach the operator's Pi configuration and configured model provider. This does **not** weaken Pioneer: it still launches the Pi review actor in its own native sandbox.
+1. Run the `pioneer` controller outside any enclosing agent sandbox. It must reach the operator's Pi configuration and configured model provider. Pioneer launches the Pi review actor in its own native sandbox on macOS and Linux.
 2. Confirm `pioneer` and `pi` are available on `PATH`.
 3. On macOS or Linux, run `pioneer doctor` before the first review in a session.
    - For an ordinary readiness failure, stop and present its instructions.
@@ -63,7 +63,7 @@ Windows review execution is not enforceably sandboxed. Never add `--allow-unsand
 
 ## Presenting results
 
-- Treat a review as transport-successful only when the command's exit status is zero and stdout contains a non-empty report. This is not a semantic verdict: a genuine no-findings result must still be a non-empty report that says so.
+- Treat a review as transport-successful only when the command's exit status is zero and stdout contains a non-empty report. Read the report to determine the findings. A no-findings result must explicitly say that the review found no issues.
 - Preserve the command's exit status, stdout, and stderr in any shell or tool wrapper. Do not reduce the result to stdout alone. A capture such as `{"output":""}` is insufficient evidence of either success or failure.
 - Treat `[PIONEER_WORK_LOG] ABSOLUTE_PATH` as an informational stderr marker, not a failure. Preserve the path so the caller can inspect live progress and diagnose a hang.
 - Treat `[PIONEER_REPORT] ABSOLUTE_PATH` as an informational stderr marker, not a failure. Preserve the path, but do not read it as a completed report until the command reaches a terminal result; Pioneer may still be publishing through its protected reservation. On transport success the path contains the private durable report.
