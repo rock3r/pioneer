@@ -1,16 +1,19 @@
 # Technical documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — implemented components, dependency direction, and runtime flows
-- [SECURITY.md](SECURITY.md) — threat model, trust boundaries, platform guarantees, and residual risks
-- [REVIEW-TRANSPORT.md](REVIEW-TRANSPORT.md) — review CLI/API lifecycle and Pi RPC behavior
-- [PI-COMPATIBILITY.md](PI-COMPATIBILITY.md) — supported Pi range, capability contract, and release maintenance
-- [PI-EXTENSIONS.md](PI-EXTENSIONS.md) — extension snapshots, provider hooks, tool restrictions and discovery isolation
-- [CLI-REFERENCE.md](CLI-REFERENCE.md) — complete command and option reference
-- [EVALS.md](EVALS.md) — isolated eval preparation, execution, platform evidence, and setup
-- [PLUGIN-PACKAGING.md](PLUGIN-PACKAGING.md) — portable Agent Plugins plus native Codex/Claude packaging and release rules
-- [RELEASING.md](RELEASING.md) — cross-platform gates, npm provenance, and tag-driven publication
-- [TESTING.md](TESTING.md) — test layers and required validation
-- [CONVENTIONS.md](CONVENTIONS.md) — implementation conventions
-- [WINDOWS-SANDBOX-PROTOTYPE.md](WINDOWS-SANDBOX-PROTOTYPE.md) — AppContainer experiment and Windows limitations
+| Document | Subject |
+| --- | --- |
+| [Architecture](ARCHITECTURE.md) | Components, dependencies, and runtime behavior |
+| [Security](SECURITY.md) | Threats, trust boundaries, platform guarantees, and remaining risks |
+| [Review transport](REVIEW-TRANSPORT.md) | CLI/API lifecycle and Pi remote procedure call (RPC) behavior |
+| [Pi compatibility](PI-COMPATIBILITY.md) | Supported versions, required capabilities, and release checks |
+| [Pi extensions](PI-EXTENSIONS.md) | Snapshots, provider hooks, tool limits, and isolated discovery |
+| [CLI reference](CLI-REFERENCE.md) | Commands and options |
+| [Skill evals](EVALS.md) | Preparation, execution, platform evidence, and setup |
+| [Plugin packaging](PLUGIN-PACKAGING.md) | Agent Plugins, Codex, and Claude Code packages |
+| [Releasing](RELEASING.md) | Platform checks, npm provenance, and publication from tags |
+| [Testing](TESTING.md) | Test types and required checks |
+| [Conventions](CONVENTIONS.md) | Implementation rules |
+| [Recoverable reviews](RECOVERABLE-REVIEWS-DESIGN.md) | Native sessions, output bounds, and recovery design |
+| [Windows prototype](WINDOWS-SANDBOX-PROTOTYPE.md) | AppContainer research and Windows limits |
 
-For installation and day-to-day usage, start with the [user guide](../user-guide/README.md).
+The [user guide](../user-guide/README.md) covers installation and everyday use.

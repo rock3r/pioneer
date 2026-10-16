@@ -1,13 +1,10 @@
 # Windows AppContainer prototype
 
-Status: research prototype in `native/windows-appcontainer`. It is not
-enabled for eval actors and is not a CI or release gate.
+The research prototype lives in `native/windows-appcontainer`. Eval actors do not use it. CI and releases do not require it.
 
 ## Result
 
-The prototype in `native/windows-appcontainer` calls Windows'
-`Experimental_CreateProcessInSandbox` API directly. It compiles without
-administrator privileges on the tested Windows host and its `doctor` command fails closed.
+The prototype calls Windows' `Experimental_CreateProcessInSandbox` API directly. It compiles without administrator privileges on the tested host. Its `doctor` command fails closed.
 
 The tested Windows 11 build `10.0.26200` exports
 `Experimental_CreateProcessInSandbox`, but the feature is disabled. A real
@@ -22,8 +19,7 @@ create call returns Win32 error 120 (`ERROR_CALL_NOT_IMPLEMENTED`):
 }
 ```
 
-No AppContainer profile was created by the failed probes. The TypeScript eval
-runner therefore retains its existing pre-launch Windows rejection.
+The failed probes created no AppContainer profile. The TypeScript eval runner still rejects Windows before launch.
 
 ## Intended boundary
 
@@ -42,14 +38,11 @@ The helper loads `processmodel.dll` only from System32, passes
 for the sandboxed process. The `SBOX` FlatBuffer follows Microsoft's published
 `BaseContainerSpecification.fbs` layout.
 
-The helper is not a supported fallback. It must still pass the complete
-filesystem, environment, IPC, process-tree, and non-LAN network probe battery
-on a host where the API is enabled.
+Keep the helper disabled until it passes every required probe on a host with the API enabled. These probes cover filesystems, environments, interprocess communication (IPC), process trees, and non-LAN networking.
 
 ## What Codex does on Windows
 
-The open-source Codex CLI was inspected at commit
-`4462b9deef211723b781b426f5e5d36a5777115f`.
+The source review used Codex CLI commit `4462b9deef211723b781b426f5e5d36a5777115f`.
 
 Codex does not currently use AppContainer for its Windows command sandbox. Its
 strong backend:
@@ -67,22 +60,13 @@ strong backend:
 8. applies persistent, user-scoped firewall/WFP policy for offline and
    proxy-only modes.
 
-Useful design choices copied into this prototype are fail-closed capability
-selection, System32-pinned DLL loading, a clean environment, job/UI
-restrictions, and mandatory adversarial validation. The dedicated accounts,
-host ACL changes, and persistent firewall rules are deliberately not copied.
+The prototype copies Codex's fail-closed capability selection, System32-pinned DLL loading, clean environment, job/UI restrictions, and required adversarial tests. It leaves dedicated accounts, host ACL changes, and persistent firewall rules out of scope.
 
 ## Why Brokered File System was not tried
 
-The tested Windows host has `C:\Windows\System32\bfscfg.exe`, so classic AppContainer plus
-Brokered File System appears superficially possible. Microsoft MXC commit
-`a101c5ef671fc8e4cb4ceaf1ebb59f5d3b286849` explicitly compiles that tier out
-of shipping builds because invoking `bfscfg.exe` can deadlock Windows 25H2.
-Pioneer did not invoke it.
+The tested host has `C:\Windows\System32\bfscfg.exe`. Microsoft MXC commit `a101c5ef671fc8e4cb4ceaf1ebb59f5d3b286849` disables the Brokered File System tier in shipping builds. Calling `bfscfg.exe` can deadlock Windows 25H2. Pioneer did not run it.
 
-The remaining classic AppContainer fallback modifies host NTFS DACLs for the
-AppContainer SID. That is the invasive mechanism this experiment is intended
-to avoid, so it was not implemented or run.
+The remaining classic AppContainer approach changes host NTFS discretionary access control lists (DACLs) for the AppContainer security identifier (SID). This experiment excludes host permission changes. Pioneer did not implement or run that approach.
 
 ## Remaining limitations
 

@@ -7,7 +7,7 @@ Use test-driven development for behavior changes:
 1. Add or update the narrowest test that describes the required behavior.
 2. Run it and confirm it fails for the intended reason.
 3. Implement the minimum change.
-4. Run the targeted test to green.
+4. Rerun the targeted test and confirm it passes.
 5. Run `npm run check` before handoff.
 
 ## Test layers
@@ -19,7 +19,7 @@ Use test-driven development for behavior changes:
 - **Adapter tests** verify MCP schemas and Claude/Codex packaging without duplicating orchestration assertions.
 - **Deep review tests** cover versioned schemas, consensus gates, council scheduling, GitHub marker/idempotency contracts, and capability-profile validation. End-to-end CLI contract tests cover `pioneer deep-review` and `pioneer github deep-review` without provider credentials.
 
-The unit suite's global setup compiles the Linux network supervisor beside its source, because `buildLinuxSandboxArgv` binds that compiled sibling exactly as a published install resolves it. Without it every proxied Bubblewrap launch from the TypeScript sources would fail, so Linux sandbox cases must never be skipped for a missing build artifact.
+Global unit setup compiles the Linux network supervisor beside its source. `buildLinuxSandboxArgv` binds that sibling using the same layout as a published installation. Without it, proxied Bubblewrap launches from TypeScript sources fail. Build the artifact during setup; never skip Linux sandbox cases because it is missing.
 
 ## Temporary directories
 
@@ -45,17 +45,71 @@ teardown check cannot do.
 
 Security-sensitive changes should include negative tests for malformed JSONL, unsupported thinking levels, invalid model IDs, path escapes, invalid refs, oversized output, subprocess failure, timeout, and cancellation isolation as applicable.
 
-Recoverable-review changes additionally require tests for the 20 MiB/64 MiB RPC bounds and stable near-limit diagnostics, five-second delta batching, default private report creation, post-validation target replacement, unspoofable active reservations, abandoned-owner and post-publication-sidecar reclamation, concurrent pre-link reservation protection, publication-time retention protection, failed-write reservation restoration, and post-sync close failure, `--no-resume` and exact-session argv, UUID and explicit/default cross-token resume-output containment, immutable scope and Pi-version checks, missing/ambiguous/torn/symlink/special-file session rejection, committed-attempt and aggregate archive size/count bounds, crash-left staging reclamation, lease/pruning behavior including prevalidation and deletion-time lease acquisition, success deletion, prior-attempt preservation, report-delivery recovery, tokenless failures, and renewed Windows acknowledgement. Work logs and diagnostics must be asserted not to contain tokens or native session content.
+Recoverable-review tests must cover these contracts:
 
-Eval command changes require end-to-end regression coverage for every reported eval failure mode: staged fixtures reachable from the prepared prompt without a search, run-directory and `fixtures/` listing, the printed actor contract, credential lock creation in the isolated snapshot with the source Pi home unchanged and the snapshot removed, stage work logs free of prompts and credentials, injected Pi fast-start flags with an externalized agent directory, process-tree timeout with preserved partial output, fail-closed preflight for an incompatible Pi CLI, missing or unloadable model configuration, and an unconfigured requested model without any actor launch, plus actor denial of the controller manifest, sibling arm, and source eval definitions. Prepare regressions cover `[EVAL_FIXTURE_LEAK]` for a leaking path and for a lowercase `todo:` marker, a todo-list fixture and a `TestFixture.kt` class that still pass, and `[EVAL_FIXTURE_TOO_LARGE]` for a sparse fixture over 64 MiB, each without creating output. Actor-runtime regressions cover a child process spawned with ignored stdio, `/bin/sh`, and `/usr/bin/git` (issues #86 and #87), an allowed loopback port reachable while an unlisted one stays closed (#88), `--env` passthrough without logged values, a `--pi-extension` package keeping its tools while a plain `-e` extension is stripped (#89), and a `--pi-extension` that needs a `--env` value and a run-directory file to initialize loading only in the actor, while an explicit `-e` provider still resolves its model in discovery and an initialization failure stops the actor with `PI_EXTENSION_LOAD_FAILED` (#91). These run under the real sandbox on macOS and Linux CI. Output regressions cover a named stdout overflow, a rejected actor-visible `--stdout-file`, and more than 4 MiB of stdout streamed to `--stdout-file`.
+| Area | Required checks |
+| --- | --- |
+| RPC | Check 20 MiB/64 MiB bounds, stable near-limit diagnostics, and five-second delta batching. |
+| Reports | Check private default creation, post-validation replacement, and unspoofable active reservations. |
+| Reservation retention | Check abandoned owners, post-publication sidecars, concurrent pre-link reservations, and publication-time protection. |
+| Write failure | Check marker restoration and post-sync close failure. |
+| Launch | Check `--no-resume` and exact-session arguments. |
+| Scope | Check UUID containment, explicit/default cross-token output containment, immutable scope, and exact Pi versions. |
+| Session validation | Reject missing, ambiguous, torn, symlinked, and special-file sessions. |
+| Archive limits | Check committed-attempt and aggregate byte/entry bounds and crash-left staging reclamation. |
+| Leases | Check validation-time and deletion-time acquisition, pruning, and successful archive deletion. |
+| Recovery | Preserve prior attempts and report-delivery recovery. Check tokenless failures and renewed Windows acknowledgement. |
 
-Pi-home snapshot changes must test the positive root allowlist, exclusions when directory entry types are unknown, review/eval skill difference, recursive default exclusions, platform case semantics, identity-checked case-folded selection and symlink-target deduplication, case-fold collision rejection, sparse skipped content, exact repeated review includes, overlap accounting, hard exclusions, special files, and broken, escaping, selected, and unselected symlink targets. Eval snapshot tests must also prove the real Pi home cannot overlap actor grants, controller artifacts stay outside the persistent actor run, the isolated snapshot agent directory can create Pi credential lock files, writable home/tmp scratch is separate, the source Pi home remains unmounted, and temporary credentials are removed after completion or setup interruption. Snapshot tests must use sparse or mocked oversized fixtures rather than allocating a real gigabyte. Extension snapshot changes must prove that a staged dependency can still load files from source directories named `sessions` or `logs`, including JSON resources, while the agent directory's private session and log storage, root `.log` files, configured session directories, and links into them stay excluded. Both snapshot suites must also prove that a Pi session `.jsonl` file outside every known location is excluded by content, that a link to one is skipped or refused, and that a non-session `.jsonl` file is still copied. With mocked smaller scan limits, both suites must prove that skipped session files count against the cumulative scan file limit and that bytes read by scans count against the scan byte limit. The Pi-home suite must also prove that the target checks of `.jsonl` links count. A mocked `copyFile` must prove that each suite refuses a file that becomes session history during its copy, both for a `.jsonl` file and for a non-`.jsonl` file with more than one hard link.
+Assert that work logs and diagnostics exclude tokens and native session content.
+
+Eval changes require end-to-end regressions for every reported failure mode:
+
+- Actors must reach staged fixtures from the prepared prompt without searching. Test run-directory/`fixtures/` listing and the printed actor contract.
+- Pi must create credential locks in the isolated snapshot. Keep source Pi home unchanged and remove the snapshot afterward.
+- Stage logs must exclude prompts and credentials. Test injected fast-start flags and the external agent directory.
+- Timeouts must stop process trees and preserve partial output.
+- Preflight must reject incompatible Pi, missing/unloadable model configuration, and unconfigured requested models before actor launch.
+- Actors must not read controller manifests, sibling arms, or source eval definitions.
+
+Preparation tests must reject revealing paths and lowercase `todo:` with `[EVAL_FIXTURE_LEAK]`. Keep todo-list fixtures and `TestFixture.kt` valid. A sparse fixture above 64 MiB must fail with `[EVAL_FIXTURE_TOO_LARGE]`. These failures must create no output.
+
+Runtime regressions use real macOS/Linux sandboxes in CI:
+
+- Spawn children with ignored stdio, `/bin/sh`, and `/usr/bin/git` (#86, #87).
+- Reach an allowed loopback port and deny an unlisted port (#88).
+- Pass `--env` values without logging them.
+- Retain `--pi-extension` tools and strip plain `-e` tools (#89).
+- Initialize `--pi-extension` only in the actor when it needs `--env` and a run-directory file (#91).
+- Keep explicit `-e` provider discovery working. Fail actor initialization with `PI_EXTENSION_LOAD_FAILED` when required (#91).
+
+Output tests must name stdout overflow, reject actor-visible `--stdout-file`, and stream more than 4 MiB to a valid `--stdout-file`.
+
+Pi-home snapshot changes require checks for:
+
+- the root allowlist, unknown directory-entry types, review/eval skill differences, and recursive default exclusions;
+- platform case matching, identity-checked case-folded selection, symlink-target deduplication, and case-fold collisions;
+- sparse skipped content, exact repeated includes, overlap accounting, and hard exclusions;
+- special files and broken, escaping, selected, or unselected symlink targets.
+
+Eval snapshot tests must deny source-home overlap with any actor grant. Keep controller artifacts outside the persistent run and home/tmp scratch separate. Test credential locks in the isolated writable agent directory. Keep source home unmounted and remove temporary credentials after completion or setup interruption.
+
+Use sparse or mocked oversized fixtures. Do not allocate a real gigabyte.
+
+Extension tests must load dependency resources, including JSON, from source directories named `sessions` or `logs`. Exclude private agent sessions/logs, root `.log` files, configured session directories, and links into them.
+
+Both suites must identify session `.jsonl` files outside known locations by content. Skip or reject links to history and still copy non-session `.jsonl` files.
+
+With smaller mocked limits, count skipped history against scan-file limits and bytes read against scan-byte limits. Pi-home tests must count `.jsonl` link-target checks too.
+
+Mock `copyFile` to make files become history during copying. Both suites must reject changed `.jsonl` files and multiply hard-linked non-`.jsonl` files.
 
 Tests must not read real credential files, contact model providers by default, or depend on the user's current repositories.
 
 ## Timeouts and Windows concurrency
 
-`npm test` keeps Vitest's 5 s default `testTimeout` on macOS and Linux. On Windows it serializes files (`fileParallelism: false`, `maxWorkers: 1`) and raises `testTimeout`/`hookTimeout` to 15 s. That is load-dependent filesystem headroom, not a hang budget: Windows CI has timed out many otherwise-passing cases together when workers oversubscribe a slow disk, and the same job reports far more cumulative test time than wall-clock time.
+macOS and Linux use Vitest's default 5 s `testTimeout`. Windows serializes files with `fileParallelism: false` and `maxWorkers: 1`. Its `testTimeout` and `hookTimeout` are 15 s.
+
+Concurrent workers on slow Windows CI disks caused otherwise-passing tests to time out together. Those jobs reported cumulative test times much longer than elapsed time. The Windows settings address that disk load. They must not hide hangs.
 
 Prefer a per-case timeout with a comment when one test is genuinely long-running (for example two resume-archive creates plus a live-owner lease inspection, or work-log retention that waits on a lock). Do not skip, quarantine, or weaken a test to make the Windows job pass, and do not use a large global timeout to hide a hang.
 
@@ -63,7 +117,13 @@ End-to-end tests keep their own 120 s serial budget in `vitest.e2e.config.ts`.
 
 ## Commands
 
-The extension contract integration uses installed Pi with disposable configuration and a local fake provider, never operator credentials. Build first, then run `PIONEER_PI_EXTENSION_INTEGRATION=1 npx vitest run test/pi-extension-integration.test.ts` outside an outer sandbox. It verifies extension-only discovery/execution, disabled and untrusted resources, package/local dependencies, initialization, tool restrictions, and source/report/credential/code isolation. A single-use OAuth fixture verifies concurrent reviews, durable rotations, later refreshes, preservation of unrelated credentials, and rejection of both review-agent and worker credential-file tampering. The legacy adapter test also ensures that a short-lived broker result cannot trigger a second private refresh. Run the integration against both supported Pi endpoints when changing the auth adapter. Normal `npm test` skips this opt-in test. A real provider smoke review is separate and must use the specifically requested model and existing credentials without printing them.
+The extension integration uses installed Pi, disposable configuration, and a local fake provider. It never uses operator credentials. Build first. Outside any outer sandbox, run `PIONEER_PI_EXTENSION_INTEGRATION=1 npx vitest run test/pi-extension-integration.test.ts`.
+
+It checks extension-only discovery/execution, disabled/untrusted resources, dependencies, initialization, tool limits, and source/report/credential/code isolation. A single-use OAuth fixture checks concurrent reviews, durable rotations, later refreshes, and preservation of unrelated credentials. It rejects review-agent and worker credential-file tampering.
+
+The legacy adapter test checks that short-lived broker results cannot trigger a second private refresh. Run against both supported Pi endpoints for auth-adapter changes. Normal `npm test` skips this opt-in integration.
+
+Real provider smoke reviews are separate. Use the requested model and existing credentials. Never print credentials.
 
 ```bash
 npm test

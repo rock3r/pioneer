@@ -2,11 +2,11 @@
 
 ## Executables
 
-After building and linking the source checkout, one executable is available:
+Build and link the source checkout to use the executable:
 
 - `pioneer` — review readiness, model discovery, synchronous code reviews, and isolated eval workflows.
 
-The repository npm scripts build first:
+Repository npm scripts build before running Pioneer:
 
 ```bash
 npm run pioneer -- review ...
@@ -15,7 +15,7 @@ npm run pioneer -- doctor
 
 ## Version output
 
-The CLI prints the installed Pioneer package version without probing Pi:
+Print the installed Pioneer version without probing Pi:
 
 ```bash
 pioneer --version
@@ -23,7 +23,7 @@ pioneer --version
 
 ## Package updates
 
-Normal Pioneer commands begin a best-effort npm update check without delaying command startup. The check runs at most once every 24 hours, caches the newest published version, and prints an update notice to stderr only after the requested command finishes. A failed background check is silent and never changes that command's exit status.
+Normal commands start a background npm update check without waiting for it. Pioneer checks at most once every 24 hours and caches the newest published version. Any update notice goes to stderr after the command finishes. A failed check prints nothing and leaves the command's exit status unchanged.
 
 Force a check now:
 
@@ -31,14 +31,14 @@ Force a check now:
 pioneer check-update
 ```
 
-To update a global npm installation, Pioneer first forces the same check. When a newer version is available, it asks whether to print that release's changelog and whether to install it. The installation is delegated to npm as `npm install --global @rock3r/pioneer@VERSION`.
+For global npm updates, Pioneer forces that check first. If a newer version exists, it asks whether to print its changelog and install it. It runs `npm install --global @rock3r/pioneer@VERSION` to install.
 
 ```bash
 pioneer update
 pioneer update --changelog --yes
 ```
 
-`--yes` (or `-y`) installs without any prompt and does not print the changelog. `--changelog` prints the changelog without asking. Add `--changelog` to `--yes` to print it before a non-interactive install.
+`--yes` or `-y` installs without prompts or changelog output. `--changelog` prints the changelog without asking. Combine `--changelog` and `--yes` to print it before a non-interactive install.
 
 ## `pioneer review`
 
@@ -85,37 +85,76 @@ pioneer review --resume TOKEN
 | `--no-resume` | false | Explicitly disables private native-session retention for this new review |
 | `--allow-unsandboxed-windows` | false | Required acknowledgement for instruction-only Windows reviews |
 
-Exit status is zero only when Pi settles with a non-empty report. The report is written to stdout and persisted to a private default report directory unless `--report` selects another target. Pioneer exclusively creates a private file containing a random ownership marker bound to the controller's OS process-start identity and a randomly named controller-owned sibling reservation link before emitting `[PIONEER_REPORT] ABSOLUTE_PATH` on stderr, then writes the verified report through that owned inode while a separate random publication lease keeps retention from pruning it. It restores the marker after a failed write and fails without overwriting or deleting another file if the target identity changes. An unsuccessful run removes only the reservation it still owns; later retention reclaims abandoned reservation and publication siblings after controller exit, plus inactive post-publication hard links left by transient cleanup failures. Immediate cleanup of now-unneeded siblings after durable publication is best effort and cannot turn a delivered report into failure. If persistence fails, stdout still contains the verified report, the recoverable session is retained when available, and Pioneer exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`; diagnostics and warnings use stderr.
+Exit zero requires Pi to settle with a non-empty report. Pioneer prints the report to stdout and saves it privately. `--report` changes the default save target.
 
-`--network none` is rejected before Pi starts with `[REVIEW_NETWORK_DISABLED]`, because the sandboxed actor must reach its configured model provider. Start a new review with `--network public`, or use `--network full` only when the review needs LAN or loopback access.
+Before printing `[PIONEER_REPORT] ABSOLUTE_PATH` to stderr, Pioneer exclusively creates a private reservation file and a randomly named controller-owned sibling link. A random ownership marker binds the file to the controller's OS process-start identity. Pioneer writes verified report bytes through that inode. A separate random publication lease prevents retention from pruning it during writing.
 
-The default cumulative RPC stdout bound is 20 MiB; `--max-rpc-output-mb` accepts only integral values from 1 through 64. Overflow terminates the process tree and reports `[REVIEW_RPC_OUTPUT_LIMIT]` with byte metadata in the work log. High-volume delta metadata is batched after the first 1,000 events in five-second type/subtype windows, so the 16 MiB work-log cap remains an independent fail-closed bound.
+If writing fails, Pioneer restores the marker. If target identity changes, it fails without overwriting or deleting the replacement. Failed runs remove only reservations they still own. After controller exit, retention reclaims abandoned reservation/publication siblings and inactive post-publication hard links. Cleanup after durable publication is best effort and cannot invalidate a delivered report.
 
-New reviews retain a private native Pi session after a strict non-success only when process-tree containment is proven and the opaque session tree is a regular candidate within the 32 MiB/5,000-entry committed-attempt cap. This leaves room for the next crash-safe copy inside the aggregate 64 MiB/10,000-entry archive cap. Pioneer emits `[PIONEER_REVIEW_RESUME] TOKEN`; resume accepts only the immutable stored source, grants, prompt scope, model, thinking, Pi-home, Git targets, and network policy. It may change only timeout, bounded RPC output, and controller-owned output paths. A resume always requires a fresh Windows acknowledgement. Archives created by an earlier Pioneer with `--network none` are rejected with `[REVIEW_NETWORK_DISABLED]`; start a new review with `--network public` or `--network full` instead. If both `[REVIEW_RPC_OUTPUT_LIMIT]` and a resume token appear, clients must run exactly `pioneer review --resume TOKEN`; a tokenless failure is not resumable. `--no-resume` runs neither create nor prune the private resume store.
+If saving fails, stdout still contains the verified report. Pioneer retains a recoverable session when available and exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. Diagnostics and warnings go to stderr.
 
-Immediately after opening the controller-owned work log, Pioneer prints `[PIONEER_WORK_LOG] ABSOLUTE_PATH` to stderr. Without `--work-log`, it creates a unique `review-*.jsonl` file in:
+Pioneer rejects `--network none` before Pi starts with `[REVIEW_NETWORK_DISABLED]`. The actor needs access to its model provider. Start a new review with `--network public`. Use `--network full` only for required LAN or loopback access.
+
+RPC stdout has a cumulative 20 MiB default bound. `--max-rpc-output-mb` accepts integral values from 1 through 64. Overflow terminates the process tree with `[REVIEW_RPC_OUTPUT_LIMIT]` and logs byte metadata. After the first 1,000 high-volume delta events, Pioneer batches metadata by type/subtype in five-second windows. The independent 16 MiB work-log cap still fails closed.
+
+After strict failure, new reviews retain a private native Pi session only when Pioneer proves process-tree containment and finds a regular opaque session tree. A committed attempt cannot exceed 32 MiB/5,000 entries. This reserves room for the next crash-safe copy within the total archive cap of 64 MiB/10,000 entries.
+
+Pioneer prints `[PIONEER_REVIEW_RESUME] TOKEN`. Resume keeps the stored source, grants, prompt scope, model, thinking, Pi-home, Git targets, and network policy unchanged. Only timeout, bounded RPC output, and controller-owned output paths can change. Windows always requires fresh acknowledgement.
+
+Earlier archives using `--network none` fail with `[REVIEW_NETWORK_DISABLED]`. Start a new review with `--network public` or `--network full`. If `[REVIEW_RPC_OUTPUT_LIMIT]` and a resume token both appear, run exactly `pioneer review --resume TOKEN`. Tokenless failures cannot resume. `--no-resume` neither creates nor prunes the private resume store.
+
+Pioneer prints `[PIONEER_WORK_LOG] ABSOLUTE_PATH` to stderr immediately after opening the controller-owned log. Without `--work-log`, it creates a unique `review-*.jsonl` file in:
 
 - macOS: `~/Library/Logs/Pioneer/reviews/`;
 - Linux: `${XDG_STATE_HOME:-~/.local/state}/pioneer/logs/reviews/`;
 - Windows: `%LOCALAPPDATA%\Pioneer\Logs\reviews\`.
 
-Each schema-versioned JSONL record is written synchronously before Pioneer continues, so `tail -f` observes it immediately; a dirty-log timer syncs the file to disk within one second even when Pi is silent, and Pioneer syncs again on close. Records include timestamps, elapsed time, run/sequence IDs, controller stages, Pi process state, restricted Pi RPC event metadata, stderr byte activity, retries, tool lifecycle, settlement, termination, and a heartbeat every five seconds while Pi RPC is active. Pi-controlled strings are represented only by allowlisted protocol values, tool-call hashes, booleans, and presence/byte-count metadata. An event type outside the allowlist is recorded as `unrecognized`, with its name in `unrecognizedEventType` for known Pi session events that are not summarized, or a short hash in `unrecognizedEventTypeHash` otherwise. The log deliberately excludes prompt and model-generated text, thinking, tool arguments/output, unrestricted Pi reasons/diagnostics, queue contents, environment values, and credentials. Each auto-created log is capped at 16 MiB; reaching the cap writes `work_log_truncated` and fails the review instead of continuing without observability. Private nonce-backed leases carry an OS process-start identity and are refreshed by a worker thread even if the controller event loop hangs. If suspend/resume or a clock step makes a live lease look old, retention preserves it when its PID and process identity still match; legacy markers and temporarily unverifiable identities receive one renewal interval, but PID liveness alone never protects a current log. Abandoned leases therefore expire after crashes and PID reuse, and both creation-time and close-time retention reclaim expired leases. Retention runs after both default-log creation and lease removal on close, pruning only inactive auto-named files toward the newest 100 total even after a large overlapping batch drains. Both passes complete their bounded critical section synchronously under a private cross-process lock with an atomically published PID, nonce, and OS process-start identity. Windows records a narrow millisecond-scale hashed start-time window to tolerate clock-source rounding without allowing practical PID reuse; Linux uses kernel boot/start ticks, and macOS canonicalizes its OS start time under the C locale and UTC. A suspended owner retains the same process identity, while PID reuse does not; release also verifies the exact owner record before unlinking. A closing log renews its lease until it owns that lock, protects its target, and prefers older last-write times, so concurrently finishing logs cannot delete one another while older completed logs remain. A custom target must be absolute, absent, and have an existing writable non-symlink parent; Pioneer does not rotate custom targets outside its reserved auto-name pattern.
+Pioneer writes each schema-versioned JSONL record synchronously before continuing, so `tail -f` sees it immediately. A dirty-log timer syncs to disk within one second, even while Pi is silent. Pioneer syncs again on close.
 
-On Windows, a custom target inherits its parent directory ACL because POSIX mode bits do not establish a DACL. Pioneer cannot validate arbitrary Windows ACLs; use the default path unless the custom parent is already private to the current user.
+Records include timestamps, elapsed time, run/sequence IDs, controller stages, Pi process state, restricted RPC metadata, stderr byte activity, retries, and tool lifecycle. They also cover settlement, termination, and a five-second heartbeat while Pi RPC is active.
 
-`[REVIEW_WORK_LOG_CREATE_FAILED]` means Pioneer could not establish the requested observability channel, while `[REVIEW_WORK_LOG_WRITE_FAILED]` means real-time flushing failed after creation. Either failure is terminal; Pioneer does not continue an unobservable review.
+Pi-controlled strings appear only as allowlisted protocol values, tool-call hashes, booleans, or presence/byte-count metadata. Unknown event types use `unrecognized`. Known unsummarized Pi session event names use `unrecognizedEventType`; others use a short hash in `unrecognizedEventTypeHash`.
 
-Transport success is not a semantic review verdict. A no-findings review still returns a non-empty Markdown report. Stable completion failures are `[REVIEW_REPORT_MISSING]` when Pi settles without a report, `[REVIEW_ASSISTANT_FAILED]` when Pi reports a failed or aborted assistant run, `[REVIEW_RPC_INCOMPLETE]` when the RPC process ends before settling, `[REVIEW_PROCESS_FAILED]` when a settled Pi process with a report exits nonzero or by signal, `[REVIEW_PROCESS_CONTAINMENT_FAILED]` when Pioneer cannot prove the process tree stopped after its child exits, `[REVIEW_RESUME_SESSION_INVALID]` for a torn native session, `[REVIEW_RESUME_PI_VERSION_MISMATCH]` for an exact Pi-version mismatch, `[REVIEW_RESUME_ATTEMPT_LIMIT]` when the bounded retry layout is exhausted, `[REVIEW_RESUME_IN_USE]` when another controller still owns the active archive lease, and the work-log failures described above. A containment, retry-layout, or in-use failure is never issued a usable resume token.
+Logs exclude prompts, model text, thinking, tool arguments/output, unrestricted Pi reasons/diagnostics, queue contents, environment values, and credentials. Auto-created logs have a 16 MiB cap. Reaching it writes `work_log_truncated` and fails the review.
+
+Private leases carry a nonce and OS process-start identity. A worker thread refreshes them even if the controller event loop hangs. Retention preserves an old-looking lease after suspend/resume or a clock step if PID and process identity still match. Legacy markers and temporarily unverifiable identities get one renewal interval. PID liveness alone never protects a current log.
+
+Abandoned leases expire after crashes or PID reuse. Retention reclaims expired leases after default-log creation and lease removal on close. It prunes only inactive auto-named files toward the newest 100 total, including after large overlapping batches finish.
+
+Both retention passes run bounded synchronous critical sections under a private cross-process lock. Lock publication atomically records PID, nonce, and OS process-start identity. Windows uses a narrow millisecond-scale hashed start-time window to allow clock-source rounding without practical PID reuse. Linux uses kernel boot/start ticks. macOS canonicalizes OS start time with the C locale and UTC.
+
+Suspension preserves process identity; PID reuse changes it. Release checks the exact owner record before unlinking. Closing logs renew their leases until they own the lock and protect their targets. Retention prefers older last-write times, so concurrently finishing logs cannot delete each other while older completed logs remain.
+
+Custom targets must be absolute and absent, with an existing writable non-symlink parent. Pioneer does not rotate custom targets outside its reserved auto-name pattern.
+
+Windows custom targets inherit the parent directory ACL. POSIX mode bits do not establish a DACL. Pioneer cannot validate arbitrary Windows ACLs. Use the default path unless the custom parent is already private to you.
+
+`[REVIEW_WORK_LOG_CREATE_FAILED]` means Pioneer could not create the requested log. `[REVIEW_WORK_LOG_WRITE_FAILED]` means real-time flushing failed after creation. Either failure stops the review.
+
+Transport success confirms report delivery. The report itself states the review findings. A no-findings review still returns non-empty Markdown. Completion failures use these codes:
+
+- `[REVIEW_REPORT_MISSING]`: Pi settled without a report.
+- `[REVIEW_ASSISTANT_FAILED]`: Pi reported a failed or aborted assistant run.
+- `[REVIEW_RPC_INCOMPLETE]`: RPC ended before settling.
+- `[REVIEW_PROCESS_FAILED]`: Pi settled with a report, then exited nonzero or by signal.
+- `[REVIEW_PROCESS_CONTAINMENT_FAILED]`: Pioneer could not prove the tree stopped after child exit.
+- `[REVIEW_RESUME_SESSION_INVALID]`: the native session was torn.
+- `[REVIEW_RESUME_PI_VERSION_MISMATCH]`: the exact Pi version differed.
+- `[REVIEW_RESUME_ATTEMPT_LIMIT]`: the bounded retry layout was exhausted.
+- `[REVIEW_RESUME_IN_USE]`: another controller owned the active archive lease.
+- The work-log failures above.
+
+Containment, retry-layout, and in-use failures never issue a usable resume token.
 
 ## `pioneer models`
 
-Lists the configured models visible to the same offline Pi readiness probe used by reviews:
+List configured models with the review's offline Pi readiness probe:
 
 ```text
 pioneer models [--pi-home DIR] [--json] [--no-extensions]
 ```
 
-Human output contains one sorted, qualified `provider/model` name per line. `--json` emits a schema-versioned catalog:
+Human output sorts qualified `provider/model` names, one per line. `--json` prints a schema-versioned catalog:
 
 ```json
 {
@@ -131,13 +170,15 @@ Human output contains one sorted, qualified `provider/model` name per line. `--j
 }
 ```
 
-`--pi-home` selects the source for private configuration and enabled-extension snapshots. Discovery executes extensions inside the native sandbox; see [Pi extensions](PI-EXTENSIONS.md). The command fails nonzero with the same readiness diagnostic used by reviews. In particular, Pioneer refuses to return a partial catalog when Pi reports that `models.json` is invalid.
+`--pi-home` selects the private configuration and enabled-extension snapshot source. Discovery runs extensions inside the native sandbox; see [Pi extensions](PI-EXTENSIONS.md). Readiness failures return nonzero with the review diagnostic. Invalid `models.json` prevents Pioneer from returning a partial catalog.
 
-Review Pi-home snapshots copy only the known root configuration files and `skills/`; unknown root paths and dependency/runtime fluff are skipped. `--pi-home-include` names one existing relative file or directory exactly; use `--pi-home-include=--NAME` for an exact path beginning with `--`. It accepts no glob, negation, or persistent configuration syntax, and paths cannot be absolute, traverse with `..`, or escape the source home. Sessions, logs, `.npm`, `.cache`, `tmp`, `.tmp`, `temp`, and `*.log` paths are hard exclusions, matched case-insensitively on macOS and Windows. Internal symlinks are retained only when their targets are also selected. Review includes are not accepted by eval commands.
+Review Pi-home snapshots copy only known root configuration files and `skills/`. They skip unknown root paths and dependency/runtime content. `--pi-home-include` selects one existing relative file or directory by exact path. Use `--pi-home-include=--NAME` for paths starting with `--`.
+
+Includes accept no glob, negation, or persistent configuration syntax. Paths cannot be absolute, use `..`, or escape the source home. Sessions, logs, `.npm`, `.cache`, `tmp`, `.tmp`, `temp`, and `*.log` are hard exclusions, case-insensitively on macOS and Windows. Internal symlinks survive only if their targets are also selected. Eval commands reject review includes.
 
 ## `pioneer doctor`
 
-Checks Pi, configured models, enabled user extensions and strict platform sandbox dependencies. `pioneer doctor --no-extensions` explicitly checks built-in providers only. It prints schema-versioned JSON and exits nonzero when unsupported or unready. Human-readable entries in `errors` start with a stable diagnostic ID. Machine consumers should branch on `diagnostics[].id`, not prose.
+Check Pi, configured models, enabled user extensions, and strict platform sandbox dependencies. `pioneer doctor --no-extensions` checks only built-in providers. Doctor prints schema-versioned JSON and exits nonzero for unsupported or unready setups. Human-readable `errors` start with a stable diagnostic ID. Machine consumers should use `diagnostics[].id`.
 
 ```json
 {
@@ -186,9 +227,9 @@ The v1 diagnostic IDs are listed below. Warning diagnostics use `severity: "warn
 | `BUBBLEWRAP_NOT_FOUND` | Bubblewrap is not installed |
 | `UNCLASSIFIED_ERROR` | A legacy or unexpected error lacked a stable prefix |
 
-When Pi reports zero models, `doctor` checks only whether the terminal may access Pi configuration metadata. It never reads configuration contents. If access is denied, the error says the command must be rerun with approved outer-terminal escalation; otherwise it gives normal Pi `/login` guidance.
+If Pi reports zero models, `doctor` checks terminal access to configuration metadata without reading contents. Denied access produces an error requiring approved outer-terminal escalation. Otherwise, doctor gives normal Pi `/login` guidance.
 
-Since some policy sandboxes make metadata access look successful while hiding file contents, recognized sandbox environment indicators also select the conservative escalation diagnostic. Set `PIONEER_OUTER_SANDBOX=1` to identify an otherwise unknown outer sandbox. Pioneer reports the variable name but not its value.
+Some policy sandboxes allow metadata access while hiding contents. Recognized sandbox environment indicators therefore also select the escalation diagnostic. Set `PIONEER_OUTER_SANDBOX=1` for an unknown outer sandbox. Pioneer reports only the variable name, never its value.
 
 ```bash
 pioneer doctor
@@ -202,13 +243,23 @@ Windows always reports strict eval execution as unsupported.
 pioneer eval prepare --skill DIR --evals FILE --output DIR [--allow-fixture-name GLOB]...
 ```
 
-The output must not exist and its canonical parent must keep it outside the source skill. Pioneer revalidates the created destination before populating it. The command rejects symlinks in the skill, requires `skill_name` to be one portable path component valid on Windows and Unix, including the 255-byte filename limit, parses `evals.json`, and creates controller metadata plus baseline/with-skill actor directories.
+The output must not exist. Its canonical parent must keep it outside the source skill. Pioneer rechecks the created destination before populating it. The command rejects skill symlinks and requires a single Windows/Unix-portable `skill_name` component within 255 bytes. It parses `evals.json` and creates controller metadata and baseline/with-skill actor directories.
 
-Before creating output, prepare fails closed with `[EVAL_FIXTURE_LEAK]` when a `files[]` path component matches a grading-cue denylist term (`stale`, `bug`, `defect`, `bad`, `good`, `broken`, `wrong`, `negative`, `positive`, `rough`, `showcase`, `expected`, `fixture`, `case`) on camelCase/kebab/snake/dot word boundaries. `case` and `fixture` are allowed when joined to another word in camelCase or PascalCase, so `BadgeCase.kt` and `TestFixture.kt` pass while `Fixture.kt` and `test-fixture.kt` do not. Prepare checks both the `files[]` source path and the staged path under `fixtures/`. It also rejects staged text that contains `BUG:`, `TODO:`, or `FIXME` in any letter case, or a bare `TODO` or `XXX` in uppercase. Bare lowercase `todo` and `xxx` are ordinary words and pass. Markers are whole tokens, so `DEBUG:` does not match `BUG:`. `TODO-list.md` is an allowed path because `todo` is not a path term. Repeatable `--allow-fixture-name GLOB` waives a path collision when it matches the source path, the staged path, or the basename; it does not waive content markers. [EVALS.md](EVALS.md#fixture-checks) explains each rule.
+Before creating output, prepare checks `files[]` paths for grading cues at camelCase/kebab/snake/dot word boundaries. These words fail with `[EVAL_FIXTURE_LEAK]`: `stale`, `bug`, `defect`, `bad`, `good`, `broken`, `wrong`, `negative`, `positive`, `rough`, `showcase`, `expected`, `fixture`, and `case`.
 
-Every `files[]` entry must resolve to a regular file of at most 64 MiB. Directories and special files (for example FIFOs) are rejected, and a larger file fails with `[EVAL_FIXTURE_TOO_LARGE]`, before output is created. Prepare checks and scans each fixture from one open descriptor, then closes it and records its identity. Staging reopens the file, fails with `[EVAL_FIXTURE_CHANGED]` if its device, inode, size, modification or change time, or permission bits changed, and scans it again while copying.
+Joined camelCase/PascalCase words can include `case` and `fixture`: `BadgeCase.kt` and `TestFixture.kt` pass; `Fixture.kt` and `test-fixture.kt` fail. Prepare checks source paths and staged paths under `fixtures/`.
 
-Fixtures are staged under `fixtures/` inside each actor run directory, and each prepared prompt is rewritten so the paths it names resolve from the actor working directory. `case.json` records `id`, the rewritten `prompt`, the original `source_prompt`, `fixtures_dir`, and the staged `files`. Ambiguous basenames shared by several staged fixtures are left unrewritten. The JSON result adds `actorContract` with `caseFile`, `fixturesDir`, `promptField`, and a one-sentence `description`; the same sentence is printed to stderr as `[PIONEER_EVAL_ACTOR_CONTRACT]`.
+Content checks reject `BUG:`, `TODO:`, or `FIXME` in any case, and bare uppercase `TODO` or `XXX`. Bare lowercase `todo` and `xxx` pass. Markers match whole tokens, so `DEBUG:` does not match `BUG:`. `TODO-list.md` passes because `todo` is not a path term.
+
+Repeat `--allow-fixture-name GLOB` to waive path collisions matching the source path, staged path, or basename. It cannot waive content markers. See [EVALS.md](EVALS.md#fixture-checks).
+
+Each `files[]` entry must resolve to a regular file no larger than 64 MiB. Directories and special files, including FIFOs, fail before output creation. Oversized files fail with `[EVAL_FIXTURE_TOO_LARGE]`. Prepare scans each fixture through one open descriptor, closes it, and records its identity.
+
+Staging reopens and rescans the file while copying. Changed device, inode, size, modification/change time, or permission bits fail with `[EVAL_FIXTURE_CHANGED]`.
+
+Prepare stages files under `fixtures/` in each actor run directory. It rewrites prompt paths to resolve from the actor working directory. `case.json` stores `id`, rewritten `prompt`, original `source_prompt`, `fixtures_dir`, and staged `files`. Ambiguous shared basenames stay unchanged.
+
+The JSON result adds `actorContract` with `caseFile`, `fixturesDir`, `promptField`, and a one-sentence `description`. Pioneer prints that sentence to stderr as `[PIONEER_EVAL_ACTOR_CONTRACT]`.
 
 ## `pioneer eval run`
 
@@ -227,31 +278,64 @@ pioneer eval run --run-dir DIR
   -- COMMAND [ARG ...]
 ```
 
-Pioneer executes the command after `--` as separate arguments in the strict sandbox. The runner first performs mandatory filesystem, environment, and loopback probes.
+Pioneer runs the command after `--` with separate arguments in the strict sandbox. Mandatory filesystem, environment, and loopback probes run first.
 
 Before creating launch artifacts, Pioneer validates the executable. Bare names use the selected sanitized `PATH`. Relative paths resolve from the run directory. Pioneer canonicalizes absolute or symlinked launchers and grants access to their exact paths.
 
-Pioneer returns actor output observed before termination, bounded at 4 MiB for stdout and 64 KiB for stderr. It also returns the exit status and terminating signal. `--stdout-file FILE` and `--stderr-file FILE` stream the selected output to a file instead, bounded at 1 GiB. Pioneer then prints nothing for that stream. Its own diagnostics still go to stderr. Use these options for large output, such as `pi --mode json`, which repeats every image the agent reads as base64.
+Pioneer returns output seen before termination, up to 4 MiB stdout and 64 KiB stderr, plus exit status and terminating signal. `--stdout-file FILE` and `--stderr-file FILE` stream output to files instead, with a 1 GiB bound per stream. Pioneer prints nothing for a redirected stream. Its diagnostics still go to stderr.
+
+Use file output for large results. For example, `pi --mode json` repeats every image the agent reads as base64.
 
 Each target follows the `--work-log` rules. It must be absolute, absent, free of control characters, and outside every actor-visible grant. Only you or root can change its parent folders. It must differ from the work log and the other output file.
 
-Pioneer creates the file with mode `0600` just before the actor starts. A run that fails earlier leaves no file. `[EVAL_OUTPUT_FILE_CREATE_FAILED]` reports a rejected target. If stdout creation succeeds but stderr creation fails, the message names the empty stdout file that Pioneer leaves in place. Remove it before retrying. Pioneer does not delete it by path because another process could have replaced it. `[EVAL_OUTPUT_WRITE_FAILED]` stops a run whose file cannot be written.
+Pioneer creates mode `0600` files just before actor launch. Earlier failures leave no file. A rejected target produces `[EVAL_OUTPUT_FILE_CREATE_FAILED]`. If stdout creation succeeds but stderr creation fails, the diagnostic names the empty stdout file left behind. Remove it before retrying. Pioneer avoids path-based deletion because another process could replace it. A write failure stops the run with `[EVAL_OUTPUT_WRITE_FAILED]`.
 
-Before the actor starts, Pioneer prints one `[PIONEER_EVAL_ACTOR_CONTRACT]` stderr line naming the actor working directory, the `fixtures/` directory, and `case.json`, followed by one `[PIONEER_EVAL_FIXTURES]` line per staged file. The listing reads at most 256 KiB of `case.json`, ignores absolute, escaping, over-long, and control-character entries because the run directory stays actor-writable, prints at most 20 paths, and then reports how many remain. A run directory without a usable `case.json` still gets the contract line.
+Before launch, Pioneer prints `[PIONEER_EVAL_ACTOR_CONTRACT]` to stderr with the actor working directory, `fixtures/`, and `case.json`. It follows with `[PIONEER_EVAL_FIXTURES]` lines for staged files.
 
-The isolated Pi snapshot `agentDir` is writable so Pi can create credential lock directories next to snapshotted `auth.json` and `settings.json`. The source Pi home is never mounted.
+The listing reads at most 256 KiB of `case.json`. Since actors can write the run directory, it ignores absolute, escaping, over-long, and control-character entries. It prints at most 20 paths, then counts the rest. Even without usable `case.json`, it prints the contract line.
 
-Immediately after opening the controller-owned work log, Pioneer prints `[PIONEER_EVAL_WORK_LOG] ABSOLUTE_PATH` to stderr. Without `--work-log`, it creates a unique `eval-*.jsonl` file in the platform Pioneer evals log directory. An explicit `--work-log` target must be absolute, absent, free of control characters, and outside every actor-visible grant. On macOS and Linux, every folder above it must be owned by you or root and must not be writable by other users, except a sticky folder such as `/tmp` that protects your own entries. Otherwise another user could swap a folder for a link into the actor's run tree after the check. Work-log records cover runner stages and bounded exit metadata only. `[EVAL_WORK_LOG_CREATE_FAILED]` and `[EVAL_WORK_LOG_WRITE_FAILED]` are terminal.
+Pi can write the isolated snapshot `agentDir` to create credential locks beside copied `auth.json` and `settings.json`. Pioneer never mounts the source Pi home.
 
-Eval failures return nonzero. Stable stderr diagnostics are `[EVAL_FIXTURE_LEAK]` when prepare would stage a path or content marker that leaks the expected finding, `[EVAL_FIXTURE_TOO_LARGE]` when a prepare fixture is larger than 64 MiB, `[EVAL_TIMEOUT]` for timeout, `[EVAL_INTERRUPTED]` for SIGINT/SIGTERM, `[EVAL_SPAWN_FAILED]` for sandbox launch failure, `[EVAL_SHEBANG_RESOLUTION_FAILED]` for a cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` interpreter chain, `[EVAL_PROCESS_CONTAINMENT_FAILED]` when inherited pipes prevent proving the process tree stopped, `[EVAL_OUTPUT_LIMIT]` when an output bound is exceeded (the message names `stdout` or `stderr`, the limit, and for the in-memory bounds the `--stdout-file` or `--stderr-file` option), `[PI_NO_MCP_VERSION_UNKNOWN]` when a tool-restricted Pi actor reaches launch without a known Pi version, and the work-log failures described above. These diagnostics do not print the actor environment, Pi configuration, or authenticated proxy URL.
+Pioneer prints `[PIONEER_EVAL_WORK_LOG] ABSOLUTE_PATH` to stderr immediately after opening the controller log. Without `--work-log`, it creates a unique `eval-*.jsonl` in the platform Pioneer evals log directory. Explicit targets must be absolute, absent, free of control characters, and outside every actor-visible grant.
 
-When the actor executable is Pi, fast-start flags are added automatically and skills are disabled. On Pi 1.0.4 or newer that includes `--no-mcp`, applied after readiness (including deferred extension readiness and `--pi-home`) and after extension staging rebuilds the command. A custom non-Pi actor is passed through unchanged, even if its arguments include `--tools` or `--no-extensions`. The writable run directory and read-only runtime paths must all be narrow and non-overlapping. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, temporary, variable-data, and home roots, are rejected after canonicalization; narrowly selected read-only system runtimes and disposable temporary descendants remain supported. Eval networking is public-only unless `--allow-loopback` opens exact host ports.
+On macOS/Linux, parent folders must belong to you or root and deny writes by others. Trusted sticky folders such as `/tmp` can protect your entries. Otherwise another user could replace a folder with a link into actor storage after validation. Records contain only runner stages and bounded exit metadata. `[EVAL_WORK_LOG_CREATE_FAILED]` and `[EVAL_WORK_LOG_WRITE_FAILED]` stop the run.
 
-`--allow-loopback HOST:PORT` is repeatable and lets the actor reach one host loopback port directly, for skills that drive a local app through a local bridge. `HOST` must be `127.0.0.1` or `localhost`; at most 16 distinct ports are accepted, and ranges, wildcards, other addresses, and IPv6 are rejected with `[EVAL_LOOPBACK_TARGET_INVALID]` before the run directory is read. On macOS the Seatbelt profile allows outbound TCP to exactly those loopback ports. On Linux a controller-owned Unix socket relays each port into the actor's network namespace, where the supervisor listens on `127.0.0.1:PORT`; port 3128 is reserved there for the proxy relay. The actor receives `NO_PROXY=127.0.0.1,localhost` so proxy-aware clients connect directly; the proxy still refuses loopback, and every unlisted port stays closed. The mandatory loopback probe still runs against a port outside the allow list, and the work log records the allowed targets.
+Eval failures return nonzero and use stable stderr diagnostics:
 
-`--env NAME=VALUE` is repeatable and passes a variable to the actor only. Names must be letters, digits, and underscores; names Pioneer controls (`PATH`, `HOME`, `TMPDIR`, proxy variables, `NODE_OPTIONS`, TLS configuration, the Windows runtime variables, and every `PI_*` or `PIONEER_*` name, case-insensitively) and duplicates are rejected with `[EVAL_ACTOR_ENV_INVALID]`, as is `__proto__`. At most 64 variables of up to 32 KiB each, and 64 KiB in total, are accepted. The work log records variable names, never values.
+- `[EVAL_FIXTURE_LEAK]`: prepare found a path or content marker that reveals the expected finding.
+- `[EVAL_FIXTURE_TOO_LARGE]`: a prepare fixture exceeded 64 MiB.
+- `[EVAL_TIMEOUT]`: the run timed out.
+- `[EVAL_INTERRUPTED]`: SIGINT/SIGTERM interrupted the run.
+- `[EVAL_SPAWN_FAILED]`: sandbox launch failed.
+- `[EVAL_SHEBANG_RESOLUTION_FAILED]`: an `/usr/bin/env` interpreter chain was cyclic, excessively deep, or unterminated-overlong.
+- `[EVAL_PROCESS_CONTAINMENT_FAILED]`: inherited pipes prevented proof that the process tree stopped.
+- `[EVAL_OUTPUT_LIMIT]`: output exceeded a bound. The message names the stream and limit. For in-memory bounds, it also names `--stdout-file` or `--stderr-file`.
+- `[PI_NO_MCP_VERSION_UNKNOWN]`: a tool-restricted Pi actor reached launch without a known version.
+- The work-log failures above.
 
-`--pi-extension PATH` is repeatable, up to 8 times, and loads one Pi extension file or package directory that keeps its tools, for example an MCP adapter. It requires the trusted official Pi package as the actor. A directory resolves like Pi does, from a `package.json` `pi.extensions` list or an `index.ts`/`index.js`, and every entry must stay inside it. The `package.json` must be a regular file of at most 64 KiB with at most 32 `pi.extensions` entries, or the run fails with `[PI_EXTENSION_TOOL_SOURCE_INVALID]` before any entry is resolved. Pioneer stages the source read-only with its ancestor `node_modules`, under the same location policy as an explicit `--extension`, and passes the staged copy with `--extension`. Only that copy keeps its tools; enabled user extensions and `-e` extensions stay tool-stripped. The same extension may not also be enabled in Pi or passed with `-e` (`[PI_EXTENSION_TOOL_SOURCE_INVALID]`); add `--no-extensions` to the Pi command in that case. Put configuration the extension needs, such as an `mcp.json`, in the run directory and pass its flag on the Pi command. The extension loads only in the actor, not during model discovery, so it can use `--env` values, run-directory files, Pi arguments, and `--allow-loopback` ports while it starts. If it cannot start, the run fails with `[PI_EXTENSION_LOAD_FAILED]`.
+These diagnostics exclude the actor environment, Pi configuration, and authenticated proxy URL.
+
+Pi actors get fast-start flags with skills disabled. Pi 1.0.4+ also gets `--no-mcp` after readiness, including deferred extension readiness and `--pi-home`, and after extension staging rebuilds the command. Custom non-Pi actors stay unchanged, including arguments such as `--tools` and `--no-extensions`.
+
+Writable run directories and read-only runtime paths must be narrow and non-overlapping. After canonicalization, Pioneer rejects writable protected-system roots and descendants, plus broad filesystem, sensitive-configuration, temporary, variable-data, and home roots. Narrow read-only system runtimes and disposable temporary descendants remain supported. Networking is public-only unless `--allow-loopback` opens exact host ports.
+
+Repeat `--allow-loopback HOST:PORT` to reach local apps through exact host loopback ports. `HOST` must be `127.0.0.1` or `localhost`. At most 16 distinct ports are allowed. Ranges, wildcards, other addresses, and IPv6 fail with `[EVAL_LOOPBACK_TARGET_INVALID]` before Pioneer reads the run directory.
+
+On macOS, Seatbelt allows outbound TCP to exactly those ports. On Linux, a controller-owned Unix socket relays each port into the actor namespace. The supervisor listens on `127.0.0.1:PORT`; port 3128 is reserved for the proxy relay.
+
+Actors get `NO_PROXY=127.0.0.1,localhost` so proxy-aware clients connect directly. The proxy still refuses loopback. Unlisted ports stay closed, and the mandatory probe uses a port outside the allow list. The work log records allowed targets.
+
+Repeat `--env NAME=VALUE` to pass variables only to the actor. Names can contain letters, digits, and underscores. Pioneer rejects duplicates, `__proto__`, and controlled names with `[EVAL_ACTOR_ENV_INVALID]`. Controlled names include `PATH`, `HOME`, `TMPDIR`, proxy variables, `NODE_OPTIONS`, TLS configuration, Windows runtime variables, and all `PI_*`/`PIONEER_*` names, case-insensitively.
+
+Pioneer accepts at most 64 variables, up to 32 KiB each and 64 KiB total. Logs record names without values.
+
+Repeat `--pi-extension PATH` up to 8 times to load Pi extension files or packages that retain tools, such as an MCP adapter. The actor must be the trusted official Pi package. Directory entries resolve from `package.json` `pi.extensions` or `index.ts`/`index.js` and must stay inside the directory.
+
+`package.json` must be a regular file no larger than 64 KiB, with at most 32 `pi.extensions` entries. Otherwise `[PI_EXTENSION_TOOL_SOURCE_INVALID]` stops the run before entry resolution. Pioneer stages the source and ancestor `node_modules` read-only under the explicit `--extension` location policy. It passes the staged copy with `--extension`.
+
+Only that copy retains tools. Enabled user extensions and `-e` extensions remain tool-stripped. An extension already enabled in Pi or passed with `-e` fails with `[PI_EXTENSION_TOOL_SOURCE_INVALID]`. Add `--no-extensions` to the Pi command if needed.
+
+Put required configuration, such as `mcp.json`, in the run directory and pass its Pi command flag. Only the actor loads the extension; discovery does not. It can use actor `--env` values, run-directory files, Pi arguments, and `--allow-loopback` ports during startup. Startup failure returns `[PI_EXTENSION_LOAD_FAILED]`.
 
 ## `pioneer eval install-linux`
 
@@ -262,7 +346,7 @@ npm run build
 sudo node dist/review-cli.js eval install-linux
 ```
 
-The command must run as root. It installs a root-owned copy of `/usr/bin/bwrap` at `/usr/local/libexec/pioneer/bwrap` and loads one AppArmor profile granting `userns` only to that executable. It does not change a global sysctl.
+Run the command as root. It copies `/usr/bin/bwrap` to root-owned `/usr/local/libexec/pioneer/bwrap` and loads one AppArmor profile. The profile grants `userns` only to that executable. The command changes no global sysctl.
 
 ## Environment
 
@@ -273,22 +357,22 @@ The command must run as root. It installs a root-owned copy of `/usr/bin/bwrap` 
 | `LANG`, `LC_ALL` | Preserved when present |
 | `PIONEER_DEBUG` | Enables limited proxy diagnostics; never enable in routine use |
 
-Run-local `HOME`, `TMPDIR`, proxy variables, `PI_OFFLINE`, and `PI_TELEMETRY` are set by the controller. Arbitrary host environment variables are not passed into sandboxed actors; `eval run --env` passes only the variables it names.
+The controller sets run-local `HOME`, `TMPDIR`, proxy variables, `PI_OFFLINE`, and `PI_TELEMETRY`. Sandboxed actors do not inherit arbitrary host variables. `eval run --env` passes only named variables.
 
 ## `pioneer deep-review`
 
-Runs a versioned council/president deep review against a validated PR packet and trusted configuration. Pioneer core has no GitHub credential on this path.
+Run a versioned council/president deep review with a validated PR packet and trusted configuration. Pioneer core receives no GitHub credential on this path.
 
 ```text
 pioneer deep-review --source DIR --packet FILE --config FILE
   [--output FILE] [--work-log FILE] [--scratch-base DIR]
 ```
 
-Stdout emits a small machine-readable terminal summary. `[PIONEER_DEEP_REVIEW_WORK_LOG]` and `[PIONEER_DEEP_REVIEW_RESULT]` go to stderr. Exit `0` for a complete clean review, `1` when publishable findings exist, and `2` for incomplete or unavailable runs. Windows fails closed before actor launch.
+Stdout contains a small machine-readable terminal summary. `[PIONEER_DEEP_REVIEW_WORK_LOG]` and `[PIONEER_DEEP_REVIEW_RESULT]` go to stderr. Exit codes are `0` for a complete clean review, `1` for publishable findings, and `2` for incomplete or unavailable runs. Windows stops before actor launch.
 
 ## `pioneer github deep-review`
 
-Trusted GitHub adapter commands for same-repository workflows:
+Use these trusted GitHub adapter commands for same-repository workflows:
 
 ```text
 pioneer github deep-review start --owner OWNER --repo REPO --head-sha SHA
@@ -296,4 +380,4 @@ pioneer github deep-review collect --source DIR --owner OWNER --repo REPO --pr N
 pioneer github deep-review publish --owner OWNER --repo REPO --pr N --result FILE --packet FILE --check-run-id ID
 ```
 
-Collect and publish require `GITHUB_TOKEN`. The `pioneer deep-review` step must run without that token in its environment.
+Collect and publish require `GITHUB_TOKEN`. Remove that token from the environment before running `pioneer deep-review`.

@@ -1,8 +1,8 @@
 # Skill evals
 
-Pioneer can prepare and execute the isolated actor half of a skill-creator-style evaluation. Each case gets a baseline arm and a with-skill arm. The actor can use public network services and explicitly granted tools, but it cannot read the source skill, eval definitions, answer keys, sibling arms, or unrelated host files.
+Pioneer prepares and runs isolated actors for skill evaluations. Each case has a `baseline` arm and a `with-skill` arm. Actors can use public network services and explicitly granted tools. They cannot read the source skill, eval definitions, answer keys, sibling arms, or unrelated host files.
 
-This is an advanced workflow. The harness deliberately does not choose an agent protocol, drive Pi RPC, grade outputs, or aggregate scores. Your controller owns those steps outside the actor sandbox.
+Your controller selects the agent protocol, drives Pi RPC, grades output, and combines scores outside the actor sandbox. Pioneer handles preparation and isolation.
 
 ## Define cases
 
@@ -27,7 +27,9 @@ Place an `evals/evals.json` file inside the skill directory:
 
 `files` is optional and contains paths below the skill directory. Every entry must resolve to a regular file of at most 64 MiB. Pioneer rejects directories, special files such as FIFOs, and larger files before creating output.
 
-Controller-only fields such as `expected_output` and `expectations` can appear in the source definition. Pioneer never stages them into an actor run. Every `files[]` path is actor-visible: Pioneer copies it into `fixtures/`, lists it in `case.json`, and prints it on `eval run` as `[PIONEER_EVAL_FIXTURES]`. Avoid filenames and directories that reveal the expected finding.
+Source definitions can contain controller-only fields such as `expected_output` and `expectations`. Pioneer excludes these fields from actor runs.
+
+Actors can see every `files[]` path. Pioneer copies each file into `fixtures/`, lists it in `case.json`, and prints it during `eval run` as `[PIONEER_EVAL_FIXTURES]`. Use filenames and directories that do not reveal the expected finding.
 
 The complete source skill must be free of symbolic links. Generated eval workspaces and `evals/` content are excluded from the with-skill copy. The actor must see only what a developer would see in a real checkout.
 
@@ -42,9 +44,13 @@ pioneer eval prepare \
   --output /absolute/path/to/new-eval-battery
 ```
 
-`eval prepare` fails closed with `[EVAL_FIXTURE_LEAK]` before creating the output directory when a staged path or its contents would leak the expected finding. Path matching is on word boundaries after camelCase, kebab, snake, and dot splits of each path component, so `MOTION-stale.md` and `rough-tier/` are rejected. `BadgeCase.kt` and `TestFixture.kt` are allowed, because `case` and `fixture` are allowed inside a camelCase or PascalCase name. Pioneer checks both your `files[]` path and the staged path the actor sees under `fixtures/`.
+`eval prepare` rejects paths or contents that reveal the expected finding with `[EVAL_FIXTURE_LEAK]`. This check runs before output-directory creation.
 
-Staged text is also rejected when it contains `BUG:`, `TODO:`, or `FIXME` in any letter case, or a bare `TODO` or `XXX` in uppercase. Lowercase `todo` and `xxx` on their own are ordinary words, so a todo-list app fixture passes. A file named `TODO-list.md` also passes: `todo` is not a path term, because a name like that does not say the file has a defect. Repeatable `--allow-fixture-name GLOB` is the escape hatch for a genuine filename collision in a real repository snapshot; it does not waive content markers. See [the fixture checks](../docs/EVALS.md#fixture-checks) for the exact rules.
+Pioneer splits each path component at camelCase, kebab, snake, and dot word boundaries. It rejects `MOTION-stale.md` and `rough-tier/`. It allows `case` and `fixture` within camelCase or PascalCase names, including `BadgeCase.kt` and `TestFixture.kt`. It checks both `files[]` and staged paths under `fixtures/`.
+
+Pioneer rejects staged text containing `BUG:`, `TODO:`, or `FIXME` in any letter case. It also rejects bare uppercase `TODO` or `XXX`. Bare lowercase `todo` and `xxx` pass. A todo-list app fixture can use these ordinary words.
+
+`TODO-list.md` passes because `todo` is absent from the path denylist. Use repeated `--allow-fixture-name GLOB` options for genuine filename collisions in repository snapshots. This option waives only path checks. [Fixture checks](../docs/EVALS.md#fixture-checks) lists the exact rules.
 
 The output directory must not already exist. The generated layout is:
 
@@ -73,9 +79,9 @@ new-eval-battery/
 
 ### Staged fixture contract
 
-Actors run with their run directory as the working directory, and fixtures are staged one level down under `fixtures/`. Pioneer therefore rewrites each prepared prompt so the paths it names resolve from that working directory: a source prompt saying `File: panel.kt` becomes `File: fixtures/panel.kt`, while `source_prompt` keeps the original wording. A basename shared by two staged fixtures is left alone, because only its distinct relative path is unambiguous.
+Actors use their run directory as the working directory. Fixtures sit one level below it in `fixtures/`. Pioneer rewrites prompt paths to resolve there: `File: panel.kt` becomes `File: fixtures/panel.kt`. `source_prompt` keeps the original wording. Shared basenames stay unchanged because they cannot identify a unique fixture.
 
-Use `case.json` as the actor prompt source. Nothing else is needed to locate a fixture: the run directory and `fixtures/` can be listed directly, so an actor never has to run a `find`-style search that the eval sandbox may refuse to launch.
+Use `case.json` as the actor prompt source. Actors can list the run directory and `fixtures/` directly. They need no `find`-style search, which the sandbox can refuse to launch.
 
 `pioneer eval prepare` reports the same contract in its JSON output under `actorContract`, and as a `[PIONEER_EVAL_ACTOR_CONTRACT]` stderr line.
 
@@ -91,14 +97,18 @@ pioneer eval run \
   -- your-agent-adapter --case case.json
 ```
 
-Repeat with the `with-skill` directory. Before the actor starts, Pioneer prints the actor contract to stderr: one `[PIONEER_EVAL_ACTOR_CONTRACT]` line naming the working directory, the `fixtures/` directory, and `case.json`, followed by one bounded `[PIONEER_EVAL_FIXTURES]` line per staged file. The command after `--` is passed as discrete arguments, not interpreted by a shell. The writable `--run-dir` must identify one narrow actor directory. `--runtime-read` is repeatable, read-only, and intended for narrow non-overlapping tool runtimes. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and their canonical aliases, are rejected; narrow read-only system runtimes and disposable temporary descendants remain supported.
+Repeat with the `with-skill` directory. Before launch, Pioneer prints `[PIONEER_EVAL_ACTOR_CONTRACT]` to stderr with the working directory, `fixtures/`, and `case.json`. It then prints one bounded `[PIONEER_EVAL_FIXTURES]` line per staged file. Pioneer passes the command after `--` as discrete arguments without a shell.
+
+`--run-dir` must identify one narrow writable actor directory. Repeat `--runtime-read` for narrow, read-only tool runtimes that do not overlap it.
+
+Pioneer rejects writable protected-system roots and descendants. It also rejects broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and their canonical aliases. Narrow read-only system runtimes and disposable temporary descendants remain supported.
 
 `--deny-read-probe` is also repeatable. Use it for every controller-side answer key or sensitive reference whose invisibility you want the mandatory preflight to prove.
 
 Three more repeatable options adapt an arm to a skill that drives a local tool:
 
 - `--allow-loopback 127.0.0.1:PORT` lets the actor reach one local port directly, for example a desktop app's HTTP bridge. Every other loopback port stays closed. Only `127.0.0.1` and `localhost` are accepted.
-- `--env NAME=VALUE` passes a variable to the actor, such as a tool's configuration directory. Variables Pioneer controls, such as `PATH`, `HOME`, proxy variables, and `PI_*`/`PIONEER_*` names, are refused. The work log keeps names, not values.
+- `--env NAME=VALUE` passes an actor variable, such as a tool configuration directory. Pioneer rejects its reserved names: `PATH`, `HOME`, proxy variables, and `PI_*`/`PIONEER_*`. The log records names and excludes values.
 - `--pi-extension PATH` loads a Pi extension file or package directory whose tools the actor may use, for example an MCP adapter. The actor must be Pi. Put the adapter's configuration, such as `mcp.json`, in the run directory and pass its flag on the Pi command:
 
 ```bash
@@ -110,12 +120,23 @@ pioneer eval run \
   -- pi --no-extensions --mcp-config mcp.json --mode json -p "..."
 ```
 
-`--no-extensions` on the Pi command keeps the enabled user extensions out of the run, while the `--pi-extension` still loads. Use it unless the model provider comes from an extension: every staged extension shares one 1 GiB snapshot budget, and one broken user extension fails the whole run. On macOS, grant an MCP server's executable with `--runtime-read`, such as `--runtime-read ~/.local/bin/uv`, or the adapter's spawn fails with `EPERM`.
+`--no-extensions` on the Pi command excludes enabled user extensions. The explicit `--pi-extension` still loads. Use this option unless an extension supplies the model provider. Staged extensions share a 1 GiB snapshot budget. Any broken user extension fails the run.
 
-Pass `--stdout-file FILE` when the actor prints a lot, for example `pi --mode json`, which repeats every image the agent reads as base64. Pioneer streams stdout to that file instead of holding it in memory, so the 4 MiB stdout bound does not apply; the file is bounded at 1 GiB. `--stderr-file FILE` does the same for stderr. Both files must be outside the run directory and must not exist yet.
-Pioneer starts the `--pi-extension` only in the actor, not while it checks which models Pi can use. So the extension can read `--env` values and run-directory files, use Pi arguments such as `--mcp-config`, and connect to `--allow-loopback` ports while it starts. If it cannot start, the run stops with `[PI_EXTENSION_LOAD_FAILED]` and names the extension.
+On macOS, grant the MCP server executable with `--runtime-read`, for example `--runtime-read ~/.local/bin/uv`. Without that grant, spawning the server fails with `EPERM`.
 
-The eval runner uses a fixed selective Pi-home snapshot outside the persistent actor run: required root configuration files are copied into an isolated `agentDir` that is writable so Pi can create lock directories beside credentials, configured skills and dependency/runtime fluff are excluded, writable home/tmp scratch is separate and ephemeral, and no Pi-home include option is available. The source Pi home is never mounted. Controller launch/probe files and the copied snapshot are removed on every exit path. When the actor executable is Pi, Pioneer adds fast-start and isolation flags automatically: `--offline`, `--no-session`, `--no-approve`, `--no-extensions`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`. It also stages the enabled user extensions from the trusted official Pi package and passes each one with `--extension`, so extension-registered model providers resolve inside the sandbox. Extension tools are not added, except for a `--pi-extension`. Put `--no-extensions` on the Pi command to stay on built-in providers. OAuth refresh still uses the broker when the snapshot has OAuth credentials and the package can host the auth adapter. An explicit `--extension` or `-e` on that command still loads through the tool-stripping adapter. There is still no Pi-home include flag. Driving Pi's RPC protocol and delivering `case.json` remains the adapter's job.
+Use `--stdout-file FILE` for large output. For example, `pi --mode json` repeats each image as base64. Pioneer streams stdout to a file capped at 1 GiB. The in-memory 4 MiB stdout cap then does not apply. `--stderr-file FILE` does the same for stderr. Both files must be absent and outside the run directory.
+
+Pioneer initializes `--pi-extension` only in the actor. At startup, it can use `--env`, run-directory files, Pi arguments such as `--mcp-config`, and `--allow-loopback` ports. Initialization failure stops the run with `[PI_EXTENSION_LOAD_FAILED]` and the extension name.
+
+The eval runner copies required root Pi configuration into an isolated `agentDir` outside the persistent actor run. Pi can write credential lock directories there. The snapshot excludes configured skills and dependency/runtime content. Home/tmp scratch is separate, writable, and temporary. Evals have no Pi-home include option.
+
+Pioneer never mounts the source Pi home. It removes controller launch/probe files and the copied snapshot on every exit path.
+
+For Pi actors, Pioneer adds `--offline`, `--no-session`, `--no-approve`, `--no-extensions`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`. It stages enabled user extensions from the trusted official Pi package and passes them with `--extension`. Their provider registrations remain available. Only `--pi-extension` tools remain enabled.
+
+Put `--no-extensions` on the Pi command to use built-in providers. Explicit `--extension` or `-e` entries still load through the tool-stripping adapter. OAuth refresh uses the broker when the snapshot has OAuth credentials and the package supports the auth adapter.
+
+Your adapter must drive Pi's RPC protocol and deliver `case.json`.
 
 Every run writes a controller-owned work log. Pioneer prints `[PIONEER_EVAL_WORK_LOG] ABSOLUTE_PATH` to stderr as soon as the file exists. Use `--work-log /absolute/path.jsonl` for a create-only custom target, or leave the default `eval-*.jsonl` file in the platform Pioneer evals log directory. The log records stages such as snapshot, probe, proxy, and actor launch; it does not contain prompts, credentials, or proxy URLs.
 
@@ -136,7 +157,7 @@ Capture actor stdout and artifacts, then grade them from the trusted controller 
 
 ## Matrix batteries
 
-Arms are fixed at `baseline` and `with-skill`. A second factor — current vs stale config, present vs absent file — has nowhere to go inside one battery. Do not add a third arm, and do not put sibling fixtures such as `CONFIG-stale.md` next to `CONFIG.md` in the same battery: the actor can see every staged path.
+Each battery has exactly two arms: `baseline` and `with-skill`. Use separate batteries for other factors, such as current/stale configuration or present/absent files. Do not add a third arm. Keep `CONFIG-stale.md` out of a battery containing `CONFIG.md`, because actors can see every staged path.
 
 Use one battery per cell, with identical case ids, identical prompts, and identical staged filenames. Only the file contents and the controller-owned run manifest differ:
 

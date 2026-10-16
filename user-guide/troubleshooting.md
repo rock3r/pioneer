@@ -10,11 +10,13 @@ pioneer doctor
 
 The command prints JSON and exits nonzero when Pi, configured models, or the native sandbox shared by reviews and evals is unavailable.
 
-Pioneer itself must run outside an enclosing agent sandbox. The controller needs the operator's Pi configuration and provider connection; it then starts the Pi actor inside Pioneer's own native sandbox. This is not an instruction to run the review actor unsandboxed.
+Run the Pioneer controller outside any enclosing agent sandbox. It needs the operator's Pi configuration and provider connection. Pioneer then starts the Pi actor inside its own native sandbox.
 
 ## Pi version is unsupported
 
-Run `pioneer --version` to identify Pioneer and `pi --version` to identify Pi. Pioneer requires Pi `0.80.6` or newer. Versions above the tested maximum continue with `PI_VERSION_UNTESTED`; use `pioneer doctor` to see the warning in machine output. A non-semantic or in-range binary that lacks documented Pi flags should be replaced with an official Pi release.
+Run `pioneer --version` and `pi --version` to identify both versions. Pioneer requires Pi `0.80.6` or newer. Above the tested maximum, it continues with `PI_VERSION_UNTESTED`. `pioneer doctor` includes this warning in machine output.
+
+Replace Pi with an official release if its version is non-semantic or it lacks documented flags for its reported version.
 
 ## Pi is not installed
 
@@ -69,7 +71,7 @@ Fix every reported `models.json` error, then rerun `pioneer models`. Pioneer del
 
 ## Thinking level rejected
 
-Pioneer recognizes `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, but support still depends on Pi, the provider, and the model. Choose a supported level explicitly; the runner will not lower it automatically.
+Pioneer recognizes `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Pi, the provider, and the model determine which levels work. Select a supported level explicitly. Pioneer never lowers it automatically.
 
 ## Bubblewrap or user namespaces unavailable
 
@@ -91,7 +93,7 @@ Do not disable the global user-namespace restriction. See [Linux sandbox setup](
 
 ## Provider cannot reach the network
 
-Pioneer rejects `--network none` for reviews before Pi starts: a configured model provider needs an egress path, and custom Pi extensions are disabled for reviews. Start a new review with `public`, or use `full` only when the review also needs LAN or loopback access. `public` blocks LAN and loopback; `full` permits all three through the proxy.
+Pioneer rejects `--network none` before review launch because Pi needs access to its model provider. Start a new review with `public`. Use `full` when the review also needs LAN or loopback access. Both modes route traffic through the proxy. Ambient extension discovery stays disabled.
 
 On Linux, programs must honor standard HTTP(S) proxy variables. Raw TCP clients cannot escape the isolated network namespace. Enable `PIONEER_DEBUG=1` only for limited proxy diagnostics and never publish its output without inspecting it.
 
@@ -107,9 +109,11 @@ Do not rely on a symbolic-link shortcut in the source tree. The sandbox resolves
 
 ## Pi home exceeds a snapshot limit
 
-Pioneer selects only the known root configuration files and, for reviews, the sanitized `skills/` tree. Default traversal skips package/runtime fluff; sessions, logs, `.npm`, `.cache`, transient directories, and log files are hard exclusions, matched case-insensitively on macOS and Windows. The 500,000-entry and 1 GiB limits count selected content only. If a review genuinely needs a package or machine-specific directory, add its exact path with repeated `--pi-home-include RELATIVE_PATH`; understand that this increases storage/runtime cost and reduces portability. Evals do not support this opt-in.
+Pioneer selects known root configuration files and, for reviews, the sanitized `skills/` tree. Default traversal skips package and runtime content. Hard exclusions cover sessions, logs, `.npm`, `.cache`, transient directories, and log files. macOS and Windows match exclusions without case sensitivity.
 
-An error such as `[PI_HOME_SYMLINK_TARGET_MISSING]` means a selected skill points at a path omitted by the default policy. Add the reported relative target with `--pi-home-include` when it is not hard-excluded. Broken, escaping, special-file, hard-excluded, or ambiguous symlink selections must be removed or replaced with a self-contained skill.
+The 500,000-entry and 1 GiB limits count selected content only. For required review packages or machine-specific directories, repeat `--pi-home-include RELATIVE_PATH` with exact paths. Extra paths increase storage and runtime costs and reduce portability. Evals have no include option.
+
+`[PI_HOME_SYMLINK_TARGET_MISSING]` means a selected skill links to a path excluded by default. Add that relative target with `--pi-home-include` if policy permits it. Remove broken, escaping, special-file, hard-excluded, or ambiguous links, or replace the skill with a self-contained copy.
 
 ## Pi's session directory cannot be located
 
@@ -121,23 +125,39 @@ Pioneer must know where Pi stores private sessions so it can keep them out of sn
 
 ## An eval run fails before the model answers
 
-Look at the path printed as `[PIONEER_EVAL_WORK_LOG]`. The JSONL stages show whether Pioneer died during readiness, snapshot, proxy, isolation probe, or the actor itself. `Credential store read failed` plus `auth.json.lock` used to mean the isolated Pi home was read-only; current Pioneer grants that snapshot directory write access for Pi lock files while still leaving the real Pi home unmounted.
+Inspect the file named by `[PIONEER_EVAL_WORK_LOG]`. Its JSONL records identify failures during readiness, snapshot, proxy, isolation probes, or actor execution.
+
+Pi needs write access to create `auth.json.lock` in the isolated Pi home. Pioneer grants that snapshot directory write access and never mounts the real Pi home. Older read-only snapshots could produce `Credential store read failed` errors naming `auth.json.lock`.
 
 `[EVAL_TIMEOUT]` and `[EVAL_PROCESS_CONTAINMENT_FAILED]` include any captured stdout/stderr. `[EVAL_WORK_LOG_CREATE_FAILED]` and `[EVAL_WORK_LOG_WRITE_FAILED]` mean the run stopped because it could not stay observable.
 
 ## An extension fails to load or stage
 
-`[PI_EXTENSION_LOAD_FAILED]` names each failing extension by its last two path segments, and a missing module by its path below `node_modules`, for example `entry 1 (compose-pi/provider.ts): missing dependency @earendil-works/pi-ai/dist/compat.js/api/openai-completions`. Pioneer leaves out a name that looks like a credential or has unusual characters. It never prints the raw error. Pioneer refuses any extension that fails to load, while normal Pi can skip that extension without a message. So an extension can fail here and still seem to work in Pi. Fix or disable that extension. In an eval that does not need it, put `--no-extensions` on the Pi command.
+`[PI_EXTENSION_LOAD_FAILED]` names failing extensions by their last two path segments. It names missing modules by their path below `node_modules`. For example: `entry 1 (compose-pi/provider.ts): missing dependency @earendil-works/pi-ai/dist/compat.js/api/openai-completions`.
 
-`[PI_EXTENSION_SNAPSHOT_LIMIT]` says whether the 1 GiB byte limit or the 500,000-entry limit was hit, with the staged totals. A separate message says that the extension directories hold more than 500,000 entries to scan. That scan also counts skipped content such as `.git`, so move the extension into a smaller dedicated directory. In an eval, a `--pi-extension` shares that budget with the enabled user extensions. When those use most of it, the message says so. Pass `--no-extensions` on the Pi command; the `--pi-extension` still loads.
+Pioneer omits names that resemble credentials or contain unusual characters. It never prints raw errors. Pioneer stops on any extension-load failure. Normal Pi can silently skip the same extension, so a normal Pi run can hide this problem.
 
-On macOS, an extension that starts a helper program, such as an MCP server, fails with `spawn EPERM` when the sandbox cannot read the program. Grant the exact executable with `--runtime-read`, for example `--runtime-read ~/.local/bin/uv`, and keep its directory on `PATH`. The actor's `HOME` is private scratch, and `--env HOME=...` is refused. A helper that reads files from the real home directory needs a configurable path, passed with `--env` and granted with `--runtime-read`. If the helper has no such option, start it with its own `HOME`, for example `/usr/bin/env HOME=/Users/me /path/to/server` in `mcp.json`, and grant only the exact files it reads with `--runtime-read`. Only that helper process sees the changed `HOME`.
+Fix or disable the failing extension. For an eval that needs no user extensions, add `--no-extensions` to the Pi command.
 
-On macOS, `/usr/bin/git` and other Xcode shims print `couldn't create cache file '/var/folders/.../xcrun_db-...'` and `DVTFilePathFSEvents: Failed to start fs event stream`, then work. xcrun always writes its cache to the shared per-user temporary directory and ignores `TMPDIR`. Pioneer does not grant that directory, because the actor could then poison a tool-path cache that normal, unsandboxed commands trust. The messages are harmless.
+`[PI_EXTENSION_SNAPSHOT_LIMIT]` identifies the exceeded limit and staged totals: 1 GiB or 500,000 entries. A separate message reports directories with more than 500,000 entries to scan. Scanning counts skipped content such as `.git`. Move the extension into a smaller dedicated directory.
+
+In evals, `--pi-extension` shares the snapshot budget with enabled user extensions. The message identifies their contribution. Add `--no-extensions` to the Pi command to exclude user extensions. The explicit `--pi-extension` still loads.
+
+On macOS, `spawn EPERM` can mean the sandbox cannot read a helper executable, such as an MCP server. Grant the exact executable with `--runtime-read`, for example `--runtime-read ~/.local/bin/uv`. Keep its directory on `PATH`.
+
+The actor uses private scratch as `HOME`. Pioneer rejects `--env HOME=...`. For helpers that need real-home files, pass a configurable path through `--env` and grant it through `--runtime-read`.
+
+If the helper has no configurable path, set only its own `HOME`. For example, use `/usr/bin/env HOME=/Users/me /path/to/server` in `mcp.json`. Grant only the exact files it reads with `--runtime-read`. Only that helper sees the changed `HOME`.
+
+On macOS, Git and other Xcode shims can work after printing cache warnings. Messages include `couldn't create cache file '/var/folders/.../xcrun_db-...'` and `DVTFilePathFSEvents: Failed to start fs event stream`.
+
+xcrun ignores `TMPDIR` and writes its cache in the shared per-user temporary directory. Pioneer withholds that directory. Otherwise an actor could change tool-path caches used by unsandboxed commands. These warnings alone do not indicate command failure.
 
 ## An output path is rejected as writable by another user
 
-Pioneer refuses a `--report`, `--work-log`, `--stdout-file`, or `--stderr-file` target when any folder above it is owned by another user, or can be changed by other users without the sticky bit. The error names the folder, for example `Eval stdout file parent is writable by another user: /shared/out`. Another user could swap that folder for a link into the sandboxed actor's files. Pick a folder in your home directory, or remove group and world write access (`chmod go-w FOLDER`).
+On macOS and Linux, output ancestors must belong to you or root. Other users must not have write access unless sticky-directory rules protect your entry. This applies to `--report`, `--work-log`, `--stdout-file`, and `--stderr-file`.
+
+Errors name the unsafe folder, for example `Eval stdout file parent is writable by another user: /shared/out`. Another user could replace it with a link into actor files. Choose a directory in your home or remove group/world write access with `chmod go-w FOLDER`.
 
 ## A writable grant is rejected
 
@@ -165,23 +185,52 @@ Timeout cleanup kills Pi and removes the private run state.
 
 ## Eval timed out or returned a containment diagnostic
 
-`[EVAL_FIXTURE_LEAK]` means `eval prepare` refused to stage a fixture whose path or contents would tell the actor the expected finding. Rename the file to what a real checkout would use, move the variant into a separate battery, or pass repeatable `--allow-fixture-name GLOB` for a genuine filename collision. Content markers have no name hatch: `BUG:`, `TODO:`, and `FIXME` match in any letter case, and bare `TODO` and `XXX` match in uppercase. Remove the marker from the fixture, or rewrite it as plain text that does not name the defect.
+`[EVAL_FIXTURE_LEAK]` means a fixture path or content would reveal the expected finding. Use a realistic filename or place the variant in a separate battery. For genuine filename collisions, repeat `--allow-fixture-name GLOB`.
+
+That option cannot waive content checks. Pioneer rejects `BUG:`, `TODO:`, and `FIXME` in any case, plus bare uppercase `TODO` and `XXX`. Remove these markers or use plain text that does not identify the defect.
 
 `[EVAL_FIXTURE_TOO_LARGE]` means a `files[]` entry is larger than the 64 MiB fixture limit. Eval fixtures should be small. Trim the file to the part the case needs.
 
-Eval timeout errors begin with `[EVAL_TIMEOUT]` and preserve actor output captured before termination. `[EVAL_PROCESS_CONTAINMENT_FAILED]` means a descendant retained an inherited stdout/stderr pipe beyond the bounded cleanup grace; the run is nonzero and Pioneer stops accepting output. `[EVAL_SHEBANG_RESOLUTION_FAILED]` means `/usr/bin/env` interpreter resolution detected a cycle, exceeded its bounded depth, or began an unterminated overlong shebang; fix the actor's shebang chain. `[EVAL_INTERRUPTED]`, `[EVAL_SPAWN_FAILED]`, and `[EVAL_OUTPUT_LIMIT]` identify interruption, native launch failure, and bounded-output overflow respectively. `[EVAL_OUTPUT_LIMIT]` names the stream that overflowed. When stdout or stderr is simply large, for example `pi --mode json` with images, pass `--stdout-file FILE` or `--stderr-file FILE` to stream it to a file outside the run directory. Retry only after checking the actor's process creation and output behavior; do not add broad runtime grants or disable native isolation.
+`[EVAL_TIMEOUT]` preserves output captured before termination. Other diagnostics identify these causes:
+
+| Diagnostic | Cause |
+| --- | --- |
+| `[EVAL_PROCESS_CONTAINMENT_FAILED]` | A descendant held inherited stdout/stderr past the cleanup grace. Pioneer exits nonzero and stops accepting output. |
+| `[EVAL_SHEBANG_RESOLUTION_FAILED]` | `/usr/bin/env` resolution found a cycle, exceeded its depth bound, or read an overlong unterminated shebang. |
+| `[EVAL_INTERRUPTED]` | A signal interrupted the run. |
+| `[EVAL_SPAWN_FAILED]` | Native launch failed. |
+| `[EVAL_OUTPUT_LIMIT]` | The named output stream exceeded its bound. |
+
+Fix invalid shebang chains. For large output such as image-heavy `pi --mode json`, use `--stdout-file FILE` or `--stderr-file FILE` outside the run directory.
+
+Check process creation and output behavior before retrying. Keep runtime grants narrow and native isolation enabled.
 
 ## Review appears to hang
 
-Preserve the `[PIONEER_WORK_LOG] ABSOLUTE_PATH` line that Pioneer prints on stderr, then inspect the final records in that JSONL file. Fresh five-second `heartbeat` records mean the controller is alive; advancing `rpcBytes`, `stderrBytes`, or `lastPiEvent` means Pi is still active. Missing heartbeats indicate a stalled controller or event loop, while fresh heartbeats with a growing `idleMs` indicate a live controller waiting on silent Pi activity.
+Keep the `[PIONEER_WORK_LOG] ABSOLUTE_PATH` stderr line and inspect that JSONL file's final records. Fresh five-second `heartbeat` records show a live controller. Changes to `rpcBytes`, `stderrBytes`, or `lastPiEvent` show Pi activity.
 
-`[REVIEW_WORK_LOG_CREATE_FAILED]` means Pioneer could not establish the log before starting long-running work. `[REVIEW_WORK_LOG_WRITE_FAILED]` means persistence failed after creation, including when the 16 MiB cap was reached. Both are terminal because Pioneer will not continue an unobservable review. If the report had already been verified when close-time syncing or retention failed, Pioneer still prints that report to stdout before reporting the work-log failure and exiting nonzero.
+Missing heartbeats indicate a stalled controller or event loop. Fresh heartbeats with increasing `idleMs` show a live controller waiting for silent Pi activity.
+
+`[REVIEW_WORK_LOG_CREATE_FAILED]` means Pioneer could not create the log before long-running work. `[REVIEW_WORK_LOG_WRITE_FAILED]` means a later write failed or reached the 16 MiB cap. Either error stops the review.
+
+If close-time sync or retention fails after report verification, Pioneer prints the report to stdout. It then reports the log error and exits nonzero.
 
 ## Review completed without a report
 
-Pioneer exits nonzero with `[REVIEW_REPORT_MISSING]` if Pi reaches `agent_settled` without a non-empty assistant report. It exits nonzero with `[REVIEW_RPC_INCOMPLETE]` if Pi ends before settling, with `[REVIEW_PROCESS_FAILED]` if Pi settles with a report but exits nonzero or by signal, and with `[REVIEW_PROCESS_CONTAINMENT_FAILED]` if an inherited RPC pipe prevents Pioneer from proving the process tree stopped. A successful no-findings review still prints a non-empty report; exit zero alone is transport success, not a semantic verdict.
+These terminal failures exit nonzero:
 
-The report is always printed to stdout and persisted to a private default report directory; Pioneer emits the selected absolute path as `[PIONEER_REPORT] ABSOLUTE_PATH` on stderr. Until the command reaches a terminal result, that path is a protected reservation and may contain its ownership marker or report bytes being published in place. `--report /absolute/path/report.md` overrides that controller-owned target, which must not already exist and cannot be actor-visible. If persistence fails, stdout still contains the verified report but Pioneer exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. The private Pi home and scratch directory are always removed after the run.
+| Diagnostic | Cause |
+| --- | --- |
+| `[REVIEW_REPORT_MISSING]` | Pi reached `agent_settled` without a non-empty assistant report. |
+| `[REVIEW_RPC_INCOMPLETE]` | Pi ended before settlement. |
+| `[REVIEW_PROCESS_FAILED]` | Pi settled with a report, then exited nonzero or by signal. |
+| `[REVIEW_PROCESS_CONTAINMENT_FAILED]` | An inherited RPC pipe prevented proof that the process tree stopped. |
+
+A successful no-findings review must print a non-empty report. Read it to determine the verdict. Exit zero alone cannot describe its findings.
+
+Pioneer prints verified reports to stdout and saves them in a private default directory. It announces `[PIONEER_REPORT] ABSOLUTE_PATH` on stderr. During execution, this protected reservation can contain an ownership marker or report bytes during publication. Wait for the terminal result before reading the completed report.
+
+`--report /absolute/path/report.md` selects another controller-owned target. It must be absent and invisible to the actor. Saving failures preserve stdout and exit nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. Pioneer always removes the private Pi home and scratch after the run.
 
 Inspect the command's exit status and stderr as well as stdout. A wrapper result such as `{"output":""}` has discarded the evidence needed to distinguish failure from success.
 

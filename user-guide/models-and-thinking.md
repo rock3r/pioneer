@@ -20,7 +20,7 @@ For machine-readable output:
 pioneer models --json
 ```
 
-Pioneer uses Pi's offline model catalog, so this command avoids optional startup network checks. It fails instead of returning a partial list when Pi reports that `models.json` is invalid.
+Pioneer reads Pi's offline model catalog and skips optional startup network checks. If Pi reports invalid `models.json`, Pioneer rejects the entire list.
 
 ## Select a model
 
@@ -33,7 +33,7 @@ pioneer review \
   --prompt "Review the implementation under src."
 ```
 
-An unqualified model ID works only when exactly one configured provider exposes it. If the name is missing or ambiguous, Pioneer stops before creating scratch state and prints the configured qualified names. It never silently substitutes another model.
+An unqualified model ID works only when exactly one configured provider has it. Missing or ambiguous names stop the request before scratch creation. Pioneer prints the configured qualified names and never substitutes another model.
 
 When `--model` is omitted, Pi keeps its configured default.
 
@@ -57,7 +57,7 @@ Or use the model shorthand:
 --model xai/grok-4.3:max
 ```
 
-If both are present, `--thinking` wins. Pi or the selected provider may still reject a level it does not support; Pioneer surfaces that failure rather than lowering the level automatically.
+An explicit `--thinking` overrides the shorthand. Pi or the selected provider can reject an unsupported level. Pioneer reports that failure and keeps the requested level unchanged.
 
 ## Use another Pi home
 
@@ -72,8 +72,8 @@ pioneer review \
   --prompt "Review the implementation under src."
 ```
 
-Pioneer validates that directory, copies it into the run, and makes the copy writable. The original is never used as the actor's home.
+Pioneer validates the directory and creates a writable run-local copy. The actor uses only the copy as its home.
 
-Review copies retain configured Pi skills. Eval copies intentionally omit them so the baseline and candidate arms are controlled by the eval harness.
+Review copies include configured Pi skills. Eval copies exclude them so the eval harness controls the skills available to each baseline and candidate arm.
 
-For a review that needs one additional Pi-home path, repeat `--pi-home-include RELATIVE_PATH`. The path is exact and relative to the selected Pi home; it may select a normally skipped package directory, but not sessions, logs, caches, transient directories, or log files. Evals intentionally have no equivalent option.
+Use repeated `--pi-home-include RELATIVE_PATH` options for extra review paths. Each path must name an exact file or directory relative to the selected Pi home. Includes can select normally skipped packages. Hard exclusions still block sessions, logs, caches, transient directories, and log files. Evals have no include option.
