@@ -19,13 +19,13 @@ plugins/pioneer/
     └── SKILL.md
 ```
 
-Agent Plugins v1 clients, Codex, and Claude Code load the same skill. The skill delegates to the installed `pioneer` executable; it does not contain a second implementation, bundle Pi, or carry provider credentials.
+Agent Plugins v1 clients, Codex, and Claude Code load the same skill. It calls the installed `pioneer` executable. Users install Pi and configure provider credentials separately.
 
 ## Portable Agent Plugins definition
 
-The root `plugin.json` conforms to [Agent Plugins v1](https://agent-plugins.org/specification). It contains only the closed portable metadata fields, targets the canonical `1.0.0` schema, and relies on the standard fixed `skills/` discovery location. Pioneer does not provide an MCP server, so `mcp.json` is intentionally absent; missing optional component locations are valid.
+The root `plugin.json` follows [Agent Plugins v1](https://agent-plugins.org/specification) and its `1.0.0` schema. It uses only the allowed portable metadata fields. Clients discover skills under the fixed `skills/` path. Pioneer has no Model Context Protocol (MCP) server, so the package omits the optional `mcp.json`.
 
-Installation and marketplace behavior are client-owned rather than part of the portable specification. A conforming client should be pointed at the `plugins/pioneer/` directory using that client's installation flow. The native manifests below remain for clients with additional packaging or interface metadata.
+Each client defines installation and marketplace behavior. Point its installer at `plugins/pioneer/`. Client-specific manifests supply additional package or interface metadata.
 
 Validate the portable manifest, shared Agent Skill, and cross-manifest identity with the offline repository contract test:
 
@@ -35,7 +35,7 @@ npm test -- src/branding.test.ts
 
 ## Codex definition
 
-`.codex-plugin/plugin.json` contains the stable plugin name, semantic version, UEL license identifier, skill path, and Codex interface metadata. Its composer, light, and dark logo fields share `assets/pioneer-mascot.png`. `.agents/plugins/marketplace.json` makes the checkout an explicitly installable repo/team marketplace named `pioneer`.
+`.codex-plugin/plugin.json` defines the stable name, semantic version, UEL license identifier, skill path, and Codex interface metadata. Composer, light, and dark logos all use `assets/pioneer-mascot.png`. `.agents/plugins/marketplace.json` defines the installable repository/team marketplace named `pioneer`.
 
 Validate the plugin with the locally installed plugin-creator validator:
 
@@ -56,7 +56,7 @@ The repository does not write or assume a user's personal Codex marketplace. A r
 
 `.claude-plugin/marketplace.json` makes the repository a Claude Code marketplace named `pioneer`. Its relative source points to `./plugins/pioneer`, whose `.claude-plugin/plugin.json` declares the shared skill.
 
-Claude Code's current plugin manifest and marketplace schemas do not expose an icon or logo field. The mascot remains in the shared plugin payload, but Claude cannot display a plugin-specific logo until its schema adds that capability.
+Claude Code's plugin and marketplace schemas have no icon or logo field. The shared package includes the mascot. Claude Code cannot display it as a plugin logo with these schemas.
 
 Validate both marketplace and plugin from the repository root:
 
@@ -74,11 +74,11 @@ Install locally during development:
 
 ## CLI prerequisite
 
-Plugin installation does not install the Pioneer CLI or Pi itself. This is deliberate: agent plugins should not silently execute package-manager lifecycle actions or copy provider credentials. Users install the CLI, configure Pi, and run readiness checks separately.
+Users must install the CLI, configure Pi, and run readiness checks separately. Plugin installation must never silently run package-manager lifecycle actions or copy provider credentials.
 
 ## Versioning
 
-The npm package and all three plugin manifests use the same semantic version. Bump all four version fields together for every published release. Claude Code treats an explicit manifest version as its cache/update key; pushing changes without a version bump does not update existing installations.
+The npm package and all three plugin manifests use the same semantic version. Update all four fields for each release. Claude Code uses the manifest version as its cache/update key. Changes without a version increase do not update existing installations.
 
 Keep the stable identifier `pioneer`. Change display text rather than renaming the identifier, because installed plugin settings and skill namespaces depend on it.
 

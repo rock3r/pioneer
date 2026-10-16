@@ -1,8 +1,8 @@
 # Pi compatibility
 
-Pioneer treats Pi's command-line interface as a versioned external contract. The authoritative range and required capabilities live in [`pi-compatibility.json`](../pi-compatibility.json).
+Pioneer checks Pi's command-line interface against a versioned contract. [`pi-compatibility.json`](../pi-compatibility.json) defines the supported range and required capabilities.
 
-The current supported range is Pi `0.80.6` through `1.2.0`, inclusive. Older versions fail with `PI_VERSION_TOO_OLD`. A newer semantic version is allowed with `PI_VERSION_UNTESTED` on stderr and in doctor machine output so users are not blocked merely because Pi published first. Resumable reviews additionally require the stored exact Pi version to match on resume.
+Pioneer supports Pi `0.80.6` through `1.2.0`, inclusive. Older versions fail with `PI_VERSION_TOO_OLD`. Newer semantic versions continue with `PI_VERSION_UNTESTED` on stderr and in doctor machine output. Resume requires the current Pi version to match the stored version exactly.
 
 ## Why the minimum is 0.80.6
 
@@ -27,13 +27,14 @@ For every Pioneer release:
    npm view @earendil-works/pi-coding-agent version
    ```
 
-2. Compare Pi's release notes and source changes from the previous `testedMaximum` through that version. Pay particular attention to CLI argument parsing, RPC events, model-list output, configuration layout, trust behavior, thinking levels, and session/startup flags.
+2. Compare Pi's release notes and source changes from the previous `testedMaximum` through that version.
+   Check CLI parsing, RPC events, model-list output, configuration layout, project trust, thinking levels, and session/startup flags.
 3. Update `testedMaximum` in `pi-compatibility.json` to the exact newest version reviewed.
 4. Update the two endpoint versions in `.github/workflows/ci.yml` and `.github/workflows/release.yml`. `npm run release:verify` fails if either workflow drifts from the policy.
 5. Run the compatibility smoke against both endpoints. The smoke verifies version output, every required CLI option, every required thinking level, offline model enumeration, and Pioneer's readiness behavior.
 6. Run a real sandboxed review with the newest endpoint on macOS and Linux as part of the normal release validation.
 
-`npm run pi:compat:latest` queries the official npm registry and fails unless `testedMaximum` is the current `latest`. The tagged release workflow runs this check before publication, so a new Pi release makes Pioneer fail closed at release time until maintainers review and test it.
+`npm run pi:compat:latest` queries the official npm registry. It fails unless `testedMaximum` equals `latest`. Tagged releases run this check before publication. Maintainers must review and test each new Pi release before publishing Pioneer.
 
 The minimum should move only when Pioneer intentionally adopts a newer required capability or stops supporting an old Pi contract. To lower it, prove every required capability against that exact released tag and add the endpoint to the matrix first.
 
@@ -46,8 +47,10 @@ Pioneer parses the first line of `pi --version` as SemVer before model discovery
 - above `testedMaximum`: continue with `PI_VERSION_UNTESTED`;
 - non-SemVer output: fail with `PI_VERSION_UNRECOGNIZED`.
 
-Resume is stricter than a new review: the stored exact Pi version must match the current readiness version. A newer or older binary therefore receives `[REVIEW_RESUME_PI_VERSION_MISMATCH]` until a fresh review creates a new archive under the reviewed compatibility contract.
+Resume requires an exact match between stored and current Pi versions. A mismatch fails with `[REVIEW_RESUME_PI_VERSION_MISMATCH]`. Start a fresh review to create an archive for the current version.
 
-Deep review loads Pioneer's bundled inspection extension with `--extension PATH` while `--no-extensions` disables discovery. Explicit `--extension` paths remain honored under disabled discovery. Deep review actors also pass `--no-builtin-tools` and a tool allowlist containing only inspection-extension tool names. Review, deep-review, and eval Pi actors pass `--no-mcp` on Pi 1.0.4 or newer; a tool-restricted Pi actor with no known version at launch fails closed with `[PI_NO_MCP_VERSION_UNKNOWN]`. Custom non-Pi eval actors are not given that flag.
+Deep review loads the bundled inspection extension with `--extension PATH` and disables discovery with `--no-extensions`. Pi still honors explicit extension paths. Actors also receive `--no-builtin-tools` and an allowlist containing only inspection-extension tool names.
+
+Review, deep-review, and eval Pi actors receive `--no-mcp` on Pi 1.0.4 or newer. A tool-restricted Pi actor with no known launch version fails with `[PI_NO_MCP_VERSION_UNKNOWN]`. Custom non-Pi eval actors receive no such flag.
 
 A binary claiming an in-range version but missing `--no-approve` fails with `PI_CLI_INCOMPATIBLE`. The compatibility smoke catches official-package regressions; users should reinstall an official Pi release if a custom or stale standalone binary diverges from its reported version.

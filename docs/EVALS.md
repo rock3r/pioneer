@@ -1,6 +1,6 @@
 # Isolated skill evals
 
-Pioneer prepares separate baseline and with-skill actor directories and runs each actor behind a native operating-system sandbox. It has no dependency on Anthropic Sandbox Runtime.
+Pioneer prepares separate baseline and with-skill directories. Each actor runs in a native operating-system sandbox. Pioneer does not depend on Anthropic Sandbox Runtime.
 
 ## Platform status
 
@@ -20,33 +20,50 @@ Run the repeatable native battery with:
 npm run sandbox:smoke
 ```
 
-The smoke test uses harmless disposable files. It checks ordinary read-only access to `.idea` and `.vscode`, source immutability, outside content and leaf-metadata denial, scratch writes, mediated public egress, and direct-loopback denial. Pioneer has no special filename or editor-directory deny list.
+The smoke test uses harmless disposable files. It checks read-only access to `.idea` and `.vscode`, source immutability, outside content and leaf-metadata denial, scratch writes, mediated public egress, and direct-loopback denial. Pioneer does not deny specific filenames or editor directories.
 
-Issue #17 live macOS acceptance on 2026-08-14 used Pi 0.84.1 with `openai-codex/gpt-5.6-luna`: exit 0, stdout exactly `OK` plus one newline, no eval diagnostic, and 9.65 seconds wall time against the 90-second timeout. The disposable run directory was removed after capture. The final native timeout capture returned `[EVAL_TIMEOUT]` with both pre-timeout markers in 1.167 seconds, and the retained-pipe capture returned `[EVAL_PROCESS_CONTAINMENT_FAILED]` with its marker in 1.012 seconds; both were nonzero and left no disposable actor running.
+Issue #17's live macOS acceptance test ran on 2026-08-14 with Pi 0.84.1 and `openai-codex/gpt-5.6-luna`. It exited 0 in 9.65 seconds against a 90-second timeout. Stdout contained exactly `OK` and one newline, with no eval diagnostic. The disposable run directory was removed after capture.
+
+The native timeout test returned `[EVAL_TIMEOUT]` and both pre-timeout markers in 1.167 seconds. The retained-pipe test returned `[EVAL_PROCESS_CONTAINMENT_FAILED]` and its marker in 1.012 seconds. Both exited nonzero and left no disposable actor running.
 
 ## Native implementation
 
-macOS invokes `/usr/bin/sandbox-exec` directly with a generated Seatbelt profile. The profile starts at `deny default`, permits only the caller's canonical read/write grants and required runtime paths, and permits outbound TCP only to the per-run authenticated proxy port plus any `--allow-loopback` ports. It lets processes open `/dev/null` for reading and writing: libuv's `posix_spawn` opens it for every ignored stdio slot, which Pi's `bash` tool uses, and Git opens it at startup, so an ioctl-only grant made both fail with `EPERM`. Eval runs also grant `/private/var/select` read-only, because `/bin/sh` reads its shell choice there, together with the toolchain that `developer_dir` selects: `/Library/Developer/CommandLineTools`, or the whole Xcode bundle when it is an `/Applications/*.app/Contents/Developer` directory, because Xcode's tools read the bundle's `Info.plist` and `SharedFrameworks`, plus `/Library/Preferences/com.apple.dt.Xcode.plist`, where xcrun checks license acceptance. With that, the `/usr/bin/git` shim works; xcrun may still warn that it cannot write its cache in the shared per-user temporary directory, which stays ungranted. Any other `developer_dir` target is not granted. Because grants are canonical `/private/...` paths while tools such as `xcode-select` use `/var/select/developer_dir`, the profile also lets a process read the root `/etc`, `/tmp`, or `/var` alias symlink when a grant lies beneath its `/private` target.
+On macOS, Pioneer invokes `/usr/bin/sandbox-exec` directly with a generated Seatbelt profile. Starting from `deny default`, it allows canonical read/write grants and required runtimes. Outbound TCP reaches only the per-run authenticated proxy port and explicit `--allow-loopback` ports.
 
-Linux invokes Bubblewrap directly. It starts with an empty tmpfs root, bind-mounts runtime/source/reference paths read-only, bind-mounts scratch and explicit write grants read-write, creates fresh user/PID/network/IPC/UTS namespaces, drops all capabilities, and mounts private `/proc` and `/dev` views. On usrmerged distributions a `/bin` grant canonicalizes to `/usr/bin`, so the empty root gets a `/bin -> usr/bin` alias, like the existing `/lib` and `/lib64` aliases, and `/bin/sh` resolves.
+The profile permits reads and writes to `/dev/null`. Libuv's `posix_spawn` opens it for ignored stdio slots used by Pi's `bash` tool. Git also opens it at startup. An ioctl-only grant caused both to fail with `EPERM`.
 
-Pioneer requires Bubblewrap options available since 0.2.0 (2017). `--cap-drop ALL` is the newest required option. `--die-with-parent` arrived in 0.1.8. The tmpfs root, `--dir` ancestors, `--symlink` runtime-linker aliases, `--unshare-*` namespaces, and `--unshare-cgroup-try` all predate 0.2.0.
+Eval runs grant read-only access to `/private/var/select`, where `/bin/sh` reads its shell choice. They also grant the toolchain selected by `developer_dir`:
 
-Pioneer does not run a Bubblewrap version probe. Distributions that ship `bwrap` provide the required options. The platform table records tested versions; it does not set a minimum version.
+- `/Library/Developer/CommandLineTools`; or
+- the whole Xcode bundle for an `/Applications/*.app/Contents/Developer` selection. Xcode tools need the bundle's `Info.plist` and `SharedFrameworks`.
+
+Other `developer_dir` targets receive no grant. Evals also grant `/Library/Preferences/com.apple.dt.Xcode.plist`, where xcrun checks license acceptance. These grants let the `/usr/bin/git` shim work. Xcrun can still warn that it cannot write its cache in the ungranted shared per-user temporary directory.
+
+Tools such as `xcode-select` use `/var/select/developer_dir`, while canonical grants use `/private/...`. The profile therefore permits reading the root `/etc`, `/tmp`, or `/var` alias symlink when a grant lies below its `/private` target.
+
+On Linux, Pioneer invokes Bubblewrap directly. It starts with an empty tmpfs root and mounts runtimes, source, and references read-only. Scratch and explicit write grants are read-write. It creates fresh user/PID/network/IPC/UTS namespaces, drops all capabilities, and mounts private `/proc` and `/dev` views.
+
+On usrmerged distributions, `/bin` canonicalizes to `/usr/bin`. Pioneer adds a `/bin -> usr/bin` alias so `/bin/sh` resolves, as with the existing `/lib` and `/lib64` aliases.
+
+All required Bubblewrap options exist in 0.2.0 (2017). The newest is `--cap-drop ALL`. `--die-with-parent` arrived in 0.1.8. The tmpfs root, `--dir` ancestors, `--symlink` runtime-linker aliases, `--unshare-*` namespaces, and `--unshare-cgroup-try` predate 0.2.0.
+
+Pioneer does not probe the Bubblewrap version. Distribution `bwrap` packages provide the required options. The platform table records tested versions without setting a minimum.
 
 `npm run sandbox:smoke` checks process containment separately on each platform.
 
-On Linux, Bubblewrap runs as PID 1 of a `--unshare-pid` namespace. When the actor exits, the kernel destroys every surviving process in that namespace. Descendants cannot outlive the run, and inherited pipes close immediately. A leaked descendant therefore produces a clean exit without a containment diagnostic.
+On Linux, Bubblewrap runs as PID 1 in a `--unshare-pid` namespace. After the actor exits, the kernel destroys all remaining namespace processes and closes inherited pipes. A leaked descendant therefore produces a clean exit without a containment diagnostic.
 
-On macOS, Seatbelt provides no PID namespace. A descendant can survive while holding inherited pipes. Pioneer detects it when the pipe-close grace expires and fails the run with `[EVAL_PROCESS_CONTAINMENT_FAILED]`.
+Seatbelt has no PID namespace on macOS. A descendant can survive with inherited pipes open. When the pipe-close grace expires, Pioneer fails with `[EVAL_PROCESS_CONTAINMENT_FAILED]`.
 
-For Linux egress, the host proxy is exposed as one mode-0600 Unix socket. A small Pioneer Node supervisor inside the network namespace listens on loopback port 3128 and relays only to that socket. The reviewed/evaluated process receives the authenticated proxy URL. Raw host/LAN/loopback networking remains impossible because it has no host network interface. The parent proxy performs destination policy and pins the selected DNS result before connecting. Each `--allow-loopback` port gets its own mode-0600 Unix socket that the controller relays only to that host loopback port; the supervisor listens on `127.0.0.1:PORT` inside the namespace before it starts the actor.
+Linux exposes the host proxy through one mode-0600 Unix socket. A Pioneer Node supervisor listens on namespace loopback port 3128 and relays only to that socket. The review/eval process gets the authenticated proxy URL. It has no host network interface, so raw host/LAN/loopback connections remain unavailable. The parent proxy checks destinations and pins the selected DNS result before connecting.
 
-No launcher interpolates actor-controlled values into a shell command. Commands and arguments remain discrete argv entries. The Linux network supervisor spawns the actor with `shell: false`.
+Each `--allow-loopback` port gets a separate mode-0600 Unix socket. The controller relays it only to that host loopback port. Before actor launch, the supervisor listens on `127.0.0.1:PORT` inside the namespace.
+
+Launchers pass commands and arguments as separate argv entries. They never insert actor-controlled values into shell commands. The Linux supervisor spawns actors with `shell: false`.
 
 ## Threat model and mandatory probes
 
-The eval actor is untrusted. It must not read source skills, eval definitions, answer keys, sibling arms, user files, real credential stores, or host-only environment values. Persistent writes are confined to the actor's run directory.
+Eval actors are untrusted. They must not read source skills, eval definitions, answer keys, sibling arms, user files, real credential stores, or host-only environment values. Persistent writes stay inside the actor run directory.
 
 Every eval run first proves that the sandboxed process:
 
@@ -56,15 +73,29 @@ Every eval run first proves that the sandboxed process:
 - cannot connect directly to a listening loopback service; and
 - can execute with the requested runtime grants.
 
-The actor does not start if a dependency, canonicalization step, model preflight, or mandatory probe fails. There is no unconfined eval fallback. SIGINT/SIGTERM is captured from the first async setup step through final cleanup, returning `[EVAL_INTERRUPTED]` only after temporary controller and credential material has been removed.
+A failed dependency, canonicalization step, model preflight, or mandatory probe stops actor launch. Evals never fall back to unconfined execution. Pioneer handles SIGINT/SIGTERM from the first async setup step through cleanup. It returns `[EVAL_INTERRUPTED]` only after removing temporary controller and credential material.
 
-The actor executable is resolved before the run directory receives launch artifacts. Bare names use the sanitized controller `PATH`; relative paths use the validated actor run directory; absolute paths are validated directly. Symlink launchers are canonicalized, with only the exact lexical launcher and canonical target added as read-only grants. A Pi package root that overlaps the writable run tree in either direction is rejected. `/usr/bin/env` shebang inspection reads a bounded prefix and rejects cyclic or excessively deep interpreter chains. Missing, non-executable, directory, broken-link, NUL-containing, and escaping relative paths fail closed.
+Pioneer resolves the executable before writing launch artifacts to the run directory. Bare names use the sanitized controller `PATH`. Relative paths use the validated actor run directory. Absolute paths receive direct validation. Symlink launchers get read-only grants for only their exact lexical path and canonical target.
 
-Eval output preserves partial stdout and stderr. The controller retains at most 4 MiB of stdout and 64 KiB of stderr; exceeding either limit returns nonzero with `[EVAL_OUTPUT_LIMIT]`, which names the stream. `--stdout-file` and `--stderr-file` stream that stream to a new controller-owned file instead, bounded at 1 GiB, for large output such as `pi --mode json` with images. A timeout returns `[EVAL_TIMEOUT]`, interruption returns `[EVAL_INTERRUPTED]`, a failed launch returns `[EVAL_SPAWN_FAILED]`, cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` chains return `[EVAL_SHEBANG_RESOLUTION_FAILED]`, and retained inherited pipes return `[EVAL_PROCESS_CONTAINMENT_FAILED]` on platforms where a descendant can outlive the actor. Linux destroys such a descendant with the PID namespace instead, so that diagnostic is not reachable there. These diagnostics never include the full environment, Pi configuration, or authenticated proxy URL.
+A Pi package root must not overlap the writable run tree in either direction. `/usr/bin/env` shebang inspection reads a bounded prefix and rejects cyclic or excessively deep chains. Missing, non-executable, directory, broken-link, NUL-containing, and escaping relative paths fail closed.
+
+Pioneer preserves partial output up to 4 MiB stdout and 64 KiB stderr. Exceeding either limit returns nonzero with `[EVAL_OUTPUT_LIMIT]` and the stream name. For larger output, such as `pi --mode json` with images, use `--stdout-file` or `--stderr-file`. Each streams its output to a new controller-owned file with a 1 GiB bound.
+
+Other failures use these diagnostics:
+
+- `[EVAL_TIMEOUT]` for timeout;
+- `[EVAL_INTERRUPTED]` for interruption;
+- `[EVAL_SPAWN_FAILED]` for launch failure;
+- `[EVAL_SHEBANG_RESOLUTION_FAILED]` for cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` chains;
+- `[EVAL_PROCESS_CONTAINMENT_FAILED]` for retained inherited pipes where descendants can outlive the actor. Linux's PID namespace destroys those descendants, so this diagnostic is unreachable there.
+
+Diagnostics exclude the full environment, Pi configuration, and authenticated proxy URL.
 
 ## Network policy
 
-Eval actors may use the public internet but not loopback, link-local, private, carrier-grade NAT, documentation, multicast, reserved, or other non-global IPv4/IPv6 ranges. The one exception is opt-in: each `eval run --allow-loopback 127.0.0.1:PORT` lets the actor connect directly to that exact host loopback port, and sets `NO_PROXY=127.0.0.1,localhost` so proxy-aware clients do not send those requests to the proxy, which still refuses loopback. Other loopback ports stay closed, and the mandatory probe targets a listener outside the allow list.
+Eval actors can use the public internet. They cannot reach loopback, link-local, private, carrier-grade NAT, documentation, multicast, reserved, or other non-global IPv4/IPv6 ranges by default.
+
+`eval run --allow-loopback 127.0.0.1:PORT` opens only that exact host loopback port. Pioneer sets `NO_PROXY=127.0.0.1,localhost` for direct connections from proxy-aware clients. The proxy still refuses loopback. Other loopback ports stay closed. The mandatory probe uses a listener outside the allow list.
 
 The authenticated parent proxy:
 
@@ -73,7 +104,7 @@ The authenticated parent proxy:
 - requires every returned address to be globally routable; and
 - connects to the selected validated address, preventing a DNS-rebinding race.
 
-Review `full` mode uses the same mediation but permits public, LAN, and loopback destinations. Review `public` uses eval-style public-only resolution. Pioneer rejects review `none` before actor launch because the configured model provider needs proxy-mediated egress.
+Review `full` uses the same proxy mediation and allows public, LAN, and loopback destinations. Review `public` uses eval-style public-only resolution. Pioneer rejects review `none` before launch because the model provider needs proxy-mediated egress.
 
 ## Prepare and run a battery
 
@@ -90,52 +121,94 @@ npm run pioneer -- eval run \
   -- pi --mode rpc
 ```
 
-Prepared fixtures are staged under `fixtures/` in each actor run directory, one level below the actor working directory. Prepare rewrites every prompt so the paths it names resolve from that working directory, keeps the original wording in `case.json`'s `source_prompt`, and reports the contract as `actorContract` on stdout plus a `[PIONEER_EVAL_ACTOR_CONTRACT]` stderr line. `eval run` repeats that line and lists the staged files as bounded `[PIONEER_EVAL_FIXTURES]` lines. Actors therefore neither guess Pioneer's staging convention nor need a `find`-style search, which the sandbox may refuse to launch; listing the run directory and `fixtures/` is enough.
+Prepare stages fixtures under `fixtures/`, one level below each actor working directory. It rewrites prompt paths to resolve from that working directory and keeps the original in `case.json`'s `source_prompt`. It reports `actorContract` on stdout and `[PIONEER_EVAL_ACTOR_CONTRACT]` on stderr.
 
-The prepared output must not already exist and its canonical parent must place it outside the source skill. Pioneer revalidates the created destination before populating descendants. `skill_name` must be one portable path component within the 255-byte filename limit; absolute, empty, dot, separator-containing, Windows-reserved, invalid-character, and trailing-dot/space values are rejected before any output directory is created. Symlinks in the source skill are rejected. Staged fixture paths and contents that leak the expected finding fail closed with `[EVAL_FIXTURE_LEAK]` before output is created; `--allow-fixture-name GLOB` waives a genuine filename collision only. Every `files[]` entry must resolve to a regular file of at most 64 MiB; directories, special files, and larger files are rejected before output is created. [Fixture checks](#fixture-checks) gives the exact rules. Each eval gets independent baseline and with-skill directories; only the latter receives a sanitized skill copy. Expectations and answer keys never enter actor-visible storage. Paths are not similarly hidden: the actor sees every staged filename.
+`eval run` repeats the contract line and lists staged files in bounded `[PIONEER_EVAL_FIXTURES]` lines. Actors can list the run directory and `fixtures/` without guessing paths or launching a `find` search that the sandbox could deny.
 
-The writable `--run-dir` and every caller-supplied read-only `--runtime-read` grant must be narrowly scoped and must not overlap. The selected real Pi home must remain outside every actor grant. Controller-derived executable paths already covered by the run directory are omitted from the read-only grant set. Writable protected-system roots and their descendants, plus broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and their canonical platform aliases, are rejected. Narrow read-only system runtimes required by an actor and disposable temporary descendants remain supported.
+The output must not exist. Its canonical parent must place it outside the source skill. Pioneer rechecks the created destination before adding descendants. `skill_name` must be one portable component within the 255-byte filename limit. Before creating output, Pioneer rejects absolute, empty, dot, separator-containing, Windows-reserved, invalid-character, and trailing-dot/space values. It also rejects source-skill symlinks.
 
-The runner snapshots `PI_CODING_AGENT_DIR` (or `~/.pi/agent`) into a canonical private temporary tree outside the persistent eval run using the fixed root allowlist `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`. The actor receives that selected configuration in a writable isolated `agentDir` so Pi 0.84.x can create `auth.json.lock` and `settings.json.lock`, plus separate ephemeral writable home/tmp scratch. The source Pi home is never mounted. Controller launch/probe files are not placed in the actor run, and the entire temporary tree is removed on every exit path. Configured skills are excluded, as are default-skipped package/runtime trees. Sessions, logs, `.npm`, `.cache`, transient directories, and log files are hard exclusions, matched case-insensitively on macOS and Windows; evals have no include flag. Enabled user extensions from the trusted official Pi package are staged read-only beside that snapshot and passed explicitly. Ambient extension discovery stays disabled. `--pi-home DIR` selects another snapshot source; the source is validated and copied, never used in place. The selected snapshot alone is subject to the 500,000-entry and 1 GiB backstops.
+Paths or content that reveal expected findings fail before output creation with `[EVAL_FIXTURE_LEAK]`. `--allow-fixture-name GLOB` waives only filename collisions. Every `files[]` entry must be a regular file no larger than 64 MiB. Directories, special files, and larger files fail before output creation. See [Fixture checks](#fixture-checks).
 
-After native-sandbox and default Pi-home readiness succeed, every `eval run` writes a controller-owned JSONL work log. Pass `--work-log FILE` for a create-only absolute path that must not be actor-visible; otherwise Pioneer creates a unique `eval-*.jsonl` file in:
+Each eval has independent baseline and with-skill directories. Only with-skill receives a sanitized skill copy. Actor-visible storage never contains expectations or answer keys. Actors can see every staged filename.
+
+Writable `--run-dir` and caller-supplied read-only `--runtime-read` grants must be narrow and non-overlapping. The real Pi home must stay outside every actor grant. Pioneer omits controller-derived executable grants already covered by the run directory.
+
+Pioneer rejects writable protected-system roots and descendants. It also rejects broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and canonical platform aliases. Narrow read-only system runtimes and disposable temporary descendants remain supported.
+
+The runner snapshots `PI_CODING_AGENT_DIR` or `~/.pi/agent` into a canonical private temporary tree outside the persistent eval run. The root allowlist is `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`. The actor gets a writable isolated `agentDir`, allowing Pi 0.84.x to create `auth.json.lock` and `settings.json.lock`. Home/tmp scratch is separate, writable, and temporary.
+
+Pioneer never mounts the source Pi home or puts controller launch/probe files in the actor run. It removes the whole temporary tree on every exit. The snapshot excludes configured skills and default-skipped package/runtime trees. Hard exclusions cover sessions, logs, `.npm`, `.cache`, transient directories, and log files, case-insensitively on macOS and Windows. Evals have no include flag.
+
+Pioneer stages trusted official Pi user extensions read-only beside the snapshot and passes them explicitly. Ambient discovery stays disabled. `--pi-home DIR` selects a different source to validate and copy, never to use in place. The selected snapshot alone has 500,000-entry and 1 GiB limits.
+
+After native-sandbox and default Pi-home readiness pass, `eval run` writes a controller-owned JSONL work log. `--work-log FILE` selects a create-only absolute path outside actor visibility. Otherwise Pioneer creates a unique `eval-*.jsonl` file in:
 
 - macOS: `~/Library/Logs/Pioneer/evals/`;
 - Linux: `${XDG_STATE_HOME:-~/.local/state}/pioneer/logs/evals/`;
 - Windows: `%LOCALAPPDATA%\Pioneer\Logs\evals\`.
 
-Immediately after opening the log, Pioneer prints `[PIONEER_EVAL_WORK_LOG] ABSOLUTE_PATH` to stderr. Records include timestamps, elapsed time, and stages (`sandbox_readiness`, `pi_readiness`, `pi_home_snapshot`, `network_proxy`, `isolation_probe`, `actor`, `cleanup`) plus bounded exit metadata. The `network_proxy` completion lists `allowedLoopback` targets, and the `actor` start lists `actorEnvironmentNames` from `--env` and `toolExtensionCount`. They omit prompts, credentials, environment values, and proxy URLs. `[EVAL_WORK_LOG_CREATE_FAILED]` and `[EVAL_WORK_LOG_WRITE_FAILED]` stop the run.
+Pioneer prints `[PIONEER_EVAL_WORK_LOG] ABSOLUTE_PATH` to stderr immediately after opening the log. Records include timestamps, elapsed time, bounded exit metadata, and stages: `sandbox_readiness`, `pi_readiness`, `pi_home_snapshot`, `network_proxy`, `isolation_probe`, `actor`, and `cleanup`.
 
-When the actor command is Pi, or the declared `pi` entry point of the trusted official package, the runner adds `--offline`, `--no-session`, `--no-approve`, `--no-extensions`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`, plus `PI_OFFLINE=1` and `PI_TELEMETRY=0`. On Pi 1.0.4 or newer it also adds `--no-mcp`, because `--tools` keeps MCP tools unless an entry starts with `mcp__`. Pioneer applies that flag after Pi readiness, including deferred extension readiness and `--pi-home` probes, and again after extension staging rebuilds the command. Identity is carried through launcher wrapping; a custom non-Pi actor is passed through unchanged even if its arguments include `--tools` or `--no-extensions`. If a tool-restricted Pi actor still has no known version at launch, the run fails with `[PI_NO_MCP_VERSION_UNKNOWN]`. For that official package it also adds one `--extension` path per staged enabled user extension and launches Pi through the tool-stripping adapter. `--no-extensions` or `-ne` on the Pi command skips user-extension staging and keeps built-in providers only. When the snapshot contains OAuth credentials and the package can host the auth adapter, that opt-out still starts the provider-scoped broker and launches through the auth adapter. An explicit `--extension` or `-e` must name a regular file inside a dedicated directory. Pioneer refuses a file that sits directly in a shared temp directory, the home directory, a filesystem root, a broad system directory such as `/opt`, `/srv`, `/usr`, `/mnt`, or `/media`, Pi's private session or log storage, a directory that contains the Pi agent directory, or a credential directory such as `.ssh`, `.aws`, or a file placed directly in `.config`. It stages the file's directory into the private extension snapshot, so a sibling import still resolves, and both readiness and OAuth refresh load the staged entry. A trusted Pi package that cannot host the adapter fails closed unless the command passes `--no-extensions` or `-ne`. A trusted package that cannot host the adapter rejects the explicit extension.
+The `network_proxy` completion lists `allowedLoopback` targets. Actor start lists `actorEnvironmentNames` from `--env` and `toolExtensionCount`. Logs exclude prompts, credentials, environment values, and proxy URLs. `[EVAL_WORK_LOG_CREATE_FAILED]` and `[EVAL_WORK_LOG_WRITE_FAILED]` stop the run.
 
-`eval run --pi-extension PATH` is the one way to give a Pi actor extension tools, for example an MCP adapter. PATH is an extension file or a package directory whose entries resolve like Pi's, from `package.json` `pi.extensions` or `index.ts`/`index.js`, and stay inside it. It is staged read-only under the same location policy, passed with `--extension`, and named to the adapter as trusted, so only its tools survive. It requires the trusted official Pi package and fails closed with `[PI_EXTENSION_TOOL_SOURCE_INVALID]` when the same extension is also enabled in Pi or passed with `-e`. It loads only in the actor. Model discovery and the OAuth worker do not initialize it, so it may need the actor's `--env` values, run directory, Pi arguments, and `--allow-loopback` ports while it starts. If it fails to initialize in the actor, the run exits nonzero with `[PI_EXTENSION_LOAD_FAILED]`. `eval run --env NAME=VALUE` passes operator variables such as an adapter's configuration path; Pioneer-controlled values always win and reserved names are refused.
+For Pi or the trusted official package's declared `pi` entry point, the runner adds `--offline`, `--no-session`, `--no-approve`, `--no-extensions`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`. It also sets `PI_OFFLINE=1` and `PI_TELEMETRY=0`.
 
-Pi/model readiness is checked before actor artifacts are created. Qualified `provider/model` names must match exactly; an unqualified ID must be unique. Missing or ambiguous requests fail with the configured qualified model list. Thinking levels include `xhigh` and `max`.
+Pi 1.0.4+ also gets `--no-mcp`, because `--tools` keeps MCP tools unless an entry starts with `mcp__`. Pioneer adds it after readiness, including deferred extension readiness and `--pi-home` probes, and after extension staging rebuilds the command. Launcher wrapping preserves actor identity. Custom non-Pi actors remain unchanged, including arguments such as `--tools` or `--no-extensions`. Tool-restricted Pi actors with no known launch version fail with `[PI_NO_MCP_VERSION_UNKNOWN]`.
+
+For the official package, Pioneer adds one `--extension` per staged enabled user extension and uses the tool-stripping adapter. Passing `--no-extensions` or `-ne` on the Pi command skips user-extension staging and keeps only built-in providers. If the snapshot contains OAuth credentials and the package supports the auth adapter, that opt-out still starts the provider-scoped broker and auth adapter.
+
+Explicit `--extension` or `-e` paths must name regular files in dedicated directories. Pioneer rejects files directly in shared temp, home, filesystem roots, or broad system directories such as `/opt`, `/srv`, `/usr`, `/mnt`, and `/media`. It also rejects Pi private session/log storage, directories containing the Pi agent directory, credential directories such as `.ssh` and `.aws`, and files directly in `.config`.
+
+Pioneer stages the file's directory so sibling imports resolve. Readiness and OAuth refresh both load the staged entry. A trusted package without adapter support fails closed unless the command uses `--no-extensions` or `-ne`. It always rejects explicit extensions without adapter support.
+
+To keep a Pi extension's tools, use `eval run --pi-extension PATH`, for example for an MCP adapter. PATH can be a file or package directory. Package entries resolve from `package.json` `pi.extensions` or `index.ts`/`index.js` and must stay inside the package. Pioneer stages the source read-only under the same location policy and passes `--extension`. The adapter trusts only that copy to retain tools.
+
+This option requires the trusted official Pi package. If the extension is also enabled in Pi or passed with `-e`, the run fails with `[PI_EXTENSION_TOOL_SOURCE_INVALID]`. Only the actor initializes it; discovery and the OAuth worker do not. It can therefore depend on actor `--env` values, run-directory files, Pi arguments, and `--allow-loopback` ports at startup. Failed actor initialization exits nonzero with `[PI_EXTENSION_LOAD_FAILED]`.
+
+`eval run --env NAME=VALUE` passes operator variables, such as an adapter configuration path. Pioneer-controlled values take precedence, and reserved names fail validation.
+
+Pioneer checks Pi/model readiness before creating actor artifacts. Qualified `provider/model` names must match exactly; unqualified IDs must be unique. Missing or ambiguous requests fail with the configured qualified model list. Thinking levels include `xhigh` and `max`.
 
 ## Fixture checks
 
 `eval prepare` checks every `files[]` entry before it creates the output directory. A failed check stops prepare with a stable diagnostic.
 
-**Path terms.** Pioneer splits each path component on `-`, `_`, and `.`, then on camelCase and PascalCase word boundaries. It rejects a component with `[EVAL_FIXTURE_LEAK]` when a resulting word is one of `stale`, `bug`, `defect`, `bad`, `good`, `broken`, `wrong`, `negative`, `positive`, `rough`, `showcase`, `expected`, `fixture`, or `case`. The words `case` and `fixture` are also parts of many real class names. They are therefore allowed when joined to another word in camelCase or PascalCase, such as `BadgeCase.kt` or `TestFixture.kt`. They are still rejected as a whole name or as a delimited token, such as `Fixture.kt`, `test-fixture.kt`, or `case/`.
+### Paths must not reveal expected findings
 
-**Source and staged paths.** Pioneer checks both the `files[]` source path and the staged path below `fixtures/` that the actor sees. A source outside `evals/files/` is staged under its basename, so the source check is the stricter one: `samples/fixture/parser.ts` is rejected even though the actor only sees `fixtures/parser.ts`. A repeatable `--allow-fixture-name GLOB` waives a path when the glob matches the source path, the staged path, or the basename. It never waives a content marker.
+Pioneer splits path components on `-`, `_`, `.`, and camelCase/PascalCase word boundaries. A resulting word of `stale`, `bug`, `defect`, `bad`, `good`, `broken`, `wrong`, `negative`, `positive`, `rough`, `showcase`, `expected`, `fixture`, or `case` fails with `[EVAL_FIXTURE_LEAK]`.
 
-**Content markers.** Staged text is rejected when it contains `BUG:`, `TODO:`, or `FIXME` in any letter case, or a bare `TODO` or `XXX` in uppercase. Bare lowercase `todo` and `xxx` are ordinary words, so a fixture for a todo-list app still passes. Every marker is a whole token: `DEBUG:` does not match `BUG:`, `todos` does not match `TODO`, and `fixmeLater` does not match `FIXME`.
+`case` and `fixture` can appear in real class names. Pioneer allows them when joined to another camelCase/PascalCase word, as in `BadgeCase.kt` and `TestFixture.kt`. Whole names and delimited tokens such as `Fixture.kt`, `test-fixture.kt`, and `case/` still fail.
 
-**Why paths and content differ.** `todo` is not a path term, so `TODO-list.md` is allowed, while a `TODO` marker in content is rejected. A file named like that is common in real projects and does not say that the file has a defect. A `TODO` marker in content is a note that a person wrote about the code next to it, so it can point the actor at the expected finding.
+Pioneer checks both `files[]` source paths and actor-visible staged paths below `fixtures/`. Sources outside `evals/files/` use their basename when staged. The source check therefore rejects `samples/fixture/parser.ts` even though the actor sees only `fixtures/parser.ts`.
 
-**File type and size.** Each fixture must be a regular file of at most 64 MiB. Pioneer opens each fixture without following a final symbolic link and without blocking on a FIFO. It checks the file type and size with `fstat` on that descriptor. A directory or special file is rejected, and a larger file fails with `[EVAL_FIXTURE_TOO_LARGE]`. The content scan streams from the same descriptor with bounded memory, and it keeps enough overlap between chunks to find a marker that crosses a chunk boundary. Pioneer then closes the file and records its device, inode, size, modification and change times, and permission bits, so a large battery never holds many descriptors open. Every staged copy reopens the file, fails with `[EVAL_FIXTURE_CHANGED]` if that identity changed before or during the copy (the partial copy is emptied through its own descriptor, not deleted by path), and is scanned again while it is written, with the size checked again while reading. The bytes that reach `fixtures/` are therefore the bytes that were checked, even if the source path is replaced during prepare. When a staged copy fails that second scan, Pioneer removes the copy and stops. The partly prepared output directory stays in place and must not be used.
+Repeat `--allow-fixture-name GLOB` to waive paths matching a source path, staged path, or basename. This never waives content markers.
+
+### Content markers fail the check
+
+Pioneer rejects `BUG:`, `TODO:`, and `FIXME` in any letter case, and bare uppercase `TODO` or `XXX`. Bare lowercase `todo` and `xxx` pass, including fixtures for todo-list apps. Markers match whole tokens: `DEBUG:` does not match `BUG:`, `todos` does not match `TODO`, and `fixmeLater` does not match `FIXME`.
+
+`todo` is not a path term, so `TODO-list.md` passes. That common filename does not identify a defect. A `TODO` content marker can point the actor to an expected finding and therefore fails.
+
+### Staging checks file identity and bytes
+
+Each fixture must be a regular file no larger than 64 MiB. Pioneer opens it without following a final symbolic link or blocking on a FIFO. It checks type and size with `fstat` on that descriptor. Directories and special files fail. Oversized files fail with `[EVAL_FIXTURE_TOO_LARGE]`.
+
+The content scan streams from the same descriptor with bounded memory. Overlapping chunks detect markers across chunk boundaries. Pioneer then closes the file and records device, inode, size, modification/change times, and permission bits. Large batteries therefore do not hold many descriptors open.
+
+Each staged copy reopens the file and checks identity before and during copying. Changes fail with `[EVAL_FIXTURE_CHANGED]`. Pioneer empties partial copies through their own descriptors rather than deleting by path. It rescans content while writing and rechecks size while reading. Only checked bytes reach `fixtures/`, even if a source path changes during prepare.
+
+If a staged copy fails the second scan, Pioneer removes it and stops. The partial output directory remains and must not be used.
 
 ## Setup
 
-On macOS, no privileged setup is required:
+macOS needs no privileged setup:
 
 ```bash
 npm run pioneer -- doctor
 npm run sandbox:smoke
 ```
 
-On Linux, install Bubblewrap (any release from 0.2.0 onward provides every option Pioneer uses). Node is already a project requirement:
+On Linux, install Bubblewrap. All releases from 0.2.0 provide the required options. The project already requires Node:
 
 ```bash
 sudo apt-get install bubblewrap
@@ -143,7 +216,7 @@ npm run pioneer -- doctor
 npm run sandbox:smoke
 ```
 
-Bubblewrap normally runs without administrator privileges. Ubuntu 24.04 and newer may restrict unprivileged user namespaces through AppArmor. Do not disable that restriction globally. Install the narrow project profile instead:
+Bubblewrap normally needs no administrator privileges. Ubuntu 24.04+ can restrict unprivileged user namespaces through AppArmor. Keep that global restriction. Install the narrow project profile:
 
 ```bash
 npm run build
@@ -151,14 +224,18 @@ sudo node dist/review-cli.js eval install-linux
 npm run pioneer -- doctor
 ```
 
-The installer copies only `/usr/bin/bwrap` to `/usr/local/libexec/pioneer/bwrap`, makes it root-owned mode 0755, and loads an AppArmor profile granting `userns` only to that fixed executable. There is no seccomp helper, global sysctl change, or package-owned compatibility directory.
+The installer copies only `/usr/bin/bwrap` to `/usr/local/libexec/pioneer/bwrap` and sets root ownership and mode 0755. It loads an AppArmor profile granting `userns` only to that executable. It adds no seccomp helper or package-owned compatibility directory and changes no global sysctl.
 
 ## Windows limitation
 
-Eval `doctor` reports unsupported and `run` stops before actor launch or ACL mutation. The native AppContainer experiment is documented in [WINDOWS-SANDBOX-PROTOTYPE.md](WINDOWS-SANDBOX-PROTOTYPE.md). It remains feature-gated by the tested Windows build.
+Eval `doctor` reports unsupported. `run` stops before launching an actor or changing ACLs. The [native AppContainer experiment](WINDOWS-SANDBOX-PROTOTYPE.md) remains feature-gated by the tested Windows build.
 
 ## Remaining limitations
 
-- macOS uses the legacy `sandbox-exec` interface, for which Apple provides no public drop-in replacement for dynamically sandboxing arbitrary CLI processes. Its behavior is therefore covered by mandatory release smoke tests.
-- Provider-aware tools must honor standard HTTP(S) proxy variables to use mediated egress. Raw TCP is intentionally unavailable inside Linux's isolated network namespace.
-- The harness prepares and isolates eval arms; complete grading/orchestration remains separate work. The native smoke also runs a provider-free disposable actor through `runEvalCommand`, including bare executable resolution, the production path, native policy, Pi credential-lock creation in the isolated agent directory, and output propagation. Live provider acceptance remains a separate operator-controlled check. `npm run test:e2e` adds credential-free end-to-end regressions for the reported eval failures: it drives the built CLI against a scripted Pi installation covering fixture staging, actor listing, credential locks, work-log stages, injected startup flags, process-tree timeout, fail-closed Pi/model preflight, and controller-material denial.
+- macOS uses legacy `sandbox-exec`. Apple offers no public drop-in replacement for dynamically sandboxing arbitrary CLI processes. Mandatory release smoke tests check its behavior.
+- Provider-aware tools must honor standard HTTP(S) proxy variables. Linux's isolated network namespace provides no raw TCP egress.
+- Pioneer prepares and isolates eval arms. Complete grading and orchestration remain separate work.
+
+The native smoke runs a provider-free disposable actor through `runEvalCommand`. It covers bare executable resolution, the production path, native policy, isolated Pi credential-lock creation, and output propagation. Live provider acceptance is a separate operator-controlled check.
+
+`npm run test:e2e` drives the built CLI against a scripted Pi installation without credentials. It covers fixture staging, actor listing, credential locks, work-log stages, startup flags, process-tree timeout, fail-closed Pi/model preflight, and controller-material denial.

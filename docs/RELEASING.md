@@ -1,6 +1,6 @@
 # Releasing
 
-Releases publish one public npm CLI package and the matching portable Agent Plugins, Codex, and Claude plugin payload from the same tagged source tree.
+Each release publishes a public npm CLI package and matching Agent Plugins, Codex, and Claude Code packages. All packages come from the same Git tag.
 
 ## One-time setup
 
@@ -25,9 +25,11 @@ For every tag, `.github/workflows/release.yml` independently requires:
 - a real Bubblewrap/AppArmor smoke battery on Linux;
 - Windows fail-closed CLI checks;
 - one npm tarball built once, installed, and invoked on all three operating systems;
-- a native Windows installed-artifact smoke that installs the tested-maximum real Pi npm package into the tarball's temporary prefix, invokes the installed `pioneer.cmd doctor` through its native shim, verifies Pi through npm's generated `pi.cmd`, retains `WINDOWS_STRICT_ISOLATION_UNAVAILABLE`, and rejects `PI_NOT_FOUND` or `PI_LAUNCHER_UNSAFE` regressions.
+- The Windows installed-artifact smoke installs the tested-maximum real Pi npm package into the tarball's temporary prefix.
+  It invokes the installed `pioneer.cmd doctor` through its native shim and checks Pi through npm's generated `pi.cmd`.
+  It retains `WINDOWS_STRICT_ISOLATION_UNAVAILABLE` and rejects `PI_NOT_FOUND` or `PI_LAUNCHER_UNSAFE` regressions.
 
-Only the tarball that passed the matrix is published. A GitHub release and attached tarball are created after npm accepts the package. GitHub generates the release page notes from commits and merged pull requests; [the changelog](../CHANGELOG.md) is the curated, versioned user-facing record.
+The workflow publishes only the tarball that passed every platform check. After npm accepts it, the workflow creates a GitHub release with the tarball attached. GitHub generates release notes from commits and merged pull requests. Maintainers keep versioned user-facing entries in [the changelog](../CHANGELOG.md).
 
 ## Refreshing Pi compatibility
 
@@ -62,8 +64,10 @@ Do not defer a newer Pi release to a later Pioneer release: review it, raise the
    ```
 
 6. Validate the portable Agent Plugins package and both native plugin formats using [the plugin packaging commands](PLUGIN-PACKAGING.md).
-7. Run two independent real reviews through Pioneer. Use `pioneer models` to enumerate the configured choices, then ask the user which model and provider to use for each review before starting. For each Pioneer process, preserve the nested terminal session until it returns an exit code, then record the exit code and stdout/stderr byte counts. An intermediate empty output with a session ID is not a completed review. Use `--report /absolute/path/report.md` when a durable final report artifact is needed.
+7. Run two independent real reviews through Pioneer. List configured models with `pioneer models`. Ask the user to select each model and provider before starting.
+   Keep each nested terminal session until it returns an exit code. Then record that code and stdout/stderr byte counts.
+   Keep polling a session ID even when intermediate output is empty. Use `--report /absolute/path/report.md` for a specific durable report target.
 8. Commit and push the reviewed release candidate. Before merging its PR, require passing CI, a completed Codex review of the current head, and resolution of all actionable findings. Bugbot is no longer a release or PR gate.
 9. Create and push an annotated `v<version>` tag. Pushing the tag is the publication trigger.
 
-Do not reuse or move a published version tag. If a release is defective, fix forward with a new patch version and deprecate the affected npm version when appropriate.
+Never reuse or move a published version tag. Publish fixes under a new patch version. Deprecate the affected npm version when appropriate.

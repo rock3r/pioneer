@@ -1,6 +1,6 @@
 # Sandbox and path grants
 
-Pioneer treats the review actor as untrusted. On macOS and Linux, it starts from explicit capabilities instead of giving Pi the caller's normal filesystem and network access.
+Pioneer treats the review actor as untrusted. On macOS and Linux, Pi can use only the filesystem and network capabilities that Pioneer explicitly grants.
 
 ## Default access
 
@@ -16,17 +16,31 @@ Pioneer treats the review actor as untrusted. On macOS and Linux, it starts from
 
 Pioneer canonicalizes grants before launch. It rejects a source grant that is a symbolic link, grants that overlap with conflicting access, and unsafe broad eval runtime grants. An explicit writable path is a real host capability, so grant the narrowest directory that meets the request.
 
-Eval actor commands are validated before launch artifacts are created. Bare executable names are found only through Pioneer's sanitized `PATH`; relative paths are resolved below the actor run directory; absolute symlink launchers retain only exact lexical and canonical read grants. Missing or non-executable targets fail closed, and Pioneer's timeout/containment handling terminates the native process group rather than waiting on inherited output pipes.
+Pioneer validates eval commands before creating launch artifacts. It finds bare executable names through its sanitized `PATH` and resolves relative paths below the run directory. Absolute symlink launchers receive exact lexical and canonical read grants. Missing or non-executable targets stop the run.
+
+On timeout or containment failure, Pioneer terminates the native process group. It bounds the wait for inherited output pipes.
 
 The private scratch and copied Pi home are deleted when the review finishes. Use `--report /absolute/path/report.md` when you need Pioneer to preserve the final Markdown report; that does not require giving Pi another writable path.
 
 ## Isolated Pi home
 
-By default, Pioneer selectively copies `PI_CODING_AGENT_DIR`, or `~/.pi/agent` when the variable is unset, into the private run area. The root allowlist is `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`; review snapshots also include a sanitized `skills/` tree, while eval snapshots do not. Dependency/runtime fluff such as `node_modules/` and `.git/` is skipped inside that traversed skills tree; root-level `npm/`, `git/`, and unknown paths are not in the allowlist, while valid skill directories named `git` or `npm` remain available.
+Pioneer copies selected content from `PI_CODING_AGENT_DIR` into the private run area. If the variable is unset, it uses `~/.pi/agent`.
 
-For reviews, repeat `--pi-home-include RELATIVE_PATH` to select one exact existing file or directory relative to the selected Pi home. Use the attached form `--pi-home-include=--NAME` when the exact path begins with `--`. This can opt into normally skipped package content, but not hard exclusions: `sessions/`, `logs/`, `.npm/`, `.cache/`, `tmp/`, `.tmp/`, `temp/`, and `*.log` paths. These names are matched case-insensitively on macOS and Windows. Inside an included `node_modules/` package, directories named `sessions/`, `logs/`, `tmp/`, `.tmp/`, or `temp/` are package source and are kept. Includes do not accept globs, negation, or configuration files. Internal symlinks are copied only when their targets are selected; broken, escaping, special-file, unselected-target, and ambiguous-collision cases fail closed. Evals have no include opt-in.
+The root allowlist contains `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`. Review snapshots also include a sanitized `skills/` tree. Eval snapshots exclude skills.
 
-Both modes cap selected content at 500,000 entries and 1 GiB; skipped content does not consume those budgets. Opting into large or machine-specific directories increases storage, runtime, and portability risk. Ambient extension discovery remains disabled for both review and eval actors. Both still load the staged enabled user extensions through explicit `--extension` paths. Eval actors strip extension tools the same way reviews do. Eval snapshots use an external private temporary tree: the isolated `agentDir` is writable so Pi can create credential lock directories, writable home/tmp scratch is separate, the source Pi home is never mounted, and everything is removed when the run ends.
+Skills traversal skips dependency and runtime content such as `node_modules/` and `.git/`. The root allowlist excludes `npm/`, `git/`, and unknown paths. Valid skill directories named `git` or `npm` remain available.
+
+For reviews, repeat `--pi-home-include RELATIVE_PATH` to select exact existing files or directories relative to the Pi home. Use `--pi-home-include=--NAME` for paths beginning with `--`. Includes accept no globs, negation, or configuration files. Evals have no include option.
+
+Hard exclusions remain: `sessions/`, `logs/`, `.npm/`, `.cache/`, `tmp/`, `.tmp/`, `temp/`, and `*.log` paths. macOS and Windows match these names without case sensitivity. Inside included `node_modules/` packages, directories named `sessions/`, `logs/`, `tmp/`, `.tmp/`, or `temp/` contain package source and remain included.
+
+Pioneer copies internal symlinks only when their targets are selected. Broken links, escapes, special files, unselected targets, and ambiguous collisions stop the snapshot.
+
+Both modes cap selected content at 500,000 entries and 1 GiB. Skipped content does not count toward these limits. Large or machine-specific includes increase storage, runtime, and portability risk.
+
+Review and eval actors disable ambient extension discovery. They load staged enabled user extensions through explicit `--extension` paths. Both modes strip extension tools.
+
+Eval snapshots use an external private temporary tree. Pi can write credential lock directories in the isolated `agentDir`. Home/tmp scratch is separate and writable. Pioneer never mounts the source Pi home and removes the temporary tree after the run.
 
 Use `--pi-home /absolute/path` to select a prepared source directory. Pioneer still validates and copies it; it never points the actor directly at the original.
 
@@ -37,7 +51,7 @@ Use `--pi-home /absolute/path` to select a prepared source directory. Pioneer st
 | `full` | Yes | Yes | Yes | Default reviews; local deployments may be probed |
 | `public` | Yes | No | No | Reviews that only need providers or public references |
 
-Traffic is mediated by a per-run authenticated HTTP(S) proxy. In `public` mode, the proxy resolves destinations, rejects non-global results, pins the accepted address, and therefore also closes the DNS-rebinding window.
+Pioneer routes traffic through a per-run authenticated HTTP(S) proxy. In `public` mode, the proxy rejects non-global destination addresses. It connects to the validated address without another DNS lookup, preventing DNS rebinding between validation and connection.
 
 On Linux, the actor has a fresh network namespace and can reach only a loopback proxy bridge connected to the parent proxy through a private Unix socket. Tools that ignore standard proxy variables cannot use the network. On macOS, Seatbelt limits the actor to the per-run proxy endpoint.
 
@@ -47,7 +61,7 @@ On Linux, the actor has a fresh network namespace and can reach only a loopback 
 
 ### macOS
 
-Pioneer generates a deny-by-default Seatbelt profile and launches the actor through the system-provided `/usr/bin/sandbox-exec` interface. Apple offers no public drop-in replacement for dynamically applying a comparable sandbox to arbitrary command-line children, so release validation includes live boundary tests.
+Pioneer generates a deny-by-default Seatbelt profile and launches the actor through `/usr/bin/sandbox-exec`. Apple offers no public replacement with comparable dynamic sandboxing for arbitrary command-line children. Release validation includes live boundary tests.
 
 ### Linux
 
@@ -67,4 +81,4 @@ From the source checkout, run:
 npm run sandbox:smoke
 ```
 
-The battery proves that normal editor directories remain readable, source writes fail, scratch writes succeed, outside content and file metadata are hidden, mediated public egress succeeds, and a direct loopback bypass fails. Run it on each supported operating system before a release.
+The tests check editor-directory reads, denied source writes, and allowed scratch writes. They also check denied outside content and metadata access, allowed public proxy traffic, and denied direct loopback access. Run them on each supported operating system before a release.

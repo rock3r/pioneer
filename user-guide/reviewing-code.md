@@ -10,14 +10,13 @@ With the plugin installed, use ordinary language:
 
 > Ask Pi to review the local deployment too; it may access LAN services but must not modify the repository.
 
-The portable Agent Plugin and the native Codex and Claude adapters translate the request into the same `pioneer review` CLI. They do not maintain separate review implementations.
+The portable Agent Plugin and the Codex and Claude adapters all call `pioneer review`. The CLI owns the shared review implementation.
 
 ## Describe the review target
 
-Pioneer grants a source directory. Git-target reviews collect bounded read-only Git context in the
-controller on every platform. `--source` must be the repository root. Prefer an explicit `--git`
-target; Git-target prompts without `--git` infer conservative scopes. GitHub pull requests are not
-Git targets.
+Pioneer grants access to a source directory. For Git-target reviews, the controller collects bounded read-only Git context on every platform. `--source` must be the repository root.
+
+Prefer an explicit `--git` target. Without it, Pioneer infers conservative scopes from Git-target prompts. GitHub pull requests cannot serve as Git targets.
 
 ### Working tree
 
@@ -69,7 +68,9 @@ Pi cannot see arbitrary neighboring directories. Grant each required directory e
 
 ## Observe a review in real time
 
-Pioneer creates a private JSONL work log before readiness checks or Pi startup and immediately prints its location as `[PIONEER_WORK_LOG] ABSOLUTE_PATH` on stderr. Tail that file to distinguish a busy review from a stalled controller: five-second `heartbeat` records include the last sanitized Pi event, idle duration, RPC byte count, stderr byte count, and child PID without storing prompts, model text, or tool content.
+Pioneer creates a private JSONL work log before readiness checks or Pi startup. It immediately prints `[PIONEER_WORK_LOG] ABSOLUTE_PATH` on stderr. Tail the file to inspect review activity.
+
+Five-second `heartbeat` records show the last sanitized Pi event, idle duration, RPC and stderr byte counts, and child process ID. They exclude prompts, model text, and tool content.
 
 Pass `--work-log` to choose an exact create-only destination:
 
@@ -80,11 +81,15 @@ pioneer review \
   --prompt "Review this source tree."
 ```
 
-The target must be absolute, absent, outside every actor-visible grant, and beneath an existing writable non-symlink directory. Without the option, Pioneer uses the platform log directory documented in [Getting started](getting-started.md). On Windows, a custom target inherits its parent ACL; use the default unless that parent is already private to the current user. A log write failure or the 16 MiB per-run cap stops the review rather than allowing an unobservable run to continue.
+The target must be absolute, absent, and outside every actor-visible grant. Its parent must be an existing writable directory without a symlink. [Getting started](getting-started.md) lists the default platform log directories.
+
+Windows custom targets inherit their parent ACL. Use the default unless the parent is already private to your user. A write failure or the 16 MiB per-run cap stops the review.
 
 ## Persist a report
 
-The canonical result is stdout. Pioneer also persists every verified final report to a private default report directory and prints `[PIONEER_REPORT] ABSOLUTE_PATH` on stderr. While the command is running, that path is a protected reservation and may contain its ownership marker or report bytes being published in place; treat it as the completed durable report only after a successful terminal result. Use `--report` when Pioneer should select a different controller-owned target:
+Pioneer prints the report to stdout and saves every verified final report in a private default directory. It prints `[PIONEER_REPORT] ABSOLUTE_PATH` on stderr.
+
+During execution, that path is a protected reservation. It can contain an ownership marker or report bytes during publication. Read it as a completed durable report only after terminal success. Use `--report` to choose another controller-owned target:
 
 ```bash
 pioneer review \
@@ -93,7 +98,9 @@ pioneer review \
   --report /absolute/path/to/review.md
 ```
 
-The report target must be an absolute path that does not exist yet and is outside every source, reference, and writable grant. Pioneer writes it only after Pi settles, exits zero, and returns a non-empty report. Stdout still receives the same Markdown. If persistence fails, Pioneer preserves that stdout report but exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`.
+The report path must be absolute, absent, and outside every source, reference, and writable grant. Pioneer writes it after Pi settles, exits zero, and returns a non-empty report.
+
+Stdout receives the same Markdown. If saving fails, Pioneer keeps the stdout report and exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`.
 
 Use `--allow-write` only when Pi itself must create artifacts during the review:
 
@@ -107,20 +114,22 @@ pioneer review \
 
 An explicit write grant is a real host capability. It must not overlap the source or a read-only grant.
 
-The private scratch directory is removed after every run. New reviews also retain a bounded opaque native Pi session after a non-success when containment is proven. If stderr includes both `[REVIEW_RPC_OUTPUT_LIMIT]` and `[PIONEER_REVIEW_RESUME] TOKEN`, retry exactly:
+Pioneer removes private scratch after every run. After a failed new review, it retains a bounded opaque native Pi session only when it proves containment. If stderr includes `[REVIEW_RPC_OUTPUT_LIMIT]` and `[PIONEER_REVIEW_RESUME] TOKEN`, retry exactly:
 
 ```bash
 pioneer review --resume TOKEN
 ```
 
-Resume keeps the original source, grants, model, thinking, Pi-home, and network policy immutable; only timeout, RPC bound, and controller-owned output paths may change. On Windows, pass a fresh `--allow-unsandboxed-windows` acknowledgement. Use `--no-resume` on a new review only when the caller explicitly wants the ephemeral privacy opt-out.
+Resume keeps the source, grants, model, thinking, Pi-home, and network policy unchanged. Only timeout, RPC bound, and controller-owned output paths can change. Windows requires a fresh `--allow-unsandboxed-windows` acknowledgement.
+
+Use `--no-resume` for a new review only when the caller explicitly requests ephemeral execution without session retention.
 
 ## Choose network scope
 
 - `--network full` is the default and permits public, LAN, and loopback destinations through the proxy.
 - `--network public` blocks local and reserved destinations.
 
-Use `full` when Pi needs to probe a local deployment. Prefer `public` when local services are irrelevant. Pioneer rejects `--network none`: its sandboxed Pi actor must still reach the configured model provider, and review extension discovery is disabled.
+Use `full` for local deployment checks. Prefer `public` when the review needs no local services. Pioneer rejects `--network none` because Pi needs access to its configured model provider. Ambient review extension discovery stays disabled.
 
 ## Set a timeout
 

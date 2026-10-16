@@ -25,19 +25,36 @@ const result = await runReview({
 });
 ```
 
-`ReviewRequest.gitTargets` is a repeatable explicit Git inspection contract (`working-tree`, `staged`, `untracked`, `commit:REF`, `range:FROM...TO` or `range:FROM..TO`). When it is omitted, Pioneer infers conservative targets from Git-target prompts and fails closed for GitHub pull-request URLs. Collected Git output is untrusted prompt context; it does not grant Pi a shell on macOS or Windows.
+`ReviewRequest.gitTargets` accepts multiple Git inspection targets: `working-tree`, `staged`, `untracked`, `commit:REF`, `range:FROM...TO`, or `range:FROM..TO`. Without it, Pioneer infers conservative targets from Git-target prompts. It rejects GitHub pull-request URLs. Collected Git output enters the prompt as untrusted context. Pi gets no shell on macOS or Windows.
 
-`ReviewRequest.piHomeIncludes` is a repeatable exact-path opt-in relative to the selected Pi home. It is intended for a narrowly required additional file or directory, including a managed package directory; it does not support globs, negation, or persistent configuration. The shared snapshot applies the same hard exclusions and symlink checks as the CLI.
+`ReviewRequest.piHomeIncludes` selects exact paths relative to the chosen Pi home. Use it for required extra files or directories, including managed package directories. It accepts multiple paths but no globs, negation, or persistent configuration. The snapshot uses the CLI's hard exclusions and symlink checks.
 
-`ReviewRequest.controllerScratchBase` selects a validated controller-owned base for private scratch directories; its platform, ownership, overlap, stability, and path-length constraints are detailed under Path and network construction.
+`ReviewRequest.controllerScratchBase` selects a controller-owned base for private scratch directories. [Path and network construction](#path-and-network-construction) describes its platform, ownership, overlap, stability, and path-length checks.
 
-`ReviewRequest.workLogPath` selects an absolute create-only work-log target. `onWorkLogReady` runs synchronously immediately after that file is open and before report reservation, long-running readiness, or actor work, so report setup failures still leave a discoverable diagnostic log. `onReportReady` likewise runs only after Pioneer has exclusively created the private report reservation with a random ownership marker bound to the controller's OS process-start identity and a randomly named controller-owned sibling link; successful persistence writes through that owned inode, syncs it, verifies the target still has the same identity, and then treats handle close and sibling removal as best-effort cleanup that cannot rewrite the durable report. A separate random publication lease remains independently marked while those bytes are changing, so concurrent retention still classifies the target as active; Pioneer restores the reservation marker if the write fails before that durable boundary. It never overwrites or deletes a replacement target. Failure cleanup removes only state whose identity and marker it still owns. Retention recognizes an active reservation through the reservation or publication sibling, protects a live sidecar before its target link exists, and gives an incomplete marker a one-minute setup grace, so concurrent default-report setup cannot race reservation creation and model-produced report text cannot spoof an active owner. After the owning controller exits, retention reclaims abandoned siblings, and later default-report passes also remove inactive post-publication hard links so transient cleanup failures cannot retain hidden report copies outside the visible bound. A sidecar orphaned by interruption cannot block a new reservation for an absent target. `ReviewRequest.maxRpcOutputBytes` accepts an integral byte value from 1 MiB through 64 MiB and defaults to 20 MiB; the CLI's `--max-rpc-output-mb` uses integral MiB values. `ReviewRequest.resumable` defaults to true; false restores the ephemeral `--no-session` launch and does not create or prune resume storage. `ReviewResult` contains the Markdown `report`, absolute `reportPath` and `workLogPath`, optional effective `model` and `thinking`, a `sandboxed` boolean, an optional Windows warning, an optional `resumeToken` when report delivery failed, an optional `cleanupError`, an optional `reportWriteError`, and an optional `workLogWriteError` when cleanup, report persistence, or close-time work-log persistence fails after the report has already been verified. Callers must still surface the report before treating any of these errors as terminal; the CLI prints it and exits nonzero.
+`ReviewRequest.workLogPath` selects an absolute create-only work log. `onWorkLogReady` runs synchronously after Pioneer opens it, before report reservation, readiness, or actor work. Report setup failures therefore still leave a discoverable diagnostic log.
 
-The CLI prints only the report to stdout. The immediate `[PIONEER_WORK_LOG] ABSOLUTE_PATH` and `[PIONEER_REPORT] ABSOLUTE_PATH` markers, resume token, errors, and the Windows warning go to stderr. The report path names an exclusively reserved private file, so another Pioneer process cannot claim it while the review runs; until verified report persistence begins, its contents are only the in-progress ownership marker.
+`onReportReady` runs after Pioneer exclusively creates a private report reservation and a randomly named controller-owned sibling link. A random ownership marker binds the reservation to the controller's OS process-start identity. Pioneer writes through that inode, syncs it, and checks the target's identity. Closing the handle and removing siblings are then best-effort cleanup. They cannot rewrite the durable report.
+
+A separate random publication lease stays marked while report bytes change, so retention treats the target as active. Pioneer restores the reservation marker if writing fails before durable publication. It never overwrites or deletes a replacement target. Failure cleanup removes only state whose identity and marker it still owns.
+
+Retention recognizes active reservations through reservation or publication siblings. It protects a live sidecar before the target link exists and gives incomplete markers one minute for setup. Concurrent retention therefore cannot interrupt reservation creation, and model text cannot impersonate an active owner. After the controller exits, retention reclaims abandoned siblings. Later default-report passes remove inactive post-publication hard links, keeping hidden copies within the visible retention bound. An orphaned sidecar cannot block a new reservation for an absent target.
+
+`ReviewRequest.maxRpcOutputBytes` accepts integral bytes from 1 MiB through 64 MiB, with a 20 MiB default. The CLI's `--max-rpc-output-mb` accepts integral MiB. `ReviewRequest.resumable` defaults to true. Setting it to false uses `--no-session` and neither creates nor prunes resume storage.
+
+`ReviewResult` contains:
+
+- the Markdown `report` and absolute `reportPath` and `workLogPath`;
+- optional effective `model` and `thinking`, a `sandboxed` boolean, and an optional Windows warning;
+- an optional `resumeToken` if report delivery failed;
+- optional `cleanupError`, `reportWriteError`, and `workLogWriteError` for cleanup, report persistence, or close-time log persistence failures after report verification.
+
+Callers must present the verified report before treating these errors as terminal. The CLI prints it and exits nonzero.
+
+Only the report goes to stdout. Pioneer sends `[PIONEER_WORK_LOG] ABSOLUTE_PATH` and `[PIONEER_REPORT] ABSOLUTE_PATH` immediately to stderr, along with any resume token, errors, or Windows warning. Another Pioneer process cannot claim the reserved private report file. Until verified persistence starts, it contains only the ownership marker.
 
 ## Target semantics
 
-`--source` grants a directory to Pi and sets it as the working directory. Git-target reviews collect bounded read-only Git context in the Pioneer controller on every platform, then inject it into the prompt as untrusted repository output. `--source` must be the Git repository root for those reviews. Prefer an explicit `--git` target:
+`--source` grants Pi a directory and makes it the working directory. For Git-target reviews, it must be the repository root. On every platform, the controller collects bounded read-only Git context and adds it to the prompt as untrusted repository output. Prefer an explicit `--git` target:
 
 - `--git working-tree` for tracked and untracked working-tree changes
 - `--git staged` for the index
@@ -45,9 +62,9 @@ The CLI prints only the report to stdout. The immediate `[PIONEER_WORK_LOG] ABSO
 - `--git commit:REF` for a validated commit or tag
 - `--git range:FROM...TO` or `--git range:FROM..TO` for a validated revision range
 
-Git-target prompts without `--git` still infer those same conservative targets. GitHub pull-request numbers and URLs fail closed; pass a local `--git` target instead. Source-only prompts such as `Review the implementation under src/auth for correctness.` do not collect Git.
+Without `--git`, Pioneer infers the same conservative targets from Git-target prompts. It rejects GitHub pull-request numbers and URLs; use a local `--git` target. Source-only prompts such as `Review the implementation under src/auth for correctness.` do not collect Git.
 
-Pi uses its allowlisted built-in inspection tools inside the granted source tree. The native sandbox keeps that source read-only. Linux additionally permits `bash` inside Bubblewrap; macOS and Windows keep Pi on `read` and `ls` and rely on the controller Git context.
+Pi uses allowlisted built-in inspection tools in the granted source tree. The native sandbox keeps the source read-only. Linux also permits `bash` inside Bubblewrap. macOS and Windows use `read`, `ls`, and controller-collected Git context. Windows has no native sandbox and requires unsandboxed opt-in.
 
 ## Readiness and model resolution
 
@@ -57,15 +74,15 @@ Readiness prepares private configuration and enabled-extension snapshots before 
 2. sandboxed model discovery with staged enabled user extensions to return at least one configured model;
 3. an explicitly requested model to resolve unambiguously.
 
-A qualified `provider/model` name is matched case-insensitively as a whole. An unqualified model ID is accepted only if exactly one configured provider exposes it. Missing or ambiguous requests fail with the sorted qualified model list.
+Pioneer matches the whole qualified `provider/model` name without case sensitivity. It accepts an unqualified ID only if exactly one configured provider exposes it. Missing or ambiguous requests fail with a sorted qualified model list.
 
-The supported range and its release procedure are defined in [Pi compatibility](PI-COMPATIBILITY.md). If Pi reports a `models.json` load failure, Pioneer rejects the partial catalog before model resolution. `pioneer models` exposes the same parsed catalog and readiness behavior as reviews.
+See [Pi compatibility](PI-COMPATIBILITY.md) for the supported range and release procedure. If Pi cannot load `models.json`, Pioneer rejects the partial catalog before resolving models. `pioneer models` uses the review catalog parser and readiness checks.
 
-If Pi returns an empty model list, the controller performs metadata-only `access` checks on the selected Pi agent directory and known configuration filenames. `EACCES` or `EPERM` produces a client-neutral diagnostic explaining that the calling agent's outer terminal sandbox must be escalated or bypassed.
+If Pi returns no models, the controller checks only metadata with `access` on the selected Pi agent directory and known configuration filenames. `EACCES` or `EPERM` produces a client-neutral diagnostic asking for escalation or bypass of the calling agent's outer terminal sandbox.
 
-Because policy sandboxes can make `access(2)` succeed while hiding file contents, a recognized outer-agent sandbox environment indicator produces the same conservative result when the model list is empty. Unknown callers can set `PIONEER_OUTER_SANDBOX=1`. The probe never reads configuration contents or reports environment values, and terminal escalation does not disable Pioneer's own review sandbox.
+Some policy sandboxes let `access(2)` succeed while hiding file contents. A recognized outer-agent sandbox indicator therefore produces the same diagnostic when the model list is empty. Unknown callers can set `PIONEER_OUTER_SANDBOX=1`. The probe never reads configuration contents or reports environment values. Terminal escalation leaves Pioneer's review sandbox enabled.
 
-Thinking may be supplied separately with `--thinking`, or as the suffix in `--model provider/model:max`. An explicit `--thinking` value takes precedence over the suffix. Supported levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
+Set thinking with `--thinking` or a suffix such as `--model provider/model:max`. An explicit `--thinking` overrides the suffix. The supported levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 
 ## Pi startup contract
 
@@ -82,7 +99,9 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 - `PI_OFFLINE=1`;
 - `PI_TELEMETRY=0`.
 
-Offline mode disables Pi's optional startup network activity; it does not prevent the selected provider request once the agent is running. Review completion uses Pi's RPC mode, enabled provider/auth hooks and a separate inspection-tool policy. See [Pi extensions](PI-EXTENSIONS.md). `write` and `edit` are excluded. macOS and opt-in Windows reviews use `read` and `ls`, so source discovery remains available without allowing Pi to request a child process; macOS also denies process creation in Seatbelt. Git-target inspection on those platforms is controller-collected, not executed by Pi. Linux reviews retain `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace in addition to the same controller Git collection. Pioneer does not assume subagents, MCP, or another optional Pi extension is installed.
+Offline mode disables optional Pi startup network activity. The running agent can still request its selected provider. Reviews use Pi RPC, enabled provider/auth hooks, and a separate inspection-tool policy. See [Pi extensions](PI-EXTENSIONS.md).
+
+Pioneer excludes `write` and `edit`. macOS and opt-in Windows reviews use `read` and `ls` without a child-process tool. macOS also denies process creation through Seatbelt. The controller collects Git context on those platforms. Linux also keeps `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace. Pioneer does not require subagents, MCP, or other optional extensions.
 
 ## RPC framing and completion
 
@@ -92,42 +111,82 @@ The controller writes one LF-delimited request:
 {"id":"review","type":"prompt","message":"..."}
 ```
 
-Stdout is treated as JSONL protocol data. Malformed JSON requests process termination and fails the review. The collector accepts text deltas and final assistant messages from current Pi event variants, including `message_update`, `message_end`, `turn_end`, and `agent_end`. Pioneer does not resolve any terminal outcome merely because Pi emits `agent_settled`: it waits for the child process and its stdio pipes to close, including after timeout or protocol failure. A successful review additionally requires `agent_settled`, a non-empty assistant report, exit code zero, no terminating signal, and proof that the RPC pipes closed without forced disconnection.
+Pioneer reads stdout as JSONL protocol data. Malformed JSON causes termination and review failure. The collector accepts text deltas and final assistant messages from Pi events, including `message_update`, `message_end`, `turn_end`, and `agent_end`.
 
-Pioneer also converts each Pi RPC record into a restricted work-log event as it arrives. It retains allowlisted event types/subtypes, allowlisted tool names, a short hash of each tool-call ID, byte counts, retry counters/delays, boolean state, and presence/size metadata for Pi-controlled reasons and diagnostics. It never persists unrestricted Pi strings, payload content, prompt excerpts, or diagnostic text. An event type outside the allowlist is logged as `unrecognized`. Its name is added as `unrecognizedEventType` only for Pi session event types that Pioneer knows but does not summarize, such as `queue_update`. Any other type is added as a 16-character SHA-256 prefix in `unrecognizedEventTypeHash`, because an untrusted type string could carry a secret. An `extension_ui_request` is logged with its allowlisted `extensionUiMethod` only. A review has no user to answer an extension dialog, and Pi waits for an answer. So Pioneer answers every `select`, `confirm`, `input` and `editor` request at once with `{"type":"extension_ui_response","id":ID,"cancelled":true}`, and records `pi_extension_dialog_cancelled` with the method. The extension receives its documented cancelled value. Non-blocking requests such as `setWidget` need no answer. Stderr contributes byte-count activity records. `[REVIEW_RPC_INCOMPLETE]` and `[REVIEW_PROCESS_FAILED]` add an allowlisted stderr summary; see the next section. A five-second heartbeat records the last allowlisted Pi event, idle duration, RPC/stderr byte counts, and child PID. Missing heartbeats distinguish a stalled controller/event loop from a live controller waiting on silent Pi activity.
+Pioneer waits for the child and its stdio pipes to close before returning any terminal outcome, including after timeout or protocol failure. Success requires `agent_settled`, a non-empty assistant report, exit code zero, no terminating signal, and RPC pipes that closed without forced disconnection.
 
-The default cumulative raw RPC stdout cap is 20 MiB and callers may select 1 through 64 MiB. Pioneer counts bytes before JSON decoding, emits one sanitized `pi_rpc_near_limit` event at 75% and 90%, then terminates with `[REVIEW_RPC_OUTPUT_LIMIT]` when the selected bound is exceeded. The 16 MiB per-run work-log cap remains fail-closed: Pioneer first writes `work_log_truncated`, then terminates the review with `[REVIEW_WORK_LOG_WRITE_FAILED]`. After the first 1,000 thinking/text/tool delta metadata events, Pioneer emits fixed five-second type/subtype-counted batches so work-log volume does not preempt the new default RPC bound.
+Pioneer converts each RPC record into a restricted work-log event as it arrives. It keeps allowlisted event types/subtypes and tool names, short tool-call ID hashes, byte counts, retry counters/delays, and booleans. For Pi-controlled reasons and diagnostics, it keeps only presence/size metadata. It never saves unrestricted Pi strings, payloads, prompt excerpts, or diagnostic text.
+
+Events outside the allowlist use `unrecognized`. Known but unsummarized Pi session events, such as `queue_update`, also get `unrecognizedEventType` with their name. Other events get a 16-character SHA-256 prefix in `unrecognizedEventTypeHash`. Untrusted type strings could contain secrets.
+
+An `extension_ui_request` records only its allowlisted `extensionUiMethod`. Reviews have no user to answer dialogs, so Pioneer immediately answers `select`, `confirm`, `input`, and `editor` with `{"type":"extension_ui_response","id":ID,"cancelled":true}`. It records `pi_extension_dialog_cancelled` and the method. The extension receives its documented cancelled value. Non-blocking requests such as `setWidget` need no answer.
+
+Stderr adds byte-count activity records. `[REVIEW_RPC_INCOMPLETE]` and `[REVIEW_PROCESS_FAILED]` also add an allowlisted stderr summary, described below. A five-second heartbeat records the last allowlisted event, idle duration, RPC/stderr byte counts, and child PID. Missing heartbeats help distinguish a stalled controller/event loop from a live controller waiting on silent Pi.
+
+Raw RPC stdout has a cumulative 20 MiB default cap. Callers can select 1 through 64 MiB. Pioneer counts bytes before JSON decoding and emits one sanitized `pi_rpc_near_limit` event at each of 75% and 90%. Exceeding the cap terminates the run with `[REVIEW_RPC_OUTPUT_LIMIT]`.
+
+The independent work-log cap is 16 MiB per run. At the cap, Pioneer writes `work_log_truncated` and terminates with `[REVIEW_WORK_LOG_WRITE_FAILED]`. After the first 1,000 thinking/text/tool delta metadata events, it batches counts by type/subtype in fixed five-second windows. This reduces log volume for the default RPC bound.
 
 Default Windows work logs inherit the per-user `%LOCALAPPDATA%` directory ACL. A custom Windows `workLogPath` inherits its existing parent ACL, which Pioneer cannot validate; callers must use a parent already private to the current user.
 
-The process is killed on timeout, malformed output, protocol rejection, or output overflow. On macOS and Linux, Pioneer puts the RPC launcher in its own process group and kills that group; Windows invokes the canonical system `taskkill.exe /T` and falls back to direct termination if that utility cannot run or reports failure. macOS reviews deny process creation, so all review activity remains in the controller-owned Pi process. While the direct child is running, Pioneer also forwards `SIGINT` and `SIGTERM` to that tree before returning the interrupted outcome. Whenever the direct child exits, Pioneer starts a bounded grace period for inherited output pipes. A pipe still held after that period is force-closed only to release controller resources, and the review fails with `[REVIEW_PROCESS_CONTAINMENT_FAILED]`; Pioneer never returns its report as a successful review when it cannot prove the process tree stopped. Failures are reported only after this cleanup, with the final child exit status, signal, and stderr-presence metadata. No shell participates in the RPC launch.
+Pioneer kills the process on timeout, malformed output, protocol rejection, or output overflow. macOS and Linux use a dedicated RPC launcher process group and kill that group. Windows uses canonical system `taskkill.exe /T`, with direct termination as a fallback if the utility fails or cannot run. macOS denies process creation, keeping review activity in the controller-owned Pi process.
 
-`[REVIEW_REPORT_MISSING]` means Pi settled but emitted no non-empty assistant report. `[REVIEW_ASSISTANT_FAILED]` means Pi reported an error or abort, even if it produced partial output before settling. `[REVIEW_RPC_INCOMPLETE]` means the process ended before `agent_settled`. `[REVIEW_PROCESS_FAILED]` means Pi settled with a report but then exited nonzero or by signal. `[REVIEW_PROCESS_CONTAINMENT_FAILED]` means a descendant retained the RPC pipe after the direct child exited, so Pioneer could not prove that the process tree stopped. All are non-zero terminal failures written to stderr. Provider and assistant diagnostic text is suppressed; those errors expose only bounded presence and count metadata when Pi supplies diagnostics. When Pi exits early or nonzero, `[REVIEW_RPC_INCOMPLETE]` and `[REVIEW_PROCESS_FAILED]` end with `Pi stderr summary:`. `[REVIEW_REPORT_MISSING]` and `[REVIEW_ASSISTANT_FAILED]` add it too when Pi settled and then exited nonzero or by signal. The summary contains only values from fixed allowlists: the error class, a known Node error code and syscall, the npm package named in the stack when it is one of the extension packages that the controller staged, and the diagnostic codes that Pioneer's own adapter writes, for example `error=Error; code=EPERM; syscall=spawn; package=pi-subagents`. It never contains stderr message text or paths, because stderr is untrusted and can hold credentials that no pattern redaction recognizes. `[PI_PROBE_FAILED]` from readiness adds the same summary of the probe output as `Pi output summary:`.
+While the direct child runs, Pioneer forwards `SIGINT` and `SIGTERM` to its tree before returning an interrupted outcome. After the child exits, inherited output pipes have a bounded grace period to close. Pioneer force-closes remaining pipes to release resources and fails with `[REVIEW_PROCESS_CONTAINMENT_FAILED]`. It cannot report success without proof that the process tree stopped.
+
+Pioneer reports failures after cleanup, with final child exit status, signal, and stderr-presence metadata. RPC launch uses no shell.
+
+Terminal failures go to stderr and return nonzero:
+
+- `[REVIEW_REPORT_MISSING]`: Pi settled without a non-empty assistant report.
+- `[REVIEW_ASSISTANT_FAILED]`: Pi reported an error or abort, even if it produced partial output.
+- `[REVIEW_RPC_INCOMPLETE]`: the process ended before `agent_settled`.
+- `[REVIEW_PROCESS_FAILED]`: Pi settled with a report, then exited nonzero or by signal.
+- `[REVIEW_PROCESS_CONTAINMENT_FAILED]`: a descendant retained an RPC pipe after the direct child exited, preventing proof that the tree stopped.
+
+Pioneer suppresses provider and assistant diagnostic text. These errors expose only bounded presence and count metadata for supplied diagnostics. Early or nonzero exits add `Pi stderr summary:` to `[REVIEW_RPC_INCOMPLETE]` and `[REVIEW_PROCESS_FAILED]`. `[REVIEW_REPORT_MISSING]` and `[REVIEW_ASSISTANT_FAILED]` also add it if Pi settled, then exited nonzero or by signal.
+
+The summary uses fixed allowlists: error class, known Node error code and syscall, controller-staged extension package names from the stack, and Pioneer adapter diagnostic codes. For example: `error=Error; code=EPERM; syscall=spawn; package=pi-subagents`. It excludes stderr text and paths. Untrusted stderr can contain credentials that pattern redaction misses. Readiness `[PI_PROBE_FAILED]` adds the same summary of probe output as `Pi output summary:`.
 
 ## Path and network construction
 
-After validation, the controller creates a private `pir-*` directory beneath `/tmp` on macOS and Linux or `os.tmpdir()` on Windows, containing the writable Pi snapshot, isolated home, temporary directory, and scratch space. API callers may instead select a validated `controllerScratchBase`; Pioneer rejects broad, protected, unstable, actor-granted, or overlong bases, and on Linux reserves enough socket-path space for the authenticated proxy bridge. Runtime files required by Node, Pi, TLS, and the operating system are added as read-only grants.
+After validation, the controller creates a private `pir-*` directory under `/tmp` on macOS/Linux or `os.tmpdir()` on Windows. It contains the writable Pi snapshot, isolated home, temporary directory, and scratch. API callers can select `controllerScratchBase` instead. Pioneer rejects broad, protected, unstable, actor-granted, or overlong bases. Linux also reserves socket-path space for the authenticated proxy bridge. Required Node, Pi, TLS, and OS runtime files get read-only grants.
 
-Networking is `full` or `public`; see [SECURITY.md](SECURITY.md). Pioneer rejects `--network none` before actor launch because the configured model provider needs proxy-mediated egress. The sandbox receives proxy variables but no direct destination grant.
+Choose `full` or `public` networking; see [SECURITY.md](SECURITY.md). Pioneer rejects `--network none` before launch because the model provider needs proxy-mediated egress. The sandbox gets proxy variables but no direct destination grant.
 
 ## Result and cleanup
 
-The report is Pi's final assistant text with surrounding whitespace removed. Pioneer does not rewrite severity, validate file references, or convert the report to JSON. Every strict-successful review persists a private controller-owned report through its owned reservation by default; `--report` only changes its target. Calling agents should present it as Pi's independent review and may separately add their own analysis.
+The report contains Pi's final assistant text without surrounding whitespace. Pioneer leaves severity and file references unchanged and does not convert the report to JSON. Every strictly successful review saves a private controller-owned report through its reservation. `--report` changes only the target. Calling agents must identify it as Pi's independent review. They can add their own analysis separately.
 
 ## Native session recovery
 
-New reviews create a private opaque Pi session archive under the per-user application-data root. The archive contains a controller-only manifest with immutable scope metadata and one active attempt directory; Pioneer never parses or exposes native session content. The persisted prompt omits execution-local scratch paths. After containment is proven, a regular session tree with exactly one native `.jsonl` session may be retained for seven days and at most ten archives. The committed attempt is capped at 32 MiB/5,000 entries, leaving room for the next crash-safe copy within the aggregate 64 MiB/10,000-entry archive cap. Expiry and count pruning acquire the same per-archive lease used by resume before deletion, and count pruning recomputes the current manifest ordering under the candidate lease, so a concurrently claimed or freshly retained recovery point is preserved. Token loading acquires that lease before validating retained contents, releases it on validation failure, and transfers it on success through the rest of resume setup and execution. Resume removes crash-left staging attempts while holding that lease before it creates the next bounded staging copy. Success deletes the archive. A failure caused by a missing or ambiguous native session, torn session, symlink/special-file entry, archive-size/count limit, failed containment, retry-layout exhaustion, active-lease conflict, Pi-version mismatch, or an explicit or derived default output inside any retained archive is never converted into a fabricated report or usable token. `pioneer review --resume TOKEN` validates both output kinds outside the entire private resume store, copies the latest attempt into a new attempt directory, and selects it by exact path; previous attempts remain intact if the retry fails.
+New reviews create a private Pi session archive under the per-user application-data root. A controller-only manifest stores immutable scope metadata beside one active attempt directory. Pioneer neither parses nor exposes native session content. The saved prompt excludes execution-local scratch paths.
 
-Proxy servers, Linux bridges, copied Pi state, and scratch data are removed on every success or failure path. The controller-owned work log remains available after completion and contains cleanup and terminal outcome records. Pioneer prints the canonical report to stdout and persists the private controller-owned report through its owned reservation after the strict completion contract passes. `--report /absolute/path/report.md` overrides that target; a persistence error preserves stdout but exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. Use an explicit `--allow-write` directory only when Pi itself must create additional artifacts.
+After proving containment, Pioneer can retain a regular tree with exactly one native `.jsonl` session for seven days, with at most ten archives. A committed attempt cannot exceed 32 MiB/5,000 entries. This reserves space for a crash-safe copy within the total archive cap of 64 MiB/10,000 entries.
 
-Pi 0.84.1 has a hidden interactive `/debug` command that writes `pi-debug.log`, but it is an on-demand TUI snapshot containing rendered terminal state and complete LLM messages. Pioneer does not copy or invoke that unsafe dump; resumable RPC reviews use Pi's native session directory, while `--no-resume` retains the ephemeral no-session behavior. The documented RPC stream remains Pi's native real-time diagnostic source.
+Expiry and count pruning acquire the resume lease before deletion. Count pruning rechecks manifest ordering under the candidate lease, preserving concurrently claimed or newly retained recovery points. Token loading acquires the lease before validating contents. It releases the lease on failure or holds it through resume setup and execution on success. Before copying, resume removes staging attempts left by crashes while holding the lease. Success deletes the archive.
 
-Pioneer receives RPC events through the Pi child process's stdout pipe and synchronously flushes their sanitized metadata to its controller-owned work log. It does not use filesystem watchers, polling, or a `subagent-results` directory. Any `fs.watch` fallback reported by a calling agent runtime is outside Pioneer and cannot be the mechanism that delivers the report.
+Pioneer never fabricates a report or usable token for these failures:
+
+- a missing, ambiguous, or torn native session;
+- symlinks/special files or archive size/count limits;
+- failed containment, retry-layout exhaustion, or an active-lease conflict;
+- a Pi-version mismatch;
+- an explicit or derived default output inside any retained archive.
+
+`pioneer review --resume TOKEN` validates report and work-log paths outside the entire private resume store. It copies the latest attempt into a new directory and selects the session by exact path. Previous attempts remain intact if the retry fails.
+
+Pioneer removes proxy servers, Linux bridges, copied Pi state, and scratch on every success or failure path. The controller-owned work log remains, with cleanup and terminal outcome records. After strict completion passes, Pioneer prints the report to stdout and saves it through the owned reservation. `--report /absolute/path/report.md` overrides the target. Persistence failure preserves stdout but exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. Use `--allow-write` only when Pi must create extra artifacts.
+
+Pi 0.84.1's hidden interactive `/debug` command writes `pi-debug.log` with rendered terminal state and complete LLM messages. Pioneer never invokes or copies it. Resumable RPC reviews use Pi's native session directory; `--no-resume` keeps the temporary no-session behavior. The documented RPC stream supplies real-time Pi diagnostics.
+
+Pi's stdout pipe delivers RPC events. Pioneer synchronously flushes sanitized metadata to its work log. It uses no filesystem watchers, polling, or `subagent-results` directory. A calling agent's `fs.watch` fallback is outside Pioneer and does not deliver the report.
 
 ## Deep review structured actors
 
-Deep review reuses the same RPC transport, containment, timeout, work-log, and native recovery contracts as `runReview`, but actors emit versioned JSON instead of Markdown reports. Each council member and the president launch through the shared Pi command builder with `--no-builtin-tools`, discovery disabled, an explicit bundled inspection extension, the enabled user extension snapshot, and optional pinned provider extensions from the capability profile.
+Deep review shares `runReview`'s RPC transport, containment, timeout, work-log, and native recovery contracts. Its actors emit versioned JSON instead of Markdown. Each council member and president uses the shared Pi command builder. Launch includes `--no-builtin-tools`, disabled discovery, a bundled inspection extension, the enabled user extension snapshot, and optional pinned capability-profile provider extensions.
 
-Before launch, the controller copies the packet and any president candidate store into the actor's private scratch directory and passes those actor-local paths through environment variables. Packet and candidate stores therefore remain readable inside the OS sandbox without granting write access to controller scratch or credentials.
+Before launch, the controller copies the packet and any president candidate store into private actor scratch. It passes the actor-local paths through environment variables. Actors can read those copies inside the OS sandbox without write access to controller scratch or credentials.
 
-Structured actor prompts and raw model output are untrusted. Pioneer extracts JSON with the same bounded output limits as free-form reviews, validates worker and president schemas fail-closed, and never returns model prose or thinking in work logs. Deep-review work logs record controller lifecycle events (worker/president start and outcome); structured actor RPC metadata is not yet mirrored into those logs. Actor failures surface as deep-review diagnostics with the same process-containment guarantees as `[REVIEW_PROCESS_CONTAINMENT_FAILED]` and `[REVIEW_TIMEOUT]`.
+Pioneer treats structured actor prompts and raw model output as untrusted. JSON extraction uses free-form review output limits. Worker and president schema validation fails closed. Work logs never contain model prose or thinking.
+
+Deep-review logs record controller lifecycle events: worker/president start and outcome. They do not yet include structured actor RPC metadata. Actor failures produce deep-review diagnostics with the containment guarantees of `[REVIEW_PROCESS_CONTAINMENT_FAILED]` and `[REVIEW_TIMEOUT]`.
