@@ -20,7 +20,7 @@ The Pioneer controller must run outside any enclosing agent sandbox. It needs ac
 
 ## Quick start
 
-Pioneer requires Node.js 22.19.0 or newer, npm, and a configured Pi installation. It requires Pi `0.80.6` or newer. This release has tests through Pi `1.2.0`. Pioneer allows newer versions and prints a warning. Install the command-line interface (CLI):
+Pioneer requires Node.js 22.19.0 or newer, npm, and a configured Pi installation. It requires Pi `0.80.6` or newer. This release has tests through Pi `1.4.0`. Pioneer allows newer versions and prints a warning. Install the command-line interface (CLI):
 
 ```bash
 npm install -g @rock3r/pioneer

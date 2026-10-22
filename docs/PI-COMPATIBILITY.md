@@ -2,7 +2,7 @@
 
 Pioneer checks Pi's command-line interface against a versioned contract. [`pi-compatibility.json`](../pi-compatibility.json) defines the supported range and required capabilities.
 
-Pioneer supports Pi `0.80.6` through `1.2.0`, inclusive. Older versions fail with `PI_VERSION_TOO_OLD`. Newer semantic versions continue with `PI_VERSION_UNTESTED` on stderr and in doctor machine output. Resume requires the current Pi version to match the stored version exactly.
+Pioneer supports Pi `0.80.6` through `1.4.0`, inclusive. Older versions fail with `PI_VERSION_TOO_OLD`. Newer semantic versions continue with `PI_VERSION_UNTESTED` on stderr and in doctor machine output. Resume requires the current Pi version to match the stored version exactly.
 
 ## Why the minimum is 0.80.6
 
