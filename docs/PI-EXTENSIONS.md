@@ -64,7 +64,7 @@ Extension failures use `PI_EXTENSION_RESOLUTION_FAILED`, `PI_EXTENSION_RUNTIME_U
 
 `PI_EXTENSION_SNAPSHOT_LIMIT` names the exceeded limit and staged totals. Staging also stops if session-history scans in one call open more than 500,000 files or read more than 1 GiB. That error gives scan totals without mentioning the shared content budget. For `eval run --pi-extension`, totals include user and explicit extensions staged first. The message points to `--no-extensions` if enabled user extensions consumed budget, or to explicit `-e` extensions otherwise. Compare the installation with normal Pi and fix the reported dependency or sandbox requirement. Do not change models or disable the sandbox.
 
-The adapter has been tested with Pi 0.80.6 and 1.2.0. Pi 0.99 added `builtin:mcp`, `builtin:codemode`, `builtin:tool-search`, and the `builtin:llama.cpp` provider. Pioneer passes `--no-extensions` with staged paths, so these built-in extensions do not load in reviews or evals.
+The adapter has been tested with Pi 0.80.6 and 1.4.0. Pi 0.99 added `builtin:mcp`, `builtin:codemode`, `builtin:tool-search`, and the `builtin:llama.cpp` provider. Pioneer passes `--no-extensions` with staged paths, so these built-in extensions do not load in reviews or evals.
 
 On Pi 1.0.4+, `--tools` keeps MCP tools unless an entry starts with `mcp__`. Pioneer also passes `--no-mcp` to review, deep-review, and eval Pi actors. Evals receive it after readiness, including deferred extension readiness and `--pi-home`, and after extension staging rebuilds the command. Pioneer preserves actor identity through launcher wrapping; it does not infer identity from argv. Custom non-Pi actors stay unchanged.
 
