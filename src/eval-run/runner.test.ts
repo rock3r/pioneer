@@ -326,6 +326,8 @@ describe("eval isolated Pi credential locks", () => {
     ]);
   });
 
+  // Native sandbox launch plus Pi-home snapshot can exceed Vitest's 5s default.
+  // The inner eval budget is already 15s.
   it("lets a sandboxed actor create Pi credential lock directories beside snapshotted auth files", async (context) => {
     if ((await nativeSandboxReadinessErrors()).length > 0) {
       context.skip();
@@ -405,7 +407,7 @@ process.stdout.write("pi-credential-lock-ok\\n");
       if (previousPath === undefined) delete process.env.PATH;
       else process.env.PATH = previousPath;
     }
-  });
+  }, 15_000);
 });
 
 describe("eval actor options through the API", () => {
