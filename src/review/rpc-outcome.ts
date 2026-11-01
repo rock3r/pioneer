@@ -1,5 +1,12 @@
-import { diagnosticMessage } from "../diagnostics.js";
+import { diagnosticMessage, sanitizeDiagnostic } from "../diagnostics.js";
 import { stderrSummary } from "../stderr-summary.js";
+import {
+  type ClassifiedFailureCause,
+  classifyFailureCause,
+  type FailureCauseClass,
+  type FailureCauseContext,
+  formatFailureCause,
+} from "./failure-cause.js";
 
 interface ReviewRpcOutcome {
   readonly completed: boolean;
@@ -12,7 +19,11 @@ interface ReviewRpcOutcome {
   readonly sensitiveValues?: readonly string[];
   /** Staged extension packages; the summary names only these. */
   readonly extensionPackages?: ReadonlySet<string>;
+  /** Provider and model the controller already resolved, never inferred from the prompt. */
+  readonly providerContext?: FailureCauseContext;
 }
+
+const ASSISTANT_FAILURE_PREFIX = /^assistant stopReason=(?:error|aborted)(?::\s*(.*))?$/s;
 
 function withStderrSummary(
   message: string,
@@ -30,6 +41,44 @@ function withFailedExitSummary(message: string, outcome: ReviewRpcOutcome): stri
     : withStderrSummary(message, outcome.stderr, outcome.extensionPackages);
 }
 
+function assistantFailureEvidence(diagnostics: readonly string[]): string | undefined {
+  const details = diagnostics.flatMap((diagnostic) => {
+    const detail = ASSISTANT_FAILURE_PREFIX.exec(diagnostic)?.[1]?.trim();
+    return detail === undefined || detail.length === 0 ? [] : [detail];
+  });
+  return details.length === 0 ? undefined : details.join(" ");
+}
+
+/**
+ * Attach the classified cause when Pi or stderr already supplied one. An empty
+ * classification is omitted so a failure with no evidence stays unclassified
+ * rather than growing a fabricated explanation.
+ */
+function withClassifiedCause(
+  message: string,
+  evidence: string | undefined,
+  outcome: ReviewRpcOutcome,
+  fallback: FailureCauseClass = "unclassified",
+): string {
+  if ((evidence === undefined || evidence.trim().length === 0) && fallback === "unclassified") {
+    return message;
+  }
+  const classified = classifyReviewFailure(evidence, outcome, fallback);
+  if (classified.cause === "unclassified" && classified.summary.length === 0) return message;
+  return `${message} ${formatFailureCause(classified)}`;
+}
+
+export function classifyReviewFailure(
+  evidence: string | undefined,
+  outcome: Pick<ReviewRpcOutcome, "providerContext" | "sensitiveValues">,
+  fallback: FailureCauseClass = "unclassified",
+): ClassifiedFailureCause {
+  const classified = classifyFailureCause(evidence, outcome.providerContext, fallback);
+  const secrets = outcome.sensitiveValues ?? [];
+  if (secrets.length === 0 || classified.summary.length === 0) return classified;
+  return { ...classified, summary: sanitizeDiagnostic(classified.summary, secrets) };
+}
+
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
   if (outcome.diagnostics.includes("extension_error")) {
     throw new Error(
@@ -43,12 +92,17 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
       diagnostic.startsWith("assistant stopReason=error") ||
       diagnostic.startsWith("assistant stopReason=aborted"),
   );
+  const assistantEvidence = assistantFailureEvidence(outcome.diagnostics);
   if (outcome.completed && report) {
     if (outcome.exitCode === 0 && outcome.signal === null && assistantFailed) {
       throw new Error(
         diagnosticMessage(
           "REVIEW_ASSISTANT_FAILED",
-          `Pi reported an assistant failure after producing partial review output (${context})`,
+          withClassifiedCause(
+            `Pi reported an assistant failure after producing partial review output (${context})`,
+            assistantEvidence,
+            outcome,
+          ),
         ),
       );
     }
@@ -69,8 +123,12 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
       throw new Error(
         diagnosticMessage(
           "REVIEW_ASSISTANT_FAILED",
-          withFailedExitSummary(
-            `Pi reported an assistant failure without a review report (${context})`,
+          withClassifiedCause(
+            withFailedExitSummary(
+              `Pi reported an assistant failure without a review report (${context})`,
+              outcome,
+            ),
+            assistantEvidence,
             outcome,
           ),
         ),
@@ -79,7 +137,12 @@ export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
     throw new Error(
       diagnosticMessage(
         "REVIEW_REPORT_MISSING",
-        withFailedExitSummary(`Pi settled without a review report (${context})`, outcome),
+        withClassifiedCause(
+          withFailedExitSummary(`Pi settled without a review report (${context})`, outcome),
+          undefined,
+          outcome,
+          "missing_report",
+        ),
       ),
     );
   }

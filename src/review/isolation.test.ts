@@ -31,6 +31,20 @@ describe("review path grants", () => {
     });
   });
 
+  it("names a missing reference before Pi can search the source tree for it", async () => {
+    const root = await createTempDir("pi-review-paths-");
+    const source = path.join(root, "source");
+    await mkdir(source);
+    const missing = path.join(root, "snapshot-proposal");
+
+    await expect(
+      validateReviewPaths({ sourceDir: source, allowReadPaths: [missing] }),
+    ).rejects.toThrow(`[REVIEW_INPUT_UNAVAILABLE]`);
+    await expect(
+      validateReviewPaths({ sourceDir: source, allowReadPaths: [missing] }),
+    ).rejects.toThrow(`${missing} (not found)`);
+  });
+
   it("rejects writable grants overlapping the read-only source", async () => {
     const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");

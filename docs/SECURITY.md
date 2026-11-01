@@ -205,7 +205,7 @@ Review actors receive only the controller-selected runtime variables, Pi's isola
 
 Debug output and errors must exclude Pi credentials, proxy tokens, prompts, and full environment dumps. Work logs contain controller lifecycle records and allowlisted Pi RPC metadata.
 
-Logs omit prompts, assistant text/thinking, message bodies, tool arguments/results, queues, extension paths, proxy/environment values, and provider diagnostics. Callers receive provider-controlled response/error details only as stable state, presence, count, and byte metadata.
+Logs omit prompts, assistant text/thinking, message bodies, tool arguments/results, queues, extension paths, proxy/environment values, and raw provider diagnostics. A review failure may include a sanitized provider excerpt and a classified cause (`auth_refresh`, `missing_credentials`, `quota_or_rate_limit`, `unsupported_model`, `transport`, `timeout_or_cancellation`, `missing_report`, or `unclassified`). The work log records that cause, provider, status, and provider code, not the excerpt. Pioneer does not invent a cause, and it does not refresh credentials or change billing routes from a diagnostic.
 
 Early/nonzero Pi exits and failed readiness probes add an allowlisted stderr summary. Allowed fields include error class, known Node error code/syscall, staged extension package name, and Pioneer adapter diagnostic codes. For example: `error=Error; code=EPERM; syscall=spawn; package=pi-subagents`.
 

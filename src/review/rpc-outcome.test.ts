@@ -45,6 +45,40 @@ describe("review RPC completion", () => {
     );
   });
 
+  it("surfaces a sanitized refresh-token cause with the resolved provider and model", () => {
+    expect(() =>
+      completeReviewRpc({
+        completed: true,
+        report: "",
+        exitCode: 0,
+        signal: null,
+        eventTypes: ["message_end", "agent_settled"],
+        diagnostics: [
+          "assistant stopReason=error: Credential store modify failed for openai-codex: [PI_OAUTH_REFRESH_FAILED] Refresh through Pioneer failed. HTTP 401 code=refresh_token_reused",
+        ],
+        stderr: "",
+        providerContext: { provider: "openai-codex", model: "gpt-6-astra" },
+        sensitiveValues: ["private prompt"],
+      }),
+    ).toThrow(
+      /\[REVIEW_ASSISTANT_FAILED\].*cause=auth_refresh; provider=openai-codex; model=gpt-6-astra;.*refresh_token_reused/,
+    );
+  });
+
+  it("names a missing report as incomplete rather than a successful review", () => {
+    expect(() =>
+      completeReviewRpc({
+        completed: true,
+        report: " ",
+        exitCode: 0,
+        signal: null,
+        eventTypes: ["agent_settled"],
+        diagnostics: [],
+        stderr: "",
+      }),
+    ).toThrow(/\[REVIEW_REPORT_MISSING\].*cause=missing_report.*not a completed review/);
+  });
+
   it("rejects partial output when Pi reports an assistant failure", () => {
     expect(() =>
       completeReviewRpc({
@@ -119,7 +153,7 @@ describe("review RPC completion", () => {
         stderr: "TypeError: cleanup failed for hunter2",
       }),
     ).toThrow(
-      /^\[REVIEW_REPORT_MISSING\] Pi settled without a review report \(events: 1; diagnostics: 0; stderr: present\)\. Pi stderr summary: error=TypeError$/,
+      /^\[REVIEW_REPORT_MISSING\] Pi settled without a review report \(events: 1; diagnostics: 0; stderr: present\)\. Pi stderr summary: error=TypeError cause=missing_report;/,
     );
     expect(() =>
       completeReviewRpc({
@@ -131,7 +165,7 @@ describe("review RPC completion", () => {
         diagnostics: [],
         stderr: "Error: harmless",
       }),
-    ).toThrow(/stderr: present\)$/);
+    ).toThrow(/stderr: present\) cause=missing_report;/);
   });
 
   it("rejects a report when the settled Pi process exits nonzero", () => {

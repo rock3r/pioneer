@@ -43,6 +43,7 @@ import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../sandbox/launche
 import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { isThinkingLevel, type ThinkingLevel } from "../thinking-level.js";
+import type { FailureCauseContext } from "./failure-cause.js";
 import { collectGitContext, resolveReviewGitTargets, serializeGitTarget } from "./git-inspect.js";
 import {
   assertDistinctExistingReviewOutputs,
@@ -347,9 +348,17 @@ export async function validateProspectiveDefaultReviewOutputs(
 
 function workLogDiagnosticSummary(message: string): Readonly<Record<string, unknown>> {
   const code = /^\[([A-Z][A-Z0-9_]*)\]/.exec(message)?.[1];
+  const cause = /(?:^|\s)cause=([a-z_]+)/.exec(message)?.[1];
+  const provider = /(?:^|\s)provider=([A-Za-z0-9][A-Za-z0-9._-]{0,80})/.exec(message)?.[1];
+  const status = /(?:^|\s)status=(\d{3})/.exec(message)?.[1];
+  const providerCode = /(?:^|\s)code=([A-Za-z0-9_]+)/.exec(message)?.[1];
   return {
     diagnosticCode: code ?? "UNCLASSIFIED",
     diagnosticBytes: Buffer.byteLength(message),
+    ...(cause === undefined ? {} : { failureCause: cause }),
+    ...(provider === undefined ? {} : { provider }),
+    ...(status === undefined ? {} : { status: Number(status) }),
+    ...(providerCode === undefined ? {} : { providerCode }),
   };
 }
 
@@ -433,6 +442,8 @@ export interface RunReviewRpcOptions {
   readonly onActorWarning?: (warning: string) => void;
   /** Staged extension packages; warnings and stderr summaries name only these. */
   readonly extensionPackages?: ReadonlySet<string>;
+  /** Provider and model already resolved by readiness. Not inferred from Pi text. */
+  readonly providerContext?: FailureCauseContext;
 }
 
 const REVIEW_NETWORK_DISABLED_MESSAGE =
@@ -449,8 +460,17 @@ interface ReviewPromptWriter {
   write(chunk: string): unknown;
 }
 
+/**
+ * Read-only discovery tools for a review actor.
+ *
+ * `grep` and `find` are Pi built-ins, not a shell. macOS Seatbelt still denies
+ * process creation, so they cannot spawn `grep` or `find` binaries. Linux keeps
+ * `bash` because Bubblewrap contains the process. Windows remains instruction-only.
+ */
 export function reviewTools(platform: NodeJS.Platform = process.platform): readonly string[] {
-  return platform === "linux" ? ["read", "bash", "grep", "find", "ls"] : ["read", "ls"];
+  return platform === "linux"
+    ? ["read", "bash", "grep", "find", "ls"]
+    : ["read", "grep", "find", "ls"];
 }
 
 export function requestedModelForWorkLog(
@@ -558,12 +578,20 @@ export function buildReviewPrompt(
   scratchDir: string | undefined,
   requestPrompt: string,
   gitContext?: string,
+  referencePaths: readonly string[] = [],
 ): string {
+  const references = referencePaths.filter((entry) => entry !== sourceDir);
   return [
     scratchDir === undefined
       ? "Perform a code review. The source and reference paths are read-only. Do not attempt to modify read-only paths."
       : "Perform a code review. The source and reference paths are read-only. Use the writable scratch directory for temporary notes or reports. Do not attempt to modify read-only paths.",
     `Source: ${sourceDir}`,
+    ...(references.length === 0
+      ? []
+      : [
+          "Read-only references outside the source tree. Open a named file with its absolute path; do not search the source tree for it:",
+          ...references.map((entry) => `Reference: ${entry}`),
+        ]),
     ...(scratchDir === undefined ? [] : [`Scratch: ${scratchDir}`]),
     ...(gitContext === undefined
       ? []
@@ -573,6 +601,63 @@ export function buildReviewPrompt(
         ]),
     requestPrompt,
   ].join("\n\n");
+}
+
+export interface ReviewInputCheck {
+  readonly path: string;
+  readonly accessible: boolean;
+  readonly reason?: string;
+}
+
+/** Confirms each explicit review input can be opened before Pi starts. */
+export async function checkReviewInputs(
+  inputs: readonly string[],
+  accessPath: (candidate: string) => Promise<void> = async (candidate) => {
+    const { access } = await import("node:fs/promises");
+    await access(candidate, constants.R_OK);
+  },
+): Promise<readonly ReviewInputCheck[]> {
+  const checks: ReviewInputCheck[] = [];
+  for (const input of inputs) {
+    try {
+      await accessPath(input);
+      checks.push({ path: input, accessible: true });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      checks.push({
+        path: input,
+        accessible: false,
+        reason:
+          code === "ENOENT"
+            ? "not found"
+            : code === "EACCES" || code === "EPERM"
+              ? "not readable"
+              : "not accessible",
+      });
+    }
+  }
+  return checks;
+}
+
+function providerContextFor(model: string | undefined): FailureCauseContext {
+  if (model === undefined) return {};
+  const slash = model.indexOf("/");
+  if (slash <= 0 || slash === model.length - 1) return { model };
+  return { provider: model.slice(0, slash), model: model.slice(slash + 1) };
+}
+
+export function reviewInputFailure(checks: readonly ReviewInputCheck[]): Error | undefined {
+  const failed = checks.filter((check) => !check.accessible);
+  if (failed.length === 0) return undefined;
+  const details = failed
+    .map((check) => `${check.path} (${check.reason ?? "not accessible"})`)
+    .join("; ");
+  return new Error(
+    diagnosticMessage(
+      "REVIEW_INPUT_UNAVAILABLE",
+      `An explicit review input could not be read before Pi started: ${details}. Name an existing readable file or directory; Pioneer does not search the source tree for it.`,
+    ),
+  );
 }
 
 /** Joins warnings and drops repeated lines, which discovery and the actor can both report. */
@@ -739,6 +824,7 @@ function recordAssistantFailure(
   value: unknown,
   diagnostics: string[],
   requireAssistantRole = true,
+  prompt = "",
 ): void {
   if (typeof value !== "object" || value === null) return;
   const message = value as Record<string, unknown>;
@@ -756,10 +842,38 @@ function recordAssistantFailure(
     return;
   }
   clearAssistantFailures(diagnostics);
-  diagnostics.push(`assistant stopReason=${String(message.stopReason)}`);
+  const detail = assistantFailureDetail(message.errorMessage);
+  const safeDetail = detail === undefined ? undefined : redactPromptExcerpt(detail, prompt);
+  diagnostics.push(
+    safeDetail === undefined
+      ? `assistant stopReason=${String(message.stopReason)}`
+      : `assistant stopReason=${String(message.stopReason)}: ${safeDetail}`,
+  );
 }
 
-function recordAssistantEventFailure(value: unknown, diagnostics: string[]): void {
+/**
+ * Pi sometimes echoes the start of the caller prompt into `errorMessage`.
+ * The prompt is not a cause, and it must not reach the caller or the work log.
+ */
+function redactPromptExcerpt(detail: string, prompt: string): string {
+  const normalizedPrompt = prompt.replaceAll(/\s+/g, " ").trim();
+  if (normalizedPrompt.length < 12) return detail;
+  const excerpt = normalizedPrompt.slice(0, Math.min(normalizedPrompt.length, 400));
+  if (!detail.includes(excerpt.slice(0, 24))) return detail;
+  return detail
+    .replaceAll(excerpt, "[redacted prompt excerpt]")
+    .replaceAll(normalizedPrompt, "[redacted prompt excerpt]");
+}
+
+/** Keep a bounded provider diagnostic. Credential redaction happens at output. */
+function assistantFailureDetail(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const collapsed = value.replaceAll(/\s+/g, " ").trim();
+  if (collapsed.length === 0) return undefined;
+  return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 499)}…`;
+}
+
+function recordAssistantEventFailure(value: unknown, diagnostics: string[], prompt = ""): void {
   if (typeof value !== "object" || value === null) return;
   const event = value as Record<string, unknown>;
   if (event.type !== "error" || (event.reason !== "error" && event.reason !== "aborted")) return;
@@ -769,6 +883,17 @@ function recordAssistantEventFailure(value: unknown, diagnostics: string[]): voi
     recordAssistantFailure(
       { ...(error as Record<string, unknown>), role: "assistant", stopReason: event.reason },
       diagnostics,
+      true,
+      prompt,
+    );
+    return;
+  }
+  if (typeof error === "string") {
+    recordAssistantFailure(
+      { role: "assistant", stopReason: event.reason, errorMessage: error },
+      diagnostics,
+      true,
+      prompt,
     );
     return;
   }
@@ -1037,8 +1162,8 @@ export async function runReviewRpc(
         }
         if (record.type === "message_update") {
           const update = record.assistantMessageEvent;
-          recordAssistantFailure(record.message, diagnostics);
-          recordAssistantEventFailure(update, diagnostics);
+          recordAssistantFailure(record.message, diagnostics, true, prompt);
+          recordAssistantEventFailure(update, diagnostics, prompt);
           if (typeof update === "object" && update !== null) {
             const typed = update as Record<string, unknown>;
             if (typed.type === "start") {
@@ -1048,7 +1173,7 @@ export async function runReviewRpc(
             }
             if (typed.type === "done") {
               finalReport = assistantText(typed.message) ?? "";
-              recordAssistantFailure(typed.message, diagnostics);
+              recordAssistantFailure(typed.message, diagnostics, true, prompt);
             }
             if (typed.type === "text_delta" && typeof typed.delta === "string")
               report += typed.delta;
@@ -1056,18 +1181,18 @@ export async function runReviewRpc(
         }
         if (record.type === "message_end") {
           if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
-          recordAssistantFailure(record.message, diagnostics);
+          recordAssistantFailure(record.message, diagnostics, true, prompt);
         }
         if (record.type === "extension_error") diagnostics.push("extension_error");
         if (record.type === "turn_end") {
           if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
-          recordAssistantFailure(record.message, diagnostics);
+          recordAssistantFailure(record.message, diagnostics, true, prompt);
         }
         if (record.type === "agent_end" && Array.isArray(record.messages)) {
           for (const message of [...record.messages].reverse()) {
             if (!isAssistantMessage(message)) continue;
             const text = assistantText(message);
-            recordAssistantFailure(message, diagnostics);
+            recordAssistantFailure(message, diagnostics, true, prompt);
             finalReport = text ?? "";
             break;
           }
@@ -1149,7 +1274,7 @@ export async function runReviewRpc(
             ? new Error(
                 diagnosticMessage(
                   "REVIEW_TIMEOUT",
-                  `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr)})`,
+                  `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr)}; last event: ${lastPiEvent}; idle ${Math.max(0, Date.now() - lastPiEventAt)}ms; rpc ${stdoutBytes} bytes). A timeout is not a completed review.`,
                 ),
               )
             : terminalFailure === undefined
@@ -1177,7 +1302,7 @@ export async function runReviewRpc(
           new Error(
             diagnosticMessage(
               "REVIEW_TIMEOUT",
-              `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr)})`,
+              `Pi review timed out after ${timeoutMs}ms (${processOutcomeContext(code, signal, stderr)}; last event: ${lastPiEvent}; idle ${Math.max(0, Date.now() - lastPiEventAt)}ms; rpc ${stdoutBytes} bytes). A timeout is not a completed review.`,
             ),
           ),
         );
@@ -1202,6 +1327,9 @@ export async function runReviewRpc(
           diagnostics,
           stderr,
           sensitiveValues: workLogSecrets,
+          ...(options.providerContext === undefined
+            ? {}
+            : { providerContext: options.providerContext }),
           ...(options.extensionPackages === undefined
             ? {}
             : { extensionPackages: options.extensionPackages }),
@@ -1680,11 +1808,15 @@ async function runReviewInternal(
             }
           : {}),
       };
+      const referencePaths = [paths.sourceDir, ...paths.allowReadPaths];
+      const inputFailure = reviewInputFailure(await checkReviewInputs(referencePaths));
+      if (inputFailure !== undefined) throw inputFailure;
       const prompt = buildReviewPrompt(
         paths.sourceDir,
         resumeArchive === undefined ? scratchDirectory : undefined,
         request.prompt,
         gitContextText,
+        referencePaths,
       );
       let report: string;
       const actorWarnings: string[] = [];
@@ -1706,6 +1838,7 @@ async function runReviewInternal(
               ...preparedRuntime.extensions.sourcePaths,
             ]),
             maxRpcOutputBytes,
+            providerContext: providerContextFor(model),
           },
         );
         sandboxed = false;
@@ -1768,6 +1901,7 @@ async function runReviewInternal(
               ...preparedRuntime.extensions.sourcePaths,
             ]),
             maxRpcOutputBytes,
+            providerContext: providerContextFor(model),
           },
         );
         sandboxed = true;

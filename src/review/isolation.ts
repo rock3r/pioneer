@@ -93,7 +93,18 @@ export async function assertDistinctExistingReviewOutputs(
 
 async function canonicalGrant(candidate: string): Promise<string> {
   const absolute = path.resolve(candidate);
-  const stats = await lstat(absolute);
+  let stats: Awaited<ReturnType<typeof lstat>>;
+  try {
+    stats = await lstat(absolute);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EACCES" || code === "EPERM") {
+      throw new Error(
+        `[REVIEW_INPUT_UNAVAILABLE] An explicit review input could not be read before Pi started: ${absolute} (${code === "ENOENT" ? "not found" : "not readable"}). Name an existing readable file or directory; Pioneer does not search the source tree for it.`,
+      );
+    }
+    throw error;
+  }
   if (stats.isSymbolicLink()) throw new Error(`Review path grant is a symbolic link: ${absolute}`);
   if (!stats.isDirectory()) throw new Error(`Review path grant is not a directory: ${absolute}`);
   const canonical = await realpath(absolute);

@@ -114,9 +114,11 @@ describe.skipIf(!sandboxReady)("pioneer eval run actor runtime", () => {
     };
     expect(report.shell).toMatchObject({ error: null, status: 0, stdout: "sh-ok" });
     if (existsSync("/usr/bin/git")) {
-      // xcrun may still warn that it cannot write its cache in the shared per-user temp
-      // directory, which stays ungranted; the #86/#87 failures must not recur.
-      expect(report.git?.stderr).not.toMatch(/dev\/null|var\/select|developer_dir|Info\.plist/i);
+      // xcrun may still warn that it cannot start a filesystem event stream. The shared
+      // per-user cache stays ungranted; the #86/#87 failures must not recur.
+      expect(report.git?.stderr).not.toMatch(
+        /dev\/null|var\/select|developer_dir|Info\.plist|xcrun_db|Operation not permitted/i,
+      );
       expect(report.git, report.git?.stderr).toMatchObject({ error: null, status: 0 });
       expect(report.git?.stdout).toMatch(/^git version /);
     }

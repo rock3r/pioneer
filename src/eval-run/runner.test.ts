@@ -134,11 +134,13 @@ describe("eval process capture", () => {
         actor(`
           const { spawn } = require("node:child_process");
           spawn(process.execPath, ["-e", "setTimeout(() => {}, 10_000)"], { stdio: "inherit" });
-          setTimeout(() => process.exit(0), 700);
+          // Exit well inside the timeout. A 300ms gap races the parent timer when the
+          // machine is loaded, which reports a timeout for a child that did exit.
+          setTimeout(() => process.exit(0), 50);
         `),
         process.cwd(),
         process.env,
-        1_000,
+        3_000,
       );
 
       expect(result.exitCode).not.toBe(0);
