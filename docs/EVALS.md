@@ -37,7 +37,7 @@ Eval runs grant read-only access to `/private/var/select`, where `/bin/sh` reads
 - `/Library/Developer/CommandLineTools`; or
 - the whole Xcode bundle for an `/Applications/*.app/Contents/Developer` selection. Xcode tools need the bundle's `Info.plist` and `SharedFrameworks`.
 
-Other `developer_dir` targets receive no grant. Evals also grant `/Library/Preferences/com.apple.dt.Xcode.plist`, where xcrun checks license acceptance. These grants let the `/usr/bin/git` shim work. Xcrun can still warn that it cannot write its cache in the ungranted shared per-user temporary directory.
+Other `developer_dir` targets receive no grant. When that selector is absent, Pioneer reads `xcode-select -p` without changing the system selection and grants the same two targets if the printed path matches one. Evals also grant `/Library/Preferences/com.apple.dt.Xcode.plist`, where xcrun checks license acceptance. The actor receives `DEVELOPER_DIR` for that path and an absolute `xcrun_db` inside its private scratch. xcrun ignores `TMPDIR`, and the shared per-user cache stays ungranted so an actor cannot change tool lookups used outside the sandbox. `GIT_CONFIG_NOSYSTEM=1` keeps a missing system Git config from failing the shim. Xcrun can still warn that it cannot start a filesystem event stream.
 
 Tools such as `xcode-select` use `/var/select/developer_dir`, while canonical grants use `/private/...`. The profile therefore permits reading the root `/etc`, `/tmp`, or `/var` alias symlink when a grant lies below its `/private` target.
 

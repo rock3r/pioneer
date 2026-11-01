@@ -92,7 +92,7 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 - a private `--session-dir` for new resumable reviews, or `--no-session` only for `resumable: false` / `--no-resume`;
 - `--no-approve`;
 - `--no-extensions` plus explicit paths from the enabled user snapshot, preventing ambient or project-local discovery;
-- Linux: `--tools read,bash,grep,find,ls`; macOS and opt-in Windows: `--tools read,ls`;
+- Linux: `--tools read,bash,grep,find,ls`; macOS and opt-in Windows: `--tools read,grep,find,ls`;
 - `--no-mcp` on Pi 1.0.4 or newer, because `--tools` keeps MCP tools unless an entry starts with `mcp__`. A tool-restricted Pi actor with no known Pi version at launch fails closed with `[PI_NO_MCP_VERSION_UNKNOWN]`;
 - `--no-prompt-templates`;
 - `--no-themes`;
@@ -101,7 +101,9 @@ Reviews invoke `pi --mode rpc` and add these defaults unless the caller already 
 
 Offline mode disables optional Pi startup network activity. The running agent can still request its selected provider. Reviews use Pi RPC, enabled provider/auth hooks, and a separate inspection-tool policy. See [Pi extensions](PI-EXTENSIONS.md).
 
-Pioneer excludes `write` and `edit`. macOS and opt-in Windows reviews use `read` and `ls` without a child-process tool. macOS also denies process creation through Seatbelt. The controller collects Git context on those platforms. Linux also keeps `bash`, `grep`, `find`, and `ls` inside Bubblewrap's PID namespace. Pioneer does not require subagents, MCP, or other optional extensions.
+Pioneer excludes `write` and `edit`. macOS and opt-in Windows reviews use Pi's built-in `read`, `grep`, `find`, and `ls`. Those search tools do not start a shell. macOS also denies process creation through Seatbelt, so a tool cannot spawn `grep` or `find`. The controller collects Git context on those platforms. Linux also keeps `bash` inside Bubblewrap's PID namespace. Pioneer does not require subagents, MCP, or other optional extensions.
+
+The review prompt names the canonical source and every `--allow-read` directory as `Reference: ABSOLUTE_PATH`. Before Pi starts, Pioneer checks that each of those paths is readable. A missing or unreadable path fails with `[REVIEW_INPUT_UNAVAILABLE]` and names the path. A file read is not a completed review.
 
 ## RPC framing and completion
 
@@ -143,7 +145,11 @@ Terminal failures go to stderr and return nonzero:
 - `[REVIEW_PROCESS_FAILED]`: Pi settled with a report, then exited nonzero or by signal.
 - `[REVIEW_PROCESS_CONTAINMENT_FAILED]`: a descendant retained an RPC pipe after the direct child exited, preventing proof that the tree stopped.
 
-Pioneer suppresses provider and assistant diagnostic text. These errors expose only bounded presence and count metadata for supplied diagnostics. Early or nonzero exits add `Pi stderr summary:` to `[REVIEW_RPC_INCOMPLETE]` and `[REVIEW_PROCESS_FAILED]`. `[REVIEW_REPORT_MISSING]` and `[REVIEW_ASSISTANT_FAILED]` also add it if Pi settled, then exited nonzero or by signal.
+When Pi supplies an assistant `errorMessage`, Pioneer keeps a sanitized excerpt in the caller-facing diagnostic and classifies it. The classes are `auth_refresh`, `missing_credentials`, `quota_or_rate_limit`, `unsupported_model`, `transport`, `timeout_or_cancellation`, `missing_report`, and `unclassified`. A classified failure names the cause, the resolved provider and model when known, an HTTP status or provider code found in the text, and guidance that does not change provider or billing route. Pioneer does not invent a cause when the text matches none of these. Credential values and echoed prompt text are redacted. A missing report is `missing_report`, not a successful review.
+
+The work log still omits the diagnostic prose. It records `failureCause`, `provider`, `status`, and `providerCode` beside the existing byte counts, so a resume can be diagnosed without reading the session. A timeout names the last event, idle time, and RPC bytes. Extending the deadline is not the remedy for a review that never opened its input.
+
+Early or nonzero exits add `Pi stderr summary:` to `[REVIEW_RPC_INCOMPLETE]` and `[REVIEW_PROCESS_FAILED]`. `[REVIEW_REPORT_MISSING]` and `[REVIEW_ASSISTANT_FAILED]` also add it if Pi settled, then exited nonzero or by signal.
 
 The summary uses fixed allowlists: error class, known Node error code and syscall, controller-staged extension package names from the stack, and Pioneer adapter diagnostic codes. For example: `error=Error; code=EPERM; syscall=spawn; package=pi-subagents`. It excludes stderr text and paths. Untrusted stderr can contain credentials that pattern redaction misses. Readiness `[PI_PROBE_FAILED]` adds the same summary of probe output as `Pi output summary:`.
 

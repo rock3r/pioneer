@@ -134,7 +134,8 @@ Windows custom targets inherit the parent directory ACL. POSIX mode bits do not 
 Transport success confirms report delivery. The report itself states the review findings. A no-findings review still returns non-empty Markdown. Completion failures use these codes:
 
 - `[REVIEW_REPORT_MISSING]`: Pi settled without a report.
-- `[REVIEW_ASSISTANT_FAILED]`: Pi reported a failed or aborted assistant run.
+- `[REVIEW_ASSISTANT_FAILED]`: Pi reported a failed or aborted assistant run. The message includes a sanitized cause when Pi supplied one.
+- `[REVIEW_INPUT_UNAVAILABLE]`: an explicit source or `--allow-read` path could not be read before Pi started.
 - `[REVIEW_RPC_INCOMPLETE]`: RPC ended before settling.
 - `[REVIEW_PROCESS_FAILED]`: Pi settled with a report, then exited nonzero or by signal.
 - `[REVIEW_PROCESS_CONTAINMENT_FAILED]`: Pioneer could not prove the tree stopped after child exit.

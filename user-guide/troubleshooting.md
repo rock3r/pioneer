@@ -149,9 +149,7 @@ The actor uses private scratch as `HOME`. Pioneer rejects `--env HOME=...`. For 
 
 If the helper has no configurable path, set only its own `HOME`. For example, use `/usr/bin/env HOME=/Users/me /path/to/server` in `mcp.json`. Grant only the exact files it reads with `--runtime-read`. Only that helper sees the changed `HOME`.
 
-On macOS, Git and other Xcode shims can work after printing cache warnings. Messages include `couldn't create cache file '/var/folders/.../xcrun_db-...'` and `DVTFilePathFSEvents: Failed to start fs event stream`.
-
-xcrun ignores `TMPDIR` and writes its cache in the shared per-user temporary directory. Pioneer withholds that directory. Otherwise an actor could change tool-path caches used by unsandboxed commands. These warnings alone do not indicate command failure.
+On macOS, Git and other Xcode shims can still print `DVTFilePathFSEvents: Failed to start fs event stream`. That warning alone does not indicate command failure. Pioneer points `xcrun_db` at the actor's private scratch because xcrun ignores `TMPDIR` and would otherwise write the shared per-user temporary directory. That shared cache stays ungranted so an actor cannot change tool lookups used by unsandboxed commands. When `/private/var/select/developer_dir` is absent, Pioneer uses the directory printed by `xcode-select -p` without changing the system selection.
 
 ## An output path is rejected as writable by another user
 

@@ -83,7 +83,13 @@ import {
   validateEvalWorkLogPath,
 } from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
-import { macosRuntimeReadPaths, macosSystemToolReadPaths } from "./macos-runtime.js";
+import {
+  macosFallbackDeveloperReadPaths,
+  macosPrivateToolEnvironment,
+  macosRuntimeReadPaths,
+  macosSystemToolReadPaths,
+  selectedMacosDeveloperDir,
+} from "./macos-runtime.js";
 import {
   isDeclaredPiExecutable,
   piPackageHostsAuthAdapter,
@@ -211,7 +217,13 @@ async function existingRuntimePaths(): Promise<string[]> {
           ];
   const result: string[] = [];
   const nodeRuntime = await executableRuntimeRoot(process.execPath);
-  for (const candidate of [...candidates, ...(await macosSystemToolReadPaths()), nodeRuntime]) {
+  const developerDir = await selectedMacosDeveloperDir();
+  for (const candidate of [
+    ...candidates,
+    ...(await macosSystemToolReadPaths()),
+    ...(await macosFallbackDeveloperReadPaths(developerDir)),
+    nodeRuntime,
+  ]) {
     try {
       await access(candidate, constants.R_OK);
       result.push(candidate);
@@ -574,10 +586,16 @@ async function sandboxAndCapture(
           runtimeExecutable,
           loopbackRelays,
         );
+  const developerDir = await selectedMacosDeveloperDir();
   return await captureEvalProcess(
     launch.argv,
     runDir,
-    { ...sanitizedBrokerEnvironment(process.env), ...launch.environment },
+    {
+      ...sanitizedBrokerEnvironment(process.env),
+      ...launch.environment,
+      ...(developerDir === undefined ? {} : { DEVELOPER_DIR: developerDir }),
+      ...macosPrivateToolEnvironment(policy.writablePaths[0] ?? runDir),
+    },
     timeoutMs,
     undefined,
     sinks,

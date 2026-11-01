@@ -11,6 +11,7 @@ import {
   assertReviewResumeStateIsRecoverable,
   buildReviewPrompt,
   canonicalReviewPiHomeSource,
+  checkReviewInputs,
   cleanupCompletedReviewResumeArchive,
   cleanupUnavailableReviewResumeArchive,
   combineWarnings,
@@ -22,6 +23,7 @@ import {
   readinessMetadataForWorkLog,
   requestedModelForWorkLog,
   requiresGitInspection,
+  reviewInputFailure,
   reviewResumeFailureKind,
   reviewTools,
   runReview,
@@ -611,10 +613,38 @@ describe("review RPC runner", () => {
     await expect(runReview(request)).rejects.toThrow(/timeout/i);
   });
 
-  it("allows source discovery without granting macOS or Windows process tools", () => {
-    expect(reviewTools("darwin")).toEqual(["read", "ls"]);
-    expect(reviewTools("win32")).toEqual(["read", "ls"]);
+  it("allows source discovery with read-only search tools and without a macOS or Windows shell", () => {
+    expect(reviewTools("darwin")).toEqual(["read", "grep", "find", "ls"]);
+    expect(reviewTools("win32")).toEqual(["read", "grep", "find", "ls"]);
     expect(reviewTools("linux")).toEqual(["read", "bash", "grep", "find", "ls"]);
+    expect(reviewTools("darwin")).not.toContain("bash");
+    expect(reviewTools("win32")).not.toContain("bash");
+  });
+
+  it("names an outside reference by its absolute path and checks that it can be read", async () => {
+    const proposal = "/Users/rock3r/.amp/in/artifacts/snapshot-proposal";
+    const prompt = buildReviewPrompt(
+      "/Users/rock3r/src/atc",
+      "/tmp/pir-scratch",
+      "Review PROPOSAL.md in the allow-read directory.",
+      undefined,
+      ["/Users/rock3r/src/atc", proposal],
+    );
+
+    expect(prompt).toContain(`Reference: ${proposal}`);
+    expect(prompt).toContain("do not search the source tree");
+    expect(prompt.indexOf(`Reference: ${proposal}`)).toBeLessThan(
+      prompt.indexOf("Review PROPOSAL.md"),
+    );
+
+    const missing = await checkReviewInputs([proposal], async () => {
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    });
+    expect(reviewInputFailure(missing)?.message).toContain("[REVIEW_INPUT_UNAVAILABLE]");
+    expect(reviewInputFailure(missing)?.message).toContain(`${proposal} (not found)`);
+    await expect(checkReviewInputs([proposal], async () => {})).resolves.toEqual([
+      { path: proposal, accessible: true },
+    ]);
   });
 
   it("does not inject controller-collected repository data into read-only reviews", () => {
@@ -1368,6 +1398,35 @@ process.stdin.once("data", () => {
     expect(message).not.toContain("private prompt");
   });
 
+  it("keeps a reused refresh token in the failure instead of hiding it behind the event count", async () => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              stopReason: "error",
+              errorMessage:
+                "Credential store modify failed for openai-codex: [PI_OAUTH_REFRESH_FAILED] Refresh through Pioneer failed (401) refresh_token_reused",
+              provider: "openai-codex",
+              model: "gpt-6-astra",
+              api: "openai-codex-responses",
+            },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        "Review the source",
+        1_000,
+        { providerContext: { provider: "openai-codex", model: "gpt-6-astra" } },
+      ),
+    ).rejects.toThrow(
+      /cause=auth_refresh; provider=openai-codex; model=gpt-6-astra;.*refresh_token_reused/,
+    );
+  });
+
   it("suppresses an upstream-truncated prompt excerpt from assistant diagnostics", async () => {
     const longPrompt = `private prompt ${"x".repeat(700)}`;
     let message = "";
@@ -1396,6 +1455,36 @@ process.stdin.once("data", () => {
     expect(message).toContain("diagnostics: 1");
     expect(message).not.toContain("private prompt");
     expect(message).not.toContain("x".repeat(100));
+  });
+
+  it("redacts a partial prompt echo that is shorter than the stored excerpt", async () => {
+    const longPrompt = `private prompt ${"x".repeat(700)}`;
+    let message = "";
+    try {
+      await runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              stopReason: "error",
+              errorMessage: `provider failed after ${longPrompt.slice(0, 300)}`,
+            },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        longPrompt,
+        1_000,
+      );
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("[redacted prompt excerpt]");
+    expect(message).not.toContain("private prompt");
+    expect(message).not.toContain("x".repeat(40));
   });
 
   it("returns only a successful retry from a delta-only stream", async () => {

@@ -72,7 +72,12 @@ export async function macosSystemToolReadPaths(
   } catch {
     return [selectRoot];
   }
-  if (developerDir === COMMAND_LINE_TOOLS) return [selectRoot, developerDir];
+  if (developerDir === COMMAND_LINE_TOOLS) {
+    const preferences = await resolve(XCODE_PREFERENCES).catch(() => undefined);
+    return preferences === XCODE_PREFERENCES
+      ? [selectRoot, developerDir, preferences]
+      : [selectRoot, developerDir];
+  }
   // Xcode's tools read the bundle's Info.plist and load its SharedFrameworks, so grant the
   // whole application bundle read-only rather than only Contents/Developer.
   const xcodeBundle = XCODE_DEVELOPER_DIR.exec(developerDir)?.[1];
@@ -83,4 +88,71 @@ export async function macosSystemToolReadPaths(
   return preferences === XCODE_PREFERENCES
     ? [selectRoot, xcodeBundle, preferences]
     : [selectRoot, xcodeBundle];
+}
+
+/**
+ * The active developer directory when `/private/var/select/developer_dir` is absent.
+ *
+ * `xcode-select -p` is read-only and does not switch the system selection. Its stdout is
+ * accepted only when it names Command Line Tools or an Xcode bundle, the same bound used
+ * for the selector symlink.
+ */
+export async function selectedMacosDeveloperDir(
+  platform: NodeJS.Platform = process.platform,
+  printPath: () => Promise<string> = async () => {
+    const { stdout } = await execFileAsync("/usr/bin/xcode-select", ["-p"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 1024,
+    });
+    return stdout;
+  },
+  resolve: (candidate: string) => Promise<string> = realpath,
+): Promise<string | undefined> {
+  if (platform !== "darwin") return undefined;
+  let printed: string;
+  try {
+    printed = (await printPath()).trim();
+  } catch {
+    return undefined;
+  }
+  if (printed.length === 0 || printed.includes("\0")) return undefined;
+  let canonical: string;
+  try {
+    canonical = await resolve(printed);
+  } catch {
+    return undefined;
+  }
+  if (canonical === COMMAND_LINE_TOOLS || XCODE_DEVELOPER_DIR.test(canonical)) return canonical;
+  return undefined;
+}
+
+/**
+ * Read-only grants for a developer directory that is active without a selector symlink.
+ * An unexpected path grants nothing, so a printed path cannot widen the sandbox.
+ */
+export async function macosFallbackDeveloperReadPaths(
+  developerDir: string | undefined,
+  resolve: (candidate: string) => Promise<string> = realpath,
+): Promise<readonly string[]> {
+  if (developerDir === undefined) return [];
+  const toolchain =
+    developerDir === COMMAND_LINE_TOOLS
+      ? developerDir
+      : XCODE_DEVELOPER_DIR.exec(developerDir)?.[1];
+  if (toolchain === undefined) return [];
+  const preferences = await resolve(XCODE_PREFERENCES).catch(() => undefined);
+  return preferences === XCODE_PREFERENCES ? [toolchain, preferences] : [toolchain];
+}
+
+/**
+ * xcrun ignores `TMPDIR` and writes its tool cache in the shared per-user temporary
+ * directory. An absolute `xcrun_db` keeps that write inside the actor's private scratch,
+ * so the shared cache used by unsandboxed commands stays ungranted.
+ */
+export function macosPrivateToolEnvironment(privateDir: string): Readonly<Record<string, string>> {
+  return {
+    xcrun_db: path.join(privateDir, "xcrun_db"),
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
 }
