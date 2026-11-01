@@ -1457,6 +1457,36 @@ process.stdin.once("data", () => {
     expect(message).not.toContain("x".repeat(100));
   });
 
+  it("redacts a partial prompt echo that is shorter than the stored excerpt", async () => {
+    const longPrompt = `private prompt ${"x".repeat(700)}`;
+    let message = "";
+    try {
+      await runReviewRpc(
+        fakePiRpc([
+          {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              stopReason: "error",
+              errorMessage: `provider failed after ${longPrompt.slice(0, 300)}`,
+            },
+          },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        longPrompt,
+        1_000,
+      );
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("[redacted prompt excerpt]");
+    expect(message).not.toContain("private prompt");
+    expect(message).not.toContain("x".repeat(40));
+  });
+
   it("returns only a successful retry from a delta-only stream", async () => {
     await expect(
       runReviewRpc(

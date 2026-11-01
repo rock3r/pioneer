@@ -100,11 +100,13 @@ const CAUSE_RULES: readonly CauseRule[] = [
 ];
 
 function field(text: string, name: string): string | undefined {
-  const match = new RegExp(
-    `\\b${name}\\s*[:=]\\s*([A-Za-z0-9][A-Za-z0-9._-]{0,80})|\\bfor\\s+([A-Za-z0-9][A-Za-z0-9._-]{0,80})`,
-    "i",
-  ).exec(text);
-  const value = match?.[1] ?? match?.[2];
+  const labelled = new RegExp(`\\b${name}\\s*[:=]\\s*([A-Za-z0-9][A-Za-z0-9._-]{0,80})`, "i").exec(
+    text,
+  )?.[1];
+  // `for openai` names a provider. Applying it to model or API would invent those fields.
+  const fallback =
+    name === "provider" ? /\bfor\s+([A-Za-z0-9][A-Za-z0-9._-]{0,80})/i.exec(text)?.[1] : undefined;
+  const value = labelled ?? fallback;
   return value === undefined || value.toLowerCase() === "null" ? undefined : value;
 }
 

@@ -858,11 +858,18 @@ function recordAssistantFailure(
 function redactPromptExcerpt(detail: string, prompt: string): string {
   const normalizedPrompt = prompt.replaceAll(/\s+/g, " ").trim();
   if (normalizedPrompt.length < 12) return detail;
-  const excerpt = normalizedPrompt.slice(0, Math.min(normalizedPrompt.length, 400));
-  if (!detail.includes(excerpt.slice(0, 24))) return detail;
-  return detail
-    .replaceAll(excerpt, "[redacted prompt excerpt]")
-    .replaceAll(normalizedPrompt, "[redacted prompt excerpt]");
+  const prefix = normalizedPrompt.slice(0, Math.min(normalizedPrompt.length, 24));
+  const start = detail.indexOf(prefix);
+  if (start < 0) return detail;
+  let matched = prefix.length;
+  while (
+    start + matched < detail.length &&
+    matched < normalizedPrompt.length &&
+    detail[start + matched] === normalizedPrompt[matched]
+  ) {
+    matched += 1;
+  }
+  return `${detail.slice(0, start)}[redacted prompt excerpt]${detail.slice(start + matched)}`;
 }
 
 /** Keep a bounded provider diagnostic. Credential redaction happens at output. */

@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   macosFallbackDeveloperReadPaths,
@@ -111,7 +112,7 @@ describe("macOS system tool read paths (#87)", () => {
     ).resolves.toEqual(["/Applications/Xcode.app"]);
     await expect(macosFallbackDeveloperReadPaths("/")).resolves.toEqual([]);
     expect(macosPrivateToolEnvironment("/private/tmp/pioneer-eval-control/actor-scratch")).toEqual({
-      xcrun_db: "/private/tmp/pioneer-eval-control/actor-scratch/xcrun_db",
+      xcrun_db: path.join("/private/tmp/pioneer-eval-control/actor-scratch", "xcrun_db"),
       GIT_CONFIG_NOSYSTEM: "1",
     });
   });

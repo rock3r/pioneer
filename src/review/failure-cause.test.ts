@@ -39,6 +39,8 @@ describe("review failure cause", () => {
     const missing = classifyFailureCause("credentials_not_configured for openai");
     expect(missing.cause).toBe("missing_credentials");
     expect(missing.context.provider).toBe("openai");
+    expect(missing.context.model).toBeUndefined();
+    expect(missing.context.api).toBeUndefined();
     expect(missing.guidance).toMatch(/configure/i);
     expect(missing.guidance).not.toMatch(/re-authenticate/i);
 
