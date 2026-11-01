@@ -444,6 +444,8 @@ export interface RunReviewRpcOptions {
   readonly extensionPackages?: ReadonlySet<string>;
   /** Provider and model already resolved by readiness. Not inferred from Pi text. */
   readonly providerContext?: FailureCauseContext;
+  /** The caller's original prompt, which Pi may echo without the controller preamble. */
+  readonly callerPrompt?: string;
 }
 
 const REVIEW_NETWORK_DISABLED_MESSAGE =
@@ -825,6 +827,7 @@ function recordAssistantFailure(
   diagnostics: string[],
   requireAssistantRole = true,
   prompt = "",
+  callerPrompt = "",
 ): void {
   if (typeof value !== "object" || value === null) return;
   const message = value as Record<string, unknown>;
@@ -843,7 +846,10 @@ function recordAssistantFailure(
   }
   clearAssistantFailures(diagnostics);
   const detail = assistantFailureDetail(message.errorMessage);
-  const safeDetail = detail === undefined ? undefined : redactPromptExcerpt(detail, prompt);
+  const safeDetail =
+    detail === undefined
+      ? undefined
+      : redactPromptExcerpt(redactPromptExcerpt(detail, prompt), callerPrompt);
   diagnostics.push(
     safeDetail === undefined
       ? `assistant stopReason=${String(message.stopReason)}`
@@ -880,7 +886,12 @@ function assistantFailureDetail(value: unknown): string | undefined {
   return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 499)}…`;
 }
 
-function recordAssistantEventFailure(value: unknown, diagnostics: string[], prompt = ""): void {
+function recordAssistantEventFailure(
+  value: unknown,
+  diagnostics: string[],
+  prompt = "",
+  callerPrompt = "",
+): void {
   if (typeof value !== "object" || value === null) return;
   const event = value as Record<string, unknown>;
   if (event.type !== "error" || (event.reason !== "error" && event.reason !== "aborted")) return;
@@ -892,6 +903,7 @@ function recordAssistantEventFailure(value: unknown, diagnostics: string[], prom
       diagnostics,
       true,
       prompt,
+      callerPrompt,
     );
     return;
   }
@@ -901,6 +913,7 @@ function recordAssistantEventFailure(value: unknown, diagnostics: string[], prom
       diagnostics,
       true,
       prompt,
+      callerPrompt,
     );
     return;
   }
@@ -1169,8 +1182,14 @@ export async function runReviewRpc(
         }
         if (record.type === "message_update") {
           const update = record.assistantMessageEvent;
-          recordAssistantFailure(record.message, diagnostics, true, prompt);
-          recordAssistantEventFailure(update, diagnostics, prompt);
+          recordAssistantFailure(
+            record.message,
+            diagnostics,
+            true,
+            prompt,
+            options.callerPrompt ?? "",
+          );
+          recordAssistantEventFailure(update, diagnostics, prompt, options.callerPrompt ?? "");
           if (typeof update === "object" && update !== null) {
             const typed = update as Record<string, unknown>;
             if (typed.type === "start") {
@@ -1180,7 +1199,13 @@ export async function runReviewRpc(
             }
             if (typed.type === "done") {
               finalReport = assistantText(typed.message) ?? "";
-              recordAssistantFailure(typed.message, diagnostics, true, prompt);
+              recordAssistantFailure(
+                typed.message,
+                diagnostics,
+                true,
+                prompt,
+                options.callerPrompt ?? "",
+              );
             }
             if (typed.type === "text_delta" && typeof typed.delta === "string")
               report += typed.delta;
@@ -1188,18 +1213,30 @@ export async function runReviewRpc(
         }
         if (record.type === "message_end") {
           if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
-          recordAssistantFailure(record.message, diagnostics, true, prompt);
+          recordAssistantFailure(
+            record.message,
+            diagnostics,
+            true,
+            prompt,
+            options.callerPrompt ?? "",
+          );
         }
         if (record.type === "extension_error") diagnostics.push("extension_error");
         if (record.type === "turn_end") {
           if (isAssistantMessage(record.message)) finalReport = assistantText(record.message) ?? "";
-          recordAssistantFailure(record.message, diagnostics, true, prompt);
+          recordAssistantFailure(
+            record.message,
+            diagnostics,
+            true,
+            prompt,
+            options.callerPrompt ?? "",
+          );
         }
         if (record.type === "agent_end" && Array.isArray(record.messages)) {
           for (const message of [...record.messages].reverse()) {
             if (!isAssistantMessage(message)) continue;
             const text = assistantText(message);
-            recordAssistantFailure(message, diagnostics, true, prompt);
+            recordAssistantFailure(message, diagnostics, true, prompt, options.callerPrompt ?? "");
             finalReport = text ?? "";
             break;
           }
@@ -1846,6 +1883,7 @@ async function runReviewInternal(
             ]),
             maxRpcOutputBytes,
             providerContext: providerContextFor(model),
+            callerPrompt: request.prompt,
           },
         );
         sandboxed = false;
@@ -1909,6 +1947,7 @@ async function runReviewInternal(
             ]),
             maxRpcOutputBytes,
             providerContext: providerContextFor(model),
+            callerPrompt: request.prompt,
           },
         );
         sandboxed = true;

@@ -65,6 +65,29 @@ describe("review RPC completion", () => {
     );
   });
 
+  it("redacts a long caller secret before the cause summary is shortened", () => {
+    const secret = `confidential acquisition ${"q".repeat(300)}`;
+    let message = "";
+    try {
+      completeReviewRpc({
+        completed: true,
+        report: "",
+        exitCode: 0,
+        signal: null,
+        eventTypes: ["message_end", "agent_settled"],
+        diagnostics: [`assistant stopReason=error: provider failed after ${secret}`],
+        stderr: "",
+        sensitiveValues: [secret],
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("[REDACTED]");
+    expect(message).not.toContain("confidential acquisition");
+    expect(message).not.toContain("q".repeat(40));
+  });
+
   it("names a missing report as incomplete rather than a successful review", () => {
     expect(() =>
       completeReviewRpc({

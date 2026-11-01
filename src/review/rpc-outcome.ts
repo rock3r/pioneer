@@ -73,10 +73,25 @@ export function classifyReviewFailure(
   outcome: Pick<ReviewRpcOutcome, "providerContext" | "sensitiveValues">,
   fallback: FailureCauseClass = "unclassified",
 ): ClassifiedFailureCause {
-  const classified = classifyFailureCause(evidence, outcome.providerContext, fallback);
   const secrets = outcome.sensitiveValues ?? [];
-  if (secrets.length === 0 || classified.summary.length === 0) return classified;
-  return { ...classified, summary: sanitizeDiagnostic(classified.summary, secrets) };
+  const captured = classifyFailureCause(evidence, {}, fallback).context;
+  const redacted =
+    evidence === undefined || secrets.length === 0
+      ? evidence
+      : sanitizeDiagnostic(evidence, secrets);
+  const classified = classifyFailureCause(redacted, outcome.providerContext, fallback);
+  return {
+    ...classified,
+    context: {
+      ...classified.context,
+      ...(classified.context.status === undefined && captured.status !== undefined
+        ? { status: captured.status }
+        : {}),
+      ...(classified.context.providerCode === undefined && captured.providerCode !== undefined
+        ? { providerCode: captured.providerCode }
+        : {}),
+    },
+  };
 }
 
 export function completeReviewRpc(outcome: ReviewRpcOutcome): string {
