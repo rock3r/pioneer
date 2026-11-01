@@ -75,6 +75,11 @@ export function classifyReviewFailure(
 ): ClassifiedFailureCause {
   const secrets = outcome.sensitiveValues ?? [];
   const captured = classifyFailureCause(evidence, {}, fallback).context;
+  const capturedCode =
+    captured.providerCode !== undefined &&
+    secrets.some((secret) => secret.length > 0 && captured.providerCode?.includes(secret))
+      ? undefined
+      : captured.providerCode;
   const redacted =
     evidence === undefined || secrets.length === 0
       ? evidence
@@ -87,8 +92,8 @@ export function classifyReviewFailure(
       ...(classified.context.status === undefined && captured.status !== undefined
         ? { status: captured.status }
         : {}),
-      ...(classified.context.providerCode === undefined && captured.providerCode !== undefined
-        ? { providerCode: captured.providerCode }
+      ...(classified.context.providerCode === undefined && capturedCode !== undefined
+        ? { providerCode: capturedCode }
         : {}),
     },
   };

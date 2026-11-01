@@ -88,6 +88,27 @@ describe("review RPC completion", () => {
     expect(message).not.toContain("q".repeat(40));
   });
 
+  it("does not restore a provider code that is itself a caller secret", () => {
+    let message = "";
+    try {
+      completeReviewRpc({
+        completed: true,
+        report: "",
+        exitCode: 0,
+        signal: null,
+        eventTypes: ["agent_settled"],
+        diagnostics: ["assistant stopReason=error: provider failed code=confidential_acquisition"],
+        stderr: "",
+        sensitiveValues: ["confidential_acquisition"],
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).not.toContain("code=confidential_acquisition");
+    expect(message).not.toContain("confidential_acquisition");
+  });
+
   it("names a missing report as incomplete rather than a successful review", () => {
     expect(() =>
       completeReviewRpc({
