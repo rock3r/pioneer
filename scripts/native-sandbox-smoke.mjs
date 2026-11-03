@@ -400,7 +400,9 @@ try {
 const { spawnSync } = require("child_process");
 const net = require("net");
 const port = Number(process.argv[1]);
-const publicResult = spawnSync("/usr/bin/curl", ["-fsS", "--max-time", "15", "https://example.com/"], { env: process.env });
+// github.com: CI runners always reach it, and its chain ends at a long-standing root that every
+// CA bundle holds. example.com moved to an SSL.com 2022 root that the macOS runner bundle rejects.
+const publicResult = spawnSync("/usr/bin/curl", ["-fsS", "--max-time", "15", "https://github.com/"], { env: process.env });
 const result = { publicStatus: publicResult.status, publicStderr: publicResult.stderr.toString("utf8").slice(-500), directConnected: false };
 const socket = net.connect({ host: "127.0.0.1", port });
 const timer = setTimeout(() => { socket.destroy(); process.stdout.write(JSON.stringify(result)); }, 1500);
