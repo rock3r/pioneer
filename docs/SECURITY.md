@@ -27,6 +27,7 @@ For reviews:
 - the source and repeated `--allow-read` grants are read-only;
 - the private native Pi session attempt directory is a separate controller-created writable path; prior attempts and the archive parent are never granted to the actor;
 - the private scratch directory and repeated `--allow-write` grants are writable;
+- `--source`, `--pi-home`, `--allow-read`, and `--allow-write` grants refuse exact broad runtime roots such as `/`, `/tmp`, `/run`, `/etc`, and the caller's home; writable grants also refuse protected-system roots and their descendants, the same tables evals use;
 - The controller owns each create-only report target, including `--report`. It must be absolute, absent, and outside every actor-visible grant.
 - every review work log is controller-owned, create-only, and never granted to the actor; an explicit `--work-log` target must be absolute, absent, free of control characters, and outside every actor-visible grant;
 - On macOS and Linux, output ancestors must belong to the caller or root. This includes ancestors of the nearest existing folder when Pioneer creates descendants.
@@ -102,7 +103,7 @@ The actor run directory is the only persistent writable eval tree. Work logs and
 
 Run directories and caller runtime reads must be narrow, existing canonical paths without overlap. The selected Pi home must stay outside all actor grants. Pioneer omits redundant read-only executable grants already covered by the writable run tree. Validated Pi package roots must not overlap that tree in either direction.
 
-Before sandbox construction, Pioneer rejects writable protected-system roots and descendants. It also rejects broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and canonical aliases. Required narrow read-only system runtimes and disposable temporary descendants remain available.
+Before sandbox construction, Pioneer rejects writable protected-system roots and descendants. It also rejects broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and canonical aliases. Required narrow read-only system runtimes and disposable temporary descendants remain available. Strict descendants of the caller's home stay allowed even when the home itself sits under a protected root; the home itself stays broad.
 
 Preparation canonicalizes the output parent and requires it to stay outside the source skill. It revalidates the created destination before writing descendants. Actor-visible eval trees cannot contain symlinks.
 

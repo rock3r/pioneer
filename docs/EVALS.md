@@ -133,7 +133,7 @@ Each eval has independent baseline and with-skill directories. Only with-skill r
 
 Writable `--run-dir` and caller-supplied read-only `--runtime-read` grants must be narrow and non-overlapping. The real Pi home must stay outside every actor grant. Pioneer omits controller-derived executable grants already covered by the run directory.
 
-Pioneer rejects writable protected-system roots and descendants. It also rejects broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and canonical platform aliases. Narrow read-only system runtimes and disposable temporary descendants remain supported.
+Pioneer rejects writable protected-system roots and descendants. It also rejects broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and canonical platform aliases. Narrow read-only system runtimes and disposable temporary descendants remain supported. Strict descendants of the caller's home stay allowed even when the home sits under a protected root; the home itself stays broad.
 
 The runner snapshots `PI_CODING_AGENT_DIR` or `~/.pi/agent` into a canonical private temporary tree outside the persistent eval run. The root allowlist is `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`. The actor gets a writable isolated `agentDir`, allowing Pi 0.84.x to create `auth.json.lock` and `settings.json.lock`. Home/tmp scratch is separate, writable, and temporary.
 

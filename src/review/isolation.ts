@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { access, lstat, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { isBroadRuntimePath, isBroadWritablePath } from "../eval-run/isolation.js";
 import type { SandboxPolicy } from "../sandbox/launcher.js";
 import {
   assertStableDirectoryChain,
@@ -91,7 +92,11 @@ export async function assertDistinctExistingReviewOutputs(
   }
 }
 
-async function canonicalGrant(candidate: string): Promise<string> {
+async function canonicalGrant(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+  writable = false,
+): Promise<string> {
   const absolute = path.resolve(candidate);
   let stats: Awaited<ReturnType<typeof lstat>>;
   try {
@@ -111,13 +116,27 @@ async function canonicalGrant(candidate: string): Promise<string> {
   if (canonical === path.parse(canonical).root || canonical === os.homedir()) {
     throw new Error(`Refusing broad review path grant: ${canonical}`);
   }
+  // Exact system roots such as /tmp, /run, /etc, /home and /var would expose
+  // other runs' controller scratch (pir-*, pir-bridge-*: copied Pi auth and
+  // proxy sockets), credential sockets or other users' homes. Evals already
+  // refuse these; review grants use the same tables.
+  if (isBroadRuntimePath(canonical, platform)) {
+    throw new Error(`Refusing broad review path grant: ${canonical}`);
+  }
+  if (writable && isBroadWritablePath(canonical, platform)) {
+    throw new Error(`Refusing broad writable review path grant: ${canonical}`);
+  }
   return canonical;
 }
 
-async function canonicalList(paths: readonly string[]): Promise<string[]> {
+async function canonicalList(
+  paths: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+  writable = false,
+): Promise<string[]> {
   const values: string[] = [];
   for (const candidate of paths) {
-    const canonical = await canonicalGrant(candidate);
+    const canonical = await canonicalGrant(candidate, platform, writable);
     if (!values.includes(canonical)) values.push(canonical);
   }
   return values;
@@ -229,11 +248,11 @@ async function validateReviewPathsInternal(
   platform: NodeJS.Platform,
   prospectiveControllerDirectories: readonly string[] = [],
 ): Promise<ValidatedReviewPaths> {
-  const sourceDir = await canonicalGrant(spec.sourceDir);
+  const sourceDir = await canonicalGrant(spec.sourceDir, platform);
   const piHomeSource =
-    spec.piHomeSource === undefined ? undefined : await canonicalGrant(spec.piHomeSource);
-  const allowReadPaths = await canonicalList(spec.allowReadPaths ?? []);
-  const allowWritePaths = await canonicalList(spec.allowWritePaths ?? []);
+    spec.piHomeSource === undefined ? undefined : await canonicalGrant(spec.piHomeSource, platform);
+  const allowReadPaths = await canonicalList(spec.allowReadPaths ?? [], platform);
+  const allowWritePaths = await canonicalList(spec.allowWritePaths ?? [], platform, true);
   const reportPath =
     spec.reportPath === undefined
       ? undefined

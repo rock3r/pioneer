@@ -73,8 +73,8 @@ pioneer review --resume TOKEN
 | `--thinking LEVEL` | model/Pi default | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
 | `--pi-home DIR` | `PI_CODING_AGENT_DIR` or `~/.pi/agent` | Source Pi agent directory to copy into the run |
 | `--pi-home-include RELATIVE_PATH` | none | Review-only, repeatable exact path relative to the selected Pi home; may select otherwise skipped content but not hard exclusions |
-| `--allow-read DIR` | none | Additional read-only directory; repeatable |
-| `--allow-write DIR` | none | Additional writable directory; repeatable and forbidden from overlapping read grants |
+| `--allow-read DIR` | none | Additional read-only directory; repeatable; exact broad system roots such as `/tmp` are refused |
+| `--allow-write DIR` | none | Additional writable directory; repeatable, forbidden from overlapping read grants, and refused for broad or protected-system roots |
 | `--git TARGET` | inferred for Git-target prompts | Repeatable controller Git inspection target: `working-tree`, `staged`, `untracked`, `commit:REF`, or `range:FROM...TO` / `range:FROM..TO`. Incompatible with `--resume`. |
 | `--report FILE` | private default | Absolute controller-owned output path for the final report; must not exist, must not be visible to the review actor, and on macOS and Linux every folder above it must be owned by you or root and not writable by other users unless sticky |
 | `--work-log FILE` | platform log directory | Absolute controller-owned create-only JSONL path; must not exist, contain control characters, or be visible to the review actor |
@@ -318,7 +318,7 @@ These diagnostics exclude the actor environment, Pi configuration, and authentic
 
 Pi actors get fast-start flags with skills disabled. Pi 1.0.4+ also gets `--no-mcp` after readiness, including deferred extension readiness and `--pi-home`, and after extension staging rebuilds the command. Custom non-Pi actors stay unchanged, including arguments such as `--tools` and `--no-extensions`.
 
-Writable run directories and read-only runtime paths must be narrow and non-overlapping. After canonicalization, Pioneer rejects writable protected-system roots and descendants, plus broad filesystem, sensitive-configuration, temporary, variable-data, and home roots. Narrow read-only system runtimes and disposable temporary descendants remain supported. Networking is public-only unless `--allow-loopback` opens exact host ports.
+Writable run directories and read-only runtime paths must be narrow and non-overlapping. After canonicalization, Pioneer rejects writable protected-system roots and descendants, plus broad filesystem, sensitive-configuration, temporary, variable-data, and home roots. Strict descendants of the caller's home stay allowed under protected roots. Narrow read-only system runtimes and disposable temporary descendants remain supported. Networking is public-only unless `--allow-loopback` opens exact host ports.
 
 Repeat `--allow-loopback HOST:PORT` to reach local apps through exact host loopback ports. `HOST` must be `127.0.0.1` or `localhost`. At most 16 distinct ports are allowed. Ranges, wildcards, other addresses, and IPv6 fail with `[EVAL_LOOPBACK_TARGET_INVALID]` before Pioneer reads the run directory.
 
