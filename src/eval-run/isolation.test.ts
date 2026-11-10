@@ -1,4 +1,5 @@
 import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -10,6 +11,7 @@ import {
   evalIsolatedPiHomeWritablePaths,
   findValidatedPiPackageRoot,
   isBroadExtensionParent,
+  isBroadWritablePath,
   isPublicInternetAddress,
   isSensitiveSystemExtensionParent,
   isTrustedPiInstallation,
@@ -878,4 +880,18 @@ describe("public internet classification", () => {
       expect(isPublicInternetAddress(address)).toBe(true);
     },
   );
+});
+
+describe.skipIf(process.platform === "win32")("home descendants under protected roots", () => {
+  it("allows strict descendants of the caller's home but keeps the home itself broad", () => {
+    const home = path.resolve(os.homedir());
+    const output = path.join(home, "pioneer-eval-output");
+    expect(isBroadWritablePath(output, process.platform)).toBe(false);
+    expect(isBroadWritablePath(home, process.platform)).toBe(true);
+  });
+
+  it("still protects system paths outside the caller's home", () => {
+    expect(isBroadWritablePath("/usr/lib/pioneer-eval", "linux")).toBe(true);
+    expect(isBroadWritablePath("/etc/pioneer-eval", "linux")).toBe(true);
+  });
 });

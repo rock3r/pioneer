@@ -389,3 +389,39 @@ describe("review sandbox policy", () => {
     ).toThrow(/unavailable on Windows/i);
   });
 });
+
+describe.skipIf(process.platform === "win32")("broad review path grants", () => {
+  it("refuses exact broad system roots as read grants", async () => {
+    const root = await createTempDir("pi-review-paths-");
+    const source = path.join(root, "source");
+    await mkdir(source);
+    // /tmp and /etc are symlinks on macOS; the real directories there are the
+    // /private/* aliases from the broad-runtime tables.
+    const broadRoots =
+      process.platform === "darwin" ? ["/private/tmp", "/private/etc"] : ["/tmp", "/etc"];
+    for (const broad of broadRoots) {
+      await expect(
+        validateReviewPaths({ sourceDir: source, allowReadPaths: [broad] }),
+      ).rejects.toThrow(/broad review path grant/i);
+    }
+  });
+
+  it("refuses writable grants below protected system roots", async () => {
+    const root = await createTempDir("pi-review-paths-");
+    const source = path.join(root, "source");
+    await mkdir(source);
+    await expect(
+      validateReviewPaths({ sourceDir: source, allowWritePaths: ["/usr/bin"] }),
+    ).rejects.toThrow(/broad writable review path grant/i);
+  });
+
+  it("still accepts subdirectories of broad roots", async () => {
+    const root = await createTempDir("pi-review-paths-");
+    const source = path.join(root, "source");
+    const reference = path.join(root, "reference");
+    await Promise.all([source, reference].map((entry) => mkdir(entry)));
+    await expect(
+      validateReviewPaths({ sourceDir: source, allowReadPaths: [reference] }),
+    ).resolves.toMatchObject({ allowReadPaths: [await realpath(reference)] });
+  });
+});

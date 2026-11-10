@@ -903,6 +903,16 @@ export function isBroadWritablePath(
   ) {
     return false;
   }
+  // Strict descendants of the caller's home are never protected system paths,
+  // even when the home itself lives under a protected root (e.g. gLinux:
+  // /usr/local/google/home/<user> under /usr). The home itself stays broad via
+  // isBroadRuntimePath above.
+  if (
+    platform !== "win32" &&
+    (isWithin(path.resolve(os.homedir()), candidate) || isWithin(CANONICAL_HOME_DIR, candidate))
+  ) {
+    return false;
+  }
   return (
     BROAD_WRITABLE_POSIX_PATHS.has(candidate) ||
     (platform !== "win32" &&
