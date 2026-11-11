@@ -179,6 +179,8 @@ interface ResolvedLink {
 
 class GitDirectoryWalker {
   private readonly visited = new Set<string>();
+  /** Git-reported directories whose direct `hooks` child is exempt. */
+  private readonly hookParents = new Set<string>();
   private readonly links: AllowedGitSymlink[] = [];
   private readonly layout: string[] = [];
   private entries = 0;
@@ -186,6 +188,7 @@ class GitDirectoryWalker {
   constructor(private readonly options: GitDirectoryGuardOptions) {}
 
   async walkRoots(roots: readonly string[]): Promise<void> {
+    for (const root of roots) this.hookParents.add(root);
     for (const root of roots) await this.walk(root);
   }
 
@@ -226,9 +229,9 @@ class GitDirectoryWalker {
       if (code === "ENOENT" || code === "ENOTDIR") return;
       throw invalid(`Pioneer could not inspect Git metadata directory ${directory} (${code})`);
     }
-    const names = new Set(entries.map((entry) => entry.name));
-    const gitDirectoryLike =
-      names.has("HEAD") && (names.has("objects") || names.has("commondir")) && names.has("refs");
+    // Only the Git and common directories that Git reported are trusted as Git
+    // directories; sibling names inside the repository are attacker-controlled.
+    const hookParent = this.hookParents.has(directory);
     for (const entry of entries) {
       this.entries += 1;
       if (this.entries > (this.options.maxEntries ?? MAX_GIT_DIRECTORY_ENTRIES)) {
@@ -237,7 +240,7 @@ class GitDirectoryWalker {
         );
       }
       // Hooks never run during collection (core.hooksPath points at the null device).
-      if (gitDirectoryLike && entry.name === "hooks") continue;
+      if (hookParent && entry.name === "hooks") continue;
       const full = path.join(directory, entry.name);
       if (entry.isSymbolicLink()) {
         const resolved = await this.resolve(full);

@@ -372,6 +372,27 @@ describe("Git directory symbolic links", () => {
     expect(collected?.text).toContain("hooked");
   });
 
+  it("does not exempt a hooks entry inside a directory that only looks like a Git directory", async (ctx) => {
+    const run = await gitOrSkip(ctx);
+    if (run === undefined) return;
+    const foreign = await commitRepo(run, "pioneer-gsl-foreign-", CANARY);
+    const foreignHead = await run(foreign, ["rev-parse", "HEAD"]);
+    const source = await commitRepo(run, "pioneer-gsl-fakegit-", "base");
+    const heads = path.join(source, ".git", "refs", "heads");
+    // Decoy names make refs/heads look like a Git directory to a name-only check.
+    await writeFile(path.join(heads, "HEAD"), `${await run(source, ["rev-parse", "HEAD"])}\n`);
+    await mkdir(path.join(heads, "objects"));
+    await mkdir(path.join(heads, "refs"));
+    const outside = path.join(await tempDir("pioneer-gsl-outside-"), "ref");
+    await writeFile(outside, `${foreignHead}\n`);
+    const link = path.join(heads, "hooks");
+    await symlink(outside, link);
+
+    const failure = await collectionFailure(source, { kind: "commit", ref: "refs/heads/hooks" });
+    expect(failure.message).toContain(ESCAPE);
+    expect(failure.message).toContain(link);
+  });
+
   describe("Android repo layout", () => {
     async function repoLayout(run: RunGit): Promise<{ top: string; project: string }> {
       const top = await tempDir("pioneer-gsl-aosp-");
