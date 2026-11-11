@@ -83,6 +83,7 @@ Normal commands start an npm version check in the background. The check never de
    Record later stages in real time. macOS and Linux files use mode `0600`; Windows uses the per-user application-data ACL.
 3. Collect bounded read-only Git context for explicit `--git` targets and Git-target prompts. Require `--source` to be the repository root.
    Use canonical Git, argument arrays, and an allowlist. Disable hooks, pager, editor, external-diff, credential helpers, LFS filters, and unsafe protocols.
+   Walk the Git and common directories without following links. Reject any link whose hop chain leaves the repository or an operator-approved `--allow-git-symlink-root` / `--allow-android-repo-root` directory. Pin Git to the validated directories, then re-walk and discard the context if the layout changed.
    Add validated refs and output to the prompt as untrusted text. Reject GitHub pull-request targets and request an explicit local `--git` value.
    Keep collected targets in the immutable resume scope.
 4. Resolve Pi through the controller's selected `PATH` and check `pi --version`. Reject versions below the minimum or malformed versions before model discovery. Warn on versions above the tested maximum.

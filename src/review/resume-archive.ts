@@ -37,6 +37,8 @@ export interface ImmutableReviewScope {
   readonly piVersion: string;
   readonly extensionDigest?: string;
   readonly gitTargets?: readonly string[];
+  readonly gitSymlinkRoots?: readonly string[];
+  readonly androidRepoRoots?: readonly string[];
 }
 
 export interface ReviewResumeArchive {
@@ -184,6 +186,8 @@ export function immutableReviewScope(
     piVersion: scope.piVersion,
     ...(scope.extensionDigest === undefined ? {} : { extensionDigest: scope.extensionDigest }),
     ...(scope.gitTargets === undefined ? {} : { gitTargets: scope.gitTargets }),
+    ...(scope.gitSymlinkRoots === undefined ? {} : { gitSymlinkRoots: scope.gitSymlinkRoots }),
+    ...(scope.androidRepoRoots === undefined ? {} : { androidRepoRoots: scope.androidRepoRoots }),
   };
 }
 
@@ -1215,7 +1219,9 @@ async function readReviewResumeArchiveContents(
     !optionalStringList(rawScope.piHomeIncludes) ||
     !optionalStringList(rawScope.allowReadPaths) ||
     !optionalStringList(rawScope.allowWritePaths) ||
-    !optionalStringList(rawScope.gitTargets)
+    !optionalStringList(rawScope.gitTargets) ||
+    !optionalStringList(rawScope.gitSymlinkRoots) ||
+    !optionalStringList(rawScope.androidRepoRoots)
   ) {
     throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume scope is invalid");
   }
@@ -1290,6 +1296,12 @@ async function readReviewResumeArchiveContents(
       ? { extensionDigest: rawScope.extensionDigest }
       : {}),
     ...(Array.isArray(rawScope.gitTargets) ? { gitTargets: rawScope.gitTargets as string[] } : {}),
+    ...(Array.isArray(rawScope.gitSymlinkRoots)
+      ? { gitSymlinkRoots: rawScope.gitSymlinkRoots as string[] }
+      : {}),
+    ...(Array.isArray(rawScope.androidRepoRoots)
+      ? { androidRepoRoots: rawScope.androidRepoRoots as string[] }
+      : {}),
   };
   return {
     archive,

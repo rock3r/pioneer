@@ -1,3 +1,4 @@
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseReviewCliArgs } from "./review-cli-args.js";
 
@@ -33,6 +34,22 @@ describe("review CLI arguments", () => {
       parseReviewCliArgs(["--git", "working-tree", "--git", "commit:HEAD", "--git=staged"]),
     ).toMatchObject({
       gitTargets: ["working-tree", "commit:HEAD", "staged"],
+    });
+  });
+
+  it("parses repeated Git symbolic-link root opt-ins as absolute paths", () => {
+    expect(
+      parseReviewCliArgs([
+        "--allow-git-symlink-root",
+        "/store/a",
+        "--allow-git-symlink-root=relative/b",
+        "--allow-android-repo-root",
+        "/aosp/.repo",
+      ]),
+    ).toMatchObject({
+      gitSymlinkRoots: ["/store/a", path.resolve("relative/b")],
+      androidRepoRoots: ["/aosp/.repo"],
+      remaining: [],
     });
   });
 

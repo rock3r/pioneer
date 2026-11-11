@@ -156,6 +156,8 @@ async function main(): Promise<void> {
       noResume,
       resumeToken,
       gitTargets,
+      gitSymlinkRoots,
+      androidRepoRoots,
       allowUnsandboxedWindows,
     } = parsed;
     const timeoutMs = timeoutText === undefined ? undefined : Number(timeoutText);
@@ -174,6 +176,8 @@ async function main(): Promise<void> {
         allowReadPaths.length > 0 ||
         allowWritePaths.length > 0 ||
         gitTargets.length > 0 ||
+        gitSymlinkRoots.length > 0 ||
+        androidRepoRoots.length > 0 ||
         networkText !== "full" ||
         noResume ||
         parsed.noExtensions ||
@@ -243,6 +247,8 @@ async function main(): Promise<void> {
       ...(maxRpcOutputBytes === undefined ? {} : { maxRpcOutputBytes }),
       ...(noResume ? { resumable: false } : {}),
       ...(gitTargets.length === 0 ? {} : { gitTargets }),
+      ...(gitSymlinkRoots.length === 0 ? {} : { gitSymlinkRoots }),
+      ...(androidRepoRoots.length === 0 ? {} : { androidRepoRoots }),
       onReportReady: (reportFile) => process.stderr.write(`[PIONEER_REPORT] ${reportFile}\n`),
     });
     if (result.warning) process.stderr.write(`WARNING: ${result.warning}\n`);

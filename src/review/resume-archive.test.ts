@@ -578,6 +578,8 @@ describe("recoverable review archive", () => {
         network: "none",
         piVersion: "0.84.2",
         gitTargets: ["working-tree", "commit:HEAD"],
+        gitSymlinkRoots: ["/objects-store"],
+        androidRepoRoots: ["/aosp/.repo"],
       },
       "550e8400-e29b-41d4-a716-446655440000",
     );
@@ -597,8 +599,14 @@ describe("recoverable review archive", () => {
         network: "none",
         piVersion: "0.84.2",
         gitTargets: ["working-tree", "commit:HEAD"],
+        gitSymlinkRoots: ["/objects-store"],
+        androidRepoRoots: ["/aosp/.repo"],
       }),
     );
+    expect(manifest.scope).toMatchObject({
+      gitSymlinkRoots: ["/objects-store"],
+      androidRepoRoots: ["/aosp/.repo"],
+    });
     expect(JSON.stringify(manifest)).not.toContain("private prompt");
     expect((await stat(archive.archiveDir)).mode & 0o777).toBe(
       process.platform === "win32" ? (await stat(archive.archiveDir)).mode & 0o777 : 0o700,
@@ -1361,6 +1369,8 @@ describe("recoverable review archive", () => {
       ["allowReadPaths", ["/reference", false]],
       ["allowWritePaths", "/output"],
       ["gitTargets", ["working-tree", 42]],
+      ["gitSymlinkRoots", "/objects-store"],
+      ["androidRepoRoots", [false]],
     ] as const) {
       await writeFile(
         manifestPath,

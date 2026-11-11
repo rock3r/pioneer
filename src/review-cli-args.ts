@@ -20,6 +20,8 @@ export interface ParsedReviewCliArgs {
   readonly noExtensions: boolean;
   readonly resumeToken: string | undefined;
   readonly gitTargets: readonly string[];
+  readonly gitSymlinkRoots: readonly string[];
+  readonly androidRepoRoots: readonly string[];
   readonly remaining: readonly string[];
 }
 
@@ -83,6 +85,8 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
     noExtensions,
     resumeToken: takeOption(args, "--resume"),
     gitTargets: takeRepeated(args, "--git", false),
+    gitSymlinkRoots: takeRepeated(args, "--allow-git-symlink-root", true),
+    androidRepoRoots: takeRepeated(args, "--allow-android-repo-root", true),
     remaining: args,
   };
 }

@@ -17,6 +17,8 @@ import {
   combineWarnings,
   createReviewScratchDirectory,
   finalizeReviewWorkLog,
+  gitDirectoryAuditForWorkLog,
+  gitSymlinkRootRequests,
   markReviewCleanupFailure,
   pruneValidatedReviewResumeArchives,
   type ReviewRequest,
@@ -556,6 +558,50 @@ describe("review RPC runner", () => {
       "/checkout/token=[REDACTED]",
     );
     expect(sourcePathForWorkLog(`/${"x".repeat(600)}`, "Review source")).toHaveLength(500);
+  });
+
+  it("maps Git symbolic-link root opt-ins to typed requests", () => {
+    expect(
+      gitSymlinkRootRequests({
+        gitSymlinkRoots: ["/store"],
+        androidRepoRoots: ["/aosp/.repo"],
+      }),
+    ).toEqual([
+      { kind: "symlink-root", path: "/store" },
+      { kind: "android-repo", path: "/aosp/.repo" },
+    ]);
+    expect(gitSymlinkRootRequests({})).toEqual([]);
+  });
+
+  it("records approved Git symlink roots and allowed links with redaction", () => {
+    expect(
+      gitDirectoryAuditForWorkLog(
+        {
+          approvedRoots: [{ kind: "android-repo", path: "/aosp/token=private/.repo" }],
+          allowedLinks: [
+            {
+              link: "/aosp/X/.git/objects",
+              target: "/aosp/.repo/project-objects/X.git/objects",
+              hops: 1,
+              zone: "/aosp/.repo",
+            },
+          ],
+          allowedLinksOmitted: 3,
+        },
+        "Review source",
+      ),
+    ).toEqual({
+      gitSymlinkRoots: [{ kind: "android-repo", path: "/aosp/token=[REDACTED]" }],
+      gitAllowedSymlinks: [
+        {
+          link: "/aosp/X/.git/objects",
+          target: "/aosp/.repo/project-objects/X.git/objects",
+          hops: 1,
+          zone: "/aosp/.repo",
+        },
+      ],
+      gitAllowedSymlinksOmitted: 3,
+    });
   });
 
   it("does not write the prompt after startup logging fails", () => {

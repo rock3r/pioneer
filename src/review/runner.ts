@@ -44,6 +44,11 @@ import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-p
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { isThinkingLevel, type ThinkingLevel } from "../thinking-level.js";
 import type { FailureCauseContext } from "./failure-cause.js";
+import {
+  type GitDirectoryAudit,
+  type GitSymlinkRootRequest,
+  validateGitSymlinkRoots,
+} from "./git-dir-guard.js";
 import { collectGitContext, resolveReviewGitTargets, serializeGitTarget } from "./git-inspect.js";
 import {
   assertDistinctExistingReviewOutputs,
@@ -110,6 +115,15 @@ export interface ReviewRequest {
   readonly resumable?: boolean;
   readonly onReportReady?: (path: string) => void;
   readonly gitTargets?: readonly string[];
+  /**
+   * Directories outside the repository that Git metadata symbolic links may
+   * resolve under during controller Git collection. Each must pass the
+   * `--allow-read` broad-path checks and must not be or contain the home
+   * directory or filesystem root.
+   */
+  readonly gitSymlinkRoots?: readonly string[];
+  /** `.repo` directories of Android `repo` checkouts, approved the same way. */
+  readonly androidRepoRoots?: readonly string[];
   /**
    * Directory holding this run's controller-only scratch. Defaults to the platform's short
    * shared temporary directory, which keeps the Linux proxy bridge socket inside `sun_path`.
@@ -422,7 +436,9 @@ function assertImmutableResumeScope(
     model !== scope.model ||
     thinking !== scope.thinking ||
     network !== scope.network ||
-    !sameStringList(scope.gitTargets, request.gitTargets ?? [])
+    !sameStringList(scope.gitTargets, request.gitTargets ?? []) ||
+    !sameStringList(scope.gitSymlinkRoots, request.gitSymlinkRoots ?? []) ||
+    !sameStringList(scope.androidRepoRoots, request.androidRepoRoots ?? [])
   ) {
     throw new Error(
       "[REVIEW_RESUME_SCOPE_CHANGED] Stored review scope no longer resolves to the same canonical paths or policy",
@@ -494,6 +510,42 @@ export function readinessMetadataForWorkLog(
 
 export function sourcePathForWorkLog(sourcePath: string, prompt: string): string {
   return sanitizeWorkLogDiagnostic(sourcePath, [prompt]);
+}
+
+export function gitSymlinkRootRequests(
+  request: Pick<ReviewRequest, "gitSymlinkRoots" | "androidRepoRoots">,
+): GitSymlinkRootRequest[] {
+  return [
+    ...(request.gitSymlinkRoots ?? []).map((root) => ({
+      kind: "symlink-root" as const,
+      path: root,
+    })),
+    ...(request.androidRepoRoots ?? []).map((root) => ({
+      kind: "android-repo" as const,
+      path: root,
+    })),
+  ];
+}
+
+/** Approved roots and allowed Git metadata links, redacted for the work log. */
+export function gitDirectoryAuditForWorkLog(
+  audit: GitDirectoryAudit,
+  prompt: string,
+): Record<string, unknown> {
+  const clean = (value: string): string => sanitizeWorkLogDiagnostic(value, [prompt]);
+  return {
+    gitSymlinkRoots: audit.approvedRoots.map((root) => ({
+      kind: root.kind,
+      path: clean(root.path),
+    })),
+    gitAllowedSymlinks: audit.allowedLinks.map((link) => ({
+      link: clean(link.link),
+      target: clean(link.target),
+      hops: link.hops,
+      zone: link.zone === "repository" ? link.zone : clean(link.zone),
+    })),
+    gitAllowedSymlinksOmitted: audit.allowedLinksOmitted,
+  };
 }
 
 export function sendReviewPrompt(
@@ -1633,14 +1685,21 @@ async function runReviewInternal(
       requiresGitInspection(request.prompt),
     );
     let gitContextText: string | undefined;
+    // Validate opt-ins even without Git targets so a refused root always fails closed.
+    const approvedSymlinkRoots = await validateGitSymlinkRoots(gitSymlinkRootRequests(request));
     if (gitTargets.length > 0) {
       recordReviewWorkLog(workLog, "stage_started", { stage: "git_inspect" });
-      const collected = await collectGitContext(paths.sourceDir, gitTargets);
+      const collected = await collectGitContext(paths.sourceDir, gitTargets, {
+        approvedSymlinkRoots,
+      });
       gitContextText = collected?.text;
       recordReviewWorkLog(workLog, "stage_completed", {
         stage: "git_inspect",
         gitTargets: gitTargets.map((target) => target.kind),
         contextBytes: Buffer.byteLength(gitContextText ?? ""),
+        ...(collected === undefined
+          ? {}
+          : gitDirectoryAuditForWorkLog(collected.gitDirectoryAudit, request.prompt)),
       });
     }
 
@@ -1777,6 +1836,12 @@ async function runReviewInternal(
             piVersion: readiness.version ?? "unknown",
             extensionDigest: preparedRuntime.extensions.digest,
             ...(gitTargets.length === 0 ? {} : { gitTargets: gitTargets.map(serializeGitTarget) }),
+            ...(request.gitSymlinkRoots === undefined || request.gitSymlinkRoots.length === 0
+              ? {}
+              : { gitSymlinkRoots: request.gitSymlinkRoots }),
+            ...(request.androidRepoRoots === undefined || request.androidRepoRoots.length === 0
+              ? {}
+              : { androidRepoRoots: request.androidRepoRoots }),
           },
           undefined,
           [paths.sourceDir, ...paths.allowReadPaths, ...paths.allowWritePaths, piHomeSource],
@@ -2178,6 +2243,12 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
           : { allowWritePaths: loaded.scope.allowWritePaths }),
         network,
         ...(loaded.scope.gitTargets === undefined ? {} : { gitTargets: loaded.scope.gitTargets }),
+        ...(loaded.scope.gitSymlinkRoots === undefined
+          ? {}
+          : { gitSymlinkRoots: loaded.scope.gitSymlinkRoots }),
+        ...(loaded.scope.androidRepoRoots === undefined
+          ? {}
+          : { androidRepoRoots: loaded.scope.androidRepoRoots }),
         ...(request.reportPath === undefined ? {} : { reportPath: request.reportPath }),
         ...(request.workLogPath === undefined ? {} : { workLogPath: request.workLogPath }),
         ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
