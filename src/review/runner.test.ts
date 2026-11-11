@@ -17,8 +17,10 @@ import {
   combineWarnings,
   createReviewScratchDirectory,
   finalizeReviewWorkLog,
+  assertSameGitSymlinkRootScope,
   gitDirectoryAuditForWorkLog,
   gitSymlinkRootRequests,
+  gitSymlinkRootScope,
   markReviewCleanupFailure,
   pruneValidatedReviewResumeArchives,
   type ReviewRequest,
@@ -571,6 +573,39 @@ describe("review RPC runner", () => {
       { kind: "android-repo", path: "/aosp/.repo" },
     ]);
     expect(gitSymlinkRootRequests({})).toEqual([]);
+  });
+
+  it("stores canonical approved Git symlink roots in the resume scope", () => {
+    expect(
+      gitSymlinkRootScope([
+        { kind: "symlink-root", path: "/canonical/store" },
+        { kind: "android-repo", path: "/canonical/aosp/.repo" },
+      ]),
+    ).toEqual({
+      gitSymlinkRoots: ["/canonical/store"],
+      androidRepoRoots: ["/canonical/aosp/.repo"],
+    });
+    expect(gitSymlinkRootScope([])).toEqual({});
+  });
+
+  it("rejects resumed Git symlink roots that now resolve elsewhere", () => {
+    const stored = { gitSymlinkRoots: ["/canonical/a"], androidRepoRoots: ["/aosp/.repo"] };
+    expect(() =>
+      assertSameGitSymlinkRootScope(stored, [
+        { kind: "symlink-root", path: "/canonical/a" },
+        { kind: "android-repo", path: "/aosp/.repo" },
+      ]),
+    ).not.toThrow();
+    expect(() =>
+      assertSameGitSymlinkRootScope(stored, [
+        { kind: "symlink-root", path: "/canonical/b" },
+        { kind: "android-repo", path: "/aosp/.repo" },
+      ]),
+    ).toThrow("[REVIEW_RESUME_SCOPE_CHANGED]");
+    expect(() => assertSameGitSymlinkRootScope({}, [])).not.toThrow();
+    expect(() =>
+      assertSameGitSymlinkRootScope({}, [{ kind: "symlink-root", path: "/canonical/a" }]),
+    ).toThrow("[REVIEW_RESUME_SCOPE_CHANGED]");
   });
 
   it("records approved Git symlink roots and allowed links with redaction", () => {

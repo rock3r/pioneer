@@ -45,6 +45,7 @@ import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { isThinkingLevel, type ThinkingLevel } from "../thinking-level.js";
 import type { FailureCauseContext } from "./failure-cause.js";
 import {
+  type ApprovedGitSymlinkRoot,
   type GitDirectoryAudit,
   type GitSymlinkRootRequest,
   validateGitSymlinkRoots,
@@ -436,9 +437,7 @@ function assertImmutableResumeScope(
     model !== scope.model ||
     thinking !== scope.thinking ||
     network !== scope.network ||
-    !sameStringList(scope.gitTargets, request.gitTargets ?? []) ||
-    !sameStringList(scope.gitSymlinkRoots, request.gitSymlinkRoots ?? []) ||
-    !sameStringList(scope.androidRepoRoots, request.androidRepoRoots ?? [])
+    !sameStringList(scope.gitTargets, request.gitTargets ?? [])
   ) {
     throw new Error(
       "[REVIEW_RESUME_SCOPE_CHANGED] Stored review scope no longer resolves to the same canonical paths or policy",
@@ -525,6 +524,46 @@ export function gitSymlinkRootRequests(
       path: root,
     })),
   ];
+}
+
+/** Canonical approved roots, as stored in an immutable resume scope. */
+export function gitSymlinkRootScope(approved: readonly ApprovedGitSymlinkRoot[]): {
+  gitSymlinkRoots?: string[];
+  androidRepoRoots?: string[];
+} {
+  const symlinkRoots = approved.filter((root) => root.kind === "symlink-root");
+  const androidRoots = approved.filter((root) => root.kind === "android-repo");
+  return {
+    ...(symlinkRoots.length === 0
+      ? {}
+      : { gitSymlinkRoots: symlinkRoots.map((root) => root.path) }),
+    ...(androidRoots.length === 0
+      ? {}
+      : { androidRepoRoots: androidRoots.map((root) => root.path) }),
+  };
+}
+
+/**
+ * A resumed review must trust exactly the directories the first attempt
+ * trusted. Compare the roots' current canonical paths with the stored ones,
+ * so a retargeted symbolic-link ancestor cannot change them.
+ */
+export function assertSameGitSymlinkRootScope(
+  stored: {
+    readonly gitSymlinkRoots?: readonly string[];
+    readonly androidRepoRoots?: readonly string[];
+  },
+  approved: readonly ApprovedGitSymlinkRoot[],
+): void {
+  const current = gitSymlinkRootScope(approved);
+  if (
+    !sameStringList(stored.gitSymlinkRoots, current.gitSymlinkRoots ?? []) ||
+    !sameStringList(stored.androidRepoRoots, current.androidRepoRoots ?? [])
+  ) {
+    throw new Error(
+      "[REVIEW_RESUME_SCOPE_CHANGED] Stored Git symbolic-link roots no longer resolve to the same canonical directories",
+    );
+  }
 }
 
 /** Approved roots and allowed Git metadata links, redacted for the work log. */
@@ -1687,6 +1726,9 @@ async function runReviewInternal(
     let gitContextText: string | undefined;
     // Validate opt-ins even without Git targets so a refused root always fails closed.
     const approvedSymlinkRoots = await validateGitSymlinkRoots(gitSymlinkRootRequests(request));
+    if (resumeContext !== undefined) {
+      assertSameGitSymlinkRootScope(resumeContext.loaded.scope, approvedSymlinkRoots);
+    }
     if (gitTargets.length > 0) {
       recordReviewWorkLog(workLog, "stage_started", { stage: "git_inspect" });
       const collected = await collectGitContext(paths.sourceDir, gitTargets, {
@@ -1836,12 +1878,7 @@ async function runReviewInternal(
             piVersion: readiness.version ?? "unknown",
             extensionDigest: preparedRuntime.extensions.digest,
             ...(gitTargets.length === 0 ? {} : { gitTargets: gitTargets.map(serializeGitTarget) }),
-            ...(request.gitSymlinkRoots === undefined || request.gitSymlinkRoots.length === 0
-              ? {}
-              : { gitSymlinkRoots: request.gitSymlinkRoots }),
-            ...(request.androidRepoRoots === undefined || request.androidRepoRoots.length === 0
-              ? {}
-              : { androidRepoRoots: request.androidRepoRoots }),
+            ...gitSymlinkRootScope(approvedSymlinkRoots),
           },
           undefined,
           [paths.sourceDir, ...paths.allowReadPaths, ...paths.allowWritePaths, piHomeSource],
