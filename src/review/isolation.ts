@@ -129,6 +129,17 @@ async function canonicalGrant(
   return canonical;
 }
 
+/**
+ * Canonicalize a read-only directory with the same symbolic-link, broad-path,
+ * and home/filesystem-root refusals as `--allow-read` grants.
+ */
+export async function canonicalReviewReadGrant(
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string> {
+  return await canonicalGrant(candidate, platform, false);
+}
+
 async function canonicalList(
   paths: readonly string[],
   platform: NodeJS.Platform = process.platform,

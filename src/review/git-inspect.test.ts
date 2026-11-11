@@ -550,7 +550,7 @@ describe("real Git inspection", () => {
     await rm(decoyObjects, { recursive: true, force: true });
     await symlink(path.join(secretRoot, ".git", "objects"), decoyObjects);
     await expect(collectGitContext(decoyRoot, [{ kind: "working-tree" }])).rejects.toThrow(
-      "object directory outside the source",
+      "[REVIEW_GIT_SYMLINK_ESCAPE]",
     );
   });
 });

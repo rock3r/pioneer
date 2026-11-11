@@ -1,7 +1,8 @@
 export const REVIEW_USAGE = `Usage:
   pioneer review --source DIR --prompt TEXT [--model PROVIDER/MODEL] [--thinking LEVEL]
     [--pi-home DIR] [--pi-home-include RELATIVE_PATH]... [--allow-read DIR] [--allow-write DIR]
-    [--git TARGET]... [--report FILE] [--work-log FILE] [--network full|public]
+    [--git TARGET]... [--allow-git-symlink-root DIR]... [--allow-android-repo-root DIR]...
+    [--report FILE] [--work-log FILE] [--network full|public]
     [--timeout-ms N] [--max-rpc-output-mb N] [--no-resume] [--no-extensions] [--allow-unsandboxed-windows]
   pioneer review --resume TOKEN [--timeout-ms N] [--max-rpc-output-mb N]
     [--report FILE] [--work-log FILE] [--allow-unsandboxed-windows]
