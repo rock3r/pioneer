@@ -123,6 +123,8 @@ If the second scan fails, Pioneer removes the staged copy and stops. It leaves t
 
 The controller copies selected Pi configuration into a private run area and points `PI_CODING_AGENT_DIR` at the copy. It never mounts the real Pi home. Eval validation rejects a real home overlapping any actor grant.
 
+Pi's managed installer keeps its releases inside the agent directory. For that validated layout, reviews, deep reviews, `models`, and `doctor` grant only the current release's `install/releases/VERSION/node_modules` read-only, so Pi can load its hoisted dependencies. That directory contains npm package files, not configuration, sessions, or credentials. The rest of the agent directory, including the launcher, marker, and other releases, stays ungranted. See [Architecture](ARCHITECTURE.md#review-lifecycle).
+
 Eval copies and controller launch/probe files use a canonical private temporary tree outside the persistent actor run. The base defaults to the platform's short shared temporary directory.
 
 Review and eval callers can supply `controllerScratchBase`. Pioneer canonicalizes it and rejects missing paths, non-directories, broad/protected system locations, and paths too long for the bridge socket. Actor write grants follow this base.

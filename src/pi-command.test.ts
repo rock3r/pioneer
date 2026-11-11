@@ -1,8 +1,14 @@
-import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { createManagedPiInstall } from "../test/support/pi-managed-install.js";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
-import { resolveNpmPiCmdShim, resolvePiCommand } from "./pi-command.js";
+import {
+  piPackageReadRoot,
+  resolveManagedPiLauncher,
+  resolveNpmPiCmdShim,
+  resolvePiCommand,
+} from "./pi-command.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
@@ -125,6 +131,129 @@ describe("POSIX Pi command resolution", () => {
     } finally {
       process.chdir(previous);
     }
+  });
+});
+
+// The managed installer writes a POSIX shell launcher; Windows uses npm's pi.cmd instead.
+describe.skipIf(process.platform === "win32")("Pi managed installer launcher", () => {
+  async function managedFixture(options?: Parameters<typeof createManagedPiInstall>[1]) {
+    const home = await createTempDir("pioneer-pi-managed-");
+    const install = await createManagedPiInstall(path.join(home, ".pi", "agent"), options);
+    const userBin = path.join(home, "bin");
+    const nodeBin = path.join(home, "node", "bin");
+    await mkdir(userBin);
+    await mkdir(nodeBin, { recursive: true });
+    await writeFile(path.join(nodeBin, "node"), "", { mode: 0o755 });
+    // The installer commonly links ~/bin/pi to the launcher.
+    await symlink(path.join(install.binDir, "pi"), path.join(userBin, "pi"));
+    return { install, userBin, nodeBin, PATH: `${userBin}${path.delimiter}${nodeBin}` };
+  }
+
+  it("launches the current release's declared entry point through node", async () => {
+    const { install, nodeBin, PATH } = await managedFixture();
+
+    await expect(resolvePiCommand("pi", { PATH }, "linux")).resolves.toEqual([
+      await realpath(path.join(nodeBin, "node")),
+      await realpath(install.entryPoint),
+    ]);
+  });
+
+  it("resolves only the launcher directly under a marked managed install", async () => {
+    const { install } = await managedFixture();
+
+    await expect(resolveManagedPiLauncher(path.join(install.binDir, "pi"))).resolves.toBe(
+      await realpath(install.entryPoint),
+    );
+    await expect(resolveManagedPiLauncher(install.entryPoint)).resolves.toBeUndefined();
+  });
+
+  it("keeps the unrecognized launcher when the managed marker is missing", async () => {
+    const { install, PATH } = await managedFixture({ marker: null });
+
+    await expect(resolvePiCommand("pi", { PATH }, "linux")).resolves.toEqual([
+      await realpath(path.join(install.binDir, "pi")),
+    ]);
+  });
+
+  it("keeps the unrecognized launcher when the managed marker has another layout", async () => {
+    const { install } = await managedFixture({
+      marker: JSON.stringify({ kind: "pi-managed-install", schemaVersion: 1, layout: "other" }),
+    });
+
+    await expect(
+      resolveManagedPiLauncher(path.join(install.binDir, "pi")),
+    ).resolves.toBeUndefined();
+  });
+
+  it.each(["..", ".", "", "../../escape", "1.5.2/../1.5.2", " 1.5.2"])(
+    "rejects the unsafe current-version %j",
+    async (version) => {
+      const { install } = await managedFixture({ version });
+
+      await expect(
+        resolveManagedPiLauncher(path.join(install.binDir, "pi")),
+      ).resolves.toBeUndefined();
+    },
+  );
+
+  it("rejects a release bin that is not the package's declared entry point", async () => {
+    const { install } = await managedFixture();
+    const bin = path.join(install.releaseNodeModules, ".bin", "pi");
+    await rm(bin);
+    await writeFile(bin, "#!/usr/bin/env node\n", { mode: 0o755 });
+
+    await expect(
+      resolveManagedPiLauncher(path.join(install.binDir, "pi")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects a release bin that resolves outside its release", async () => {
+    const { install } = await managedFixture();
+    const elsewhere = await createTempDir("pioneer-pi-managed-elsewhere-");
+    const outside = await createManagedPiInstall(elsewhere);
+    const bin = path.join(install.releaseNodeModules, ".bin", "pi");
+    await rm(bin);
+    await symlink(outside.entryPoint, bin);
+
+    await expect(
+      resolveManagedPiLauncher(path.join(install.binDir, "pi")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("grants a managed release's hoisted node_modules, not only the Pi package", async () => {
+    const { install } = await managedFixture();
+
+    await expect(piPackageReadRoot(await realpath(install.packageRoot))).resolves.toBe(
+      await realpath(install.releaseNodeModules),
+    );
+  });
+
+  it("keeps a global npm Pi package scoped to its own directory", async () => {
+    const prefix = await createTempDir("pioneer-pi-npm-global-");
+    const packageRoot = path.join(
+      prefix,
+      "lib",
+      "node_modules",
+      "@earendil-works",
+      "pi-coding-agent",
+    );
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(
+      path.join(packageRoot, "package.json"),
+      JSON.stringify({ name: "@earendil-works/pi-coding-agent", bin: { pi: "dist/cli.js" } }),
+    );
+
+    await expect(piPackageReadRoot(await realpath(packageRoot))).resolves.toBe(
+      await realpath(packageRoot),
+    );
+  });
+
+  it("keeps the package scoped when the managed marker is missing", async () => {
+    const { install } = await managedFixture({ marker: null });
+
+    await expect(piPackageReadRoot(await realpath(install.packageRoot))).resolves.toBe(
+      await realpath(install.packageRoot),
+    );
   });
 });
 

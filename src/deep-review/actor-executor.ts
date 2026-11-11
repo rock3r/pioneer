@@ -6,7 +6,7 @@ import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import { resolvePublicTarget, startEgressProxy } from "../eval-run/public-egress-proxy.js";
 import { resolvePiCommand } from "../pi-command.js";
 import { cleanupReviewRuntime, prepareReviewRuntime } from "../pi-extension-discovery.js";
-import { withNoForkSandbox } from "../pi-extension-runtime.js";
+import { runtimeReadRoots, withNoForkSandbox } from "../pi-extension-runtime.js";
 import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
 import {
   extensionPackageNames,
@@ -135,7 +135,7 @@ async function launchStructuredActor(
 
     const runtimeReadPaths = [
       runtime.extensionRoot,
-      ...(runtime.extensions.runtimeRoot === undefined ? [] : [runtime.extensions.runtimeRoot]),
+      ...runtimeReadRoots(runtime.extensions),
       ...(await piRuntimePaths("pi")),
       ...(await piRuntimePaths("node")),
       ...(await macosRuntimeReadPaths(process.execPath)),

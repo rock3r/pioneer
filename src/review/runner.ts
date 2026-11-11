@@ -19,13 +19,13 @@ import {
   type startPublicEgressProxy,
 } from "../eval-run/public-egress-proxy.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
-import { resolvePiCommand } from "../pi-command.js";
+import { piPackageReadRoot, resolveManagedPiLauncher, resolvePiCommand } from "../pi-command.js";
 import {
   cleanupReviewRuntime,
   type PreparedReviewRuntime,
   prepareReviewRuntime,
 } from "../pi-extension-discovery.js";
-import { withNoForkSandbox } from "../pi-extension-runtime.js";
+import { runtimeReadRoots, withNoForkSandbox } from "../pi-extension-runtime.js";
 import { assertSameExtensionSnapshot } from "../pi-extension-snapshot.js";
 import {
   extensionPackageNames,
@@ -807,7 +807,12 @@ export async function piRuntimePaths(executable: string): Promise<string[]> {
       : ["/usr", "/bin", "/lib", "/lib64", "/etc/ssl/certs", "/etc/resolv.conf", "/etc/hosts"];
   try {
     const link = executableOnPath(executable);
-    const target = await realpath(link);
+    const linkTarget = await realpath(link);
+    // Pioneer launches Pi's managed release directly, never its installer launcher.
+    const managedTarget = isPiCommandName(executable)
+      ? await resolveManagedPiLauncher(linkTarget)
+      : undefined;
+    const target = managedTarget ?? linkTarget;
     let packageDir: string | undefined;
     let directory = path.dirname(target);
     while (directory !== path.dirname(directory)) {
@@ -825,9 +830,14 @@ export async function piRuntimePaths(executable: string): Promise<string[]> {
       isPiCommandName(executable) &&
       (await declaredPiExecutable(packageDir, target))
     ) {
-      paths.push(packageDir);
+      paths.push(await piPackageReadRoot(packageDir));
     } else paths.push(path.dirname(target));
-    if (existsSync(link) && !(await lstat(link)).isSymbolicLink() && link !== target) {
+    if (
+      managedTarget === undefined &&
+      existsSync(link) &&
+      !(await lstat(link)).isSymbolicLink() &&
+      link !== target
+    ) {
       const relative = packageDir === undefined ? "" : path.relative(packageDir, link);
       const insidePackage =
         relative === "" ||
@@ -1365,6 +1375,15 @@ export async function runReviewRpc(
       const text = chunk.toString("utf8");
       stderr = (stderr + text).slice(-64 * 1024);
       acceptStderrLines(text);
+    });
+    // Pi can exit before reading its prompt, for example when its modules fail to load.
+    // The write then fails with EPIPE. Handle it here so the close handler reports Pi's
+    // exit and stderr instead of the stream error escaping unhandled.
+    child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+      recordWorkLog("pi_stdin_closed", {
+        ...(typeof error.code === "string" ? { code: error.code } : {}),
+      });
+      if (!childExited) terminate(new Error("Pi closed its RPC input before the review completed"));
     });
     child.once("error", (error) => {
       recordWorkLog("pi_process_error", {
@@ -2019,9 +2038,7 @@ async function runReviewInternal(
           runtimeReadPaths: [
             ...runtimeReadPaths,
             preparedRuntime.extensionRoot,
-            ...(preparedRuntime.extensions.runtimeRoot === undefined
-              ? []
-              : [preparedRuntime.extensions.runtimeRoot]),
+            ...runtimeReadRoots(preparedRuntime.extensions),
           ],
           network,
           ...(resumeArchive === undefined ? {} : { sessionDir: resumeArchive.activeAttemptDir }),

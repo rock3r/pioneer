@@ -14,6 +14,7 @@ import type { PiLaunchCommand } from "./pi-command.js";
 import {
   type PreparedExtensions,
   preparePiExtensions,
+  runtimeReadRoots,
   withNoForkSandbox,
 } from "./pi-extension-runtime.js";
 import { extensionPathsWithCapabilities } from "./pi-extension-snapshot.js";
@@ -171,10 +172,9 @@ export async function runPreparedPiCommand(
         ...(runtime.capabilityExtensions ?? []).filter(
           (entry) =>
             !pathContains(runtime.extensionRoot, entry) &&
-            (runtime.extensions.runtimeRoot === undefined ||
-              !pathContains(runtime.extensions.runtimeRoot, entry)),
+            !runtimeReadRoots(runtime.extensions).some((root) => pathContains(root, entry)),
         ),
-        ...(runtime.extensions.runtimeRoot === undefined ? [] : [runtime.extensions.runtimeRoot]),
+        ...runtimeReadRoots(runtime.extensions),
         ...(await piRuntimePaths("pi")),
         ...(await piRuntimePaths("node")),
         ...(await macosRuntimeReadPaths(process.execPath)),

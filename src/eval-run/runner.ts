@@ -27,7 +27,7 @@ import {
   snapshotOAuthProviders,
 } from "../pi-auth-runtime.js";
 import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
-import { preparePiExtensions } from "../pi-extension-runtime.js";
+import { preparePiExtensions, runtimeReadRoots } from "../pi-extension-runtime.js";
 import {
   extensionPathsWithCapabilities,
   mirroredExtensionStagePath,
@@ -1099,10 +1099,7 @@ async function stageEvalPiExtensions(
           };
     return {
       ...(authBroker === undefined ? {} : { authBroker }),
-      readPaths: [
-        extensionRoot,
-        ...(extensions.runtimeRoot === undefined ? [] : [extensions.runtimeRoot]),
-      ],
+      readPaths: [extensionRoot, ...runtimeReadRoots(extensions)],
       optimized,
       command,
       runtime: runtimeWithBroker,
