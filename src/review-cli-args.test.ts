@@ -47,8 +47,8 @@ describe("review CLI arguments", () => {
         "/aosp/.repo",
       ]),
     ).toMatchObject({
-      gitSymlinkRoots: ["/store/a", path.resolve("relative/b")],
-      androidRepoRoots: ["/aosp/.repo"],
+      gitSymlinkRoots: [path.resolve("/store/a"), path.resolve("relative/b")],
+      androidRepoRoots: [path.resolve("/aosp/.repo")],
       remaining: [],
     });
   });
