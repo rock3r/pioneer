@@ -94,6 +94,10 @@ Normal commands start an npm version check in the background. The check never de
 
    On Windows, lookup follows `PATHEXT`. Read npm's `pi.cmd` only as a bounded generated shim. Verify its target against the installed `@earendil-works/pi-coding-agent` package's declared `pi` entry point.
    Launch that target with Pioneer's absolute Node executable and discrete arguments, without a command shell. Reuse the resolved command for review startup.
+
+   On macOS and Linux, Pi's managed installer puts a shell launcher at `AGENT/bin/pi`. Pioneer never runs that launcher. It requires the `releases-v1` marker in `AGENT/install/managed-install.json` and reads one line from `AGENT/install/current-version` under the launcher's character rules. It then launches that release's declared `@earendil-works/pi-coding-agent` entry point through Node. A missing marker, unsafe version, linked release directory, or undeclared bin target leaves the launcher unrecognized, and extension preparation fails closed.
+
+   npm hoists a managed release's dependencies beside the Pi package. The read-only grant therefore covers `AGENT/install/releases/VERSION/node_modules`, which holds only that release's npm packages. Nothing else under the agent directory is granted. Other layouts, including global npm prefixes, keep the package-only grant. Strict evals do not recognize the managed launcher and fail closed.
 5. Resolve a requested qualified model exactly, or an unqualified model only when it is unique.
 6. Copy selected `PI_CODING_AGENT_DIR` content into the private run directory. The default source is `~/.pi/agent`.
    Copy root `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`. Include `skills/` for reviews and exclude it for evals.

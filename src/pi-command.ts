@@ -117,6 +117,117 @@ async function findOwningPiPackage(target: string): Promise<{
   throw new Error("npm Pi shim target is not owned by the installed Pi package");
 }
 
+/** The canonical declared `pi` entry point of an official package, if it stays inside it. */
+async function declaredPiEntryPoint(piPackage: {
+  readonly root: string;
+  readonly bin: string;
+}): Promise<string | undefined> {
+  if (piPackage.bin.length === 0 || piPackage.bin.includes("\0") || path.isAbsolute(piPackage.bin))
+    return undefined;
+  const lexical = path.resolve(piPackage.root, piPackage.bin);
+  if (!isWithin(piPackage.root, lexical)) return undefined;
+  return await regularFileOrUndefined(lexical);
+}
+
+const MANAGED_INSTALL_MARKER = "managed-install.json";
+const MAX_MANAGED_FILE_BYTES = 64 * 1024;
+const MAX_MANAGED_VERSION_BYTES = 1024;
+// The managed launcher accepts these characters and rejects "." and "..".
+const MANAGED_RELEASE_VERSION = /^[0-9A-Za-z._+-]+$/;
+
+function isManagedReleaseVersion(version: string): boolean {
+  return MANAGED_RELEASE_VERSION.test(version) && version !== "." && version !== "..";
+}
+
+/** Whether a directory carries Pi's `releases-v1` managed-install marker. */
+async function isManagedInstallRoot(installRoot: string): Promise<boolean> {
+  try {
+    const marker = JSON.parse(
+      (
+        await readBounded(path.join(installRoot, MANAGED_INSTALL_MARKER), MAX_MANAGED_FILE_BYTES)
+      ).replace(/^\uFEFF/, ""),
+    ) as unknown;
+    if (typeof marker !== "object" || marker === null) return false;
+    const record = marker as Record<string, unknown>;
+    return (
+      record.kind === "pi-managed-install" &&
+      record.schemaVersion === 1 &&
+      record.layout === "releases-v1"
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve Pi's managed-installer launcher (`<agent>/bin/pi`) to the canonical `pi` entry
+ * point of its current release, `<agent>/install/releases/<version>/node_modules`, without
+ * running the launcher. Anything else, or any layout that fails validation, returns
+ * undefined so callers keep their existing fail-closed handling.
+ */
+export async function resolveManagedPiLauncher(launcher: string): Promise<string | undefined> {
+  try {
+    const canonical = await realpath(launcher);
+    const binDirectory = path.dirname(canonical);
+    if (path.basename(canonical) !== "pi" || path.basename(binDirectory) !== "bin")
+      return undefined;
+    const contents = await readBounded(canonical, MAX_MANAGED_FILE_BYTES);
+    if (!contents.startsWith("#!/bin/sh\n") || !contents.includes("PI_MANAGED_INSTALL_ROOT"))
+      return undefined;
+    const installRoot = path.join(path.dirname(binDirectory), "install");
+    if (!(await isManagedInstallRoot(installRoot))) return undefined;
+    // The launcher reads one newline-terminated line with `IFS= read -r`.
+    const current = await readBounded(
+      path.join(installRoot, "current-version"),
+      MAX_MANAGED_VERSION_BYTES,
+    );
+    const newline = current.indexOf("\n");
+    const version = newline < 0 ? "" : current.slice(0, newline);
+    if (!isManagedReleaseVersion(version)) return undefined;
+    const expectedNodeModules = path.join(
+      await realpath(installRoot),
+      "releases",
+      version,
+      "node_modules",
+    );
+    // Reject a release directory that links elsewhere; its contents are granted read-only.
+    if ((await realpath(expectedNodeModules)) !== expectedNodeModules) return undefined;
+    const target = await regularFileOrUndefined(path.join(expectedNodeModules, ".bin", "pi"));
+    if (target === undefined) return undefined;
+    await access(target, constants.X_OK);
+    const piPackage = await findOwningPiPackage(target);
+    if (piPackage.root !== path.join(expectedNodeModules, "@earendil-works", "pi-coding-agent"))
+      return undefined;
+    return (await declaredPiEntryPoint(piPackage)) === target ? target : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The read-only grant that lets an official Pi package load its dependencies. npm installs
+ * a managed release with its dependencies hoisted beside the package, so that release's
+ * `node_modules` is granted. It holds only the release's npm packages, not Pi's
+ * configuration or credentials. Every other layout keeps the package directory itself, so a
+ * global npm prefix never exposes unrelated packages.
+ */
+export async function piPackageReadRoot(packageRoot: string): Promise<string> {
+  const scope = path.dirname(packageRoot);
+  const nodeModules = path.dirname(scope);
+  const release = path.dirname(nodeModules);
+  const releases = path.dirname(release);
+  if (
+    path.basename(packageRoot) !== "pi-coding-agent" ||
+    path.basename(scope) !== "@earendil-works" ||
+    path.basename(nodeModules) !== "node_modules" ||
+    path.basename(releases) !== "releases" ||
+    !isManagedReleaseVersion(path.basename(release)) ||
+    !(await isManagedInstallRoot(path.dirname(releases)))
+  )
+    return packageRoot;
+  return nodeModules;
+}
+
 export async function resolveNpmPiCmdShim(
   shimPath: string,
   nodeExecutable = process.execPath,
@@ -151,19 +262,7 @@ export async function resolveNpmPiCmdShim(
   const target = await regularFileOrUndefined(lexicalTarget);
   if (target === undefined) throw new Error("npm Pi shim target is missing or not a regular file");
   const piPackage = await findOwningPiPackage(target);
-  if (
-    piPackage.bin.length === 0 ||
-    piPackage.bin.includes("\0") ||
-    path.isAbsolute(piPackage.bin)
-  ) {
-    throw new Error("npm Pi shim does not match the installed Pi package entry point");
-  }
-  const lexicalDeclaredTarget = path.resolve(piPackage.root, piPackage.bin);
-  if (!isWithin(piPackage.root, lexicalDeclaredTarget)) {
-    throw new Error("npm Pi shim does not match the installed Pi package entry point");
-  }
-  const declaredTarget = await regularFileOrUndefined(lexicalDeclaredTarget);
-  if (declaredTarget !== target) {
+  if ((await declaredPiEntryPoint(piPackage)) !== target) {
     throw new Error("npm Pi shim does not match the installed Pi package entry point");
   }
   return [nodeExecutable, target];
@@ -244,7 +343,10 @@ export async function resolvePiCommand(
   // Return the canonical file. A PATH symlink often lives outside the package, and the
   // sandbox grants the package directory rather than that external launcher.
   if (platform !== "win32") {
-    const script = await posixExecutableCandidate(executable, environment);
+    const found = await posixExecutableCandidate(executable, environment);
+    // Pi's managed installer puts a shell launcher on PATH. Launch its current release's
+    // entry point directly, as the launcher would, so the sandbox grants that release.
+    const script = (await resolveManagedPiLauncher(found)) ?? found;
     // Launch through the absolute node binary. A PATH symlink such as Homebrew's
     // node is not mounted, so the script's env shebang cannot find it.
     if (await usesEnvNodeShebang(script)) {

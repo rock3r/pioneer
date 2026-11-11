@@ -1,6 +1,7 @@
 import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { createManagedPiInstall } from "../../test/support/pi-managed-install.js";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { piRuntimePaths, reviewProcessEnvironment } from "./runner.js";
 
@@ -147,6 +148,26 @@ describe("review actor environment", () => {
         const grants = await piRuntimePaths("pi");
         expect(grants).toContain(await realpath(bin));
         expect(grants).not.toContain(await realpath(root));
+      } finally {
+        if (previous === undefined) delete process.env.PATH;
+        else process.env.PATH = previous;
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "grants a managed Pi release's sibling dependencies but not the rest of the Pi home",
+    async () => {
+      const home = await createTempDir("pioneer-pi-managed-grant-");
+      const install = await createManagedPiInstall(path.join(home, ".pi", "agent"));
+      const previous = process.env.PATH;
+      process.env.PATH = install.binDir;
+      try {
+        const grants = await piRuntimePaths("pi");
+        expect(grants).toContain(await realpath(install.releaseNodeModules));
+        expect(grants).not.toContain(await realpath(install.binDir));
+        expect(grants).not.toContain(await realpath(install.installRoot));
+        expect(grants).not.toContain(await realpath(install.agentDir));
       } finally {
         if (previous === undefined) delete process.env.PATH;
         else process.env.PATH = previous;

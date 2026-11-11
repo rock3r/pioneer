@@ -1077,6 +1077,36 @@ process.stdin.once("data", () => {
     ).rejects.toThrow("[DEEP_REVIEW_WORK_LOG_WRITE_FAILED]");
   });
 
+  it("reports Pi's startup failure when Pi exits before reading the prompt", async () => {
+    // A Pi that cannot load its modules exits before reading stdin. The prompt write then
+    // fails with EPIPE, which must not escape as an unhandled stream error (#126).
+    const earlyExitPi: readonly [string, ...string[]] = [
+      process.execPath,
+      "-e",
+      "process.stderr.write(\"Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'chalk'\\n\", () => process.exit(1));",
+    ];
+    const { log, records } = recordingWorkLog();
+
+    const failure = await runReviewRpc(
+      earlyExitPi,
+      process.cwd(),
+      process.env,
+      `review ${"x".repeat(4 * 1024 * 1024)}`,
+      5_000,
+      { workLog: log },
+    ).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).not.toContain("EPIPE");
+    expect(message).toContain("exit 1");
+    expect(message).toContain("stderr: present");
+    expect(records.map((record) => record.type)).toContain("pi_stdin_closed");
+  });
+
   it("redacts a long prompt echoed to stderr before retaining the diagnostic tail", async () => {
     const prompt = `private prompt ${"x".repeat(70 * 1024)}`;
     let message = "";

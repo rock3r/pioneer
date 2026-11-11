@@ -1,6 +1,7 @@
-import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { createManagedPiInstall } from "../test/support/pi-managed-install.js";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
 import {
   EXTENSION_ADAPTER_FILES,
@@ -49,3 +50,20 @@ it("does not silently select a different Pi farther down PATH", async () => {
   ).rejects.toThrow("[PI_EXTENSION_RUNTIME_UNSUPPORTED]");
   await expect(installedPiRoot(["pi"], { PATH: second })).resolves.toBe(await realpath(second));
 });
+
+// Pi's managed installer writes a POSIX shell launcher at ~/.pi/agent/bin/pi (#126).
+it.skipIf(process.platform === "win32")(
+  "finds the official package behind Pi's managed installer launcher",
+  async () => {
+    const home = await createTempDir("pi-root-managed-");
+    const install = await createManagedPiInstall(path.join(home, ".pi", "agent"));
+    const userBin = path.join(home, "bin");
+    await mkdir(userBin);
+    await symlink(path.join(install.binDir, "pi"), path.join(userBin, "pi"));
+    const packageRoot = await realpath(install.packageRoot);
+
+    await expect(installedPiRoot(["pi"], { PATH: userBin })).resolves.toBe(packageRoot);
+    await expect(installedPiRoot(["pi"], { PATH: install.binDir })).resolves.toBe(packageRoot);
+    await expect(installedPiRoot([path.join(install.binDir, "pi")], {})).resolves.toBe(packageRoot);
+  },
+);

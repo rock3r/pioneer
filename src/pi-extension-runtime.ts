@@ -4,7 +4,7 @@ import { access, copyFile, readFile, realpath, writeFile } from "node:fs/promise
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type { PiLaunchCommand } from "./pi-command.js";
+import { type PiLaunchCommand, piPackageReadRoot, resolveManagedPiLauncher } from "./pi-command.js";
 import {
   type ExtensionResource,
   type ExtensionSnapshot,
@@ -45,7 +45,9 @@ export async function installedPiRoot(
     let directory: string;
     try {
       if (!path.isAbsolute(command[0])) await access(argument, constants.X_OK);
-      directory = path.dirname(await realpath(argument));
+      const canonical = await realpath(argument);
+      // Pi's managed installer launcher sits outside the package it runs.
+      directory = path.dirname((await resolveManagedPiLauncher(canonical)) ?? canonical);
     } catch {
       continue;
     }
@@ -97,7 +99,19 @@ function parseResources(value: unknown): ExtensionResource[] {
 
 export interface PreparedExtensions extends ExtensionSnapshot {
   readonly command: PiLaunchCommand;
+  /** The official Pi package directory that the adapter imports. */
   readonly runtimeRoot?: string;
+  /** The read-only sandbox grant for that package and the dependencies it loads. */
+  readonly runtimeReadRoot?: string;
+}
+
+/** Read-only sandbox grants that let the prepared adapter load the official Pi package. */
+export function runtimeReadRoots(extensions: {
+  readonly runtimeRoot?: string;
+  readonly runtimeReadRoot?: string;
+}): string[] {
+  const root = extensions.runtimeReadRoot ?? extensions.runtimeRoot;
+  return root === undefined ? [] : [root];
 }
 
 /**
@@ -192,5 +206,6 @@ export async function preparePiExtensions(
     ...(enabled ? {} : { digest: "0".repeat(64) }),
     command: [process.execPath, entry, root],
     runtimeRoot: root,
+    runtimeReadRoot: await piPackageReadRoot(root),
   };
 }
