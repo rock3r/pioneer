@@ -906,10 +906,12 @@ export function isBroadWritablePath(
   // Strict descendants of the caller's home are never protected system paths,
   // even when the home itself lives under a protected root (e.g. gLinux:
   // /usr/local/google/home/<user> under /usr). The home itself stays broad via
-  // isBroadRuntimePath above.
+  // isBroadRuntimePath above. A home that is itself a filesystem or protected
+  // system root (for example HOME=/ for a service account) grants no exemption.
   if (
     platform !== "win32" &&
-    (isWithin(path.resolve(os.homedir()), candidate) || isWithin(CANONICAL_HOME_DIR, candidate))
+    (isStrictHomeDescendant(path.resolve(os.homedir()), candidate) ||
+      isStrictHomeDescendant(CANONICAL_HOME_DIR, candidate))
   ) {
     return false;
   }
@@ -918,6 +920,15 @@ export function isBroadWritablePath(
     (platform !== "win32" &&
       PROTECTED_WRITABLE_POSIX_ROOTS.some((root) => isWithin(root, candidate)))
   );
+}
+
+function isStrictHomeDescendant(home: string, candidate: string): boolean {
+  if (path.parse(home).root === home) return false;
+  const protectedRoots: readonly string[] = PROTECTED_WRITABLE_POSIX_ROOTS;
+  if (BROAD_WRITABLE_POSIX_PATHS.has(home) || protectedRoots.includes(home)) {
+    return false;
+  }
+  return isWithin(home, candidate);
 }
 
 function isDarwinPerUserTempDescendant(candidate: string): boolean {

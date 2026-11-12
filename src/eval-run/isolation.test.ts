@@ -1,7 +1,7 @@
 import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   assertEvalWorkLogNotActorVisible,
@@ -893,5 +893,29 @@ describe.skipIf(process.platform === "win32")("home descendants under protected 
   it("still protects system paths outside the caller's home", () => {
     expect(isBroadWritablePath("/usr/lib/pioneer-eval", "linux")).toBe(true);
     expect(isBroadWritablePath("/etc/pioneer-eval", "linux")).toBe(true);
+  });
+
+  it.each(["/", "/usr", "/opt", "/var", "/etc"])(
+    "keeps protected paths broad when the home is the system root %s",
+    (brokenHome) => {
+      const homedir = vi.spyOn(os, "homedir").mockReturnValue(brokenHome);
+      try {
+        expect(isBroadWritablePath("/usr/lib/pioneer-eval", "linux")).toBe(true);
+        expect(isBroadWritablePath("/etc/ssh/pioneer-eval", "linux")).toBe(true);
+        expect(isBroadWritablePath("/opt/pioneer-eval", "linux")).toBe(true);
+      } finally {
+        homedir.mockRestore();
+      }
+    },
+  );
+
+  it("still allows descendants of a home that lives under a protected root", () => {
+    const homedir = vi.spyOn(os, "homedir").mockReturnValue("/usr/local/google/home/someone");
+    try {
+      expect(isBroadWritablePath("/usr/local/google/home/someone/out", "linux")).toBe(false);
+      expect(isBroadWritablePath("/usr/local/google/home/someone", "linux")).toBe(true);
+    } finally {
+      homedir.mockRestore();
+    }
   });
 });
