@@ -48,57 +48,99 @@ interface StagedEntry {
   };
 }
 
-/** A sibling task that did not start because another staging task had already failed. */
-class StagingCancelled extends Error {}
+/** One directory's children, handed out in order to whichever worker is free. */
+interface WalkLevel<C> {
+  readonly size: number;
+  readonly child: (index: number) => C;
+  next: number;
+}
 
 /**
- * Runs staging tasks at bounded concurrency. After the first failure no new task starts, and
- * `settle` waits for every started sibling, so nothing still writes when the snapshot fails.
+ * Visits a tree with a fixed pool of workers. Pending work is one cursor per open directory,
+ * not one task per entry, so a directory with many entries costs no more promises than a
+ * small one. After the first failure no new entry starts, and the walk waits for the visits
+ * in flight before it rejects, so nothing still writes when the snapshot fails.
  */
-function createStagingWork(signal?: AbortSignal) {
+async function walkBounded<C>(
+  top: WalkLevel<C>,
+  visit: (entry: C) => Promise<WalkLevel<C> | undefined>,
+  signal?: AbortSignal,
+): Promise<void> {
+  const levels: WalkLevel<C>[] = [top];
+  let failure: { readonly error: unknown } | undefined;
   let active = 0;
-  let failed = false;
-  const waiting: (() => void)[] = [];
-  const acquire = async (): Promise<void> => {
-    if (active < STAGING_CONCURRENCY) {
-      active += 1;
-      return;
+  let wake = (): void => {};
+  let changed = new Promise<void>((resolve) => {
+    wake = resolve;
+  });
+  const notify = (): void => {
+    const resolve = wake;
+    changed = new Promise<void>((next) => {
+      wake = next;
+    });
+    resolve();
+  };
+  const take = (): C | undefined => {
+    for (;;) {
+      const level = levels[levels.length - 1];
+      if (level === undefined) return undefined;
+      if (level.next < level.size) {
+        const index = level.next;
+        level.next += 1;
+        return level.child(index);
+      }
+      levels.pop();
     }
-    await new Promise<void>((resolve) => waiting.push(resolve));
   };
-  const release = (): void => {
-    const next = waiting.shift();
-    if (next === undefined) active -= 1;
-    else next();
-  };
-  return {
-    async run<T>(task: () => Promise<T>): Promise<T> {
-      await acquire();
+  const worker = async (): Promise<void> => {
+    while (failure === undefined) {
+      const entry = take();
+      if (entry === undefined) {
+        // Another worker may still open a directory; wait for it unless nothing is running.
+        if (active === 0) return;
+        await changed;
+        continue;
+      }
+      active += 1;
       try {
-        if (failed) throw new StagingCancelled();
         signal?.throwIfAborted();
-        return await task();
+        const level = await visit(entry);
+        if (level !== undefined && level.size > 0) levels.push(level);
       } catch (error) {
-        if (!(error instanceof StagingCancelled)) failed = true;
-        throw error;
+        failure ??= { error };
       } finally {
-        release();
+        active -= 1;
+        notify();
       }
-    },
-    /** Waits for all tasks, then returns their values in order or the first real failure. */
-    async settle<T>(tasks: readonly Promise<T>[]): Promise<T[]> {
-      const results = await Promise.allSettled(tasks);
-      const values: T[] = [];
-      let cancelled: unknown;
-      for (const result of results) {
-        if (result.status === "fulfilled") values.push(result.value);
-        else if (result.reason instanceof StagingCancelled) cancelled ??= result.reason;
-        else throw result.reason;
-      }
-      if (cancelled !== undefined) throw cancelled;
-      return values;
-    },
+    }
   };
+  await Promise.all(Array.from({ length: STAGING_CONCURRENCY }, worker));
+  if (failure !== undefined) throw failure.error;
+}
+
+/** Staged digest items of one entry, and of its children in sorted order once visited. */
+interface DigestNode {
+  readonly items: readonly DigestItem[];
+  children?: (DigestNode | undefined)[];
+}
+
+/** Flattens digest nodes in pre-order without recursion, which keeps the 0.4.8 order. */
+function flattenDigestItems(nodes: readonly (DigestNode | undefined)[]): DigestItem[] {
+  const items: DigestItem[] = [];
+  const stack = [{ nodes, next: 0 }];
+  for (;;) {
+    const top = stack[stack.length - 1];
+    if (top === undefined) return items;
+    if (top.next >= top.nodes.length) {
+      stack.pop();
+      continue;
+    }
+    const node = top.nodes[top.next];
+    top.next += 1;
+    if (node === undefined) continue;
+    for (const item of node.items) items.push(item);
+    if (node.children !== undefined) stack.push({ nodes: node.children, next: 0 });
+  }
 }
 
 /**
@@ -462,7 +504,6 @@ export async function snapshotExtensionResources(
   const isSensitivePath = createSensitiveCredentialPathMatcher();
   const mapped = new Map<string, string>();
   const stagedPath = (source: string): string => mirroredExtensionStagePath(destination, source);
-  const work = createStagingWork(signal);
   /**
    * Stages one entry without descending into it. A directory returns its sorted child names, so
    * the caller can stage the children concurrently and still assemble digest items in order.
@@ -613,71 +654,112 @@ export async function snapshotExtensionResources(
     await chmod(target, details.mode & 0o100 ? 0o700 : 0o600);
     return { items: [{ record, content: target, size: copied.size }] };
   }
-  async function copy(
-    source: string,
-    target: string,
-    ancestors: ReadonlySet<string>,
-    checkCredentialPath: boolean,
-  ): Promise<DigestItem[]> {
-    const staged = await work.run(() => stageEntry(source, target, ancestors, checkCredentialPath));
-    if (staged.directory === undefined) return staged.items;
-    const { canonical, names, ancestors: next } = staged.directory;
-    const children = await work.settle(
-      names.map((name) => copy(path.join(canonical, name), path.join(target, name), next, true)),
-    );
-    return staged.items.concat(children.flat());
+  /** A pending copy: where the entry comes from, where it goes, and its digest slot. */
+  interface CopyEntry {
+    readonly source: string;
+    readonly target: string;
+    readonly ancestors: ReadonlySet<string>;
+    readonly checkCredentialPath: boolean;
+    readonly slots: (DigestNode | undefined)[];
+    readonly index: number;
   }
+  const copy = async (entry: CopyEntry): Promise<WalkLevel<CopyEntry> | undefined> => {
+    const staged = await stageEntry(
+      entry.source,
+      entry.target,
+      entry.ancestors,
+      entry.checkCredentialPath,
+    );
+    const node: DigestNode = { items: staged.items };
+    entry.slots[entry.index] = node;
+    if (staged.directory === undefined) return undefined;
+    const { canonical, names, ancestors } = staged.directory;
+    const slots = new Array<DigestNode | undefined>(names.length);
+    node.children = slots;
+    return {
+      size: names.length,
+      next: 0,
+      child: (index) => {
+        const name = names[index] ?? "";
+        return {
+          source: path.join(canonical, name),
+          target: path.join(entry.target, name),
+          ancestors,
+          checkCredentialPath: true,
+          slots,
+          index,
+        };
+      },
+    };
+  };
   const rootInodeCounts = new Map<string, number>();
   let prepassVisits = 0;
-  let prepassQueued = 0;
+  // The roots count too, so the queued total never trails the entries the scan will visit.
+  let prepassQueued = selectedRoots.length;
   const prepassLimitError = (): Error =>
     new Error(
       `[PI_EXTENSION_SNAPSHOT_LIMIT] The selected extension directories hold more than ${SNAPSHOT_ENTRY_LIMIT} entries to scan, including skipped metadata such as .git. Move the extension into a smaller dedicated directory.`,
     );
-  const countRootInodes = async (file: string): Promise<void> => {
-    const names = await work.run(async () => {
-      let details: Awaited<ReturnType<typeof lstat>>;
-      try {
-        details = await lstat(file, { bigint: true });
-      } catch {
-        return [];
+  const countRootInodes = async (file: string): Promise<WalkLevel<string> | undefined> => {
+    let details: Awaited<ReturnType<typeof lstat>>;
+    try {
+      details = await lstat(file, { bigint: true });
+    } catch {
+      return undefined;
+    }
+    prepassVisits += 1;
+    // This scan also visits entries the copy skips, such as .git, and has no shared budget.
+    if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) throw prepassLimitError();
+    if (details.isSymbolicLink()) return undefined;
+    if (details.isFile()) {
+      if (details.ino === 0n) return undefined;
+      const id = `${details.dev}:${details.ino}`;
+      rootInodeCounts.set(id, (rootInodeCounts.get(id) ?? 0) + 1);
+      // The walk starts at a canonical root and never follows links, so `file` is canonical.
+      if (isSensitiveCredentialFile(path.basename(file)) || isSensitivePath(file, file)) {
+        excludedFiles.add(id);
       }
-      prepassVisits += 1;
-      // This scan also visits entries the copy skips, such as .git, and has no shared budget.
-      if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) throw prepassLimitError();
-      if (details.isSymbolicLink()) return [];
-      if (details.isFile()) {
-        if (details.ino === 0n) return [];
-        const id = `${details.dev}:${details.ino}`;
-        rootInodeCounts.set(id, (rootInodeCounts.get(id) ?? 0) + 1);
-        // The walk starts at a canonical root and never follows links, so `file` is canonical.
-        if (isSensitiveCredentialFile(path.basename(file)) || isSensitivePath(file, file)) {
-          excludedFiles.add(id);
-        }
-        return [];
-      }
-      if (!details.isDirectory()) return [];
-      // Read lazily and count every name before it is queued, so an oversized directory fails
-      // at the limit instead of allocating work for all of its children.
-      const children: string[] = [];
-      const directory = await opendir(file);
-      for await (const child of directory) {
-        prepassQueued += 1;
-        if (prepassQueued > SNAPSHOT_ENTRY_LIMIT) throw prepassLimitError();
-        children.push(child.name);
-      }
-      return children;
-    });
-    await work.settle(names.map((name) => countRootInodes(path.join(file, name))));
+      return undefined;
+    }
+    if (!details.isDirectory()) return undefined;
+    // Read lazily and count every name before it is queued, so an oversized directory fails
+    // at the limit instead of visiting its children first.
+    const names: string[] = [];
+    const directory = await opendir(file);
+    for await (const child of directory) {
+      prepassQueued += 1;
+      if (prepassQueued > SNAPSHOT_ENTRY_LIMIT) throw prepassLimitError();
+      names.push(child.name);
+    }
+    return { size: names.length, next: 0, child: (index) => path.join(file, names[index] ?? "") };
   };
-  for (const root of selectedRoots) await countRootInodes(root);
-  const items: DigestItem[] = [];
-  for (const root of selectedRoots) {
+  if (prepassQueued > SNAPSHOT_ENTRY_LIMIT) throw prepassLimitError();
+  await walkBounded(
+    { size: selectedRoots.length, next: 0, child: (index) => selectedRoots[index] ?? "" },
+    countRootInodes,
+    signal,
+  );
+  const rootSlots = new Array<DigestNode | undefined>(selectedRoots.length);
+  const rootEntries: CopyEntry[] = [];
+  for (const [index, root] of selectedRoots.entries()) {
     if (await isPrivateStorage(root)) throw refusePrivateStorage();
     const target = stagedPath(root);
     mapped.set(root, target);
-    for (const item of await copy(root, target, new Set(), false)) items.push(item);
+    rootEntries.push({
+      source: root,
+      target,
+      ancestors: new Set(),
+      checkCredentialPath: false,
+      slots: rootSlots,
+      index,
+    });
   }
+  await walkBounded(
+    { size: rootEntries.length, next: 0, child: (index) => rootEntries[index] as CopyEntry },
+    copy,
+    signal,
+  );
+  const items = flattenDigestItems(rootSlots);
   const digest = createHash("sha256");
   await updateDigestInOrder(digest, items, signal);
   const paths: string[] = [];
