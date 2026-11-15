@@ -629,6 +629,11 @@ export async function snapshotExtensionResources(
   }
   const rootInodeCounts = new Map<string, number>();
   let prepassVisits = 0;
+  let prepassQueued = 0;
+  const prepassLimitError = (): Error =>
+    new Error(
+      `[PI_EXTENSION_SNAPSHOT_LIMIT] The selected extension directories hold more than ${SNAPSHOT_ENTRY_LIMIT} entries to scan, including skipped metadata such as .git. Move the extension into a smaller dedicated directory.`,
+    );
   const countRootInodes = async (file: string): Promise<void> => {
     const names = await work.run(async () => {
       let details: Awaited<ReturnType<typeof lstat>>;
@@ -639,11 +644,7 @@ export async function snapshotExtensionResources(
       }
       prepassVisits += 1;
       // This scan also visits entries the copy skips, such as .git, and has no shared budget.
-      if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) {
-        throw new Error(
-          `[PI_EXTENSION_SNAPSHOT_LIMIT] The selected extension directories hold more than ${SNAPSHOT_ENTRY_LIMIT} entries to scan, including skipped metadata such as .git. Move the extension into a smaller dedicated directory.`,
-        );
-      }
+      if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) throw prepassLimitError();
       if (details.isSymbolicLink()) return [];
       if (details.isFile()) {
         if (details.ino === 0n) return [];
@@ -656,7 +657,16 @@ export async function snapshotExtensionResources(
         return [];
       }
       if (!details.isDirectory()) return [];
-      return await readdir(file);
+      // Read lazily and count every name before it is queued, so an oversized directory fails
+      // at the limit instead of allocating work for all of its children.
+      const children: string[] = [];
+      const directory = await opendir(file);
+      for await (const child of directory) {
+        prepassQueued += 1;
+        if (prepassQueued > SNAPSHOT_ENTRY_LIMIT) throw prepassLimitError();
+        children.push(child.name);
+      }
+      return children;
     });
     await work.settle(names.map((name) => countRootInodes(path.join(file, name))));
   };

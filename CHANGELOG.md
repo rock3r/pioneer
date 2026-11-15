@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.4.9 - 2026-11-15
+
 - Stage enabled extensions about four times faster. Pioneer copies extensions into a private snapshot before every review, `models`, and `doctor` run, and this copy took most of the run time. It processed one file at a time. It also canonicalized every path several times with synchronous calls that blocked Node's event loop. Pioneer now stages up to 32 entries at once, uses copy-on-write clones where the filesystem supports them, and canonicalizes the credential-check roots once per snapshot. The same 55,936 extension entries (504 MiB) were measured on two machines:
 
   | Machine | Staging before | Staging after | `pioneer models` before | `pioneer models` after |
@@ -12,6 +14,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
   | Ubuntu 26.04, ext4 to tmpfs | about 26 s | about 5.4 s | 30–35 s | about 11 s |
 
   The Linux `pioneer models` numbers come from that machine's own Pi home, which has a similar size. On macOS, copying the same trees with `cp -c -R` alone took 9.6 s, so the remaining time is mostly filesystem work. The Linux copy target is tmpfs, which cannot clone, so the Linux gain comes from concurrency and fewer path lookups alone. The snapshot digest is unchanged, so existing resume tokens still work. On both machines, the old and new code produced the same digest for the same tree.
+
+  The entry-count scan that runs before staging reads each directory lazily and stops at the 500,000-entry limit. An oversized directory now fails with `[PI_EXTENSION_SNAPSHOT_LIMIT]` without queuing work for all of its children first.
 
 ## 0.4.8 - 2026-11-12
 
