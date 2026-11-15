@@ -4,16 +4,20 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.4.9 - 2026-11-15
+
 - Fail at once on Windows when extensions are enabled. Extension discovery is unsupported on Windows, but Pioneer still copied the whole enabled-extension tree into a private snapshot before it reported `[PI_EXTENSION_DISCOVERY_UNSUPPORTED]`. Reviews, `models`, and `doctor` now skip that copy on Windows and report the same error with the same guidance. The error text is unchanged. On a Windows 11 test machine whose extension tree has 2,033 entries (77 MiB), the copy took about 3.5–4 s, `pioneer models` went from about 4.6 s to about 0.4 s, and the default `pioneer review` failure went from about 5.8 s to about 0.9 s. Pass `--no-extensions` with `--allow-unsandboxed-windows` to run a review on Windows. macOS and Linux behavior is unchanged.
 
-- Stage enabled extensions about four times faster. Pioneer copies extensions into a private snapshot before every review, `models`, and `doctor` run, and this copy took most of the run time. It processed one file at a time. It also canonicalized every path several times with synchronous calls that blocked Node's event loop. Pioneer now stages up to 32 entries at once, uses copy-on-write clones where the filesystem supports them, and canonicalizes the credential-check roots once per snapshot. The same 55,936 extension entries (504 MiB) were measured on two machines:
+- Stage enabled extensions about four times faster. Pioneer copies extensions into a private snapshot before every review, `models`, and `doctor` run, and this copy took most of the run time. It processed one file at a time. It also canonicalized every path several times with synchronous calls that blocked Node's event loop. Pioneer now stages with a fixed pool of 32 workers, uses copy-on-write clones where the filesystem supports them, and canonicalizes the credential-check roots once per snapshot. The same 55,936 extension entries (504 MiB) were measured on two machines:
 
   | Machine | Staging before | Staging after | `pioneer models` before | `pioneer models` after |
   | --- | --- | --- | --- | --- |
-  | macOS, APFS | about 46 s | about 9 s | about 58 s | about 17 s |
-  | Ubuntu 26.04, ext4 to tmpfs | about 26 s | about 5.4 s | 30–35 s | about 11 s |
+  | macOS, APFS | about 46 s | about 8 s | about 58 s | about 16 s |
+  | Ubuntu 26.04, ext4 to tmpfs | about 26 s | about 5.1 s | 30–35 s | about 10 s |
 
   The Linux `pioneer models` numbers come from that machine's own Pi home, which has a similar size. On macOS, copying the same trees with `cp -c -R` alone took 9.6 s, so the remaining time is mostly filesystem work. The Linux copy target is tmpfs, which cannot clone, so the Linux gain comes from concurrency and fewer path lookups alone. The snapshot digest is unchanged, so existing resume tokens still work. On both machines, the old and new code produced the same digest for the same tree.
+
+  Pending work stays bounded however many entries a directory holds. The workers take entries one at a time from one cursor per open directory, so Pioneer never creates a task for every entry in advance. In a test, a directory with 20,000 entries kept fewer than 2,000 promises pending at once; one task per entry kept more than 160,000. The entry-count scan that runs before staging counts each name, including the selected roots, as it reads a directory. It stops at the 500,000-entry limit, so an oversized directory fails with `[PI_EXTENSION_SNAPSHOT_LIMIT]` before any of its children is visited.
 
 ## 0.4.8 - 2026-11-12
 
