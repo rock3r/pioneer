@@ -91,18 +91,21 @@ export async function prepareReviewRuntime(
     });
     const needsAuthAdapter =
       process.platform !== "win32" && (await snapshotOAuthProviders(home.agentDir)).size > 0;
-    const extensions =
-      extensionsEnabled || needsAuthAdapter
-        ? await preparePiExtensions(
-            command,
-            agentDir,
-            path.join(extensionRoot, "extensions"),
-            environment,
-            signal,
-            path.join(home.agentDir, "settings.json"),
-            extensionsEnabled,
-          )
-        : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
+    // Windows cannot run extension discovery, so copying the extension tree would only delay
+    // the `PI_EXTENSION_DISCOVERY_UNSUPPORTED` that `runPreparedPiCommand` throws. Skip the
+    // copy; callers still reach that error, with the same guidance, when they discover.
+    const stageExtensions = process.platform !== "win32" && (extensionsEnabled || needsAuthAdapter);
+    const extensions = stageExtensions
+      ? await preparePiExtensions(
+          command,
+          agentDir,
+          path.join(extensionRoot, "extensions"),
+          environment,
+          signal,
+          path.join(home.agentDir, "settings.json"),
+          extensionsEnabled,
+        )
+      : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
     const runtime = { scratch, extensionRoot, home, extensions, network, capabilityExtensions };
     const authBroker = await prepareAuthBroker(runtime);
     return authBroker === undefined
