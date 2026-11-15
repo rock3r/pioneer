@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import {
   chmod,
   link,
   lstat,
   mkdir,
+  readdir,
   readFile,
   readlink,
   rm,
@@ -19,6 +21,7 @@ import { registerManagedTempPaths } from "../test/support/temp-dir.js";
 import {
   assertSameExtensionSnapshot,
   extensionPathsWithCapabilities,
+  mirroredExtensionStagePath,
   snapshotExtensionResources,
 } from "./pi-extension-snapshot.js";
 
@@ -421,6 +424,70 @@ describe("extension snapshots", () => {
       "[REVIEW_RESUME_EXTENSIONS_CHANGED]",
     );
   });
+  it.skipIf(process.platform === "win32")(
+    "keeps the digest format that retained resume archives recorded",
+    async () => {
+      const root = await createTempDir("extension-digest-format-");
+      const pkg = path.join(root, "package");
+      await mkdir(path.join(pkg, "lib", "nested"), { recursive: true });
+      await mkdir(path.join(root, "node_modules", "dependency"), { recursive: true });
+      await writeFile(path.join(pkg, "index.ts"), "extension");
+      await writeFile(path.join(pkg, "lib", "b.js"), "b".repeat(200_000));
+      await writeFile(path.join(pkg, "lib", "a.js"), "a");
+      await writeFile(path.join(pkg, "lib", "nested", "tool.sh"), "#!/bin/sh\n");
+      await chmod(path.join(pkg, "lib", "nested", "tool.sh"), 0o755);
+      await writeFile(path.join(pkg, "lib", "empty.txt"), "");
+      await symlink("a.js", path.join(pkg, "lib", "alias.js"));
+      await writeFile(path.join(root, "node_modules", "dependency", "index.js"), "dependency");
+      const destination = path.join(root, "snapshot");
+
+      const result = await snapshotExtensionResources(
+        [
+          {
+            path: path.join(pkg, "index.ts"),
+            enabled: true,
+            metadata: { scope: "user", origin: "package", baseDir: pkg },
+          },
+        ],
+        destination,
+      );
+
+      // Reference stream of the 0.4.8 format: a pre-order walk with sorted names, one JSON
+      // record per entry, file bytes right after their record, then the staged entry paths.
+      const hash = createHash("sha256");
+      const walk = async (staged: string): Promise<void> => {
+        const details = await lstat(staged);
+        const relative = path.relative(destination, staged);
+        if (details.isSymbolicLink()) {
+          hash.update(JSON.stringify([relative, "symlink", await readlink(staged)]));
+          hash.update("\0");
+          return;
+        }
+        hash.update(
+          JSON.stringify([
+            relative,
+            details.isDirectory() ? "directory" : "file",
+            details.isFile() ? details.size : 0,
+            details.mode & 0o100,
+          ]),
+        );
+        hash.update("\0");
+        if (details.isFile()) hash.update(await readFile(staged));
+        if (details.isDirectory()) {
+          for (const name of (await readdir(staged)).sort()) await walk(path.join(staged, name));
+        }
+      };
+      for (const source of [
+        realpathSync(path.join(root, "node_modules")),
+        realpathSync(pkg),
+      ].sort()) {
+        await walk(mirroredExtensionStagePath(destination, source));
+      }
+      hash.update(JSON.stringify(result.paths.map((entry) => path.relative(destination, entry))));
+
+      expect(result.digest).toBe(hash.digest("hex"));
+    },
+  );
   it("retains parent node_modules resolution for a local file extension", async () => {
     const root = await createTempDir("local-parent-dependency-");
     const extensions = path.join(root, "extensions");
