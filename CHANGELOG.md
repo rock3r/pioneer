@@ -6,6 +6,8 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## 0.4.9 - 2026-11-15
 
+- Fail at once on Windows when extensions are enabled. Extension discovery is unsupported on Windows, but Pioneer still copied the whole enabled-extension tree into a private snapshot before it reported `[PI_EXTENSION_DISCOVERY_UNSUPPORTED]`. Reviews, `models`, and `doctor` now skip that copy on Windows and report the same error with the same guidance. The error text is unchanged. On a Windows 11 test machine whose extension tree has 2,033 entries (77 MiB), the copy took about 3.5–4 s, `pioneer models` went from about 4.6 s to about 0.4 s, and the default `pioneer review` failure went from about 5.8 s to about 0.9 s. Pass `--no-extensions` with `--allow-unsandboxed-windows` to run a review on Windows. macOS and Linux behavior is unchanged.
+
 - Stage enabled extensions about four times faster. Pioneer copies extensions into a private snapshot before every review, `models`, and `doctor` run, and this copy took most of the run time. It processed one file at a time. It also canonicalized every path several times with synchronous calls that blocked Node's event loop. Pioneer now stages up to 32 entries at once, uses copy-on-write clones where the filesystem supports them, and canonicalizes the credential-check roots once per snapshot. The same 55,936 extension entries (504 MiB) were measured on two machines:
 
   | Machine | Staging before | Staging after | `pioneer models` before | `pioneer models` after |
