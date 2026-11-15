@@ -4,6 +4,15 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+- Stage enabled extensions about four times faster. Pioneer copies extensions into a private snapshot before every review, `models`, and `doctor` run, and this copy took most of the run time. It processed one file at a time. It also canonicalized every path several times with synchronous calls that blocked Node's event loop. Pioneer now stages up to 32 entries at once, uses copy-on-write clones where the filesystem supports them, and canonicalizes the credential-check roots once per snapshot. The same 55,936 extension entries (504 MiB) were measured on two machines:
+
+  | Machine | Staging before | Staging after | `pioneer models` before | `pioneer models` after |
+  | --- | --- | --- | --- | --- |
+  | macOS, APFS | about 46 s | about 9 s | about 58 s | about 17 s |
+  | Ubuntu 26.04, ext4 to tmpfs | about 26 s | about 5.4 s | 30–35 s | about 11 s |
+
+  The Linux `pioneer models` numbers come from that machine's own Pi home, which has a similar size. On macOS, copying the same trees with `cp -c -R` alone took 9.6 s, so the remaining time is mostly filesystem work. The Linux copy target is tmpfs, which cannot clone, so the Linux gain comes from concurrency and fewer path lookups alone. The snapshot digest is unchanged, so existing resume tokens still work. On both machines, the old and new code produced the same digest for the same tree.
+
 ## 0.4.8 - 2026-11-12
 
 - Support Pi's managed installer layout in reviews and `doctor`. Pioneer now resolves the `~/.pi/agent/bin/pi` launcher to the entry point of the current release. It checks the `releases-v1` marker, the current-version file, and bin ownership first, and an unrecognized layout still fails closed. Pioneer grants the hoisted `node_modules` of that release as read-only, so Pi can load its dependencies. It does not expose the rest of the agent directory. Global npm installs keep the package-only grant. If Pi closes its input early (`EPIPE`), the review now reports Pi's exit code and stderr instead of crashing on an unhandled stream error. Strict evals stay unsupported with this layout.

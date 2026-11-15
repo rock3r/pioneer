@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
+  createSensitiveCredentialPathMatcher,
   isPioneerApplicationDataPath,
   isPioneerStatePath,
   isSensitiveCredentialPath,
@@ -101,6 +102,31 @@ describe("Pi package runtime hosting", () => {
       }),
     ).toBe(false);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "reuses canonical roots and a caller's canonical path in a credential-path matcher",
+    async () => {
+      const root = await createTempDir("pioneer-credential-matcher-");
+      const real = path.join(root, "real-config");
+      const link = path.join(root, "config-link");
+      await mkdir(path.join(real, "sops"), { recursive: true });
+      await writeFile(path.join(real, "sops", "keys.txt"), "key");
+      await symlink(real, link);
+      const environment = { XDG_CONFIG_HOME: link };
+      const matches = createSensitiveCredentialPathMatcher("linux", environment, root);
+      const secret = path.join(await realpath(real), "sops", "keys.txt");
+      const harmless = path.join(root, "package", "index.js");
+
+      expect(matches(path.join(link, "sops", "keys.txt"))).toBe(true);
+      expect(matches(harmless)).toBe(false);
+      // A caller that already canonicalized a link passes its target, which decides the roots.
+      expect(matches(harmless, secret)).toBe(true);
+      expect(matches(path.join(root, ".ssh", "id"), harmless)).toBe(true);
+      expect(
+        isXdgConfigCredentialPath(path.join(link, "sops", "keys.txt"), "linux", environment),
+      ).toBe(true);
+    },
+  );
 
   it("requires the auth worker modules before brokering OAuth", async () => {
     const root = await createTempDir("pioneer-pi-auth-host-");

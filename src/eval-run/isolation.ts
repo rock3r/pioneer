@@ -707,6 +707,18 @@ export function isPioneerStatePath(
   return isInsideRoot(pioneerStateRoot(platform, environment, home), candidate);
 }
 
+function isXdgConfigCredentialRelative(relative: string, platform: NodeJS.Platform): boolean {
+  if (relative.startsWith(`..${path.sep}`) || relative === ".." || path.isAbsolute(relative)) {
+    return false;
+  }
+  const [name, next] = relative.split(path.sep);
+  if (name === undefined || name === "") return false;
+  const folded = platform === "linux" ? name : name.toLowerCase();
+  if (CONFIG_CREDENTIAL_DIRECTORIES.has(folded)) return true;
+  const child = platform === "linux" ? next : next?.toLowerCase();
+  return folded === "bravesoftware" && child === "brave-browser";
+}
+
 export function isXdgConfigCredentialPath(
   candidate: string,
   platform: NodeJS.Platform = process.platform,
@@ -714,14 +726,43 @@ export function isXdgConfigCredentialPath(
 ): boolean {
   const base = environment.XDG_CONFIG_HOME;
   if (base === undefined || !path.isAbsolute(base)) return false;
-  if (!isInsideRoot(base, candidate)) return false;
-  const relative = path.relative(canonicalOrLexical(base), canonicalOrLexical(candidate));
-  const [name, next] = relative.split(path.sep);
-  if (name === undefined || name === "") return false;
-  const folded = platform === "linux" ? name : name.toLowerCase();
-  if (CONFIG_CREDENTIAL_DIRECTORIES.has(folded)) return true;
-  const child = platform === "linux" ? next : next?.toLowerCase();
-  return folded === "bravesoftware" && child === "brave-browser";
+  return isXdgConfigCredentialRelative(
+    path.relative(canonicalOrLexical(base), canonicalOrLexical(candidate)),
+    platform,
+  );
+}
+
+/**
+ * Checks many paths against the credential rules with the controller-owned roots canonicalized
+ * once. A caller that already canonicalized a path passes that result as `canonical`, so the
+ * matcher does not resolve it again. The name rules always apply to the lexical `file`.
+ */
+export function createSensitiveCredentialPathMatcher(
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): (file: string, canonical?: string) => boolean {
+  const applicationData = canonicalOrLexical(
+    pioneerApplicationDataRoot(platform, environment, home),
+  );
+  const state = canonicalOrLexical(pioneerStateRoot(platform, environment, home));
+  const xdgBase = environment.XDG_CONFIG_HOME;
+  const xdgConfig =
+    xdgBase === undefined || !path.isAbsolute(xdgBase) ? undefined : canonicalOrLexical(xdgBase);
+  return (file, canonical = canonicalOrLexical(file)) =>
+    isWithinCanonical(applicationData, canonical) ||
+    isWithinCanonical(state, canonical) ||
+    (xdgConfig !== undefined &&
+      isXdgConfigCredentialRelative(path.relative(xdgConfig, canonical), platform)) ||
+    hasSensitiveCredentialSegments(file);
+}
+
+function isWithinCanonical(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative))
+  );
 }
 
 export function isSensitiveCredentialPath(file: string): boolean {
@@ -732,6 +773,10 @@ export function isSensitiveCredentialPath(file: string): boolean {
   ) {
     return true;
   }
+  return hasSensitiveCredentialSegments(file);
+}
+
+function hasSensitiveCredentialSegments(file: string): boolean {
   const segments = file.split(path.sep).map(credentialSegment);
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
