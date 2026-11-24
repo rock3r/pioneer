@@ -63,6 +63,8 @@ export async function createTestTempRoot(options: TestTempRootOptions = {}): Pro
 
 /** Redirects this process's temporary directory, covering the POSIX and Windows variables. */
 export function useTestTempRoot(root: string): void {
+  // A suite can exercise real multi-process cache reuse without opening the operator's cache.
+  process.env.XDG_CACHE_HOME = path.join(root, "cache");
   process.env.TMPDIR = root;
   process.env.TEMP = root;
   process.env.TMP = root;

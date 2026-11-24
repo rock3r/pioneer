@@ -215,6 +215,8 @@ export async function runDeepReview(request: DeepReviewRequest): Promise<DeepRev
       createDeepReviewActorExecutor({
         config: request.config,
         onActorWarning: actorWarnings.onActorWarning,
+        onExtensionSnapshot: (memberId, event) =>
+          workLog.record("extension_snapshot", { memberId, ...event }),
       });
 
     const { workerOutcomes, candidates, candidateRecords, successfulMemberIds, workerDiagnostics } =

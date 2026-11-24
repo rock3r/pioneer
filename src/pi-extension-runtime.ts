@@ -1,18 +1,24 @@
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { access, copyFile, readFile, realpath, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { type PiLaunchCommand, piPackageReadRoot, resolveManagedPiLauncher } from "./pi-command.js";
 import {
+  type CachedExtensionSnapshot,
+  type ExtensionCacheOptions,
+  prepareCachedExtensionSnapshot,
+} from "./pi-extension-cache.js";
+import {
   assertExtensionCacheDisjointFromGrants,
   extensionCacheDirectory,
 } from "./pi-extension-cache-location.js";
+import { validateCachedExtensionSnapshot } from "./pi-extension-cache-validation.js";
 import {
   type ExtensionResource,
   type ExtensionSnapshot,
-  snapshotExtensionResources,
+  planExtensionSnapshot,
 } from "./pi-extension-snapshot.js";
 import { piRuntimeStorage } from "./pi-runtime-storage.js";
 
@@ -101,17 +107,17 @@ function parseResources(value: unknown): ExtensionResource[] {
   });
 }
 
-export interface PreparedExtensions extends ExtensionSnapshot {
-  readonly snapshotHandle?: {
-    readonly cacheRoot: string;
-    readonly payload: string;
-    release(): Promise<void>;
-  };
+export interface PreparedExtensions extends CachedExtensionSnapshot {
   readonly command: PiLaunchCommand;
   /** The official Pi package directory that the adapter imports. */
   readonly runtimeRoot?: string;
   /** The read-only sandbox grant for that package and the dependencies it loads. */
   readonly runtimeReadRoot?: string;
+}
+
+export interface PrepareExtensionCacheOptions
+  extends Pick<ExtensionCacheOptions, "cacheRoot" | "record"> {
+  readonly acceptSnapshot?: (snapshot: ExtensionSnapshot, payload: string) => Promise<boolean>;
 }
 
 export function extensionSnapshotReadRoots(root: string, extensions: PreparedExtensions): string[] {
@@ -177,6 +183,7 @@ export async function preparePiExtensions(
   enabled = true,
   excludedPaths: readonly string[] = [],
   repositorySource?: string,
+  cacheOptions: PrepareExtensionCacheOptions = {},
 ): Promise<PreparedExtensions> {
   signal?.throwIfAborted();
   const root = await installedPiRoot(command, environment);
@@ -202,18 +209,21 @@ export async function preparePiExtensions(
       "[PI_EXTENSION_RESOLUTION_FAILED] Pi could not resolve its installed user extensions. Verify the selected Pi settings and installed packages with normal Pi. Extension code was not executed.",
     );
   }
-  let snapshot: Awaited<ReturnType<typeof snapshotExtensionResources>>;
+  let snapshot: CachedExtensionSnapshot;
   try {
-    snapshot = await snapshotExtensionResources(
+    const plan = await planExtensionSnapshot(
       resources,
-      destination,
       signal,
       enabled
         ? await piRuntimeStorage(sourceAgentDir, settingsFile, environment, repositorySource)
         : undefined,
-      undefined,
       excludedPaths,
     );
+    snapshot = await prepareCachedExtensionSnapshot(plan, destination, {
+      ...cacheOptions,
+      ...(signal === undefined ? {} : { signal }),
+      validate: validateCachedExtensionSnapshot,
+    });
   } catch (error) {
     if (
       error instanceof Error &&
@@ -223,18 +233,23 @@ export async function preparePiExtensions(
     }
     throw new Error("Pi extension could not be staged");
   }
-  for (const [source, target] of EXTENSION_ADAPTER_FILES) {
-    await copyFile(
-      fileURLToPath(new URL(`./${source}`, import.meta.url)),
-      path.join(destination, target),
-    );
+  try {
+    await mkdir(destination, { recursive: true, mode: 0o700 });
+    for (const [source, target] of EXTENSION_ADAPTER_FILES) {
+      await copyFile(
+        fileURLToPath(new URL(`./${source}`, import.meta.url)),
+        path.join(destination, target),
+      );
+    }
+    await writeFile(path.join(destination, "package.json"), '{"type":"module"}', { mode: 0o600 });
+  } catch (error) {
+    await snapshot.snapshotHandle?.release();
+    throw error;
   }
-  const entry = path.join(destination, "entry.mjs");
-  await writeFile(path.join(destination, "package.json"), '{"type":"module"}', { mode: 0o600 });
   return {
     ...snapshot,
     ...(enabled ? {} : { digest: "0".repeat(64) }),
-    command: [process.execPath, entry, root],
+    command: [process.execPath, path.join(destination, "entry.mjs"), root],
     runtimeRoot: root,
     runtimeReadRoot,
   };

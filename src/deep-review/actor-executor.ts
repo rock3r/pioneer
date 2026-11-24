@@ -56,6 +56,10 @@ import {
 } from "./structured-actor.js";
 
 export interface CreateDeepReviewActorExecutorOptions {
+  readonly onExtensionSnapshot?: (
+    memberId: string,
+    event: import("../pi-extension-cache.js").ExtensionSnapshotCacheEvent,
+  ) => void;
   readonly piHomeSource?: string;
   readonly packageRoot?: string;
   readonly config: DeepReviewConfigV1;
@@ -119,7 +123,12 @@ async function launchStructuredActor(
     "public",
     request.signal,
     capabilityExtensions,
-    { repositorySource: validatedPaths.sourceDir },
+    {
+      repositorySource: validatedPaths.sourceDir,
+      cache: {
+        record: (event) => options.onExtensionSnapshot?.(request.member.id, event),
+      },
+    },
   );
   try {
     const readiness = await assertPiReady({

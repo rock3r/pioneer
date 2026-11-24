@@ -1890,7 +1890,13 @@ async function runReviewInternal(
       network,
       undefined,
       [],
-      { egress: request, repositorySource: validatedPaths.sourceDir },
+      {
+        egress: request,
+        repositorySource: validatedPaths.sourceDir,
+        cache: {
+          record: (event) => recordReviewWorkLog(workLog, "extension_snapshot", { ...event }),
+        },
+      },
       request.model,
       controllerProviderAuth,
     );

@@ -26,6 +26,7 @@ import {
   extensionCacheSandboxPolicy,
   extensionSnapshotReadRoots,
   type PreparedExtensions,
+  type PrepareExtensionCacheOptions,
   preparePiExtensions,
   runtimeReadRoots,
   withNoForkSandbox,
@@ -102,6 +103,7 @@ export async function prepareReviewRuntime(
   options: {
     readonly egress?: Pick<EgressPolicy, "allowHosts" | "blockHosts">;
     readonly repositorySource?: string;
+    readonly cache?: PrepareExtensionCacheOptions;
   } = {},
   requestedModel?: string,
   protectProvider = false,
@@ -158,6 +160,7 @@ export async function prepareReviewRuntime(
           extensionsEnabled,
           undefined,
           options.repositorySource,
+          options.cache,
         )
       : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
     snapshotHandle = extensions.snapshotHandle;
