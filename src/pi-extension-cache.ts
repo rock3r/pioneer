@@ -44,6 +44,7 @@ import {
   withExtensionCacheLock,
   withNamedExtensionCacheLock,
 } from "./pi-extension-cache-lock.js";
+import { verifyExtensionPayload } from "./pi-extension-cache-validation.js";
 import {
   type ExtensionManifestRecord,
   type ExtensionSnapshot,
@@ -76,6 +77,7 @@ export interface ExtensionSnapshotHandle {
   /** The only cache directory that may appear in an actor grant. */
   readonly payload: string;
   readonly cacheRoot: string;
+  verifyPayload(): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -367,10 +369,17 @@ async function verifyBoot(
 function ownedHandle(
   cacheRoot: string,
   payload: string,
+  roots: readonly string[],
+  manifest: readonly ExtensionManifestRecord[],
   cleanup: Release,
 ): ExtensionSnapshotHandle {
   let release: Promise<void> | undefined;
-  return { cacheRoot, payload, release: () => (release ??= cleanup()) };
+  return {
+    cacheRoot,
+    payload,
+    verifyPayload: () => verifyExtensionPayload(roots, payload, manifest),
+    release: () => (release ??= cleanup()),
+  };
 }
 
 type Lookup =
@@ -424,7 +433,13 @@ async function lookup(
       type: "hit",
       snapshot: {
         ...generation.snapshot,
-        snapshotHandle: ownedHandle(cache.root, entry.payload, release),
+        snapshotHandle: ownedHandle(
+          cache.root,
+          entry.payload,
+          plan.selectedRoots,
+          generation.manifest,
+          release,
+        ),
       },
     };
   } finally {
@@ -468,7 +483,10 @@ async function stageCacheEntry(
     if (runSpecificFiltered || racy) {
       keepStaging = true;
       return {
-        snapshot: { ...snapshot, snapshotHandle: ownedHandle(cache.root, payload, cleanup) },
+        snapshot: {
+          ...snapshot,
+          snapshotHandle: ownedHandle(cache.root, payload, plan.selectedRoots, manifest, cleanup),
+        },
         event: runSpecificFiltered
           ? { cache: "bypass", reason: "run-exclusions" }
           : { cache: "racy", reason: "recent-source" },
@@ -512,7 +530,13 @@ async function stageCacheEntry(
       snapshot: {
         ...snapshot,
         paths: relativePaths.map((entry) => path.join(committed.payload, entry)),
-        snapshotHandle: ownedHandle(cache.root, committed.payload, release),
+        snapshotHandle: ownedHandle(
+          cache.root,
+          committed.payload,
+          plan.selectedRoots,
+          manifest,
+          release,
+        ),
       },
       event: { cache: "miss", reason: "staged" },
     };
@@ -613,13 +637,16 @@ export async function prepareCachedExtensionSnapshot(
       if (handle === undefined || previousDeletion === undefined) return result.snapshot;
       return {
         ...result.snapshot,
-        snapshotHandle: ownedHandle(handle.cacheRoot, handle.payload, async () => {
-          try {
-            await handle.release();
-          } finally {
-            await previousDeletion;
-          }
-        }),
+        snapshotHandle: {
+          ...handle,
+          async release() {
+            try {
+              await handle.release();
+            } finally {
+              await previousDeletion;
+            }
+          },
+        },
       };
     }
   } catch (error) {

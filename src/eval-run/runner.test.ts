@@ -1,5 +1,5 @@
 import { closeSync, openSync } from "node:fs";
-import { chmod, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -17,6 +17,49 @@ const { createTempDir } = registerManagedTempPaths();
 function actor(source: string): readonly [string, ...string[]] {
   return [process.execPath, "-e", source];
 }
+
+it.skipIf(process.platform === "win32")(
+  "rejects cache-overlapping eval grants before Pi readiness",
+  async () => {
+    const root = await createTempDir("pioneer-eval-cache-grants-");
+    const runDir = path.join(root, "run");
+    const cache = path.join(root, "cache");
+    await Promise.all([mkdir(runDir), mkdir(cache)]);
+    vi.stubEnv("XDG_CACHE_HOME", cache);
+    try {
+      const spec = { runDir, command: ["pi"] as const };
+      await expect(runEvalCommand({ ...spec, runDir: cache })).rejects.toThrow(
+        /PI_EXTENSION_CACHE_GRANT_OVERLAP.*run/,
+      );
+      await expect(runEvalCommand({ ...spec, runtimeReadPaths: [cache] })).rejects.toThrow(
+        /PI_EXTENSION_CACHE_GRANT_OVERLAP.*runtime/,
+      );
+      await expect(runEvalCommand(spec, { controllerScratchBase: cache })).rejects.toThrow(
+        /PI_EXTENSION_CACHE_GRANT_OVERLAP.*scratch/,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports unresolved eval grants before Pi readiness",
+  async () => {
+    const root = await createTempDir("pioneer-eval-unresolvable-grants-");
+    const runDir = path.join(root, "run");
+    const dangling = path.join(root, "dangling");
+    await mkdir(runDir);
+    await symlink(path.join(root, "missing"), dangling);
+    const command = ["pi"] as const;
+    await expect(runEvalCommand({ runDir: dangling, command })).rejects.toThrow(
+      /\[PI_EXTENSION_CACHE_GRANT_UNAVAILABLE\].*--run-dir.*symbolic link/,
+    );
+    await expect(runEvalCommand({ runDir, command, runtimeReadPaths: [dangling] })).rejects.toThrow(
+      /\[PI_EXTENSION_CACHE_GRANT_UNAVAILABLE\].*--runtime-read.*symbolic link/,
+    );
+  },
+);
 
 /**
  * The actor must boot an interpreter and flush both pipes before this timeout fires, or the

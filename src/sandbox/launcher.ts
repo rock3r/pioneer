@@ -5,6 +5,8 @@ import type { LinuxSandboxIdentity } from "./linux-identity.js";
 export interface SandboxPolicy {
   readonly readOnlyPaths: readonly string[];
   readonly writablePaths: readonly string[];
+  /** Private tmpfs holding only the mount path to the leased extension payload on Linux. */
+  readonly extensionCacheDirectory?: string;
   readonly network: "proxy" | "none";
   readonly proxyUrl?: string;
   readonly allowProcessFork?: boolean;
@@ -216,6 +218,12 @@ export function buildLinuxSandboxArgv(
       ? ["--symlink", "usr/bin", "/bin"]
       : []),
   ];
+  const ancestors = ancestorDirectories(paths);
+  const cache = policy.extensionCacheDirectory;
+  const cacheAncestors =
+    cache === undefined
+      ? []
+      : ancestors.filter((entry) => entry === cache || entry.startsWith(`${cache}/`));
   const args: string[] = [
     // captureEvalProcess starts Bubblewrap detached, giving it the dedicated
     // session/process group used for containment and termination.
@@ -231,8 +239,12 @@ export function buildLinuxSandboxArgv(
     "--tmpfs",
     "/",
     ...runtimeLinkerAliases,
-    ...ancestorDirectories(paths).flatMap((entry) => ["--dir", entry]),
+    ...ancestors.flatMap((entry) => [entry === cache ? "--tmpfs" : "--dir", entry]),
+    // These directories belong only to the namespace. Allow traversal to a known
+    // payload while hiding directory listings. No host bind has been installed yet.
+    ...cacheAncestors.flatMap((entry) => ["--chmod", "0111", entry]),
     ...readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
+    ...(cache === undefined ? [] : ["--remount-ro", cache]),
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
     ...identityMounts.flatMap(([source, target]) => ["--ro-bind", source, target]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", proxySocketPath, proxySocketPath]),

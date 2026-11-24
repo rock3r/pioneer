@@ -22,12 +22,17 @@ import { describeEgressPolicy } from "../eval-run/provider-network.js";
 import { startEgressProxy, type startPublicEgressProxy } from "../eval-run/public-egress-proxy.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
 import { piPackageReadRoot, resolveManagedPiLauncher, resolvePiCommand } from "../pi-command.js";
+import { assertExtensionCacheDisjointFromGrants } from "../pi-extension-cache-location.js";
 import {
   cleanupReviewRuntime,
   type PreparedReviewRuntime,
   prepareReviewRuntime,
 } from "../pi-extension-discovery.js";
-import { runtimeReadRoots, withNoForkSandbox } from "../pi-extension-runtime.js";
+import {
+  extensionCacheSandboxPolicy,
+  runtimeReadRoots,
+  withNoForkSandbox,
+} from "../pi-extension-runtime.js";
 import { assertSameExtensionSnapshot } from "../pi-extension-snapshot.js";
 import {
   extensionPackageNames,
@@ -1623,6 +1628,11 @@ async function runReviewInternal(
   ) {
     throw new Error("Review timeout must be a positive safe integer");
   }
+  if (request.controllerScratchBase !== undefined) {
+    await assertExtensionCacheDisjointFromGrants({
+      "controller scratch base": [request.controllerScratchBase],
+    });
+  }
   const requestedScratchBase =
     request.controllerScratchBase === undefined
       ? undefined
@@ -1672,6 +1682,15 @@ async function runReviewInternal(
         ...(await piRuntimePaths("node")),
         ...(await macosRuntimeReadPaths(process.execPath)),
       ];
+  await assertExtensionCacheDisjointFromGrants({
+    "review runtime": runtimeReadPaths,
+    "native session":
+      resumeContext !== undefined
+        ? [resumeContext.loaded.archive.activeAttemptDir]
+        : resumable
+          ? [defaultReviewResumeDirectory()]
+          : [],
+  });
   if (requestedScratchBase !== undefined) {
     assertScratchBaseOutsideGrants(requestedScratchBase, [
       validatedPaths.sourceDir,
@@ -1871,7 +1890,13 @@ async function runReviewInternal(
       network,
       undefined,
       [],
-      { egress: request, repositorySource: validatedPaths.sourceDir },
+      {
+        egress: request,
+        repositorySource: validatedPaths.sourceDir,
+        cache: {
+          record: (event) => recordReviewWorkLog(workLog, "extension_snapshot", { ...event }),
+        },
+      },
       request.model,
       controllerProviderAuth,
     );
@@ -2152,7 +2177,7 @@ async function runReviewInternal(
           scratchDir: scratchDirectory,
           runtimeReadPaths: [
             ...runtimeReadPaths,
-            preparedRuntime.extensionRoot,
+            ...preparedRuntime.extensionReadRoots,
             ...runtimeReadRoots(preparedRuntime.extensions),
           ],
           network,
@@ -2175,7 +2200,10 @@ async function runReviewInternal(
                 optimized.command,
               )
             : buildLinuxSandboxArgv(
-                providerConfig,
+                {
+                  ...providerConfig,
+                  ...extensionCacheSandboxPolicy(preparedRuntime.extensions.snapshotHandle),
+                },
                 optimized.command,
                 bwrapPath ?? "",
                 bridge?.socketPath,
@@ -2199,7 +2227,11 @@ async function runReviewInternal(
           callerPrompt: request.prompt,
         };
         report = await withPiStagedIntegrity(
-          { agentDir: piHome.agentDir, extensionRoot: preparedRuntime.extensionRoot },
+          {
+            agentDir: piHome.agentDir,
+            extensionRoot: preparedRuntime.extensionRoot,
+            extensionSnapshot: preparedRuntime.extensions.snapshotHandle,
+          },
           async () =>
             await runReviewRpc(
               launch.argv,

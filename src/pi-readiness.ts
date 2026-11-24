@@ -10,6 +10,7 @@ import {
   sanitizeDiagnostic,
 } from "./diagnostics.js";
 import { type PiLaunchCommand, resolvePiCommand } from "./pi-command.js";
+import { ExtensionCacheGrantOverlapError } from "./pi-extension-cache-location.js";
 import {
   cleanupReviewRuntime,
   discoverPreparedExtensions,
@@ -56,6 +57,7 @@ export interface PiConfigAccess {
 export type PiConfigAccessProbe = (agentDir: string) => Promise<PiConfigAccess>;
 
 export interface PiProbeResult {
+  readonly grantError?: ExtensionCacheGrantOverlapError;
   readonly exitCode: number | null;
   readonly stdout: string;
   readonly stderr: string;
@@ -377,6 +379,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
             ? /^\[(PI_EXTENSION_[A-Z_]+|PI_STAGED_INTEGRITY_FAILED)\]/.exec(error.message)?.[1]
             : undefined;
         return {
+          ...(error instanceof ExtensionCacheGrantOverlapError ? { grantError: error } : {}),
           exitCode: 1,
           stdout: "",
           stderr: `[${code ?? "PI_EXTENSION_DISCOVERY_FAILED"}]`,
@@ -424,6 +427,9 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     "--no-extensions",
     "--list-models",
   ]);
+  if (modelsResult.grantError instanceof ExtensionCacheGrantOverlapError) {
+    return { ready: false, version, modelCount: 0, errors: [modelsResult.grantError.message] };
+  }
   if (modelsResult.errorCode === "PI_STAGED_INTEGRITY_FAILED") {
     return {
       ready: false,

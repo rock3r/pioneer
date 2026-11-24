@@ -21,8 +21,12 @@ import { captureEvalProcess } from "./eval-run/runner.js";
 import type { PiAuthBroker } from "./pi-auth-broker.js";
 import { prepareAuthBroker, snapshotOAuthProviders } from "./pi-auth-runtime.js";
 import type { PiLaunchCommand } from "./pi-command.js";
+import { assertExtensionCacheDisjointFromGrants } from "./pi-extension-cache-location.js";
 import {
+  extensionCacheSandboxPolicy,
+  extensionSnapshotReadRoots,
   type PreparedExtensions,
+  type PrepareExtensionCacheOptions,
   preparePiExtensions,
   runtimeReadRoots,
   withNoForkSandbox,
@@ -56,6 +60,7 @@ function pathContains(root: string, candidate: string): boolean {
 export interface PreparedReviewRuntime {
   readonly scratch: string;
   readonly extensionRoot: string;
+  readonly extensionReadRoots: readonly string[];
   readonly home: PreparedPiHome;
   readonly extensions: PreparedExtensions;
   readonly network: NetworkTier;
@@ -69,11 +74,12 @@ export interface PreparedReviewRuntime {
 export async function cleanupReviewRuntime(
   runtime: Pick<
     PreparedReviewRuntime,
-    "scratch" | "extensionRoot" | "authBroker" | "controllerProviderAuth"
+    "scratch" | "extensionRoot" | "authBroker" | "controllerProviderAuth" | "extensions"
   >,
 ): Promise<void> {
   await runtime.authBroker?.close();
   const results = await Promise.allSettled([
+    runtime.extensions.snapshotHandle?.release(),
     runtime.controllerProviderAuth?.gateway.close(),
     rm(runtime.scratch, { recursive: true, force: true }),
     rm(runtime.extensionRoot, { recursive: true, force: true }),
@@ -97,6 +103,7 @@ export async function prepareReviewRuntime(
   options: {
     readonly egress?: Pick<EgressPolicy, "allowHosts" | "blockHosts">;
     readonly repositorySource?: string;
+    readonly cache?: PrepareExtensionCacheOptions;
   } = {},
   requestedModel?: string,
   protectProvider = false,
@@ -106,8 +113,13 @@ export async function prepareReviewRuntime(
   const scratch = await createReviewScratchDirectory(scratchBase);
   let extensionRoot: string | undefined;
   let controllerProviderAuth: ControllerProviderAuth | undefined;
+  let snapshotHandle: PreparedExtensions["snapshotHandle"];
   try {
     extensionRoot = await createReviewScratchDirectory(scratchBase);
+    await assertExtensionCacheDisjointFromGrants({
+      "runtime scratch": [scratch, extensionRoot],
+      "capability extension": capabilityExtensions,
+    });
     const policy = {
       network,
       ...(options.egress?.allowHosts ? { allowHosts: options.egress.allowHosts } : {}),
@@ -137,7 +149,7 @@ export async function prepareReviewRuntime(
     // the `PI_EXTENSION_DISCOVERY_UNSUPPORTED` that `runPreparedPiCommand` throws. Skip the
     // copy; callers still reach that error, with the same guidance, when they discover.
     const stageExtensions = process.platform !== "win32" && (extensionsEnabled || needsAuthAdapter);
-    const extensions = stageExtensions
+    const extensions: PreparedExtensions = stageExtensions
       ? await preparePiExtensions(
           command,
           agentDir,
@@ -148,14 +160,17 @@ export async function prepareReviewRuntime(
           extensionsEnabled,
           undefined,
           options.repositorySource,
+          options.cache ?? {},
         )
       : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
+    snapshotHandle = extensions.snapshotHandle;
     const providerNetwork =
       controllerProviderAuth?.providerNetwork ??
       (await prepareProviderNetwork(policy, home.agentDir, requestedModel));
     const runtime = {
       scratch,
       extensionRoot,
+      extensionReadRoots: extensionSnapshotReadRoots(extensionRoot, extensions),
       home,
       extensions,
       network,
@@ -172,6 +187,7 @@ export async function prepareReviewRuntime(
           home: { ...home, environment: { ...home.environment, ...authBroker.environment } },
         };
   } catch (error) {
+    await snapshotHandle?.release().catch(() => undefined);
     await controllerProviderAuth?.gateway.close().catch(() => undefined);
     await rm(scratch, { recursive: true, force: true });
     if (extensionRoot !== undefined) await rm(extensionRoot, { recursive: true, force: true });
@@ -254,6 +270,21 @@ async function withPreparedPiSandbox<T>(
     throw new Error(
       "[PI_EXTENSION_DISCOVERY_UNSUPPORTED] Extension discovery requires native sandbox support on macOS or Linux.",
     );
+  const runtimePaths = [
+    ...runtimeReadRoots(runtime.extensions),
+    ...(await piRuntimePaths("pi")),
+    ...(await piRuntimePaths("node")),
+    ...(await macosRuntimeReadPaths(process.execPath)),
+  ];
+  const additionalExtensionGrants = (runtime.capabilityExtensions ?? []).filter(
+    (entry) =>
+      ![...runtime.extensionReadRoots, ...runtimePaths].some((root) => pathContains(root, entry)),
+  );
+  await assertExtensionCacheDisjointFromGrants({
+    "runtime scratch": [runtime.scratch, runtime.extensionRoot],
+    "Pi runtime": runtimePaths,
+    "capability extension": additionalExtensionGrants,
+  });
   await assertNativeSandboxReady();
   const resolve = createEgressResolver(
     runtime.providerNetwork?.policy ?? runtime.egressPolicy ?? { network: runtime.network },
@@ -266,18 +297,8 @@ async function withPreparedPiSandbox<T>(
   let bridgeRoot: string | undefined;
   try {
     const config: SandboxPolicy = {
-      readOnlyPaths: [
-        runtime.extensionRoot,
-        ...(runtime.capabilityExtensions ?? []).filter(
-          (entry) =>
-            !pathContains(runtime.extensionRoot, entry) &&
-            !runtimeReadRoots(runtime.extensions).some((root) => pathContains(root, entry)),
-        ),
-        ...runtimeReadRoots(runtime.extensions),
-        ...(await piRuntimePaths("pi")),
-        ...(await piRuntimePaths("node")),
-        ...(await macosRuntimeReadPaths(process.execPath)),
-      ],
+      ...extensionCacheSandboxPolicy(runtime.extensions.snapshotHandle),
+      readOnlyPaths: [...runtime.extensionReadRoots, ...additionalExtensionGrants, ...runtimePaths],
       writablePaths: [runtime.scratch],
       network: "proxy",
       proxyUrl: proxy.url,
@@ -303,6 +324,7 @@ async function withPreparedPiSandbox<T>(
       {
         agentDir: runtime.home.agentDir,
         extensionRoot: runtime.extensionRoot,
+        extensionSnapshot: runtime.extensions.snapshotHandle,
         checkAborted: () => signal?.throwIfAborted(),
       },
       async () =>

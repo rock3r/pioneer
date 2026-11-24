@@ -160,6 +160,7 @@ async function startRuntimeAuthBroker(
           const workerRuntime: PreparedReviewRuntime = {
             scratch,
             extensionRoot: runtime.extensionRoot,
+            extensionReadRoots: runtime.extensionReadRoots,
             home,
             extensions: runtime.extensions,
             network: runtime.network,

@@ -7,6 +7,10 @@ import {
   isBroadWritablePath,
   isSensitiveCredentialPath,
 } from "../eval-run/isolation.js";
+import {
+  assertExtensionCacheDisjointFromGrants,
+  ExtensionCacheGrantResolutionError,
+} from "../pi-extension-cache-location.js";
 import type { SandboxPolicy } from "../sandbox/launcher.js";
 import {
   assertStableDirectoryChain,
@@ -96,6 +100,12 @@ export async function assertDistinctExistingReviewOutputs(
   }
 }
 
+function unavailableReviewInput(absolute: string, reason: "not found" | "not readable"): Error {
+  return new Error(
+    `[REVIEW_INPUT_UNAVAILABLE] An explicit review input could not be read before Pi started: ${absolute} (${reason}). Name an existing readable file or directory; Pioneer does not search the source tree for it.`,
+  );
+}
+
 async function canonicalGrant(
   candidate: string,
   platform: NodeJS.Platform = process.platform,
@@ -108,9 +118,7 @@ async function canonicalGrant(
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "EACCES" || code === "EPERM") {
-      throw new Error(
-        `[REVIEW_INPUT_UNAVAILABLE] An explicit review input could not be read before Pi started: ${absolute} (${code === "ENOENT" ? "not found" : "not readable"}). Name an existing readable file or directory; Pioneer does not search the source tree for it.`,
-      );
+      throw unavailableReviewInput(absolute, code === "ENOENT" ? "not found" : "not readable");
     }
     throw error;
   }
@@ -272,6 +280,22 @@ async function validateReviewPathsInternal(
   platform: NodeJS.Platform,
   prospectiveControllerDirectories: readonly string[] = [],
 ): Promise<ValidatedReviewPaths> {
+  try {
+    await assertExtensionCacheDisjointFromGrants(
+      {
+        "--source": [spec.sourceDir],
+        "--allow-read": spec.allowReadPaths ?? [],
+        "--allow-write": spec.allowWritePaths ?? [],
+      },
+      platform,
+    );
+  } catch (error) {
+    if (!(error instanceof ExtensionCacheGrantResolutionError)) throw error;
+    if (error.reason === "symbolic link") {
+      throw new Error(`Review path grant is a symbolic link: ${error.grant}`);
+    }
+    throw unavailableReviewInput(error.grant, error.reason);
+  }
   const sourceDir = await canonicalGrant(spec.sourceDir, platform);
   const piHomeSource =
     spec.piHomeSource === undefined

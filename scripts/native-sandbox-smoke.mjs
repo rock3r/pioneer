@@ -25,21 +25,48 @@ if (process.platform !== "darwin" && process.platform !== "linux") {
 const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "pioneer-native-smoke-")));
 const source = path.join(root, "source");
 const scratch = path.join(root, "scratch");
+const cache = path.join(root, "cache");
+const generation = path.join(cache, "v1", "entries", "key", "leased");
+const payload = path.join(generation, "payload");
+const sibling = path.join(path.dirname(generation), "other");
 await Promise.all([
   mkdir(path.join(source, ".idea"), { recursive: true }),
   mkdir(path.join(source, ".vscode"), { recursive: true }),
   mkdir(scratch),
+  mkdir(payload, { recursive: true }),
+  mkdir(sibling, { recursive: true }),
 ]);
 await Promise.all([
   writeFile(path.join(source, ".idea", "marker.txt"), "idea-readable\n"),
   writeFile(path.join(source, ".vscode", "marker.txt"), "vscode-readable\n"),
   writeFile(path.join(source, "immutable.txt"), "unchanged\n"),
+  writeFile(path.join(payload, "extension.js"), "fixture"),
+  writeFile(path.join(generation, "manifest.jsonl"), "private manifest"),
+  writeFile(path.join(sibling, "other.txt"), "separate generation"),
 ]);
 
 const actor = String.raw`
 const fs = require("fs");
 const path = require("path");
-const [source, scratch] = process.argv.slice(1);
+const [source, scratch, cache, payload, sibling] = process.argv.slice(1);
+const staged = path.join(payload, "extension.js");
+if (fs.readFileSync(staged, "utf8") !== "fixture") throw Error("leased payload unavailable");
+for (const [name, operation] of [
+  ["read manifest", () => fs.readFileSync(path.join(payload, "..", "manifest.jsonl"))],
+  ["read sibling", () => fs.readFileSync(path.join(sibling, "other.txt"))],
+  ["list sibling", () => fs.readdirSync(sibling)],
+  ["list cache", () => fs.readdirSync(cache)],
+  ["change mode", () => fs.chmodSync(staged, 0o700)],
+  ["change time", () => fs.utimesSync(staged, 0, 0)],
+  ["write", () => fs.writeFileSync(staged, "changed")],
+  ["unlink", () => fs.unlinkSync(staged)],
+]) {
+  try { operation(); } catch (error) {
+    if (["EACCES", "EPERM", "EROFS", "ENOENT"].includes(error.code)) continue;
+    throw error;
+  }
+  throw Error("unexpected extension cache access: " + name);
+}
 const result = {
   idea: fs.readFileSync(path.join(source, ".idea", "marker.txt"), "utf8").trim(),
   vscode: fs.readFileSync(path.join(source, ".vscode", "marker.txt"), "utf8").trim(),
@@ -61,11 +88,18 @@ const runtimeCandidates =
 const nodeRuntime = await executableRuntimeRoot(process.execPath);
 const nodeExecutable = await realpath(process.execPath);
 const policy = {
-  readOnlyPaths: [source, ...runtimeCandidates.filter(existsSync), nodeRuntime, nodeExecutable],
+  readOnlyPaths: [
+    source,
+    payload,
+    ...runtimeCandidates.filter(existsSync),
+    nodeRuntime,
+    nodeExecutable,
+  ],
+  extensionCacheDirectory: cache,
   writablePaths: [scratch],
   network: "none",
 };
-const command = [nodeExecutable, "-e", actor, source, scratch];
+const command = [nodeExecutable, "-e", actor, source, scratch, cache, payload, sibling];
 const linuxBwrap = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
 if (process.platform === "linux" && linuxBwrap === undefined) {
   throw new Error("Linux sandbox smoke requires Bubblewrap");

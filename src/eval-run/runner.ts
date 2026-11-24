@@ -32,9 +32,16 @@ import {
   prepareAuthBroker,
   snapshotOAuthProviders,
 } from "../pi-auth-runtime.js";
-import { resolvePiCommand } from "../pi-command.js";
+import { piPackageReadRoot, resolvePiCommand } from "../pi-command.js";
+import { assertExtensionCacheDisjointFromGrants } from "../pi-extension-cache-location.js";
 import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
-import { preparePiExtensions, runtimeReadRoots } from "../pi-extension-runtime.js";
+import {
+  extensionCacheSandboxPolicy,
+  extensionSnapshotReadRoots,
+  type PreparedExtensions,
+  preparePiExtensions,
+  runtimeReadRoots,
+} from "../pi-extension-runtime.js";
 import {
   extensionPathsWithCapabilities,
   mirroredExtensionStagePath,
@@ -1105,6 +1112,7 @@ async function stageEvalPiExtensions(
     // rejects, or hides, a read-only mount nested inside a later writable parent.
     scratch: path.dirname(piHome.root),
     extensionRoot,
+    extensionReadRoots: extensionSnapshotReadRoots(extensionRoot, extensions),
     home: piHome,
     extensions,
     network: providerNetwork?.policy.network ?? "public",
@@ -1157,7 +1165,7 @@ async function stageEvalPiExtensions(
           };
     return {
       ...(authBroker === undefined ? {} : { authBroker }),
-      readPaths: [extensionRoot, ...runtimeReadRoots(extensions)],
+      readPaths: [...runtime.extensionReadRoots, ...runtimeReadRoots(extensions)],
       optimized,
       command,
       runtime: runtimeWithBroker,
@@ -1258,7 +1266,19 @@ async function runEvalCommandWithInterruption(
 ): Promise<EvalRunResult> {
   throwIfEvalInterrupted(interruption);
   const piHomeSource = spec.piHomeSource ?? defaultPiAgentDir();
+  const runtimeReadPaths = [...(spec.runtimeReadPaths ?? []), ...(await existingRuntimePaths())];
+  await assertExtensionCacheDisjointFromGrants({
+    "--run-dir": [spec.runDir],
+    "--runtime-read": runtimeReadPaths,
+    "controller scratch base":
+      options.controllerScratchBase === undefined ? [] : [options.controllerScratchBase],
+  });
   const piActorInspection = await inspectEvalPiActor(spec.command, spec.runDir, process.env);
+  if (piActorInspection.packageRoot !== undefined) {
+    await assertExtensionCacheDisjointFromGrants({
+      "Pi package": [await piPackageReadRoot(piActorInspection.packageRoot)],
+    });
+  }
   const requestedModel =
     requestedPiModel(spec.command) ??
     (piActorInspection.trusted ? requestedPiModel(["pi", ...spec.command.slice(1)]) : undefined);
@@ -1348,7 +1368,7 @@ async function runEvalCommandWithInterruption(
   const validated = await validateEvalRunSpec({
     ...spec,
     piHomeSource,
-    runtimeReadPaths: [...(spec.runtimeReadPaths ?? []), ...(await existingRuntimePaths())],
+    runtimeReadPaths,
   });
   throwIfEvalInterrupted(interruption);
   const validatedPiHomeSource = validated.piHomeSource;
@@ -1476,6 +1496,7 @@ async function runEvalCommandWithInterruption(
       ...platformRuntimeReadPaths,
       ...executableReadPaths,
     ];
+    await assertExtensionCacheDisjointFromGrants({ "eval executable": completeActorReadPaths });
     assertPiHomeSeparatedFromActorGrants(validatedPiHomeSource, completeActorReadPaths);
     try {
       await assertEvalWorkLogNotActorVisible(workLog.path, [
@@ -1571,8 +1592,10 @@ async function runEvalCommandWithInterruption(
     let controllerProvider: ControllerProviderAuth | undefined;
     let extensionReadPaths: readonly string[] = [];
     let stagedExtensionRoot: string | undefined;
+    let snapshotHandle: PreparedExtensions["snapshotHandle"];
     try {
       const actorGrantPaths = [validated.runDir, ...completeActorReadPaths];
+      await assertExtensionCacheDisjointFromGrants({ "eval scratch": [isolationDir] });
       if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
         throw new Error("Eval controller directory must not overlap actor grants");
       }
@@ -1670,6 +1693,7 @@ async function runEvalCommandWithInterruption(
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
         stagedExtensionRoot = staged.runtime.extensionRoot;
+        snapshotHandle = staged.runtime.extensions.snapshotHandle;
         optimizedPi = staged.optimized;
         sandboxCommand = [...staged.command] as [string, ...string[]];
         actorEnvironment = {
@@ -1716,6 +1740,7 @@ async function runEvalCommandWithInterruption(
           preparedRuntime: {
             scratch: actorScratchDir,
             extensionRoot,
+            extensionReadRoots: [extensionRoot],
             home: piHome,
             extensions: {
               command: piCommand,
@@ -1891,7 +1916,11 @@ async function runEvalCommandWithInterruption(
             const sinks = openEvalOutputFiles(outputTargets);
             try {
               return await sandboxAndCapture(
-                { ...actorConfig, ...identityPolicy },
+                {
+                  ...actorConfig,
+                  ...identityPolicy,
+                  ...extensionCacheSandboxPolicy(snapshotHandle),
+                },
                 [sandboxRuntimeExecutable, launcherScript, launchSpec],
                 validated.runDir,
                 timeoutMs,
@@ -1949,6 +1978,7 @@ async function runEvalCommandWithInterruption(
         brokerCloseFailure = error;
       }
       const cleanupResults = await Promise.allSettled([
+        brokerCloseFailure === undefined ? snapshotHandle?.release() : undefined,
         controllerProvider?.gateway.close(),
         bridge?.close(),
         ...loopbackBridges.map((loopbackBridge) => loopbackBridge.close()),

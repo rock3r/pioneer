@@ -26,6 +26,7 @@ import {
   stageExtensionSnapshot,
 } from "./pi-extension-snapshot.js";
 import { piRuntimeStorage } from "./pi-runtime-storage.js";
+import { withPiStagedIntegrity } from "./pi-staged-integrity.js";
 
 vi.mock("./review/work-log.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./review/work-log.js")>()),
@@ -87,6 +88,35 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
       options(overrides),
     );
   }
+
+  it.each(["before", "during"])(
+    "detects a changed leased payload %s an actor run",
+    async (when) => {
+      const setup = await prepare("cold");
+      await setup.snapshotHandle?.release();
+      const hit = await prepare("warm", { validate: validateCachedExtensionSnapshot });
+      const handle = hit.snapshotHandle;
+      const staged = hit.paths[0];
+      if (!handle || !staged) throw new Error("Expected a leased entry point");
+      const change = async () => {
+        await chmod(staged, 0o600);
+        await writeFile(staged, "export const extension = 2;\n");
+      };
+      const actor = vi.fn(async () => {
+        if (when === "during") await change();
+        return "ok";
+      });
+      try {
+        if (when === "before") await change();
+        await expect(withPiStagedIntegrity({ extensionSnapshot: handle }, actor)).rejects.toThrow(
+          "[PI_STAGED_INTEGRITY_FAILED]",
+        );
+        expect(actor).toHaveBeenCalledTimes(when === "before" ? 0 : 1);
+      } finally {
+        await handle.release();
+      }
+    },
+  );
 
   it("records final modes and returns legacy-compatible snapshots on miss and hit", async () => {
     const legacy = await stageExtensionSnapshot(

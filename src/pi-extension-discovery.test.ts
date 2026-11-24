@@ -17,6 +17,34 @@ vi.mock("./pi-extension-runtime.js", async (importOriginal) => {
 const { createTempDir } = registerManagedTempPaths();
 
 describe("prepareReviewRuntime", () => {
+  afterEach(() => vi.mocked(preparePiExtensions).mockClear());
+  it.skipIf(process.platform === "win32")(
+    "grants only the adapter and the leased payload and releases the lease on cleanup",
+    async () => {
+      const root = await createTempDir("review-runtime-grants-");
+      const agentDir = path.join(root, "agent");
+      await mkdir(agentDir);
+      const payload = path.join(root, "generation", "payload");
+      const release = vi.fn(async () => {});
+      vi.mocked(preparePiExtensions).mockResolvedValueOnce({
+        command: ["pi"],
+        paths: [],
+        sourcePaths: [],
+        digest: "0".repeat(64),
+        entries: 0,
+        bytes: 0,
+        snapshotHandle: { cacheRoot: root, payload, release, verifyPayload: async () => {} },
+      });
+      const runtime = await prepareReviewRuntime(["pi"], agentDir, {}, root);
+      try {
+        expect(runtime.extensionReadRoots).toEqual([runtime.extensionRoot, payload]);
+        expect(release).not.toHaveBeenCalled();
+      } finally {
+        await cleanupReviewRuntime(runtime);
+      }
+      expect(release).toHaveBeenCalledOnce();
+    },
+  );
   it("locates configured session storage with the Pi environment's home", async () => {
     const root = await createTempDir("review-runtime-session-home-");
     const agentDir = path.join(root, "agent");
@@ -53,7 +81,6 @@ describe("prepareReviewRuntime", () => {
   describe("on Windows", () => {
     afterEach(() => {
       vi.unstubAllGlobals();
-      vi.mocked(preparePiExtensions).mockClear();
     });
 
     it("rejects enabled-extension discovery without staging any extension tree", async () => {

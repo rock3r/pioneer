@@ -6,7 +6,11 @@ import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import { resolvePublicTarget, startEgressProxy } from "../eval-run/public-egress-proxy.js";
 import { resolvePiCommand } from "../pi-command.js";
 import { cleanupReviewRuntime, prepareReviewRuntime } from "../pi-extension-discovery.js";
-import { runtimeReadRoots, withNoForkSandbox } from "../pi-extension-runtime.js";
+import {
+  extensionCacheSandboxPolicy,
+  runtimeReadRoots,
+  withNoForkSandbox,
+} from "../pi-extension-runtime.js";
 import { extensionPathsWithCapabilities } from "../pi-extension-snapshot.js";
 import {
   extensionPackageNames,
@@ -52,6 +56,10 @@ import {
 } from "./structured-actor.js";
 
 export interface CreateDeepReviewActorExecutorOptions {
+  readonly onExtensionSnapshot?: (
+    memberId: string,
+    event: import("../pi-extension-cache.js").ExtensionSnapshotCacheEvent,
+  ) => void;
   readonly piHomeSource?: string;
   readonly packageRoot?: string;
   readonly config: DeepReviewConfigV1;
@@ -115,7 +123,12 @@ async function launchStructuredActor(
     "public",
     request.signal,
     capabilityExtensions,
-    { repositorySource: validatedPaths.sourceDir },
+    {
+      repositorySource: validatedPaths.sourceDir,
+      cache: {
+        record: (event) => options.onExtensionSnapshot?.(request.member.id, event),
+      },
+    },
   );
   try {
     const readiness = await assertPiReady({
@@ -136,7 +149,7 @@ async function launchStructuredActor(
     await assertNativeSandboxReady();
 
     const runtimeReadPaths = [
-      runtime.extensionRoot,
+      ...runtime.extensionReadRoots,
       ...runtimeReadRoots(runtime.extensions),
       ...(await piRuntimePaths("pi")),
       ...(await piRuntimePaths("node")),
@@ -252,6 +265,7 @@ async function launchStructuredActor(
           : buildLinuxSandboxArgv(
               {
                 ...sandboxConfig,
+                ...extensionCacheSandboxPolicy(runtime.extensions.snapshotHandle),
                 writablePaths: [...sandboxConfig.writablePaths, runtime.scratch],
               },
               optimized.command,
@@ -260,7 +274,11 @@ async function launchStructuredActor(
             );
 
       return await withPiStagedIntegrity(
-        { agentDir: runtime.home.agentDir, extensionRoot: runtime.extensionRoot },
+        {
+          agentDir: runtime.home.agentDir,
+          extensionRoot: runtime.extensionRoot,
+          extensionSnapshot: runtime.extensions.snapshotHandle,
+        },
         async () =>
           await runReviewRpc(
             launch.argv,

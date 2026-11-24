@@ -1,3 +1,4 @@
+import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { canonicalProspectivePathForContainment } from "./stable-directory.js";
@@ -30,6 +31,59 @@ function contains(parent: string, child: string): boolean {
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
+export function extensionCacheDirectory(versionRoot: string): string {
+  const parent = path.dirname(versionRoot);
+  return path.basename(parent) === "extension-snapshots" ? parent : versionRoot;
+}
+
+export class ExtensionCacheGrantOverlapError extends Error {
+  constructor(label: string, grant: string, cache: string) {
+    super(
+      `[PI_EXTENSION_CACHE_GRANT_OVERLAP] The ${label} grant ${grant} overlaps Pioneer's extension cache at ${cache}. Pass a narrower grant outside that directory.`,
+    );
+  }
+}
+
+type GrantPathFailure = "not found" | "not readable" | "symbolic link";
+
+export class ExtensionCacheGrantResolutionError extends Error {
+  constructor(
+    label: string,
+    readonly grant: string,
+    readonly reason: GrantPathFailure,
+    cause: unknown,
+  ) {
+    super(
+      `[PI_EXTENSION_CACHE_GRANT_UNAVAILABLE] Could not resolve the ${label} grant ${grant} (${reason}) before checking extension cache isolation. Name an existing readable path.`,
+      { cause },
+    );
+  }
+}
+
+function pathResolutionFailure(error: unknown): "not found" | "not readable" | undefined {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code === "ENOENT") return "not found";
+  if (code === "ENOTDIR" || code === "ELOOP" || code === "EACCES" || code === "EPERM")
+    return "not readable";
+  return undefined;
+}
+
+async function resolveCacheGrant(label: string, grant: string): Promise<string> {
+  try {
+    return await canonicalProspectivePathForContainment(grant);
+  } catch (error) {
+    const failure = pathResolutionFailure(error);
+    if (failure === undefined) throw error;
+    const stats = await lstat(grant).catch(() => undefined);
+    throw new ExtensionCacheGrantResolutionError(
+      label,
+      grant,
+      stats?.isSymbolicLink() ? "symbolic link" : failure,
+      error,
+    );
+  }
+}
+
 /** Keep even a disabled cache outside user grants. A different process can hold a live lease. */
 export async function assertExtensionCacheDisjointFromGrants(
   grants: Readonly<Record<string, readonly string[]>>,
@@ -37,38 +91,24 @@ export async function assertExtensionCacheDisjointFromGrants(
   versionRoot = extensionCacheRoot(process.env, platform),
 ): Promise<void> {
   if (platform === "win32") return;
-  const parent = path.dirname(versionRoot);
-  const cache = path.resolve(
-    path.basename(parent) === "extension-snapshots" ? parent : versionRoot,
-  );
+  const cache = path.resolve(extensionCacheDirectory(versionRoot));
   const normalize = (entry: string) =>
     platform === "darwin" ? entry.normalize("NFD").toLowerCase() : entry;
   const canonical = await canonicalProspectivePathForContainment(cache).catch((error: unknown) => {
     // The store will bypass an unusable directory. The lexical path still needs protection.
-    const code = (error as NodeJS.ErrnoException).code;
-    if (
-      code === "ENOENT" ||
-      code === "ENOTDIR" ||
-      code === "ELOOP" ||
-      code === "EACCES" ||
-      code === "EPERM"
-    )
-      return cache;
+    if (pathResolutionFailure(error) !== undefined) return cache;
     throw error;
   });
   const roots = [normalize(cache), normalize(canonical)];
+  const overlapsCache = (entry: string): boolean => {
+    const name = normalize(entry);
+    return roots.some((root) => contains(root, name) || contains(name, root));
+  };
   for (const [label, paths] of Object.entries(grants)) {
     for (const grant of new Set(paths)) {
-      const names = [
-        normalize(path.resolve(grant)),
-        normalize(await canonicalProspectivePathForContainment(grant)),
-      ];
-      if (
-        names.some((name) => roots.some((root) => contains(root, name) || contains(name, root)))
-      ) {
-        throw new Error(
-          `[PI_EXTENSION_CACHE_GRANT_OVERLAP] The ${label} grant ${grant} overlaps Pioneer's extension cache at ${cache}. Pass a narrower grant outside that directory.`,
-        );
+      const absolute = path.resolve(grant);
+      if (overlapsCache(absolute) || overlapsCache(await resolveCacheGrant(label, absolute))) {
+        throw new ExtensionCacheGrantOverlapError(label, grant, cache);
       }
     }
   }

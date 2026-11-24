@@ -1,4 +1,5 @@
 import { readdir, rm } from "node:fs/promises";
+import path from "node:path";
 import {
   createTestTempRoot,
   TEST_TEMP_ROOT_VARIABLE,
@@ -24,6 +25,7 @@ export default async function setup(): Promise<() => Promise<void>> {
   useTestTempRoot(root);
 
   return async () => {
+    await rm(path.join(root, "cache"), { recursive: true, force: true });
     const leaked = (await readdir(root)).filter(
       (entry) => !UNMANAGED_TEMP_ROOT_ENTRIES.includes(entry),
     );
