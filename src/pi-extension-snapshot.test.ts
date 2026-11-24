@@ -8,6 +8,7 @@ import {
   readdir,
   readFile,
   readlink,
+  realpath,
   rm,
   stat,
   symlink,
@@ -24,6 +25,7 @@ import {
   mirroredExtensionStagePath,
   snapshotExtensionResources,
 } from "./pi-extension-snapshot.js";
+import { piRuntimeStorage } from "./pi-runtime-storage.js";
 
 const { createTempDir } = registerManagedTempPaths();
 
@@ -791,6 +793,11 @@ describe("extension snapshots", () => {
     const history = path.join(extension, "history");
     const nested = path.join(history, "dir.jsonl");
     await mkdir(nested, { recursive: true });
+    await mkdir(path.join(root, ".pi"));
+    await writeFile(
+      path.join(root, ".pi", "settings.json"),
+      JSON.stringify({ sessionDir: history }),
+    );
     const entry = path.join(extension, "index.ts");
     await writeFile(entry, "export {};\n");
     await writeFile(path.join(history, "run.jsonl"), '{"type":"example"}\n');
@@ -804,11 +811,18 @@ describe("extension snapshots", () => {
       await symlink(path.join("..", "fixtures.jsonl"), path.join(history, "inside-link"));
       await symlink(path.join("dir.jsonl", "data.json"), path.join(history, "data-link.jsonl"));
     }
+    const agentDir = path.join(root, "agent");
+    const storage = await piRuntimeStorage(
+      agentDir,
+      path.join(agentDir, "settings.json"),
+      {},
+      await realpath(root),
+    );
     const result = await snapshotExtensionResources(
       [{ path: entry, enabled: true, metadata: { scope: "user" } }],
       path.join(root, "snapshot"),
       undefined,
-      { agentDir: path.join(root, "agent"), sessionDirs: [], repositorySessionDirs: [history] },
+      storage,
     );
 
     const staged = path.dirname(result.paths[0] ?? "");
@@ -835,7 +849,7 @@ describe("extension snapshots", () => {
   });
 
   it("keeps selected entry points when the project names the extension root or filesystem root", async () => {
-    const root = realpathSync(await createTempDir("extension-repository-session-root-"));
+    const root = await realpath(await createTempDir("extension-repository-session-root-"));
     const extension = path.join(root, "code");
     const entry = path.join(extension, "entry.jsonl");
     await mkdir(extension);
