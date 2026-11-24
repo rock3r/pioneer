@@ -1,7 +1,13 @@
 import { open } from "node:fs/promises";
 import path from "node:path";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
-import { createEgressResolver, type EgressPolicy } from "./egress-policy.js";
+import {
+  createControllerProviderResolver,
+  createEgressResolver,
+  type EgressPolicy,
+  type ResolverSources,
+} from "./egress-policy.js";
+import type { EgressTargetResolver } from "./public-egress-proxy.js";
 
 function record(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -53,6 +59,42 @@ export interface PreparedProviderNetwork {
   workerPolicy(provider: string): EgressPolicy;
 }
 
+export interface ProtectedProviderNetwork extends PreparedProviderNetwork {
+  readonly resolveUpstream: EgressTargetResolver;
+}
+
+export function prepareProtectedProviderNetwork(
+  policy: EgressPolicy,
+  upstreamHostname: string,
+  requestedModel: string,
+  sources?: ResolverSources,
+): ProtectedProviderNetwork {
+  const requested = requestedModel.trim();
+  const thinking = thinkingFromModelShorthand(requested);
+  const model = thinking === undefined ? requested : requested.slice(0, -thinking.length - 1);
+  if (model.indexOf("/") < 1 || model.endsWith("/")) {
+    throw new Error("Protected provider networking requires a qualified model");
+  }
+  const filters = {
+    network: policy.network,
+    ...(policy.allowHosts === undefined ? {} : { allowHosts: [...policy.allowHosts] }),
+    ...(policy.blockHosts === undefined ? {} : { blockHosts: [...policy.blockHosts] }),
+  };
+  const upstream = createControllerProviderResolver(filters, upstreamHostname, sources);
+  const actorPolicy = { ...filters, controllerProviderHost: upstream.hostname };
+  return {
+    policy: actorPolicy,
+    defaultModel: model,
+    resolveUpstream: upstream.resolve,
+    bind(resolvedModel) {
+      if (resolvedModel?.toLowerCase() !== model.toLowerCase()) {
+        throw new Error("Resolved Pi model differs from the protected provider model");
+      }
+    },
+    workerPolicy: () => actorPolicy,
+  };
+}
+
 function configuredModels(entry: Record<string, unknown>): Record<string, unknown>[] {
   return Array.isArray(entry.models) ? entry.models.map(record) : [];
 }
@@ -65,7 +107,7 @@ function selectProvider(
   if (requested === undefined) return settings.defaultProvider;
   const names = [...new Set([...Object.keys(providers), ...standardHosts.keys()])];
   const qualified = names
-    .filter((name) => requested.toLowerCase().startsWith(name.toLowerCase() + "/"))
+    .filter((name) => requested.toLowerCase().startsWith(`${name.toLowerCase()}/`))
     .sort((a, b) => b.length - a.length);
   if (qualified[0]) return qualified[0];
   const owners = Object.entries(providers).filter(([, entry]) =>
@@ -94,7 +136,7 @@ function resolveProviderEndpoint(
     );
   }
   const entry = Object.hasOwn(providers, provider) ? record(providers[provider]) : {};
-  const modelId = selection?.toLowerCase().startsWith(provider.toLowerCase() + "/")
+  const modelId = selection?.toLowerCase().startsWith(`${provider.toLowerCase()}/`)
     ? selection.slice(provider.length + 1)
     : (selection ?? settings.defaultModel);
   const model = configuredModels(entry).find(
@@ -146,7 +188,7 @@ export async function prepareProviderNetwork(
     typeof settings.defaultModel === "string" &&
     settings.defaultProvider &&
     settings.defaultModel
-      ? settings.defaultProvider + "/" + settings.defaultModel
+      ? `${settings.defaultProvider}/${settings.defaultModel}`
       : undefined;
   let current = resolveProviderEndpoint(policy, settings, providers, requested, true);
   return {
@@ -177,6 +219,9 @@ export function describeEgressPolicy(policy: EgressPolicy): string {
     policy.network +
     ". Provider hosts: " +
     rules(policy.providerHosts) +
+    (policy.controllerProviderHost === undefined
+      ? ""
+      : `. Controller provider host: ${policy.controllerProviderHost}`) +
     ". Allow: " +
     rules(policy.allowHosts) +
     ". Block: " +

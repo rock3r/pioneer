@@ -241,6 +241,12 @@ Abrupt failure between remote rotation and local persistence can still require r
 
 Evals use the same broker with public networking, including commands with `--no-extensions` or `-ne`. The controller writes refreshed source credentials before removing the snapshot. If a snapshot contains OAuth credentials and Pi cannot host the auth adapter, the eval fails before launch.
 
+## Controller-only provider authentication
+
+`--controller-provider-auth` replaces the normal native review or eval credential snapshot with generated model configuration and one per-run placeholder. The actor and model discovery do not receive the source `auth.json`, model configuration, or provider environment values. The controller reads one credential for the exact configured provider and model. Expired OAuth requires renewal in Pi. The protected mode does not start a refresh worker or expose a refresh endpoint to the actor.
+
+The gateway injects credentials only on the fixed inference path and only when the caller supplies the placeholder in the expected header. It rejects alternate authentication headers and placeholders in other headers, pins a public address, and verifies the upstream TLS name and certificate. Upstream redirects are rejected. Returned response headers come from a small allowlist, and the controller removes matching credential bytes from each response stream. The configured upstream is trusted with the credential. An actor can still make authorized model requests for the selected model while the run is active.
+
 ## Network policy
 
 All sandboxed network access is proxy-mediated and authenticated with a per-run random token.

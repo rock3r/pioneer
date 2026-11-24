@@ -1,6 +1,11 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import {
+  assertControllerProviderAuthOutsideGrants,
+  type ControllerProviderAuth,
+  prepareControllerProviderAuth,
+} from "./controller-provider-auth.js";
+import {
   createEgressResolver,
   type EgressPolicy,
   type NetworkTier,
@@ -56,14 +61,19 @@ export interface PreparedReviewRuntime {
   readonly egressPolicy?: EgressPolicy;
   readonly providerNetwork?: PreparedProviderNetwork;
   readonly authBroker?: PiAuthBroker;
+  readonly controllerProviderAuth?: ControllerProviderAuth;
   readonly capabilityExtensions?: readonly string[];
 }
 
 export async function cleanupReviewRuntime(
-  runtime: Pick<PreparedReviewRuntime, "scratch" | "extensionRoot" | "authBroker">,
+  runtime: Pick<
+    PreparedReviewRuntime,
+    "scratch" | "extensionRoot" | "authBroker" | "controllerProviderAuth"
+  >,
 ): Promise<void> {
   await runtime.authBroker?.close();
   const results = await Promise.allSettled([
+    runtime.controllerProviderAuth?.gateway.close(),
     rm(runtime.scratch, { recursive: true, force: true }),
     rm(runtime.extensionRoot, { recursive: true, force: true }),
   ]);
@@ -85,12 +95,26 @@ export async function prepareReviewRuntime(
   capabilityExtensions: readonly string[] = [],
   filters?: Pick<EgressPolicy, "allowHosts" | "blockHosts">,
   requestedModel?: string,
+  protectProvider = false,
 ): Promise<PreparedReviewRuntime> {
   signal?.throwIfAborted();
   const scratch = await createReviewScratchDirectory(scratchBase);
   let extensionRoot: string | undefined;
+  let controllerProviderAuth: ControllerProviderAuth | undefined;
   try {
     extensionRoot = await createReviewScratchDirectory(scratchBase);
+    const policy = {
+      network,
+      ...(filters?.allowHosts ? { allowHosts: filters.allowHosts } : {}),
+      ...(filters?.blockHosts ? { blockHosts: filters.blockHosts } : {}),
+    };
+    if (protectProvider) {
+      controllerProviderAuth = await prepareControllerProviderAuth(
+        agentDir,
+        requestedModel,
+        policy,
+      );
+    }
     const home = await prepareIsolatedPiHome({
       sourceDir: agentDir,
       destination: path.join(scratch, "pi-home"),
@@ -98,6 +122,9 @@ export async function prepareReviewRuntime(
       environment,
       checkAborted: () => signal?.throwIfAborted(),
       ...(includes === undefined ? {} : { piHomeIncludes: includes }),
+      ...(controllerProviderAuth === undefined
+        ? {}
+        : { controllerProviderFiles: controllerProviderAuth.files }),
     });
     const needsAuthAdapter =
       process.platform !== "win32" && (await snapshotOAuthProviders(home.agentDir)).size > 0;
@@ -116,15 +143,9 @@ export async function prepareReviewRuntime(
           extensionsEnabled,
         )
       : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
-    const providerNetwork = await prepareProviderNetwork(
-      {
-        network,
-        ...(filters?.allowHosts ? { allowHosts: filters.allowHosts } : {}),
-        ...(filters?.blockHosts ? { blockHosts: filters.blockHosts } : {}),
-      },
-      home.agentDir,
-      requestedModel,
-    );
+    const providerNetwork =
+      controllerProviderAuth?.providerNetwork ??
+      (await prepareProviderNetwork(policy, home.agentDir, requestedModel));
     const runtime = {
       scratch,
       extensionRoot,
@@ -133,6 +154,7 @@ export async function prepareReviewRuntime(
       network,
       capabilityExtensions,
       providerNetwork,
+      ...(controllerProviderAuth === undefined ? {} : { controllerProviderAuth }),
     };
     const authBroker = await prepareAuthBroker(runtime);
     return authBroker === undefined
@@ -143,6 +165,7 @@ export async function prepareReviewRuntime(
           home: { ...home, environment: { ...home.environment, ...authBroker.environment } },
         };
   } catch (error) {
+    await controllerProviderAuth?.gateway.close().catch(() => undefined);
     await rm(scratch, { recursive: true, force: true });
     if (extensionRoot !== undefined) await rm(extensionRoot, { recursive: true, force: true });
     throw error;
@@ -218,6 +241,12 @@ export async function runPreparedPiCommand(
       proxyUrl: proxy.url,
       allowProcessFork: false,
     };
+    if (runtime.controllerProviderAuth !== undefined) {
+      await assertControllerProviderAuthOutsideGrants(runtime.home.sourceDir, [
+        ...config.readOnlyPaths,
+        ...config.writablePaths,
+      ]);
+    }
     let launch: ReturnType<typeof buildLinuxSandboxArgv>;
     if (process.platform === "darwin") launch = buildMacosSandboxArgv(config, command);
     else {

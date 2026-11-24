@@ -191,6 +191,7 @@ async function main(): Promise<void> {
         networkText !== "full" ||
         noResume ||
         parsed.noExtensions ||
+        parsed.controllerProviderAuth ||
         networkSpecified ||
         parsed.allowHosts.length > 0 ||
         parsed.blockHosts.length > 0 ||
@@ -241,6 +242,7 @@ async function main(): Promise<void> {
       usage();
     const result = await runReview({
       ...(parsed.noExtensions ? { extensions: false } : {}),
+      ...(parsed.controllerProviderAuth ? { controllerProviderAuth: true } : {}),
       sourceDir: path.resolve(sourceDir),
       prompt,
       allowReadPaths,

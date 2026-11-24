@@ -3,6 +3,7 @@ export const REVIEW_USAGE = `Usage:
     [--pi-home DIR] [--pi-home-include RELATIVE_PATH]... [--allow-read DIR] [--allow-write DIR]
     [--git TARGET]... [--allow-partial-clone] [--allow-git-symlink-root DIR]... [--allow-android-repo-root DIR]...
     [--report FILE] [--work-log FILE] [--network full|public|provider-only] [--allow-host PATTERN]... [--block-host PATTERN]...
+    [--controller-provider-auth]
     [--timeout-ms N] [--max-rpc-output-mb N] [--no-resume] [--no-extensions] [--allow-unsandboxed-windows]
   pioneer review --resume TOKEN [--timeout-ms N] [--max-rpc-output-mb N]
     [--report FILE] [--work-log FILE] [--allow-unsandboxed-windows]

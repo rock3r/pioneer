@@ -150,6 +150,12 @@ The controller reads current source credentials under Pi's shared lock. It runs 
 
 The controller saves validated provider results before cleanup and returns them to the private review credential store. Concurrent reviews and ordinary Pi reuse these rotations. The review actor cannot choose data written to source credentials. [Security](SECURITY.md#oauth-refresh-in-native-reviews-and-evals) defines the remaining limits.
 
+## Controller-only provider authentication
+
+Native review and eval can opt into a shared per-run provider gateway. The controller reads the selected provider configuration and credential, resolves a fixed public HTTPS upstream, and writes a generated models configuration and run-scoped placeholder into the isolated Pi home. Model discovery uses that generated home. Source authentication and model configuration stay outside actor grants.
+
+The actor connects to the gateway over private loopback. Linux uses the existing per-port relay across its network namespace. The gateway checks the expected request path, model ID, and authentication header before injecting the credential into a pinned HTTPS inference request. It blocks upstream redirects, forwards selected response content, and removes reflected credential bytes from the response stream. The gateway closes during run cleanup.
+
 ## Eval lifecycle
 
 Eval preparation validates `skill_name` as one portable path component within the cross-platform filename byte limit. It rejects revealing fixture paths or contents with `[EVAL_FIXTURE_LEAK]`.

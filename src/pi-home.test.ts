@@ -76,6 +76,30 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
 }
 
 describe("prepareIsolatedPiHome", () => {
+  it("uses generated provider config without exposing other source credentials or model settings", async () => {
+    const { source, destination } = await fixture();
+    await writeFile(path.join(source, "models-store.json"), '{"apiKey":"secondary-secret"}');
+    await writeFile(path.join(source, "settings.json"), '{"apiKey":"configuration-secret"}');
+    const home = await prepareIsolatedPiHome({
+      sourceDir: source,
+      destination,
+      mode: "eval",
+      controllerProviderFiles: {
+        auth: '{"openai":{"type":"api_key","key":"placeholder"}}',
+        models: "{}",
+      },
+    });
+
+    expect(await readFile(path.join(home.agentDir, "auth.json"), "utf8")).toContain("placeholder");
+    await expect(lstat(path.join(home.agentDir, "models-store.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(lstat(path.join(home.agentDir, "settings.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(await readFile(path.join(source, "auth.json"), "utf8")).toContain("secret");
+  });
+
   it("copies only the default allowlist and sanitizes review skills", async () => {
     const { source, destination } = await fixture();
     const prepared = await prepareIsolatedPiHome({

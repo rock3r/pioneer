@@ -3,9 +3,91 @@ import path from "node:path";
 import { expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { createEgressResolver } from "./egress-policy.js";
-import { prepareProviderNetwork } from "./provider-network.js";
+import {
+  describeEgressPolicy,
+  prepareProtectedProviderNetwork,
+  prepareProviderNetwork,
+} from "./provider-network.js";
 
 const { createTempDir } = registerManagedTempPaths();
+
+it.each(["full", "public", "provider-only"] as const)(
+  "keeps the protected inference host on the exact controller route in %s",
+  async (network) => {
+    const lookup = vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]);
+    const sources = { lookup, interfaces: () => ["192.168.2.4"] };
+    const plan = prepareProtectedProviderNetwork(
+      {
+        network,
+        allowHosts: ["*.provider.test", "127.0.0.1"],
+        providerHosts: ["inference.provider.test"],
+      },
+      "INFERENCE.PROVIDER.TEST.",
+      "provider/model",
+      sources,
+    );
+    expect(plan.defaultModel).toBe("provider/model");
+    expect(plan.policy.providerHosts).toBeUndefined();
+    expect(describeEgressPolicy(plan.policy)).toContain(
+      "Controller provider host: inference.provider.test.",
+    );
+    expect(plan.workerPolicy("provider")).toBe(plan.policy);
+    plan.bind("PROVIDER/model");
+    expect(() => plan.bind("provider/other-model")).toThrow(/model/i);
+    expect(() => plan.bind(undefined)).toThrow(/model/i);
+    const actor = createEgressResolver(plan.policy, sources);
+    await expect(actor("inference.provider.test", 443)).rejects.toThrow();
+    await expect(actor("127.0.0.1", 443)).rejects.toThrow();
+    await expect(plan.resolveUpstream("other.provider.test", 443)).rejects.toThrow();
+    await expect(plan.resolveUpstream("inference.provider.test", 444)).rejects.toThrow();
+    expect(lookup).not.toHaveBeenCalled();
+    await expect(plan.resolveUpstream("inference.provider.test", 443)).resolves.toEqual({
+      address: "8.8.8.8",
+      family: 4,
+    });
+    expect(lookup).toHaveBeenCalledWith("inference.provider.test");
+  },
+);
+
+it.each(["full", "public", "provider-only"] as const)(
+  "checks every protected upstream address for public reachability in %s",
+  async (network) => {
+    const lookup = vi.fn(async () => [
+      { address: "8.8.8.8", family: 4 },
+      { address: "192.168.2.99", family: 4 },
+    ]);
+    const plan = prepareProtectedProviderNetwork(
+      { network, allowHosts: ["0.0.0.0/0"] },
+      "inference.provider.test",
+      "provider/model",
+      { lookup, interfaces: () => ["192.168.2.4"] },
+    );
+    await expect(plan.resolveUpstream("inference.provider.test", 443)).rejects.toThrow();
+    expect(lookup).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("checks controller hostname blocks before DNS and controller address blocks after lookup", async () => {
+  const lookup = vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]);
+  const sources = { lookup, interfaces: () => ["192.168.2.4"] };
+  const hostname = "inference.provider.test";
+  const byName = prepareProtectedProviderNetwork(
+    { network: "full", blockHosts: ["*.provider.test"] },
+    hostname,
+    "provider/model",
+    sources,
+  );
+  await expect(byName.resolveUpstream(hostname, 443)).rejects.toThrow();
+  expect(lookup).not.toHaveBeenCalled();
+  const byAddress = prepareProtectedProviderNetwork(
+    { network: "full", blockHosts: ["8.8.8.0/24"] },
+    hostname,
+    "provider/model",
+    sources,
+  );
+  await expect(byAddress.resolveUpstream(hostname, 443)).rejects.toThrow();
+  expect(lookup).toHaveBeenCalledTimes(1);
+});
 
 it("discovers a bare built-in model without implicit network access and binds its resolved model", async () => {
   const dir = await createTempDir("provider-bootstrap-");

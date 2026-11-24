@@ -20,6 +20,7 @@ export interface ParsedReviewCliArgs {
   readonly allowUnsandboxedWindows: boolean;
   readonly noResume: boolean;
   readonly noExtensions: boolean;
+  readonly controllerProviderAuth: boolean;
   readonly resumeToken: string | undefined;
   readonly gitTargets: readonly string[];
   readonly allowPartialClone: boolean;
@@ -68,6 +69,8 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
   const partialCloneIndex = args.indexOf("--allow-partial-clone");
   const allowPartialClone = partialCloneIndex >= 0;
   if (allowPartialClone) args.splice(partialCloneIndex, 1);
+  const controllerProviderAuth = args.includes("--controller-provider-auth");
+  if (controllerProviderAuth) args.splice(args.indexOf("--controller-provider-auth"), 1);
   const networkSpecified = args.some(
     (argument) => argument === "--network" || argument.startsWith("--network="),
   );
@@ -91,6 +94,7 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
     allowUnsandboxedWindows,
     noResume,
     noExtensions,
+    controllerProviderAuth,
     resumeToken: takeOption(args, "--resume"),
     gitTargets: takeRepeated(args, "--git", false),
     allowPartialClone,

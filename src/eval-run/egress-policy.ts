@@ -11,6 +11,7 @@ export interface EgressPolicy {
   readonly blockHosts?: readonly string[];
   readonly providerHosts?: readonly string[];
   readonly oauthIssuerHost?: string;
+  readonly controllerProviderHost?: string;
 }
 
 const metadataNames = new Set([
@@ -56,7 +57,7 @@ function rules(patterns: readonly string[]) {
     const name = wildcard ? pattern.slice(2) : pattern;
     if (!validHostname.test(name) || /^[\d.]+$/.test(name))
       throw new Error("Invalid network host filter");
-    if (wildcard) suffixes.push("." + name);
+    if (wildcard) suffixes.push(`.${name}`);
     else names.add(name);
   }
   return {
@@ -83,7 +84,7 @@ const hardFloor = rules([
   "ff00::/8",
   "fd00:ec2::254",
 ]);
-interface ResolverSources {
+export interface ResolverSources {
   lookup(hostname: string): Promise<readonly { address: string; family: number }[]>;
   interfaces(): readonly string[];
 }
@@ -100,11 +101,23 @@ export function createEgressResolver(
   policy: EgressPolicy,
   sources: ResolverSources = systemSources,
 ): EgressTargetResolver {
+  return compileEgressResolver(policy, sources);
+}
+
+function compileEgressResolver(
+  policy: EgressPolicy,
+  sources: ResolverSources,
+  requirePublicAddresses = false,
+): EgressTargetResolver {
   if (!["full", "public", "provider-only"].includes(policy.network))
     throw new Error("Unsupported network tier");
   const allow = rules(policy.allowHosts ?? []);
   const block = rules(policy.blockHosts ?? []);
   const provider = rules(policy.providerHosts ?? []);
+  const controllerProvider =
+    policy.controllerProviderHost === undefined
+      ? undefined
+      : rules([policy.controllerProviderHost]);
   let local: net.BlockList | undefined;
   let refreshAfter = 0;
   function liveInterfaces(): net.BlockList {
@@ -125,7 +138,9 @@ export function createEgressResolver(
       metadataNames.has(host) ||
       host === "localhost" ||
       host.endsWith(".localhost") ||
-      host.includes("%")
+      host.includes("%") ||
+      controllerProvider?.hostname(host) ||
+      (version !== 0 && controllerProvider?.address(host))
     )
       throw denied();
     const issuer = port === 443 && host === policy.oauthIssuerHost;
@@ -152,7 +167,9 @@ export function createEgressResolver(
         address.includes("%") ||
         hardFloor.address(address) ||
         interfaces.check(address, family(address)) ||
-        block.address(address)
+        block.address(address) ||
+        controllerProvider?.address(address) ||
+        (requirePublicAddresses && !isPublicInternetAddress(address))
       )
         throw denied();
       if (grantedName || allow.address(address) || (version && provider.address(address))) continue;
@@ -163,5 +180,30 @@ export function createEgressResolver(
         throw denied();
     }
     return { address: first.address, family: first.family === 6 ? 6 : 4 };
+  };
+}
+
+export function createControllerProviderResolver(
+  policy: Pick<EgressPolicy, "network" | "allowHosts" | "blockHosts">,
+  upstreamHostname: string,
+  sources: ResolverSources = systemSources,
+): { readonly hostname: string; readonly resolve: EgressTargetResolver } {
+  const hostname = normalized(upstreamHostname);
+  const hostIsAddress = net.isIP(hostname) !== 0 && !hostname.includes("%");
+  if (!hostIsAddress && (!validHostname.test(hostname) || /^[\d.]+$/.test(hostname))) {
+    throw new Error("Protected provider requires an exact upstream hostname");
+  }
+  const exactTarget = rules([hostname]);
+  const resolve = compileEgressResolver({ ...policy, providerHosts: [hostname] }, sources, true);
+  return {
+    hostname,
+    resolve: async (requested, port) => {
+      const target = normalized(requested);
+      const exact = hostIsAddress
+        ? net.isIP(target) !== 0 && !target.includes("%") && exactTarget.address(target)
+        : exactTarget.hostname(target);
+      if (port !== 443 || !exact) throw new Error("Protected provider destination is not allowed");
+      return await resolve(hostname, port);
+    },
   };
 }

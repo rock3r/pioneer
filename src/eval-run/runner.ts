@@ -15,6 +15,12 @@ import {
 import net from "node:net";
 import path from "node:path";
 import {
+  assertControllerProviderAuthOutsideGrants,
+  type ControllerProviderAuth,
+  prepareControllerProviderAuth,
+  unsupportedControllerProviderAuth,
+} from "../controller-provider-auth.js";
+import {
   adoptCreatedScratchDirectory,
   assertScratchBaseOutsideGrants,
   validateControllerScratchBase,
@@ -1256,7 +1262,26 @@ async function runEvalCommandWithInterruption(
   const requestedModel =
     requestedPiModel(spec.command) ??
     (piActorInspection.trusted ? requestedPiModel(["pi", ...spec.command.slice(1)]) : undefined);
+  const controllerProviderMode = spec.controllerProviderAuth === true;
+  if (
+    controllerProviderMode &&
+    (process.platform === "win32" ||
+      !piActorInspection.trusted ||
+      requestedModel === undefined ||
+      !requestedModel.includes("/") ||
+      commandRequestsExplicitExtension(spec.command.slice(1)) ||
+      (spec.toolExtensionPaths?.length ?? 0) > 0 ||
+      Object.keys(spec.environment ?? {}).length > 0 ||
+      spec.command
+        .slice(1)
+        .some((argument) => argument === "--api-key" || argument.startsWith("--api-key=")))
+  ) {
+    throw unsupportedControllerProviderAuth(
+      "Use native eval with the official Pi actor, --model PROVIDER/MODEL, and no explicit extensions, --api-key, or --env",
+    );
+  }
   const loadsUserExtensions =
+    !controllerProviderMode &&
     piActorInspection.trusted &&
     piActorInspection.hostsExtensionRuntime &&
     !commandDisablesExtensions(spec.command.slice(1));
@@ -1265,6 +1290,7 @@ async function runEvalCommandWithInterruption(
     piActorInspection.hostsExtensionRuntime &&
     commandRequestsExplicitExtension(spec.command.slice(1));
   if (
+    !controllerProviderMode &&
     piActorInspection.trusted &&
     !piActorInspection.hostsExtensionRuntime &&
     !commandDisablesExtensions(spec.command.slice(1))
@@ -1296,7 +1322,12 @@ async function runEvalCommandWithInterruption(
   );
   // --pi-extension sources are not model providers and never join discovery (#91).
   const deferExtensionReadiness = loadsUserExtensions || loadsExplicitExtensions;
-  const restrictedDiscovery = spec.network === "provider-only";
+  const restrictedDiscovery = spec.network === "provider-only" || controllerProviderMode;
+  const requestedNetwork = {
+    network: spec.network ?? "public",
+    ...(spec.allowHosts ? { allowHosts: spec.allowHosts } : {}),
+    ...(spec.blockHosts ? { blockHosts: spec.blockHosts } : {}),
+  } as const;
   const initialReadinessOptions = {
     extensions: false as const,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -1537,6 +1568,7 @@ async function runEvalCommandWithInterruption(
     let bridge: LinuxProxyBridge | undefined;
     let bridgeRoot: string | undefined;
     let authBroker: PiAuthBroker | undefined;
+    let controllerProvider: ControllerProviderAuth | undefined;
     let extensionReadPaths: readonly string[] = [];
     let stagedExtensionRoot: string | undefined;
     try {
@@ -1548,11 +1580,21 @@ async function runEvalCommandWithInterruption(
       await mkdir(actorScratchDir, { mode: 0o700 });
       throwIfSetupInterrupted();
       recordEvalWorkLog(workLog, "stage_started", { stage: "pi_home_snapshot" });
+      if (controllerProviderMode) {
+        controllerProvider = await prepareControllerProviderAuth(
+          validatedPiHomeSource,
+          requestedModel,
+          requestedNetwork,
+        );
+      }
       const piHome = await prepareIsolatedPiHome({
         sourceDir: validatedPiHomeSource,
         destination: path.join(actorScratchDir, "pi-home"),
         mode: "eval",
         checkAborted: throwIfSetupInterrupted,
+        ...(controllerProvider === undefined
+          ? {}
+          : { controllerProviderFiles: controllerProvider.files }),
       });
       const linuxIdentity =
         process.platform === "linux"
@@ -1567,15 +1609,13 @@ async function runEvalCommandWithInterruption(
         ...optimizedPi.environment,
         ...piHome.environment,
       };
-      const providerNetwork = await prepareProviderNetwork(
-        {
-          network: spec.network ?? "public",
-          ...(spec.allowHosts ? { allowHosts: spec.allowHosts } : {}),
-          ...(spec.blockHosts ? { blockHosts: spec.blockHosts } : {}),
-        },
-        piHome.agentDir,
-        readiness?.resolvedModel ?? requestedModel,
-      );
+      const providerNetwork =
+        controllerProvider?.providerNetwork ??
+        (await prepareProviderNetwork(
+          requestedNetwork,
+          piHome.agentDir,
+          readiness?.resolvedModel ?? requestedModel,
+        ));
       const selection = requestedModel ?? providerNetwork.defaultModel;
       const oauthProviders = await snapshotOAuthProviders(piHome.agentDir);
       if (
@@ -1660,12 +1700,18 @@ async function runEvalCommandWithInterruption(
       }
       if (restrictedDiscovery && readiness === undefined) {
         recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
-        const piCommand = await resolvePiCommand("pi", readinessOptions.environment);
+        const environment =
+          controllerProvider === undefined
+            ? readinessOptions.environment
+            : { ...sanitizedBrokerEnvironment(process.env), ...piHome.environment };
+        const piCommand = await resolvePiCommand("pi", environment);
         const extensionRoot = path.join(isolationDir, "pi-discovery");
         await mkdir(extensionRoot, { mode: 0o700 });
         readiness = await assertPiReady({
           ...readinessOptions,
           command: piCommand,
+          environment,
+          ...(controllerProvider === undefined ? {} : { extensions: true }),
           ...(selection === undefined ? {} : { requestedModel: selection }),
           preparedRuntime: {
             scratch: actorScratchDir,
@@ -1679,8 +1725,11 @@ async function runEvalCommandWithInterruption(
               entries: 0,
               bytes: 0,
             },
-            network: "provider-only",
+            network: requestedNetwork.network,
             providerNetwork,
+            ...(controllerProvider === undefined
+              ? {}
+              : { controllerProviderAuth: controllerProvider }),
           },
         });
         recordEvalWorkLog(workLog, "stage_completed", {
@@ -1727,6 +1776,10 @@ async function runEvalCommandWithInterruption(
       throwIfSetupInterrupted();
 
       recordEvalWorkLog(workLog, "stage_started", { stage: "network_proxy" });
+      const actorLoopbackPorts =
+        controllerProvider === undefined
+          ? allowedLoopbackPorts
+          : [...new Set([...allowedLoopbackPorts, controllerProvider.gateway.port])];
       const proxyToken = randomBytes(32).toString("hex");
       const resolve = createEgressResolver(egressPolicy);
       proxy = await startEgressProxy(proxyToken, authBroker?.resolveWith(resolve) ?? resolve);
@@ -1740,7 +1793,7 @@ async function runEvalCommandWithInterruption(
         bridgeRoot = await mkdtemp(path.join(controllerTempRoot, "pir-bridge-"));
         bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
         throwIfSetupInterrupted();
-        for (const port of allowedLoopbackPorts) {
+        for (const port of actorLoopbackPorts) {
           const socketPath = path.join(bridgeRoot, `loopback-${port}.sock`);
           loopbackBridges.push(await startLinuxLoopbackBridge(port, socketPath));
           loopbackRelays.push({ port, socketPath });
@@ -1772,8 +1825,14 @@ async function runEvalCommandWithInterruption(
         ],
         writableScratchPaths: [...evalIsolatedPiHomeWritablePaths(piHome)],
         parentProxyUrl: proxy.url,
-        loopbackPorts: allowedLoopbackPorts,
+        loopbackPorts: actorLoopbackPorts,
       });
+      if (controllerProvider !== undefined) {
+        await assertControllerProviderAuthOutsideGrants(validatedPiHomeSource, [
+          ...actorConfig.readOnlyPaths,
+          ...actorConfig.writablePaths,
+        ]);
+      }
       recordEvalWorkLog(workLog, "stage_completed", {
         stage: "network_proxy",
         allowedLoopback: allowedLoopbackPorts.map(formatLoopbackTarget),
@@ -1796,7 +1855,7 @@ async function runEvalCommandWithInterruption(
             linuxBwrapPath,
             bridge?.socketPath,
             sandboxRuntimeExecutable,
-            loopbackRelays,
+            loopbackRelays.filter(({ port }) => allowedLoopbackPorts.includes(port)),
           ),
       );
       recordEvalWorkLog(workLog, "stage_completed", {
@@ -1890,6 +1949,7 @@ async function runEvalCommandWithInterruption(
         brokerCloseFailure = error;
       }
       const cleanupResults = await Promise.allSettled([
+        controllerProvider?.gateway.close(),
         bridge?.close(),
         ...loopbackBridges.map((loopbackBridge) => loopbackBridge.close()),
         bridgeRoot === undefined ? undefined : rm(bridgeRoot, { recursive: true, force: true }),

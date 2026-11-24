@@ -155,6 +155,14 @@ Transport success confirms report delivery. The report itself states the review 
 
 Containment, retry-layout, and in-use failures never issue a usable resume token.
 
+## Controller-only provider authentication
+
+Pass `--controller-provider-auth` to `review` or before the `--` separator in `eval run`. Select an exact `--model PROVIDER/MODEL` on the review or Pi command. Define the selected provider and model in the source Pi home's `models.json` with a public HTTPS `baseUrl` and an `openai-completions`, `openai-responses`, or `anthropic-messages` API.
+
+Pioneer accepts a literal API key, Pi environment interpolation in the configured key, or a current standard bearer OAuth credential for an OpenAI-compatible API. Renew expired OAuth in Pi. Specialized OAuth transports and custom authentication headers are unsupported. Protected reviews disable extensions and resumption. Protected evals use the official Pi actor with user extensions disabled. Pi home includes, explicit extensions, `--pi-extension`, `--api-key`, and eval `--env` are incompatible with this mode.
+
+Pioneer gives Pi a per-run placeholder and routes requests for the selected model through a private loopback gateway. The original credential stays in the controller. Windows does not support this option.
+
 ## `pioneer check-comments`
 
 Use a decision model to check added or edited comments for skipped requirements, dismissed edge cases, and unfinished TODOs within a task's scope. The command runs independently of Pi.

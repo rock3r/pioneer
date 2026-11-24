@@ -17,6 +17,7 @@ export interface EvalRunSpec {
   readonly command: readonly [string, ...string[]];
   readonly runtimeReadPaths?: readonly string[];
   readonly piHomeSource?: string;
+  readonly controllerProviderAuth?: boolean;
   /** Exact host loopback ports the actor may reach directly; see parseLoopbackTargets. */
   readonly allowedLoopbackPorts?: readonly number[];
   /** Extra actor variables from parseActorEnvironment; Pioneer-controlled names win. */

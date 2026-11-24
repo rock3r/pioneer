@@ -5,12 +5,17 @@ import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import {
+  assertControllerProviderAuthOutsideGrants,
+  unsupportedControllerProviderAuth,
+} from "../controller-provider-auth.js";
+import {
   adoptCreatedScratchDirectory,
   assertScratchBaseOutsideGrants,
   validateControllerScratchBase,
 } from "../controller-scratch.js";
 import { diagnosticMessage } from "../diagnostics.js";
 import { createEgressResolver } from "../eval-run/egress-policy.js";
+import { assertPiHomeSeparatedFromActorGrants } from "../eval-run/isolation.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import { describeEgressPolicy } from "../eval-run/provider-network.js";
@@ -38,7 +43,11 @@ import {
   optimizePiStartupCommand,
 } from "../pi-startup.js";
 import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../sandbox/launcher.js";
-import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
+import {
+  type LinuxProxyBridge,
+  startLinuxLoopbackBridge,
+  startLinuxProxyBridge,
+} from "../sandbox/linux-proxy-bridge.js";
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { isThinkingLevel, type ThinkingLevel } from "../thinking-level.js";
 import type { FailureCauseContext } from "./failure-cause.js";
@@ -97,6 +106,7 @@ import {
 
 export interface ReviewRequest {
   readonly extensions?: boolean;
+  readonly controllerProviderAuth?: boolean;
   readonly sourceDir: string;
   readonly prompt: string;
   readonly model?: string;
@@ -1596,6 +1606,19 @@ async function runReviewInternal(
     throw new Error(
       "Windows unsandboxed reviews cannot enforce provider-only networking or host filters",
     );
+  const controllerProviderAuth = request.controllerProviderAuth === true;
+  const resumable = request.resumable !== false && !controllerProviderAuth;
+  if (
+    controllerProviderAuth &&
+    (windows ||
+      request.model === undefined ||
+      !request.model.includes("/") ||
+      (request.piHomeIncludes?.length ?? 0) > 0)
+  ) {
+    throw unsupportedControllerProviderAuth(
+      "Use native review with --model PROVIDER/MODEL and without Pi home includes",
+    );
+  }
   if (windows && request.allowUnsandboxedWindows !== true) {
     throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
   }
@@ -1627,6 +1650,13 @@ async function runReviewInternal(
   const piHomeSource = await canonicalReviewPiHomeSource(
     request.piHomeSource ?? defaultPiAgentDir(),
   );
+  if (controllerProviderAuth) {
+    assertPiHomeSeparatedFromActorGrants(piHomeSource, [
+      validatedPaths.sourceDir,
+      ...validatedPaths.allowReadPaths,
+      ...validatedPaths.allowWritePaths,
+    ]);
+  }
   if (requestedScratchBase !== undefined) {
     // Scratch inside the selected Pi home would create and recursively remove `pir-*` in the
     // real configuration tree, and put the supposedly isolated snapshot underneath its own
@@ -1784,6 +1814,8 @@ async function runReviewInternal(
     try {
       piCommand = await resolvePiCommand("pi", piEnvironment);
     } catch {
+      if (controllerProviderAuth)
+        throw unsupportedControllerProviderAuth("Install the official Pi coding agent and retry");
       // Preserve readiness's stable, sanitized diagnostic for missing or unsafe launchers.
       await assertPiReady({
         environment: piEnvironment,
@@ -1802,12 +1834,13 @@ async function runReviewInternal(
       reviewRuntimeEnvironment(piEnvironment),
       requestedScratchBase ?? (windows ? os.tmpdir() : "/tmp"),
       request.piHomeIncludes,
-      request.extensions !== false,
+      request.extensions !== false && !controllerProviderAuth,
       network,
       undefined,
       [],
       request,
       request.model,
+      controllerProviderAuth,
     );
     const providerNetwork = preparedRuntime.providerNetwork;
     if (
@@ -1826,9 +1859,11 @@ async function runReviewInternal(
     const selection = request.model ?? providerNetwork?.defaultModel;
     const readiness = await assertPiReady({
       command: piCommand,
-      environment: piEnvironment,
+      environment: controllerProviderAuth
+        ? reviewProcessEnvironment({}, preparedRuntime.home.environment)
+        : piEnvironment,
       preparedRuntime,
-      ...(request.extensions === false ? { extensions: false } : {}),
+      ...(request.extensions === false && !controllerProviderAuth ? { extensions: false } : {}),
       ...(selection === undefined ? {} : { requestedModel: selection }),
     });
     providerNetwork?.bind(readiness.resolvedModel);
@@ -1858,11 +1893,7 @@ async function runReviewInternal(
       );
     }
 
-    if (
-      resumeContext === undefined &&
-      request.resumable !== false &&
-      readiness.version === undefined
-    ) {
+    if (resumeContext === undefined && resumable && readiness.version === undefined) {
       throw new Error(
         "[REVIEW_RESUME_CREATE_FAILED] Pioneer could not determine the current Pi version for a resumable review",
       );
@@ -1909,7 +1940,7 @@ async function runReviewInternal(
         }
         throw failure;
       }
-    } else if (request.resumable !== false) {
+    } else if (resumable) {
       recordReviewWorkLog(workLog, "stage_started", { stage: "resume_archive" });
       try {
         resumeArchive = await createReviewResumeArchive(
@@ -1973,6 +2004,7 @@ async function runReviewInternal(
     let scratch: string | undefined;
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
+    let providerBridge: LinuxProxyBridge | undefined;
     let bridgeRoot: string | undefined;
     let reviewResult: ReviewResult | undefined;
     let runFailure: Error | undefined;
@@ -2073,6 +2105,12 @@ async function runReviewInternal(
           // bridge socket remains within the reserved Linux path-length budget.
           bridgeRoot = await mkdtemp(path.join(scratchBase, "pir-bridge-"));
           bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
+          const gateway = preparedRuntime.controllerProviderAuth?.gateway;
+          if (gateway !== undefined)
+            providerBridge = await startLinuxLoopbackBridge(
+              gateway.port,
+              path.join(bridgeRoot, "provider.sock"),
+            );
         }
         recordReviewWorkLog(workLog, "stage_started", { stage: "sandbox_launch" });
         const config = buildReviewSandboxConfig({
@@ -2088,10 +2126,31 @@ async function runReviewInternal(
           ...(resumeArchive === undefined ? {} : { sessionDir: resumeArchive.activeAttemptDir }),
           ...(proxy === undefined ? {} : { parentProxyUrl: proxy.url }),
         });
+        const gateway = preparedRuntime.controllerProviderAuth?.gateway;
+        if (gateway !== undefined) {
+          await assertControllerProviderAuthOutsideGrants(piHomeSource, [
+            ...config.readOnlyPaths,
+            ...config.writablePaths,
+          ]);
+        }
+        const providerConfig =
+          gateway === undefined ? config : { ...config, loopbackPorts: [gateway.port] };
         const launch =
           process.platform === "darwin"
-            ? buildMacosSandboxArgv({ ...config, allowProcessFork: false }, optimized.command)
-            : buildLinuxSandboxArgv(config, optimized.command, bwrapPath ?? "", bridge?.socketPath);
+            ? buildMacosSandboxArgv(
+                { ...providerConfig, allowProcessFork: false },
+                optimized.command,
+              )
+            : buildLinuxSandboxArgv(
+                providerConfig,
+                optimized.command,
+                bwrapPath ?? "",
+                bridge?.socketPath,
+                undefined,
+                providerBridge === undefined || gateway === undefined
+                  ? []
+                  : [{ port: gateway.port, socketPath: providerBridge.socketPath }],
+              );
         recordReviewWorkLog(workLog, "stage_completed", { stage: "sandbox_launch" });
         recordReviewWorkLog(workLog, "stage_started", { stage: "pi_rpc" });
         const rpcOptions = {
@@ -2203,6 +2262,7 @@ async function runReviewInternal(
     }
     for (const cleanup of [
       async () => bridge?.close(),
+      async () => providerBridge?.close(),
       async () => {
         if (bridgeRoot !== undefined) await rm(bridgeRoot, { recursive: true, force: true });
       },
