@@ -316,6 +316,7 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
       extensionCacheKey({ ...plan, selectedRoots: [] }, "darwin", 1, "0.6.0"),
       extensionCacheKey({ ...plan, agentDir: source }, "darwin", 1, "0.6.0"),
       extensionCacheKey({ ...plan, privateDirectories: [source] }, "darwin", 1, "0.6.0"),
+      extensionCacheKey({ ...plan, credentialPathRoots: [source, source] }, "darwin", 1, "0.6.0"),
       extensionCacheKey(
         {
           ...plan,

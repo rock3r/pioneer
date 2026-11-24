@@ -736,6 +736,28 @@ export function isXdgConfigCredentialPath(
   );
 }
 
+export type CredentialPathRoots = readonly [
+  applicationData: string,
+  state: string,
+  xdgConfig?: string,
+];
+
+/** Canonical locations used by credential exclusions and extension cache keys. */
+export function credentialPathRoots(
+  platform: NodeJS.Platform = process.platform,
+  environment: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): CredentialPathRoots {
+  const applicationData = canonicalOrLexical(
+    pioneerApplicationDataRoot(platform, environment, home),
+  );
+  const state = canonicalOrLexical(pioneerStateRoot(platform, environment, home));
+  const xdgBase = environment.XDG_CONFIG_HOME;
+  const xdgConfig =
+    xdgBase === undefined || !path.isAbsolute(xdgBase) ? undefined : canonicalOrLexical(xdgBase);
+  return xdgConfig === undefined ? [applicationData, state] : [applicationData, state, xdgConfig];
+}
+
 /**
  * Checks many paths against the credential rules with the controller-owned roots canonicalized
  * once. A caller that already canonicalized a path passes that result as `canonical`, so the
@@ -746,13 +768,13 @@ export function createSensitiveCredentialPathMatcher(
   environment: NodeJS.ProcessEnv = process.env,
   home: string = os.homedir(),
 ): (file: string, canonical?: string) => boolean {
-  const applicationData = canonicalOrLexical(
-    pioneerApplicationDataRoot(platform, environment, home),
-  );
-  const state = canonicalOrLexical(pioneerStateRoot(platform, environment, home));
-  const xdgBase = environment.XDG_CONFIG_HOME;
-  const xdgConfig =
-    xdgBase === undefined || !path.isAbsolute(xdgBase) ? undefined : canonicalOrLexical(xdgBase);
+  return sensitiveCredentialPathMatcher(credentialPathRoots(platform, environment, home), platform);
+}
+
+export function sensitiveCredentialPathMatcher(
+  [applicationData, state, xdgConfig]: CredentialPathRoots,
+  platform: NodeJS.Platform = process.platform,
+): (file: string, canonical?: string) => boolean {
   return (file, canonical = canonicalOrLexical(file)) =>
     isWithinCanonical(applicationData, canonical) ||
     isWithinCanonical(state, canonical) ||

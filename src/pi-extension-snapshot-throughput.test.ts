@@ -3,7 +3,12 @@ import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
-import { snapshotExtensionResources } from "./pi-extension-snapshot.js";
+import { validateCachedExtensionSnapshot } from "./pi-extension-cache-validation.js";
+import {
+  planExtensionSnapshot,
+  snapshotExtensionResources,
+  stageExtensionSnapshot,
+} from "./pi-extension-snapshot.js";
 
 const { createTempDir } = registerManagedTempPaths();
 const probe = vi.hoisted(() => ({
@@ -12,6 +17,7 @@ const probe = vi.hoisted(() => ({
   maxInFlight: 0,
   modes: [] as (number | undefined)[],
   realpathSyncCalls: 0,
+  reads: [] as unknown[],
 }));
 
 // Observe copy concurrency and flags, which real timing cannot show reliably.
@@ -19,6 +25,14 @@ vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
   return {
     ...fs,
+    open: (...args: Parameters<typeof fs.open>) => {
+      probe.reads.push(args[0]);
+      return fs.open(...args);
+    },
+    readFile: (...args: Parameters<typeof fs.readFile>) => {
+      probe.reads.push(args[0]);
+      return fs.readFile(...args);
+    },
     copyFile: async (...args: Parameters<typeof fs.copyFile>) => {
       probe.modes.push(args[2]);
       probe.inFlight += 1;
@@ -43,7 +57,11 @@ vi.mock("node:fs", async (original) => {
     },
     { native: fs.realpathSync.native },
   );
-  return { ...fs, default: { ...fs, realpathSync }, realpathSync };
+  const createReadStream = (...args: Parameters<typeof fs.createReadStream>) => {
+    probe.reads.push(args[0]);
+    return fs.createReadStream(...args);
+  };
+  return { ...fs, default: { ...fs, realpathSync }, realpathSync, createReadStream };
 });
 
 beforeEach(() => {
@@ -52,6 +70,7 @@ beforeEach(() => {
   probe.maxInFlight = 0;
   probe.modes = [];
   probe.realpathSyncCalls = 0;
+  probe.reads = [];
 });
 
 async function packageWithFiles(count: number): Promise<{ root: string; pkg: string }> {
@@ -122,3 +141,23 @@ it("lets in-flight copies finish before it reports a failure", async () => {
 
   expect(probe.inFlight).toBe(0);
 });
+
+it.skipIf(process.platform === "win32")(
+  "validates a hit without copying or reading extension file contents",
+  async () => {
+    const { root, pkg } = await packageWithFiles(64);
+    const payload = path.join(root, "payload");
+    const packageJson = path.join(payload, "package.json");
+    const plan = await planExtensionSnapshot(resources(pkg));
+    const snapshot = await stageExtensionSnapshot(plan, payload);
+    await writeFile(packageJson, '{"type":"module"}', { mode: 0o400 });
+    probe.reads = [];
+    probe.modes = [];
+
+    await expect(validateCachedExtensionSnapshot(plan, payload, snapshot.manifest)).resolves.toBe(
+      "valid",
+    );
+    expect(probe.modes).toEqual([]);
+    expect(probe.reads).toEqual([packageJson]);
+  },
+);

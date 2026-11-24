@@ -142,6 +142,7 @@ export function extensionCacheKey(
         plan.selectedRoots,
         plan.agentDir,
         [...new Set(plan.privateDirectories)].sort(),
+        plan.credentialPathRoots,
       ]),
     )
     .digest("hex");
