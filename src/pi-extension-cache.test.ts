@@ -255,6 +255,28 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
     await rebuilt.snapshotHandle?.release();
   });
 
+  it("rebuilds a generation with a missing lease timestamp", async () => {
+    const { takeLease: _override, ...defaults } = options();
+    const plan = await planExtensionSnapshot(resources());
+    const initial = await prepareCachedExtensionSnapshot(
+      plan,
+      path.join(base, "initial"),
+      defaults,
+    );
+    await initial.snapshotHandle?.release();
+    const prior = path.dirname(initial.snapshotHandle?.payload as string);
+    await rm(path.join(prior, "last-used"));
+    const rebuilt = await prepareCachedExtensionSnapshot(
+      plan,
+      path.join(base, "rebuilt"),
+      defaults,
+    );
+    expect(rebuilt.snapshotHandle).toBeDefined();
+    expect(rebuilt.snapshotHandle?.payload).not.toBe(initial.snapshotHandle?.payload);
+    await expect(lstat(prior)).rejects.toMatchObject({ code: "ENOENT" });
+    await rebuilt.snapshotHandle?.release();
+  });
+
   it("keeps staging private when either run-specific filter omits extension files", async () => {
     const logs = path.join(source, "history.jsonl");
     await writeFile(logs, '{"ordinary":"record"}\n');
