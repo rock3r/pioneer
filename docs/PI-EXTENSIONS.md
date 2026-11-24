@@ -28,6 +28,7 @@ Each committed generation carries a sequence assigned under the cache lock. The 
 Pioneer excludes Pi's private runtime storage by exact location:
 
 - the agent directory's `sessions/` and `logs/` directories;
+- the agent directory's `AGENTS.md` and its canonical target when linked;
 - regular `.log` files directly in the agent directory;
 - session directories set through `PI_CODING_AGENT_SESSION_DIR` or `sessionDir`. A relative setting fails with `PI_SESSION_DIR_RELATIVE`.
 
@@ -41,7 +42,7 @@ When a run uses a shared snapshot, discovery, the actor and the OAuth worker can
 
 A review source, explicit read or write grant, eval run directory, runtime path or controller scratch base that includes the extension cache or lies inside it fails with `PI_EXTENSION_CACHE_GRANT_OVERLAP`. Pass a narrower path or move `XDG_CACHE_HOME` outside the grant. An unreadable or broken grant also stops preparation when Pioneer cannot resolve it to verify isolation. This check applies with `PIONEER_EXTENSION_CACHE=0`, because another run can hold a live snapshot there.
 
-On macOS and Linux, Pioneer verifies bounded SHA-256 digests of immutable run-local inputs before and after each native actor, including the Pi-home snapshot, per-run extension files, and eval launch and probe files. For a leased payload, it checks the original staged metadata, generated directories, and package scope before and after discovery, review, deep review, and OAuth execution. A file change between acquisition and launch, or during execution, invalidates the result. Private `auth.json`, `settings.json`, `models-store.json`, and new runtime files in the writable agent root can still change. A failed check produces `[PI_STAGED_INTEGRITY_FAILED]`.
+On macOS and Linux, Pioneer verifies bounded SHA-256 digests of immutable run-local inputs before and after each native actor, including the Pi-home snapshot, per-run extension files, and eval launch and probe files. For a leased payload, it checks the original staged metadata, generated directories, and package scope before and after discovery, review, deep review, strict eval, and OAuth execution. A file change between acquisition and launch, or during execution, invalidates the result. Private `auth.json`, `settings.json`, `models-store.json`, and new runtime files in the writable agent root can still change. A failed check produces `[PI_STAGED_INTEGRITY_FAILED]`.
 
 Discovery and execution share the configuration and extension snapshot. Pioneer removes both temporary directories after the run. Retained sessions store a SHA-256 digest of the extension snapshot. Before loading a resumed session, Pioneer re-stages and checks the code, dependency bytes, and entry-point order. Changes fail with `REVIEW_RESUME_EXTENSIONS_CHANGED`. Older archives without a digest keep their original built-in-only policy.
 

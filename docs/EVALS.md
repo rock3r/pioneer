@@ -136,7 +136,7 @@ Pioneer never mounts the source Pi home or puts controller launch/probe files in
 
 For compatible providers, `--controller-provider-auth` generates placeholder authentication and model configuration for the official Pi actor. Pass the option before `--` and select the qualified model on the Pi command. Configure its public HTTPS endpoint in the source Pi home's `models.json`. The controller's private gateway sends the original credential upstream and applies the configured network rules. [Controller-only authentication requirements](CLI-REFERENCE.md#controller-only-provider-authentication)
 
-Pioneer stages trusted official Pi user extensions read-only beside the snapshot and passes them explicitly. Ambient discovery stays disabled. `--pi-home DIR` selects a different source to validate and copy, never to use in place. The selected snapshot alone has 500,000-entry and 1 GiB limits.
+Pioneer passes trusted official Pi user extensions from a validated read-only snapshot. Both eval arms can lease the same generation. Each run stages its own Pi home and skill, and checks controller-only file exclusions against the generation. Ambient discovery stays disabled. `--pi-home DIR` selects a different source to validate and copy. The extension snapshot has 500,000-entry and 1 GiB limits.
 
 The controller checks staged immutable inputs before and after execution. A mismatch produces `[PI_STAGED_INTEGRITY_FAILED]` and a nonzero containment result. See [Pi extensions](PI-EXTENSIONS.md) for the intentionally writable Pi state.
 
@@ -158,7 +158,7 @@ For the official package, Pioneer adds one `--extension` per staged enabled user
 
 Explicit `--extension` or `-e` paths must name regular files in dedicated directories. Pioneer rejects files directly in shared temp, home, filesystem roots, or broad system directories such as `/opt`, `/srv`, `/usr`, `/mnt`, and `/media`. It also rejects Pi private session/log storage, directories containing the Pi agent directory, credential directories such as `.ssh` and `.aws`, and files directly in `.config`.
 
-Pioneer stages the file's directory so sibling imports resolve. Readiness and OAuth refresh both load the staged entry. A trusted package without adapter support fails closed unless the command uses `--no-extensions` or `-ne`. It always rejects explicit extensions without adapter support.
+An explicit extension can use the same generation when its entry is already present and matches the source. If any explicit entry falls outside that tree, Pioneer stages the whole extension set for that run so sibling imports and dependency paths retain their existing layout. Readiness and OAuth refresh both load the staged entry. A trusted package without adapter support fails closed unless the command uses `--no-extensions` or `-ne`. It always rejects explicit extensions without adapter support.
 
 To keep a Pi extension's tools, use `eval run --pi-extension PATH`, for example for an MCP adapter. PATH can be a file or package directory. Package entries resolve from `package.json` `pi.extensions` or `index.ts`/`index.js` and must stay inside the package. Pioneer stages the source read-only under the same location policy and passes `--extension`. The adapter trusts only that copy to retain tools.
 

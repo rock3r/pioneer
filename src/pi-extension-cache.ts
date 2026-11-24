@@ -96,6 +96,7 @@ export interface ExtensionSnapshotCacheEvent {
     | "unsafe-cache"
     | "cache-unavailable"
     | "run-exclusions"
+    | "explicit-extension"
     | "recent-source";
 }
 
@@ -107,6 +108,7 @@ type Validate = (
 ) => Promise<"valid" | "source-mismatch" | "copy-mismatch" | "run-exclusions">;
 
 type Release = () => Promise<void>;
+type AcceptSnapshot = (snapshot: ExtensionSnapshot, payload: string) => Promise<boolean>;
 
 export interface ExtensionCacheOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
@@ -117,6 +119,8 @@ export interface ExtensionCacheOptions {
   readonly now?: () => number;
   readonly readBootId?: () => Promise<string | undefined>;
   readonly validate?: Validate;
+  /** A run-specific eligibility check, performed before accepting or publishing a generation. */
+  readonly acceptSnapshot?: AcceptSnapshot;
   /** Runs under cache.lock. The release function must acquire its own lock if needed. */
   readonly takeLease?: (entry: ExtensionCacheEntry) => Promise<Release>;
 }
@@ -129,6 +133,7 @@ interface ActiveCache {
   readonly now: () => number;
   readonly signal: AbortSignal | undefined;
   readonly validate: Validate;
+  readonly acceptSnapshot: AcceptSnapshot | undefined;
   readonly takeLease: (entry: ExtensionCacheEntry) => Promise<Release>;
   readonly maintain: boolean;
 }
@@ -385,7 +390,7 @@ function ownedHandle(
 type Lookup =
   | { readonly type: "hit"; readonly snapshot: CachedExtensionSnapshot }
   | { readonly type: "miss"; readonly id?: string }
-  | { readonly type: "bypass" };
+  | { readonly type: "bypass"; readonly reason: "run-exclusions" | "explicit-extension" };
 
 async function lookup(
   plan: ExtensionSnapshotPlan,
@@ -415,7 +420,7 @@ async function lookup(
       return { type: "miss", id: entry.id };
     }
     const validation = await cache.validate(plan, entry.payload, generation.manifest, cache.signal);
-    if (validation === "run-exclusions") return { type: "bypass" };
+    if (validation === "run-exclusions") return { type: "bypass", reason: "run-exclusions" };
     if (validation === "source-mismatch") return { type: "miss", id: entry.id };
     const expected =
       validation === "valid" ? await validateExtensionSnapshot(plan, entry.payload) : undefined;
@@ -427,6 +432,12 @@ async function lookup(
     ) {
       await withExtensionCacheLock(cache.root, cache.platform, () => markBad(entry), cache.signal);
       return { type: "miss", id: entry.id };
+    }
+    if (
+      cache.acceptSnapshot !== undefined &&
+      !(await cache.acceptSnapshot(generation.snapshot, entry.payload))
+    ) {
+      return { type: "bypass", reason: "explicit-extension" };
     }
     owned = true;
     return {
@@ -477,6 +488,9 @@ async function stageCacheEntry(
       mode: 0o400,
       flag: "wx",
     });
+    if (cache.acceptSnapshot !== undefined && !(await cache.acceptSnapshot(snapshot, payload))) {
+      return { event: { cache: "bypass", reason: "explicit-extension" } };
+    }
     const racy = manifest.some(
       (record) => record.source.ctimeNs >= BigInt(start) * 1_000_000n - RACY_MARGIN_NS,
     );
@@ -549,7 +563,7 @@ async function useCache(plan: ExtensionSnapshotPlan, cache: ActiveCache): Promis
   const asResult = (lookup: Exclude<Lookup, { type: "miss" }>): CacheResult =>
     lookup.type === "hit"
       ? { snapshot: lookup.snapshot, event: { cache: "hit", reason: "validated" } }
-      : { event: { cache: "bypass", reason: "run-exclusions" } };
+      : { event: { cache: "bypass", reason: lookup.reason } };
   const existing = await lookup(plan, cache);
   if (existing.type !== "miss") return asResult(existing);
   const lock = path.join(cache.root, "entries", `${cache.key}.creating`);
@@ -614,6 +628,7 @@ export async function prepareCachedExtensionSnapshot(
           now,
           signal: options.signal,
           validate: options.validate,
+          acceptSnapshot: options.acceptSnapshot,
           takeLease:
             options.takeLease ?? ((entry) => takeExtensionCacheLease(entry, platform, now)),
           maintain,

@@ -74,6 +74,25 @@ describe.skipIf(process.platform === "win32")("extension cache validation", () =
     await expect(validate()).resolves.toBe("valid");
   });
 
+  it("validates a payload path with a trailing separator", async () => {
+    const { payload, stage } = await fixture();
+    const { plan, snapshot } = await stage();
+    const dirname = path.dirname;
+    const guard = vi.spyOn(path, "dirname").mockImplementation((file) => {
+      const parent = dirname(file);
+      // Make a failed ancestor walk terminate so the regression cannot hang a test worker.
+      if (parent === file) throw new Error("Ancestor walk passed the payload");
+      return parent;
+    });
+    try {
+      await expect(
+        validateCachedExtensionSnapshot(plan, `${payload}${path.sep}`, snapshot.manifest),
+      ).resolves.toBe("valid");
+    } finally {
+      guard.mockRestore();
+    }
+  });
+
   it.each([
     ["content", async (entry: string) => writeFile(entry, "export default 'changed';")],
     ["size", async (entry: string) => writeFile(entry, "changed")],
@@ -351,6 +370,38 @@ describe.skipIf(process.platform === "win32")("extension cache validation", () =
       validateCachedExtensionSnapshot(plan, filteredPayload, filtered.manifest),
     ).resolves.toBe("valid");
   });
+
+  it.skipIf(process.platform !== "linux").each(["directory", "symlink"])(
+    "keeps the exact AGENTS.md %s private without excluding a lowercase sibling",
+    async (kind) => {
+      const { root, storage } = await fixture();
+      const named = path.join(storage.agentDir, "AGENTS.md");
+      const privateDir = kind === "symlink" ? path.join(root, "instruction-target") : named;
+      const lowercase = path.join(storage.agentDir, "agents.md");
+      for (const directory of [privateDir, lowercase]) {
+        await mkdir(directory, { recursive: true });
+        await writeFile(path.join(directory, "index.mjs"), "export default 'synthetic';");
+      }
+      if (kind === "symlink") await symlink(privateDir, named);
+      const planAt = (directory: string) =>
+        planExtensionSnapshot(
+          [{ path: path.join(directory, "index.mjs"), enabled: true, metadata: { scope: "user" } }],
+          undefined,
+          storage,
+        );
+      await expect(
+        stageExtensionSnapshot(await planAt(named), path.join(root, "private-payload")),
+      ).rejects.toThrow("inside private Pi session or log storage");
+      const staged = await stageExtensionSnapshot(
+        await planAt(lowercase),
+        path.join(root, "lowercase-payload"),
+      );
+      expect(
+        staged.manifest.find((record) => record.sourcePath === path.join(lowercase, "index.mjs"))
+          ?.staged,
+      ).toBe(true);
+    },
+  );
 
   it("plans and stages against the canonical credential policy for the current environment", async () => {
     const { root, source, resources, stage } = await fixture();

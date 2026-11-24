@@ -290,6 +290,65 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
     await rebuilt.snapshotHandle?.release();
   });
 
+  it("does not publish a cold generation rejected by the explicit-extension coverage check", async () => {
+    const acceptSnapshot = vi.fn(async () => false);
+    const snapshot = await prepare("uncovered-cold", { acceptSnapshot });
+    expect(snapshot.snapshotHandle).toBeUndefined();
+    expect(acceptSnapshot).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenCalledWith({ cache: "bypass", reason: "explicit-extension" });
+    expect(await readdir(path.join(cacheRoot, "entries"))).toEqual([]);
+    expect(await readdir(path.join(cacheRoot, "staging"))).toEqual([]);
+    expect(snapshot.paths[0]).toContain(`${path.sep}uncovered-cold${path.sep}`);
+  });
+
+  it("releases a warm generation declined by this run and leaves it available for other runs", async () => {
+    const release = vi.fn(async () => {});
+    const original = await prepare("unfiltered");
+    const refused = await prepare("uncovered-hit", {
+      acceptSnapshot: async () => false,
+      takeLease: async () => release,
+    });
+    expect(refused.snapshotHandle).toBeUndefined();
+    expect(release).toHaveBeenCalledOnce();
+    expect(record).toHaveBeenLastCalledWith({ cache: "bypass", reason: "explicit-extension" });
+    const reused = await prepare("later");
+    expect(reused.snapshotHandle?.payload).toBe(original.snapshotHandle?.payload);
+    await original.snapshotHandle?.release();
+    await reused.snapshotHandle?.release();
+  });
+
+  it("uses the complete generation after a cold eval exclusion and bypasses it for later excluded runs", async () => {
+    // Use a regular file with no aliases so the fixture can isolate the run-specific filter.
+    const controllerOnly = path.join(source, "controller.fixture");
+    await writeFile(controllerOnly, "synthetic controller file");
+    const plan = await planExtensionSnapshot(resources(), undefined, undefined, [controllerOnly]);
+    const prepareExcluded = (name: string) =>
+      prepareCachedExtensionSnapshot(
+        plan,
+        path.join(base, name),
+        options({ validate: validateCachedExtensionSnapshot }),
+      );
+    const cold = await prepareExcluded("excluded-cold");
+    expect(cold.snapshotHandle?.payload).toContain(`${path.sep}staging${path.sep}`);
+    expect(await readdir(path.join(cacheRoot, "entries"))).toEqual([]);
+    await cold.snapshotHandle?.release();
+
+    const full = await prepare("unrestricted");
+    expect(
+      await readFile(
+        path.join(path.dirname(full.paths[0] as string), "controller.fixture"),
+        "utf8",
+      ),
+    ).toBe("synthetic controller file");
+    const filtered = await prepareExcluded("excluded-hit");
+    expect(filtered.snapshotHandle).toBeUndefined();
+    expect(record).toHaveBeenLastCalledWith({ cache: "bypass", reason: "run-exclusions" });
+    await expect(
+      lstat(path.join(path.dirname(filtered.paths[0] as string), "controller.fixture")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await full.snapshotHandle?.release();
+  });
+
   it("rebuilds a generation with a missing lease timestamp", async () => {
     const { takeLease: _override, ...defaults } = options();
     const plan = await planExtensionSnapshot(resources());

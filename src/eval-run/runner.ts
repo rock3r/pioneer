@@ -33,6 +33,7 @@ import {
   snapshotOAuthProviders,
 } from "../pi-auth-runtime.js";
 import { piPackageReadRoot, resolvePiCommand } from "../pi-command.js";
+import type { ExtensionSnapshotCacheEvent } from "../pi-extension-cache.js";
 import { assertExtensionCacheDisjointFromGrants } from "../pi-extension-cache-location.js";
 import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
 import {
@@ -43,6 +44,7 @@ import {
   runtimeReadRoots,
 } from "../pi-extension-runtime.js";
 import {
+  type ExtensionSnapshot,
   extensionPathsWithCapabilities,
   mirroredExtensionStagePath,
   snapshotExtensionResources,
@@ -838,6 +840,32 @@ export async function confirmReusedExtension(
   }
 }
 
+async function findStagedExplicitExtension(
+  canonical: string,
+  snapshot: ExtensionSnapshot,
+  destination: string,
+  sourceAgentDir: string,
+): Promise<string | undefined> {
+  const exact = snapshot.paths[snapshot.sourcePaths.indexOf(canonical)];
+  if (exact !== undefined) {
+    await confirmReusedExtension(canonical, exact, sourceAgentDir);
+    return exact;
+  }
+  const mirrored = mirroredExtensionStagePath(destination, canonical);
+  if (await reuseStagedExtensionFile(canonical, mirrored, sourceAgentDir)) return mirrored;
+  const covered = snapshot.sourcePaths.findIndex((source) =>
+    isWithin(path.dirname(source), canonical),
+  );
+  const stagedEntry = snapshot.paths[covered];
+  const stagedSource = snapshot.sourcePaths[covered];
+  if (stagedEntry === undefined || stagedSource === undefined) return undefined;
+  const derived = path.join(
+    path.dirname(stagedEntry),
+    path.relative(path.dirname(stagedSource), canonical),
+  );
+  return (await reuseStagedExtensionFile(canonical, derived, sourceAgentDir)) ? derived : undefined;
+}
+
 async function assertExplicitExtensionAllowed(
   canonical: string,
   sourceAgentDir: string,
@@ -987,6 +1015,7 @@ async function stageEvalPiExtensions(
   toolExtensionSources: readonly ToolExtensionSource[] = [],
   piVersion?: string,
   providerNetwork: PreparedProviderNetwork | undefined = undefined,
+  recordCacheEvent?: (event: ExtensionSnapshotCacheEvent) => void,
 ): Promise<{
   readonly authBroker?: PiAuthBroker;
   readonly readPaths: readonly string[];
@@ -996,142 +1025,137 @@ async function stageEvalPiExtensions(
 }> {
   checkAborted();
   const extensionRoot = path.join(isolationDir, "pi-extensions");
+  const destination = path.join(extensionRoot, "extensions");
+  const resolvedSources = await Promise.all(
+    explicitExtensionSources.map((source) => realpath(source).catch(() => source)),
+  );
+  const cachedExplicitRelativePaths = new Map<string, string>();
+  const acceptSnapshot = async (snapshot: ExtensionSnapshot, payload: string): Promise<boolean> => {
+    for (const source of new Set(resolvedSources)) {
+      const staged = await findStagedExplicitExtension(source, snapshot, payload, sourceAgentDir);
+      if (staged === undefined) return false;
+      // Cold entries are renamed on commit. Resolve these paths against the final payload.
+      cachedExplicitRelativePaths.set(source, path.relative(payload, staged));
+    }
+    return true;
+  };
   const extensions = await preparePiExtensions(
     [executablePath],
     sourceAgentDir,
-    path.join(extensionRoot, "extensions"),
+    destination,
     process.env,
     signal,
     path.join(piHome.agentDir, "settings.json"),
     extensionsEnabled,
     controllerOnlyPaths,
+    undefined,
+    {
+      ...(recordCacheEvent === undefined ? {} : { record: recordCacheEvent }),
+      ...(resolvedSources.length === 0 ? {} : { acceptSnapshot }),
+    },
   );
-  checkAborted();
-  const alreadyStaged = new Map<string, string>();
-  extensions.sourcePaths.forEach((source, index) => {
-    const staged = extensions.paths[index];
-    if (staged !== undefined) alreadyStaged.set(source, staged);
-  });
-  const pending: string[] = [];
-  const resolvedSources: string[] = [];
-  for (const source of explicitExtensionSources) {
-    let canonical = source;
-    try {
-      canonical = await realpath(source);
-    } catch {
-      canonical = source;
-    }
-    resolvedSources.push(canonical);
-    const stagedExact = alreadyStaged.get(canonical);
-    if (stagedExact !== undefined) {
-      await confirmReusedExtension(canonical, stagedExact, sourceAgentDir);
-      continue;
-    }
-    const mirrored = mirroredExtensionStagePath(path.join(extensionRoot, "extensions"), canonical);
-    if (await reuseStagedExtensionFile(canonical, mirrored, sourceAgentDir)) {
-      alreadyStaged.set(canonical, mirrored);
-      continue;
-    }
-    const covered = extensions.sourcePaths.findIndex((stagedSource) => {
-      const root = path.dirname(stagedSource);
-      const relative = path.relative(root, canonical);
-      return (
-        relative === "" ||
-        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-      );
-    });
-    if (covered >= 0) {
-      const stagedEntry = extensions.paths[covered];
-      const stagedSource = extensions.sourcePaths[covered];
-      if (stagedEntry !== undefined && stagedSource !== undefined) {
-        const derived = path.join(
-          path.dirname(stagedEntry),
-          path.relative(path.dirname(stagedSource), canonical),
-        );
-        if (await reuseStagedExtensionFile(canonical, derived, sourceAgentDir)) {
-          alreadyStaged.set(canonical, derived);
-          continue;
-        }
-      }
-    }
-    pending.push(canonical);
-  }
-  const copied = await stageExplicitExtensionFiles(
-    pending,
-    path.join(extensionRoot, "extensions"),
-    sourceAgentDir,
-    signal,
-    { entries: extensions.entries, bytes: extensions.bytes },
-    controllerOnlyPaths,
-  );
-  pending.forEach((source, index) => {
-    const staged = copied.paths[index];
-    if (staged !== undefined) alreadyStaged.set(source, staged);
-  });
-  // A tool extension loaded a second time, tool-stripped, would register its providers,
-  // flags and hooks twice. Refuse the ambiguity rather than guess which copy wins.
-  for (const tool of toolExtensionSources) {
-    const loadedTwice = [
-      ...(extensionsEnabled ? extensions.sourcePaths : []),
-      ...resolvedSources,
-    ].some((source) => source === tool.canonical || isWithin(tool.canonical, source));
-    if (loadedTwice) {
-      throw new Error(
-        "[PI_EXTENSION_TOOL_SOURCE_INVALID] --pi-extension is also loaded as an enabled or explicit Pi extension. Pass --no-extensions on the Pi command or drop the duplicate -e.",
-      );
-    }
-  }
-  const stagedTools = await stageToolExtensions(
-    toolExtensionSources,
-    path.join(extensionRoot, "tool-extensions"),
-    await piRuntimeStorage(sourceAgentDir, path.join(sourceAgentDir, "settings.json"), process.env),
-    signal,
-    { entries: copied.entries, bytes: copied.bytes },
-    controllerOnlyPaths,
-    extensionsEnabled ? { entries: extensions.entries, bytes: extensions.bytes } : undefined,
-  );
-  const explicitCopies = resolvedSources.map((source) => {
-    const staged = alreadyStaged.get(source);
-    if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
-    return staged;
-  });
-  const replacements = new Map<string, string>();
-  explicitExtensionSources.forEach((source, index) => {
-    const staged = explicitCopies[index];
-    if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
-    replacements.set(source, staged);
-    const resolved = resolvedSources[index];
-    if (resolved !== undefined) replacements.set(resolved, staged);
-  });
-  // This runtime drives model discovery and the OAuth worker. Tool extensions provide
-  // tools, not models, and may need the actor's --env values, run directory, Pi arguments
-  // or loopback ports to initialize. They load only in the actor, which the adapter fails
-  // with [PI_EXTENSION_LOAD_FAILED] when one cannot initialize.
-  const runtime: PreparedReviewRuntime = {
-    // Writable scratch must not contain the read-only extension tree. Bubblewrap
-    // rejects, or hides, a read-only mount nested inside a later writable parent.
-    scratch: path.dirname(piHome.root),
-    extensionRoot,
-    extensionReadRoots: extensionSnapshotReadRoots(extensionRoot, extensions),
-    home: piHome,
-    extensions,
-    network: providerNetwork?.policy.network ?? "public",
-    ...(providerNetwork === undefined ? {} : { providerNetwork }),
-    ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: [...new Set(explicitCopies)] }),
-  };
   let authBroker: Awaited<ReturnType<typeof prepareAuthBroker>>;
   try {
-    authBroker = await prepareAuthBroker(runtime);
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message.startsWith("[PI_") || error.message.startsWith("Explicit Pi extension"))
-    ) {
-      throw error;
+    checkAborted();
+    const alreadyStaged = new Map<string, string>();
+    const pending: string[] = [];
+    for (const source of new Set(resolvedSources)) {
+      const handle = extensions.snapshotHandle;
+      if (handle !== undefined) {
+        const relative = cachedExplicitRelativePaths.get(source);
+        if (relative === undefined) throw new Error("Explicit Pi extension could not be staged");
+        alreadyStaged.set(source, path.join(handle.payload, relative));
+      } else {
+        const staged = await findStagedExplicitExtension(
+          source,
+          extensions,
+          destination,
+          sourceAgentDir,
+        );
+        if (staged === undefined) pending.push(source);
+        else alreadyStaged.set(source, staged);
+      }
     }
-    throw new Error("Pi OAuth broker could not be started");
-  }
-  try {
+    const copied = await stageExplicitExtensionFiles(
+      pending,
+      destination,
+      sourceAgentDir,
+      signal,
+      { entries: extensions.entries, bytes: extensions.bytes },
+      controllerOnlyPaths,
+    );
+    pending.forEach((source, index) => {
+      const staged = copied.paths[index];
+      if (staged !== undefined) alreadyStaged.set(source, staged);
+    });
+    // A tool extension loaded a second time, tool-stripped, would register its providers,
+    // flags and hooks twice. Refuse the ambiguity rather than guess which copy wins.
+    for (const tool of toolExtensionSources) {
+      const loadedTwice = [
+        ...(extensionsEnabled ? extensions.sourcePaths : []),
+        ...resolvedSources,
+      ].some((source) => source === tool.canonical || isWithin(tool.canonical, source));
+      if (loadedTwice) {
+        throw new Error(
+          "[PI_EXTENSION_TOOL_SOURCE_INVALID] --pi-extension is also loaded as an enabled or explicit Pi extension. Pass --no-extensions on the Pi command or drop the duplicate -e.",
+        );
+      }
+    }
+    const stagedTools = await stageToolExtensions(
+      toolExtensionSources,
+      path.join(extensionRoot, "tool-extensions"),
+      await piRuntimeStorage(
+        sourceAgentDir,
+        path.join(sourceAgentDir, "settings.json"),
+        process.env,
+      ),
+      signal,
+      { entries: copied.entries, bytes: copied.bytes },
+      controllerOnlyPaths,
+      extensionsEnabled ? { entries: extensions.entries, bytes: extensions.bytes } : undefined,
+    );
+    const explicitCopies = resolvedSources.map((source) => {
+      const staged = alreadyStaged.get(source);
+      if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
+      return staged;
+    });
+    const replacements = new Map<string, string>();
+    explicitExtensionSources.forEach((source, index) => {
+      const staged = explicitCopies[index];
+      if (staged === undefined) throw new Error("Explicit Pi extension was not staged");
+      replacements.set(source, staged);
+      const resolved = resolvedSources[index];
+      if (resolved !== undefined) replacements.set(resolved, staged);
+    });
+    // This runtime drives model discovery and the OAuth worker. Tool extensions provide
+    // tools, not models, and may need the actor's --env values, run directory, Pi arguments
+    // or loopback ports to initialize. They load only in the actor, which the adapter fails
+    // with [PI_EXTENSION_LOAD_FAILED] when one cannot initialize.
+    const runtime: PreparedReviewRuntime = {
+      // Writable scratch must not contain the read-only extension tree. Bubblewrap
+      // rejects, or hides, a read-only mount nested inside a later writable parent.
+      scratch: path.dirname(piHome.root),
+      extensionRoot,
+      extensionReadRoots: extensionSnapshotReadRoots(extensionRoot, extensions),
+      home: piHome,
+      extensions,
+      network: providerNetwork?.policy.network ?? "public",
+      ...(providerNetwork === undefined ? {} : { providerNetwork }),
+      ...(explicitCopies.length === 0
+        ? {}
+        : { capabilityExtensions: [...new Set(explicitCopies)] }),
+    };
+    try {
+      authBroker = await prepareAuthBroker(runtime);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message.startsWith("[PI_") || error.message.startsWith("Explicit Pi extension"))
+      ) {
+        throw error;
+      }
+      throw new Error("Pi OAuth broker could not be started");
+    }
     checkAborted();
     const flagCommand: [string, ...string[]] = isPiExecutable(userCommand[0])
       ? [userCommand[0], ...userCommand.slice(1)]
@@ -1171,7 +1195,10 @@ async function stageEvalPiExtensions(
       runtime: runtimeWithBroker,
     };
   } catch (error) {
-    await authBroker?.close().catch(() => undefined);
+    await (async () => {
+      await authBroker?.close();
+      await extensions.snapshotHandle?.release();
+    })().catch(() => undefined);
     throw error;
   }
 }
@@ -1689,6 +1716,7 @@ async function runEvalCommandWithInterruption(
           toolExtensionSources,
           readiness?.version,
           providerNetwork,
+          (event) => recordEvalWorkLog(workLog, "extension_snapshot", { ...event }),
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
@@ -1909,6 +1937,7 @@ async function runEvalCommandWithInterruption(
           {
             agentDir: piHome.agentDir,
             ...(stagedExtensionRoot === undefined ? {} : { extensionRoot: stagedExtensionRoot }),
+            extensionSnapshot: snapshotHandle,
             controllerFiles: [launcherScript, launchSpec, ...identityFiles],
             checkAborted: throwIfSetupInterrupted,
           },
