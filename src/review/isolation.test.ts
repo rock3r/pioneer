@@ -1,6 +1,6 @@
 import { chmod, link, lstat, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   assertDistinctExistingReviewOutputs,
@@ -37,6 +37,36 @@ it("refuses sensitive actor grants but accepts a controller-only Pi-home copy so
 });
 
 describe("review path grants", () => {
+  it.skipIf(process.platform === "win32")(
+    "protects the cache from every user grant even when disabled",
+    async () => {
+      const root = await createTempDir("pioneer-cache-grants-");
+      const sourceDir = path.join(root, "source");
+      const cache = path.join(root, "cache");
+      const alias = path.join(root, "cache-alias");
+      const payload = path.join(cache, "pioneer", "extension-snapshots", "v1", "payload");
+      await mkdir(sourceDir);
+      await mkdir(payload, { recursive: true });
+      await symlink(cache, alias, "dir");
+      vi.stubEnv("XDG_CACHE_HOME", alias);
+      vi.stubEnv("PIONEER_EXTENSION_CACHE", "0");
+      try {
+        for (const [label, spec] of [
+          ["--source", { sourceDir: cache }],
+          ["--allow-read", { sourceDir, allowReadPaths: [payload] }],
+          ["--allow-write", { sourceDir, allowWritePaths: [cache] }],
+        ] as const) {
+          await expect(validateReviewPaths(spec)).rejects.toThrow(
+            new RegExp(`PI_EXTENSION_CACHE_GRANT_OVERLAP.*${label}.*extension-snapshots.*narrower`),
+          );
+        }
+        await expect(validateReviewPaths({ sourceDir })).resolves.toBeDefined();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it("canonicalizes explicit read and write grants", async () => {
     const root = await createTempDir("pi-review-paths-");
     const source = path.join(root, "source");
@@ -89,7 +119,7 @@ describe("review path grants", () => {
     ).rejects.toThrow(/symbolic link/i);
     await expect(
       validateReviewPaths({ sourceDir: source, allowReadPaths: [path.parse(root).root] }),
-    ).rejects.toThrow(/broad/i);
+    ).rejects.toThrow(process.platform === "win32" ? /broad/i : /PI_EXTENSION_CACHE_GRANT_OVERLAP/);
   });
 
   it("accepts an absolute report target outside every actor-visible grant", async () => {

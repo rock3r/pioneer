@@ -30,6 +30,11 @@ function contains(parent: string, child: string): boolean {
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
+export function extensionCacheDirectory(versionRoot: string): string {
+  const parent = path.dirname(versionRoot);
+  return path.basename(parent) === "extension-snapshots" ? parent : versionRoot;
+}
+
 /** Keep even a disabled cache outside user grants. A different process can hold a live lease. */
 export async function assertExtensionCacheDisjointFromGrants(
   grants: Readonly<Record<string, readonly string[]>>,
@@ -37,10 +42,7 @@ export async function assertExtensionCacheDisjointFromGrants(
   versionRoot = extensionCacheRoot(process.env, platform),
 ): Promise<void> {
   if (platform === "win32") return;
-  const parent = path.dirname(versionRoot);
-  const cache = path.resolve(
-    path.basename(parent) === "extension-snapshots" ? parent : versionRoot,
-  );
+  const cache = path.resolve(extensionCacheDirectory(versionRoot));
   const normalize = (entry: string) =>
     platform === "darwin" ? entry.normalize("NFD").toLowerCase() : entry;
   const canonical = await canonicalProspectivePathForContainment(cache).catch((error: unknown) => {

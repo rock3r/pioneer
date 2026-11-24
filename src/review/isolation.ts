@@ -7,6 +7,7 @@ import {
   isBroadWritablePath,
   isSensitiveCredentialPath,
 } from "../eval-run/isolation.js";
+import { assertExtensionCacheDisjointFromGrants } from "../pi-extension-cache-location.js";
 import type { SandboxPolicy } from "../sandbox/launcher.js";
 import {
   assertStableDirectoryChain,
@@ -272,6 +273,14 @@ async function validateReviewPathsInternal(
   platform: NodeJS.Platform,
   prospectiveControllerDirectories: readonly string[] = [],
 ): Promise<ValidatedReviewPaths> {
+  await assertExtensionCacheDisjointFromGrants(
+    {
+      "--source": [spec.sourceDir],
+      "--allow-read": spec.allowReadPaths ?? [],
+      "--allow-write": spec.allowWritePaths ?? [],
+    },
+    platform,
+  );
   const sourceDir = await canonicalGrant(spec.sourceDir, platform);
   const piHomeSource =
     spec.piHomeSource === undefined

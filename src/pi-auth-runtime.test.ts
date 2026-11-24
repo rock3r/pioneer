@@ -52,6 +52,7 @@ describe("prepareAuthBroker", () => {
       const runtime: PreparedReviewRuntime = {
         scratch: root,
         extensionRoot: root,
+        extensionReadRoots: [root],
         home: {
           root,
           agentDir,

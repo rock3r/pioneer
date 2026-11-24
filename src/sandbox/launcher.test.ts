@@ -72,6 +72,29 @@ describe("direct sandbox launchers", () => {
     ).toThrow(/loopback port/i);
   });
 
+  it("hides the cache directory listing behind a private traverse-only mount", () => {
+    const cache = "/cache/pioneer/extension-snapshots";
+    const payload = `${cache}/v1/entries/key/generation/payload`;
+    const { argv } = buildLinuxSandboxArgv(
+      {
+        readOnlyPaths: [payload],
+        writablePaths: [],
+        network: "none",
+        extensionCacheDirectory: cache,
+      },
+      ["/bin/true"],
+      "/usr/bin/bwrap",
+    );
+    const flag = (option: string, ...args: string[]) =>
+      argv.some((value, i) => value === option && args.every((arg, j) => argv[i + j + 1] === arg));
+    expect(flag("--tmpfs", cache)).toBe(true);
+    expect(flag("--chmod", "0111", cache)).toBe(true);
+    expect(flag("--chmod", "0111", `${cache}/v1/entries/key/generation`)).toBe(true);
+    expect(flag("--remount-ro", cache)).toBe(true);
+    expect(flag("--ro-bind", payload, payload)).toBe(true);
+    expect(flag("--chmod", "0111", payload)).toBe(false);
+  });
+
   it("relays allowed Linux loopback ports through bound Unix sockets (#88)", () => {
     const launch = buildLinuxSandboxArgv(
       { ...policy, loopbackPorts: [8722] },

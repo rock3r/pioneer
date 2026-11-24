@@ -7,6 +7,7 @@ import {
 } from "../controller-scratch.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
 import { defaultGitRunnerCollect, resolveLocalHeadSha } from "../github/deep-review/collect.js";
+import { assertExtensionCacheDisjointFromGrants } from "../pi-extension-cache-location.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import {
   validateProspectiveDeepReviewOutputPaths,
@@ -132,6 +133,11 @@ export interface DeepReviewExecution {
 
 export async function runDeepReview(request: DeepReviewRequest): Promise<DeepReviewExecution> {
   assertDeepReviewPlatform(request.config);
+  if (request.controllerScratchBase !== undefined) {
+    await assertExtensionCacheDisjointFromGrants({
+      "controller scratch base": [request.controllerScratchBase],
+    });
+  }
 
   const limits = resolvedConfigLimits(request.config);
   validatePacketCompleteness(

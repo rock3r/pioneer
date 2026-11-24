@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { type PiLaunchCommand, piPackageReadRoot, resolveManagedPiLauncher } from "./pi-command.js";
 import {
+  assertExtensionCacheDisjointFromGrants,
+  extensionCacheDirectory,
+} from "./pi-extension-cache-location.js";
+import {
   type ExtensionResource,
   type ExtensionSnapshot,
   snapshotExtensionResources,
@@ -98,11 +102,30 @@ function parseResources(value: unknown): ExtensionResource[] {
 }
 
 export interface PreparedExtensions extends ExtensionSnapshot {
+  readonly snapshotHandle?: {
+    readonly cacheRoot: string;
+    readonly payload: string;
+    release(): Promise<void>;
+  };
   readonly command: PiLaunchCommand;
   /** The official Pi package directory that the adapter imports. */
   readonly runtimeRoot?: string;
   /** The read-only sandbox grant for that package and the dependencies it loads. */
   readonly runtimeReadRoot?: string;
+}
+
+export function extensionSnapshotReadRoots(root: string, extensions: PreparedExtensions): string[] {
+  return extensions.snapshotHandle === undefined
+    ? [root]
+    : [root, extensions.snapshotHandle.payload];
+}
+
+export function extensionCacheSandboxPolicy(handle: PreparedExtensions["snapshotHandle"]): {
+  extensionCacheDirectory?: string;
+} {
+  return handle === undefined
+    ? {}
+    : { extensionCacheDirectory: extensionCacheDirectory(handle.cacheRoot) };
 }
 
 /** Read-only sandbox grants that let the prepared adapter load the official Pi package. */
@@ -157,6 +180,8 @@ export async function preparePiExtensions(
 ): Promise<PreparedExtensions> {
   signal?.throwIfAborted();
   const root = await installedPiRoot(command, environment);
+  const runtimeReadRoot = await piPackageReadRoot(root);
+  await assertExtensionCacheDisjointFromGrants({ "Pi package": [runtimeReadRoot] });
   let resources: ExtensionResource[] = [];
   try {
     if (enabled) {
@@ -211,6 +236,6 @@ export async function preparePiExtensions(
     ...(enabled ? {} : { digest: "0".repeat(64) }),
     command: [process.execPath, entry, root],
     runtimeRoot: root,
-    runtimeReadRoot: await piPackageReadRoot(root),
+    runtimeReadRoot,
   };
 }

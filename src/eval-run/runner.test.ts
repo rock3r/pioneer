@@ -18,6 +18,31 @@ function actor(source: string): readonly [string, ...string[]] {
   return [process.execPath, "-e", source];
 }
 
+it.skipIf(process.platform === "win32")(
+  "rejects cache-overlapping eval grants before Pi readiness",
+  async () => {
+    const root = await createTempDir("pioneer-eval-cache-grants-");
+    const runDir = path.join(root, "run");
+    const cache = path.join(root, "cache");
+    await Promise.all([mkdir(runDir), mkdir(cache)]);
+    vi.stubEnv("XDG_CACHE_HOME", cache);
+    try {
+      const spec = { runDir, command: ["pi"] as const };
+      await expect(runEvalCommand({ ...spec, runDir: cache })).rejects.toThrow(
+        /PI_EXTENSION_CACHE_GRANT_OVERLAP.*run/,
+      );
+      await expect(runEvalCommand({ ...spec, runtimeReadPaths: [cache] })).rejects.toThrow(
+        /PI_EXTENSION_CACHE_GRANT_OVERLAP.*runtime/,
+      );
+      await expect(runEvalCommand(spec, { controllerScratchBase: cache })).rejects.toThrow(
+        /PI_EXTENSION_CACHE_GRANT_OVERLAP.*scratch/,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  },
+);
+
 /**
  * The actor must boot an interpreter and flush both pipes before this timeout fires, or the
  * pre-timeout markers never reach the controller and the case fails asserting them. Measured
