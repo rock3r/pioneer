@@ -89,6 +89,40 @@ describe("extractDiffComments", () => {
     expect(comments[0]?.text).not.toContain("fake");
   });
 
+  it.each([
+    ["+const identity = <T extends unknown>(value: T) => value;"],
+    ["+const identity = <T = string>(value: T) => value;"],
+    ["+const identity = <T ,>(value: T) => value;"],
+    ["+const identity = <const T extends { value: string }>(value: T) => value;"],
+    ["+const identity = <T extends", "+  unknown", "+>(value: T) => value;"],
+    ["+const identity = <T", "+  extends unknown", "+>(value: T) => value;"],
+  ])("preserves comments after the TSX generic arrow %s", (...lines) => {
+    const diff = hunk("view.tsx", [...lines, "+// TODO finish validation"]);
+    expect(extractDiffComments(diff).map(({ text }) => text)).toEqual([
+      "// TODO finish validation",
+    ]);
+  });
+
+  it("keeps TSX tags with an extends attribute in JSX mode", () => {
+    const diff = hunk("view.tsx", [
+      '+const first = <Panel extends="base">',
+      "+  // JSX text",
+      "+  {/* TODO first panel */}",
+      "+</Panel>;",
+      "+const second = <Panel extends",
+      '+  ="base">',
+      "+  // JSX text",
+      "+  {/* TODO second panel */}",
+      "+</Panel>;",
+      "+// TODO after the panels",
+    ]);
+    expect(extractDiffComments(diff).map(({ text }) => text)).toEqual([
+      "/* TODO first panel */",
+      "/* TODO second panel */",
+      "// TODO after the panels",
+    ]);
+  });
+
   it("skips generated, minified and lockfile diffs, license headers and directives", () => {
     const diff = [
       hunk("dist/app.min.js", ["+// TODO generated"]),

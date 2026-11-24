@@ -6,6 +6,7 @@ type Language =
   | "java"
   | "javascript"
   | "jsx"
+  | "tsx"
   | "kotlin"
   | "rust"
   | "swift"
@@ -27,7 +28,7 @@ const FILE_LANGUAGES: Readonly<Record<string, Language>> = {
   ".cjs": "javascript",
   ".cts": "javascript",
   ".jsx": "jsx",
-  ".tsx": "jsx",
+  ".tsx": "tsx",
   ".py": "python",
   ".pyi": "python",
   ".rs": "rust",
@@ -64,12 +65,14 @@ const C_STYLE = new Set<Language>([
   "java",
   "javascript",
   "jsx",
+  "tsx",
   "kotlin",
   "rust",
   "swift",
 ]);
 const NESTED_BLOCKS = new Set<Language>(["kotlin", "rust", "swift", "sql"]);
 const HASH_STYLE = new Set<Language>(["python", "shell", "yaml", "toml"]);
+const JAVASCRIPT_STYLE = new Set<Language>(["javascript", "jsx", "tsx"]);
 const MAX_PARTS_PER_LINE = 4_096;
 
 export function commentLanguage(file: string): Language | undefined {
@@ -118,6 +121,38 @@ const JAVASCRIPT_EXPRESSION_KEYWORDS = new Set([
 ]);
 const JAVASCRIPT_CONTROL_KEYWORDS = new Set(["if", "while", "for", "with", "switch", "catch"]);
 const JAVASCRIPT_TOKEN = /(?:[$_\p{ID_Start}](?:[$\p{ID_Continue}]|\u200c|\u200d)*|\d[\w.]*)/uy;
+const TSX_TRIVIA = /(?:\s+|\/\*[\s\S]*?\*\/|\/\/[^\n]*)*/y;
+const MAX_TSX_LOOKAHEAD = 1_024;
+
+function afterTsxTrivia(text: string, from: number): number {
+  TSX_TRIVIA.lastIndex = from;
+  TSX_TRIVIA.exec(text);
+  return TSX_TRIVIA.lastIndex;
+}
+
+function startsTsxTypeParameters(line: string, index: number, nextLine?: string): boolean {
+  const prefix = line.slice(index, index + MAX_TSX_LOOKAHEAD);
+  const available = MAX_TSX_LOOKAHEAD - prefix.length - 1;
+  const text =
+    nextLine !== undefined && available > 0 ? `${prefix}\n${nextLine.slice(0, available)}` : prefix;
+  const parameter = afterTsxTrivia(text, 1);
+  JAVASCRIPT_TOKEN.lastIndex = parameter;
+  let token = JAVASCRIPT_TOKEN.exec(text)?.[0];
+  if (token === "const") {
+    JAVASCRIPT_TOKEN.lastIndex = afterTsxTrivia(text, JAVASCRIPT_TOKEN.lastIndex);
+    token = JAVASCRIPT_TOKEN.exec(text)?.[0];
+  }
+  if (token === undefined) return false;
+
+  // TSX uses a comma, a default type, or a constraint to distinguish arrow type parameters.
+  // An "extends" attribute followed by '=', '>' or '/' is still a JSX attribute.
+  const marker = afterTsxTrivia(text, JAVASCRIPT_TOKEN.lastIndex);
+  if (text[marker] === "," || text[marker] === "=") return true;
+  JAVASCRIPT_TOKEN.lastIndex = marker;
+  if (JAVASCRIPT_TOKEN.exec(text)?.[0] !== "extends") return false;
+  const constraint = text[afterTsxTrivia(text, JAVASCRIPT_TOKEN.lastIndex)];
+  return constraint !== undefined && !"=>/".includes(constraint);
+}
 
 interface JsxFrame {
   tags: number;
@@ -181,7 +216,7 @@ export class CommentLexer {
 
   constructor(private readonly language: Language) {}
 
-  scan(line: string): CommentPart[] {
+  scan(line: string, nextLine?: string): CommentPart[] {
     const indent = line.search(/\S/);
     if (this.skipOpaqueLine(line, indent)) return [];
     const parts: CommentPart[] = [];
@@ -192,7 +227,7 @@ export class CommentLexer {
       } else if (this.literal !== undefined) {
         index = this.readLiteral(line, index);
       } else {
-        index = this.readCode(line, index, indent, parts);
+        index = this.readCode(line, index, indent, parts, nextLine);
       }
       if (parts.length > MAX_PARTS_PER_LINE) {
         throw new Error("[COMMENT_DIFF_LIMIT] A diff line contains too many comment fragments.");
@@ -292,7 +327,13 @@ export class CommentLexer {
     return index;
   }
 
-  private readCode(line: string, index: number, indent: number, parts: CommentPart[]): number {
+  private readCode(
+    line: string,
+    index: number,
+    indent: number,
+    parts: CommentPart[],
+    nextLine: string | undefined,
+  ): number {
     const jsx = this.jsxFrames.at(-1);
     if (jsx !== undefined && !jsx.inExpression) return this.readJsx(jsx, line, index);
     if (this.htmlRawClose !== undefined && !this.htmlTag) {
@@ -329,8 +370,7 @@ export class CommentLexer {
       this.pendingControl = false;
       return index + width;
     }
-    if (this.language === "javascript" || this.language === "jsx")
-      return this.readJavaScript(line, index);
+    if (JAVASCRIPT_STYLE.has(this.language)) return this.readJavaScript(line, index, nextLine);
     return index + 1;
   }
 
@@ -449,8 +489,7 @@ export class CommentLexer {
       char === "`" &&
       (language === "go" ||
         language === "shell" ||
-        language === "javascript" ||
-        language === "jsx" ||
+        JAVASCRIPT_STYLE.has(language) ||
         language === "sql")
     ) {
       this.literal = {
@@ -458,7 +497,7 @@ export class CommentLexer {
         multiline: true,
         escapes: language !== "go",
         doubled: language === "sql",
-        template: language === "javascript" || language === "jsx",
+        template: JAVASCRIPT_STYLE.has(language),
       };
       return 1;
     }
@@ -551,7 +590,7 @@ export class CommentLexer {
     return index + 1;
   }
 
-  private readJavaScript(line: string, index: number): number {
+  private readJavaScript(line: string, index: number, nextLine?: string): number {
     const char = line[index] ?? "";
     if (/\s/.test(char)) return index + 1;
     if ((char === "+" || char === "-") && line[index + 1] === char) return index + 2;
@@ -564,9 +603,10 @@ export class CommentLexer {
     }
     if (
       char === "<" &&
-      this.language === "jsx" &&
+      (this.language === "jsx" || this.language === "tsx") &&
       this.regexAllowed &&
-      /^<(?:>|[A-Za-z][\w:.-]*(?=\s|\/?>))/.test(line.slice(index))
+      /^<(?:>|[A-Za-z][\w:.-]*(?=\s|\/?>|$))/.test(line.slice(index)) &&
+      (this.language !== "tsx" || !startsTsxTypeParameters(line, index, nextLine))
     ) {
       this.jsxFrames.push({ tags: 0, tag: "open", inExpression: false });
       this.regexAllowed = false;

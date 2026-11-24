@@ -109,6 +109,7 @@ interface HunkComments {
 
 function extractHunk(
   hunk: PatchHunk,
+  newLines: readonly PatchLine[],
   newLexer: CommentLexer,
   oldLexer: CommentLexer,
 ): HunkComments {
@@ -118,6 +119,8 @@ function extractHunk(
   let generated = false;
   let section = 0;
   let fragments = 0;
+  const oldLines = hunk.lines.filter((line) => line.kind !== "+");
+  let nextOldIndex = 1;
   function countFragments(count: number): void {
     fragments += count;
     if (fragments > MAX_HUNK_PARTS) {
@@ -127,7 +130,8 @@ function extractHunk(
   for (const line of hunk.lines) {
     if (line.kind === " ") section += 1;
     if (line.kind !== "+") {
-      const oldParts = oldLexer.scan(line.text);
+      const oldParts = oldLexer.scan(line.text, oldLines[nextOldIndex]?.text);
+      nextOldIndex += 1;
       if (line.kind === "-") {
         countFragments(oldParts.length);
         for (const piece of oldParts) {
@@ -137,7 +141,7 @@ function extractHunk(
       }
     }
     if (line.kind === "-") continue;
-    const newParts = newLexer.scan(line.text);
+    const newParts = newLexer.scan(line.text, newLines[line.number - hunk.firstNewLine + 1]?.text);
     countFragments(newParts.length);
     for (const piece of newParts) {
       const text = line.text.slice(piece.start, piece.end).trim();
@@ -189,9 +193,9 @@ function fileComments(
     if (hunk.firstNewLine !== nextNew) newLexer = new CommentLexer(language);
     nextOld = hunk.firstOldLine + hunk.oldLines;
     nextNew = hunk.firstNewLine + hunk.newLines;
-    const result = extractHunk(hunk, newLexer, oldLexer);
-    if (result.generated) return [];
     const newLines = hunk.lines.filter((line) => line.kind !== "-");
+    const result = extractHunk(hunk, newLines, newLexer, oldLexer);
+    if (result.generated) return [];
     for (const group of result.groups) {
       const first = group.parts[0];
       const last = group.parts.at(-1);
