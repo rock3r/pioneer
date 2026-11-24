@@ -223,7 +223,7 @@ export function buildLinuxSandboxArgv(
   const cacheAncestors =
     cache === undefined
       ? []
-      : ancestors.filter((entry) => entry === cache || entry.startsWith(cache + path.sep));
+      : ancestors.filter((entry) => entry === cache || entry.startsWith(`${cache}/`));
   const args: string[] = [
     // captureEvalProcess starts Bubblewrap detached, giving it the dedicated
     // session/process group used for containment and termination.

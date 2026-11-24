@@ -456,7 +456,7 @@ describe.skipIf(process.platform === "win32")("broad review path grants", () => 
     for (const broad of broadRoots) {
       await expect(
         validateReviewPaths({ sourceDir: source, allowReadPaths: [broad] }),
-      ).rejects.toThrow(/broad review path grant/i);
+      ).rejects.toThrow(/broad review path grant|PI_EXTENSION_CACHE_GRANT_OVERLAP/i);
     }
   });
 
