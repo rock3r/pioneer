@@ -23,6 +23,8 @@ Before reusing a cached snapshot, the controller reads source directory membersh
 
 Each controller acquires its own lease before validating or using a committed generation. Concurrent controllers can lease the same generation while one creator stages a replacement. Collection preserves a leased generation until its owners release it or their process identities show that they exited. Unleased superseded and rejected generations, generations unused for more than 14 days, and the least recently used generations beyond the 3 GiB cache budget move to trash. Later runs drain trash and reclaim abandoned staging directories in the background.
 
+Each committed generation carries a sequence assigned under the cache lock. The sequence is published with the payload and its other metadata, so clock changes and coarse filesystem timestamps cannot change which generation is newest. Earlier entries without a sequence remain eligible for validation until a sequenced entry replaces them.
+
 Pioneer excludes Pi's private runtime storage by exact location:
 
 - the agent directory's `sessions/` and `logs/` directories;

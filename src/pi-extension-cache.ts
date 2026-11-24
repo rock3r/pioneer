@@ -15,12 +15,16 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { PIONEER_VERSION } from "./package-metadata.js";
 import {
+  compareExtensionCacheGenerationOrder,
   EXTENSION_CACHE_FORMAT,
   EXTENSION_CACHE_ID,
   EXTENSION_CACHE_PACKAGE_JSON,
+  EXTENSION_CACHE_SEQUENCE_FILE,
+  type ExtensionCacheGenerationOrder,
   extensionCacheSnapshotMetadata,
   readCacheText,
   readExtensionCacheManifest,
+  readExtensionCacheSequence,
   writeExtensionCacheManifest,
 } from "./pi-extension-cache-format.js";
 import {
@@ -235,7 +239,7 @@ async function newestEntry(cache: ActiveCache): Promise<ExtensionCacheEntry | un
   const parent = path.join(cache.root, "entries", cache.key);
   if (!(await exists(parent))) return undefined;
   await inspectPrivateCacheDirectory(parent);
-  let newest: { readonly entry: ExtensionCacheEntry; readonly created: bigint } | undefined;
+  let newest: (ExtensionCacheGenerationOrder & { readonly entry: ExtensionCacheEntry }) | undefined;
   for (const id of await readdir(parent)) {
     if (!EXTENSION_CACHE_ID.test(id)) continue;
     const entry = generationEntry(cache, id);
@@ -253,14 +257,36 @@ async function newestEntry(cache: ActiveCache): Promise<ExtensionCacheEntry | un
         await markBad(entry);
         continue;
       }
-      if (newest === undefined || stats.mtimeNs > newest.created)
-        newest = { entry, created: stats.mtimeNs };
+      const candidate = {
+        entry,
+        created: stats.mtimeNs,
+        sequence: await readExtensionCacheSequence(entry.directory),
+      };
+      if (newest === undefined || compareExtensionCacheGenerationOrder(candidate, newest) > 0)
+        newest = candidate;
     } catch (error) {
       if (!isCacheError(error, "ENOENT")) continue;
       await markBad(entry);
     }
   }
   return newest?.entry;
+}
+
+/** Assign under cache.lock and publish with the generation directory's existing atomic rename. */
+async function nextGenerationSequence(parent: string): Promise<bigint> {
+  let latest = 0n;
+  for (const id of await readdir(parent)) {
+    if (!EXTENSION_CACHE_ID.test(id)) continue;
+    const directory = path.join(parent, id);
+    try {
+      await inspectPrivateCacheDirectory(directory);
+      const sequence = await readExtensionCacheSequence(directory);
+      if (sequence !== undefined && sequence > latest) latest = sequence;
+    } catch {
+      // A damaged or unsafe generation cannot prevent publication of its replacement.
+    }
+  }
+  return latest + 1n;
 }
 
 export async function readExtensionCacheGeneration(
@@ -465,7 +491,13 @@ async function stageCacheEntry(
       cache.root,
       cache.platform,
       async () => {
-        await createPrivateDirectory(path.dirname(committed.directory));
+        const parent = path.dirname(committed.directory);
+        await createPrivateDirectory(parent);
+        const sequence = await nextGenerationSequence(parent);
+        await writeFile(path.join(staging, EXTENSION_CACHE_SEQUENCE_FILE), `${sequence}\n`, {
+          mode: 0o600,
+          flag: "wx",
+        });
         await rename(staging, committed.directory);
         await unlink(path.join(committed.directory, "owner"));
         return cache.takeLease(committed);
