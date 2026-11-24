@@ -324,6 +324,7 @@ async function withPreparedPiSandbox<T>(
       {
         agentDir: runtime.home.agentDir,
         extensionRoot: runtime.extensionRoot,
+        extensionSnapshot: runtime.extensions.snapshotHandle,
         checkAborted: () => signal?.throwIfAborted(),
       },
       async () =>
