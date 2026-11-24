@@ -171,7 +171,7 @@ interface ManifestSource {
 
 export type ExtensionManifestRecord = ManifestSource &
   (
-    | { readonly staged: false }
+    | { readonly staged: false; readonly skippedLinkTarget?: string }
     | {
         readonly staged: true;
         readonly stagedRelativePath: string;
@@ -188,6 +188,7 @@ export interface StagedExtensionSnapshot extends ExtensionSnapshot {
 
 interface ObservedEntry extends ManifestSource {
   readonly stagedRelativePath?: string;
+  readonly skippedLinkTarget?: string;
 }
 
 class ExtensionSnapshotChangedError extends Error {
@@ -631,7 +632,7 @@ export async function stageExtensionSnapshot(
   const privateStorage = privateStorageMatcher(plan);
   const observed = new Map<string, ObservedEntry>();
   const stagedPath = (source: string): string => mirroredExtensionStagePath(destination, source);
-  async function skipEntry(source: string): Promise<StagedEntry> {
+  async function skipEntry(source: string, canonical?: string): Promise<StagedEntry> {
     // Most skips were already recorded by the prepass. An entry can appear between walks.
     if (!observed.has(source)) {
       const details = await lstatIfPresent(source);
@@ -639,6 +640,10 @@ export async function stageExtensionSnapshot(
         const observation = await observeSourceBestEffort(source, details);
         if (observation !== undefined) observed.set(source, observation.record);
       }
+    }
+    const record = observed.get(source);
+    if (canonical !== undefined && record?.type === "symlink") {
+      observed.set(source, { ...record, skippedLinkTarget: canonical });
     }
     return { items: [] };
   }
@@ -659,10 +664,11 @@ export async function stageExtensionSnapshot(
       if (checkCredentialPath && isSensitivePath(source)) return skipEntry(source);
       throw error;
     }
-    if (checkCredentialPath && isSensitivePath(source, canonical)) return skipEntry(source);
+    if (checkCredentialPath && isSensitivePath(source, canonical))
+      return skipEntry(source, canonical);
     if ([...excluded].some((entry) => within(entry, policyPath(canonical)))) {
       runSpecificFiltered = true;
-      return skipEntry(source);
+      return skipEntry(source, canonical);
     }
     const identity = await lstat(canonical, { bigint: true });
     const fileIdentity = `${identity.dev}:${identity.ino}`;
@@ -672,7 +678,7 @@ export async function stageExtensionSnapshot(
       (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity))
     ) {
       if (plan.excludedFiles.has(fileIdentity)) runSpecificFiltered = true;
-      return skipEntry(source);
+      return skipEntry(source, canonical);
     }
     if (
       identity.isFile() &&
@@ -684,14 +690,15 @@ export async function stageExtensionSnapshot(
     }
     const privateMatch = privateStorage(canonical);
     if (privateMatch === "private" || (privateMatch === "root-log" && identity.isFile()))
-      return skipEntry(source);
+      return skipEntry(source, canonical);
     // Project settings can only exclude session-shaped data, never an enabled entry point.
     if (identity.isFile() && isRepositorySessionFile(source, canonical, plan)) {
       runSpecificFiltered = true;
-      return skipEntry(source);
+      return skipEntry(source, canonical);
     }
     // Session history can sit anywhere a sessionDir Pioneer cannot see points, so check content.
-    if (await isPiSessionFile(canonical, scans, [source, canonical])) return skipEntry(source);
+    if (await isPiSessionFile(canonical, scans, [source, canonical]))
+      return skipEntry(source, canonical);
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency link escapes the selected code directories. Install its dependencies inside the package before retrying.",
@@ -983,9 +990,13 @@ async function finalizeExtensionManifest(
   await walkBounded(
     { size: entries.length, next: 0, child: (index) => index },
     async (index) => {
-      const { stagedRelativePath, ...entry } = entries[index] as ObservedEntry;
+      const { stagedRelativePath, skippedLinkTarget, ...entry } = entries[index] as ObservedEntry;
       if (stagedRelativePath === undefined) {
-        manifest[index] = { ...entry, staged: false };
+        manifest[index] = {
+          ...entry,
+          staged: false,
+          ...(skippedLinkTarget === undefined ? {} : { skippedLinkTarget }),
+        };
       } else {
         const details = await lstat(path.join(destination, stagedRelativePath), { bigint: true });
         manifest[index] = {
@@ -1021,7 +1032,17 @@ export async function validateCachedExtensionRunPolicy(
       { size: manifest.length, next: 0, child: (index) => index },
       async (index) => {
         const record = manifest[index];
-        if (!record?.staged) return undefined;
+        if (record === undefined) return undefined;
+        if (!record.staged) {
+          // A link that staging resolved and skipped can become eligible through an off-tree
+          // hop. Links in wholly unvisited subtrees have no resolved target to check.
+          if (
+            record.skippedLinkTarget !== undefined &&
+            (await realpath(record.sourcePath)) !== record.skippedLinkTarget
+          )
+            throw new ExtensionCachePolicyMismatch();
+          return undefined;
+        }
         const source = record.sourcePath;
         const isLink = record.type === "symlink";
         const canonical = isLink ? await realpath(source) : source;
