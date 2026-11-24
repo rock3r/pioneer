@@ -15,8 +15,6 @@ const MAX_MANIFEST_LINE_BYTES = 64 * 1024;
 // Pi's resource resolution has a 1 MiB output ceiling. Absolute and relative copies of
 // canonical entry paths can be longer, but still need a finite snapshot metadata budget.
 const MAX_SNAPSHOT_METADATA_BYTES = 16 * 1024 * 1024;
-const SOURCE_FIELDS = ["dev", "ino", "size", "nlink", "mode", "mtimeNs", "ctimeNs"] as const;
-const STAGED_FIELDS = ["ino", "size", "mode", "mtimeNs", "ctimeNs"] as const;
 const NONCANONICAL_PATH_COMPONENT = /\0|\/\/|\/\.{1,2}(?:\/|$)/;
 const DECIMAL_INTEGER = /^-?(?:0|[1-9][0-9]{0,19})$/;
 
@@ -45,16 +43,20 @@ export function cacheRelativePathForSource(canonicalSource: string): string {
   return `tree/%2F${canonicalSource}`;
 }
 
-function integers<K extends string>(value: unknown, fields: readonly K[]): Record<K, bigint> {
-  const object = metadata(value);
-  const parsed = {} as Record<K, bigint>;
-  for (const key of fields) {
-    const decimal = object[key];
-    if (typeof decimal !== "string" || !DECIMAL_INTEGER.test(decimal)) throw invalidMetadata();
-    if (decimal.startsWith("-") && key !== "mtimeNs" && key !== "ctimeNs") throw invalidMetadata();
-    parsed[key] = BigInt(decimal);
-  }
-  return parsed;
+function metadataInteger(value: unknown, signed = false): bigint {
+  if (typeof value !== "string" || !DECIMAL_INTEGER.test(value) || (!signed && value[0] === "-"))
+    throw invalidMetadata();
+  return BigInt(value);
+}
+
+function stagedMetadata(object: CacheMetadata) {
+  return {
+    ino: metadataInteger(object.ino),
+    size: metadataInteger(object.size),
+    mode: metadataInteger(object.mode),
+    mtimeNs: metadataInteger(object.mtimeNs, true),
+    ctimeNs: metadataInteger(object.ctimeNs, true),
+  };
 }
 
 function manifestRecord(value: unknown): ExtensionManifestRecord {
@@ -70,11 +72,15 @@ function manifestRecord(value: unknown): ExtensionManifestRecord {
       (type !== "symlink" || record.staged !== false || !absolutePath(skippedLinkTarget)))
   )
     throw invalidMetadata();
-  const source = integers(record.source, SOURCE_FIELDS);
+  const source = metadata(record.source);
   const entry = {
     sourcePath,
     type,
-    source,
+    source: {
+      ...stagedMetadata(source),
+      dev: metadataInteger(source.dev),
+      nlink: metadataInteger(source.nlink),
+    },
     ...(typeof linkText === "string" ? { linkText } : {}),
   } as const;
   if (
@@ -97,7 +103,7 @@ function manifestRecord(value: unknown): ExtensionManifestRecord {
     ...entry,
     staged: true,
     stagedRelativePath: record.stagedRelativePath,
-    stagedMetadata: integers(record.stagedMetadata, STAGED_FIELDS),
+    stagedMetadata: stagedMetadata(metadata(record.stagedMetadata)),
   };
 }
 
@@ -145,19 +151,20 @@ export async function readExtensionCacheManifest(
   let remainder = "";
   for await (const chunk of stream) {
     signal?.throwIfAborted();
-    const text = remainder + (chunk as string);
-    let start = 0;
-    for (let end = text.indexOf("\n"); end !== -1; end = text.indexOf("\n", start)) {
-      const line = text.slice(start, end);
-      if (Buffer.byteLength(line) > MAX_MANIFEST_LINE_BYTES || records.length === MAX_ENTRIES)
+    const lines = (remainder + (chunk as string)).split("\n");
+    remainder = lines.pop() ?? "";
+    for (const line of lines) {
+      if (
+        records.length === MAX_ENTRIES ||
+        (line.length * 3 > MAX_MANIFEST_LINE_BYTES &&
+          Buffer.byteLength(line) > MAX_MANIFEST_LINE_BYTES)
+      )
         throw invalidMetadata();
       const record = manifestRecord(JSON.parse(line));
       if (seen.has(record.sourcePath)) throw invalidMetadata();
       seen.add(record.sourcePath);
       records.push(record);
-      start = end + 1;
     }
-    remainder = text.slice(start);
     if (Buffer.byteLength(remainder) > MAX_MANIFEST_LINE_BYTES) throw invalidMetadata();
   }
   if (remainder.length !== 0) throw invalidMetadata();
