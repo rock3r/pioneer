@@ -188,6 +188,10 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
     ["manifest.jsonl", () => '{"staged":true,"sourcePath":"/invalid"}\n'],
     ["manifest.jsonl", (text: string) => text.replace('/source"', '/./source"')],
     ["manifest.jsonl", (text: string) => text.replace('"tree/%2F/', '"tree/%2F/../')],
+    [
+      "manifest.jsonl",
+      (text: string) => text.replace("}\n", `,"extra":"${"界".repeat(22_000)}"}\n`),
+    ],
     ["snapshot.json", (text: string) => text.trimEnd()],
     ["snapshot.json", (text: string) => text.slice(0, text.length / 2)],
     ["snapshot.json", () => '{"paths":["../outside"]}\n'],
@@ -252,6 +256,28 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
     const rebuilt = await preparing;
     await expect(lstat(payload)).rejects.toMatchObject({ code: "ENOENT" });
     expect(rebuilt.digest).toBe(initial.digest);
+    await rebuilt.snapshotHandle?.release();
+  });
+
+  it("rebuilds a generation with a missing lease timestamp", async () => {
+    const { takeLease: _override, ...defaults } = options();
+    const plan = await planExtensionSnapshot(resources());
+    const initial = await prepareCachedExtensionSnapshot(
+      plan,
+      path.join(base, "initial"),
+      defaults,
+    );
+    await initial.snapshotHandle?.release();
+    const prior = path.dirname(initial.snapshotHandle?.payload as string);
+    await rm(path.join(prior, "last-used"));
+    const rebuilt = await prepareCachedExtensionSnapshot(
+      plan,
+      path.join(base, "rebuilt"),
+      defaults,
+    );
+    expect(rebuilt.snapshotHandle).toBeDefined();
+    expect(rebuilt.snapshotHandle?.payload).not.toBe(initial.snapshotHandle?.payload);
+    await expect(lstat(prior)).rejects.toMatchObject({ code: "ENOENT" });
     await rebuilt.snapshotHandle?.release();
   });
 
