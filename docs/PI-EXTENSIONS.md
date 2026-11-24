@@ -22,7 +22,7 @@ Pioneer excludes Pi's private runtime storage by exact location:
 - regular `.log` files directly in the agent directory;
 - session directories set through `PI_CODING_AGENT_SESSION_DIR` or `sessionDir`. A relative setting fails with `PI_SESSION_DIR_RELATIVE`.
 
-If that storage is a link, Pioneer also excludes its canonical target and skips dependency links into it. Pioneer cannot see a `sessionDir` from another project's `.pi/settings.json` or `--session-dir`. It therefore also skips `.jsonl` files, and links to them, whose first parseable line is a Pi session header. See [session history outside known locations](SECURITY.md#session-history-outside-known-locations).
+If that storage is a link, Pioneer also excludes its canonical target and skips dependency links into it. Review and deep-review staging can also use the reviewed repository's `.pi/settings.json` to exclude regular `.jsonl` files and links to them from its configured session directory. Pioneer detects session files by content to cover sessions stored elsewhere, including those from another project or a past `--session-dir` override. See [session history outside known locations](SECURITY.md#session-history-outside-known-locations).
 
 Pioneer copies package dependency directories named `sessions` or `logs` in full. It rejects enabled entry points or code roots inside private session or log storage. Adapt installations with unsupported external runtime dependencies; Pioneer does not grant access to the operator's home.
 

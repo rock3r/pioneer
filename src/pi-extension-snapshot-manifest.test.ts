@@ -113,6 +113,28 @@ it("plans without writing and stages a controller-only record for every observed
   expect(normal).not.toHaveProperty("manifest");
 });
 
+it("records repository-filtered JSONL files as skipped only in the relevant review", async () => {
+  const { root, extension, resources, destination } = await fixture();
+  const data = path.join(extension, "records.jsonl");
+  await writeFile(data, '{"type":"fixture"}\n');
+  const storage = { agentDir: path.join(root, "pi-agent"), sessionDirs: [] };
+  const review = await staging.planExtensionSnapshot(resources, undefined, {
+    ...storage,
+    repositorySessionDirs: [extension],
+  });
+  const other = await staging.planExtensionSnapshot(resources, undefined, storage);
+
+  const filtered = await staging.stageExtensionSnapshot(review, destination);
+  const unfiltered = await staging.stageExtensionSnapshot(other, path.join(root, "other"));
+  expect(filtered.manifest.find((record) => record.sourcePath === data)).toMatchObject({
+    staged: false,
+  });
+  expect(unfiltered.manifest.find((record) => record.sourcePath === data)).toMatchObject({
+    staged: true,
+  });
+  expect(filtered.digest).not.toBe(unfiltered.digest);
+});
+
 it.skipIf(process.platform === "win32")(
   "records a link's own canonical location, metadata, and original text",
   async () => {

@@ -785,6 +785,86 @@ describe("extension snapshots", () => {
     ).rejects.toThrow("[PI_EXTENSION_RUNTIME_UNSUPPORTED]");
   });
 
+  it("skips only repository-session JSONL files and links to them", async () => {
+    const root = realpathSync(await createTempDir("extension-repository-session-filter-"));
+    const extension = path.join(root, "code");
+    const history = path.join(extension, "history");
+    const nested = path.join(history, "dir.jsonl");
+    await mkdir(nested, { recursive: true });
+    const entry = path.join(extension, "index.ts");
+    await writeFile(entry, "export {};\n");
+    await writeFile(path.join(history, "run.jsonl"), '{"type":"example"}\n');
+    await writeFile(path.join(history, "upper.JSONL"), '{"type":"example"}\n');
+    await writeFile(path.join(nested, "data.json"), '{"type":"example"}\n');
+    await writeFile(path.join(extension, "fixtures.jsonl"), '{"type":"fixture"}\n');
+    await writeFile(path.join(extension, "elsewhere.jsonl"), '{"type":"session","id":"fake"}\n');
+    if (process.platform !== "win32") {
+      await symlink(path.join("history", "run.jsonl"), path.join(extension, "latest"));
+      await symlink(path.join("history", "dir.jsonl"), path.join(extension, "link.jsonl"));
+      await symlink(path.join("..", "fixtures.jsonl"), path.join(history, "inside-link"));
+      await symlink(path.join("dir.jsonl", "data.json"), path.join(history, "data-link.jsonl"));
+    }
+    const result = await snapshotExtensionResources(
+      [{ path: entry, enabled: true, metadata: { scope: "user" } }],
+      path.join(root, "snapshot"),
+      undefined,
+      { agentDir: path.join(root, "agent"), sessionDirs: [], repositorySessionDirs: [history] },
+    );
+
+    const staged = path.dirname(result.paths[0] ?? "");
+    const names = await readdir(path.join(staged, "history"));
+    expect(names).not.toContain("run.jsonl");
+    expect(names.includes("upper.JSONL")).toBe(
+      process.platform !== "darwin" && process.platform !== "win32",
+    );
+    await expect(
+      readFile(path.join(staged, "history", "dir.jsonl", "data.json"), "utf8"),
+    ).resolves.toBe('{"type":"example"}\n');
+    await expect(readFile(path.join(staged, "fixtures.jsonl"), "utf8")).resolves.toBe(
+      '{"type":"fixture"}\n',
+    );
+    await expect(lstat(path.join(staged, "elsewhere.jsonl"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    if (process.platform !== "win32") {
+      await expect(lstat(path.join(staged, "latest"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(names).not.toContain("inside-link");
+      expect(names).toContain("data-link.jsonl");
+      expect((await stat(path.join(staged, "link.jsonl"))).isDirectory()).toBe(true);
+    }
+  });
+
+  it("keeps selected entry points when the project names the extension root or filesystem root", async () => {
+    const root = realpathSync(await createTempDir("extension-repository-session-root-"));
+    const extension = path.join(root, "code");
+    const entry = path.join(extension, "entry.jsonl");
+    await mkdir(extension);
+    await writeFile(entry, '{"type":"extension-fixture"}\n');
+    await writeFile(path.join(extension, "records.jsonl"), '{"type":"example"}\n');
+    await writeFile(path.join(extension, "support.js"), "export {};\n");
+    const resources = [{ path: entry, enabled: true, metadata: { scope: "user" } }];
+    const storage = { agentDir: path.join(root, "agent"), sessionDirs: [] };
+    const original = await snapshotExtensionResources(
+      resources,
+      path.join(root, "original"),
+      undefined,
+      storage,
+    );
+    for (const [index, dir] of [extension, path.parse(root).root].entries()) {
+      const snapshot = await snapshotExtensionResources(
+        resources,
+        path.join(root, `snapshot-${index}`),
+        undefined,
+        { ...storage, repositorySessionDirs: [dir] },
+      );
+      const staged = path.dirname(snapshot.paths[0] ?? "");
+      expect((await readdir(staged)).sort()).toEqual(["entry.jsonl", "support.js"]);
+      expect(() => assertSameExtensionSnapshot(original.digest, snapshot.digest)).toThrow(
+        "[REVIEW_RESUME_EXTENSIONS_CHANGED]",
+      );
+    }
+  });
+
   it("refuses an enabled entry inside session storage below a broader package root", async () => {
     const root = await createTempDir("extension-entry-inside-sessions-");
     const agentDir = path.join(root, "agent");

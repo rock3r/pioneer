@@ -218,6 +218,8 @@ export interface ExtensionSnapshot {
 export interface ExtensionSnapshotPlan {
   readonly enabled: readonly ExtensionResource[];
   readonly selectedRoots: readonly string[];
+  readonly entryPoints: ReadonlySet<string>;
+  readonly repositorySessionDirs: readonly string[];
   readonly agentDir: string | undefined;
   readonly privateDirectories: readonly string[];
   readonly privateFiles: ReadonlySet<string>;
@@ -545,6 +547,8 @@ export async function planExtensionSnapshot(
   const enabled = resources.filter(
     (resource) => resource.enabled && resource.metadata.scope === "user",
   );
+  const repositorySessionDirs = storage?.repositorySessionDirs?.map(policyPath) ?? [];
+  const entryPoints = new Set<string>();
   const roots = new Set<string>();
   for (const resource of enabled) {
     signal?.throwIfAborted();
@@ -555,6 +559,7 @@ export async function planExtensionSnapshot(
       root = path.join(base, "extensions");
     root = await realpath(root);
     const canonicalEntry = await realpath(resource.path);
+    entryPoints.add(policyPath(canonicalEntry));
     if (!within(root, canonicalEntry)) root = path.dirname(canonicalEntry);
     const modulesSegment = `${path.sep}node_modules${path.sep}`;
     const modulesIndex = root.indexOf(modulesSegment);
@@ -626,6 +631,8 @@ export async function planExtensionSnapshot(
   return {
     enabled,
     selectedRoots,
+    entryPoints,
+    repositorySessionDirs,
     agentDir,
     privateDirectories,
     privateFiles,
@@ -704,6 +711,18 @@ export async function stageExtensionSnapshot(
       throw new Error("Explicit Pi extension uses an unsupported hard-link layout");
     }
     if (await isPrivateStorage(canonical, plan)) return skipEntry(source);
+    // Project settings can only exclude session-shaped data, never an enabled entry point.
+    if (identity.isFile() && plan.repositorySessionDirs.length > 0) {
+      const file = policyPath(canonical);
+      if (
+        file.endsWith(".jsonl") &&
+        !plan.entryPoints.has(file) &&
+        plan.repositorySessionDirs.some(
+          (dir) => within(dir, file) || within(dir, policyPath(source)),
+        )
+      )
+        return skipEntry(source);
+    }
     // Session history can sit anywhere a sessionDir Pioneer cannot see points, so check content.
     if (await isPiSessionFile(canonical, scans, [source, canonical])) return skipEntry(source);
     if (!selectedRoots.some((root) => within(root, canonical))) {
