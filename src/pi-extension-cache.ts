@@ -158,9 +158,8 @@ async function createPrivateDirectory(directory: string): Promise<void> {
 
 async function initializeRoot(root: string, platform: NodeJS.Platform): Promise<string> {
   const snapshots = path.dirname(root);
-  const pioneer = path.dirname(snapshots);
   const directories =
-    path.basename(snapshots) === "extension-snapshots" ? [pioneer, snapshots, root] : [root];
+    path.basename(snapshots) === "extension-snapshots" ? [snapshots, root] : [root];
   // The cache parent may have ordinary application-data permissions. Everything Pioneer
   // uses below it must be a private directory owned by this controller's user.
   await createStableDirectory(

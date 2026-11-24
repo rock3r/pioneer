@@ -274,6 +274,20 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
     );
   });
 
+  it("allows a stable 0755 Pioneer cache parent and keeps the snapshot hierarchy private", async () => {
+    const family = path.dirname(cacheRoot);
+    const pioneer = path.dirname(family);
+    await mkdir(pioneer, { recursive: true, mode: 0o755 });
+    await chmod(pioneer, 0o755);
+    const staged = await prepare("shared-parent");
+    expect(staged.snapshotHandle).toBeDefined();
+    expect((await lstat(pioneer)).mode & 0o777).toBe(0o755);
+    for (const directory of [family, cacheRoot, path.join(cacheRoot, "entries")]) {
+      expect((await lstat(directory)).mode & 0o777).toBe(0o700);
+    }
+    await staged.snapshotHandle?.release();
+  });
+
   it.each([
     { environment: { PIONEER_EXTENSION_CACHE: "0" } },
     { platform: "win32" },
