@@ -93,6 +93,7 @@ async function validatePayloadDirectories(
     let child = mirroredExtensionStagePath(payload, root);
     for (;;) {
       const parent = path.dirname(child);
+      if (parent === child) throw new ManifestMismatch();
       const existing = directories.get(parent);
       if (existing !== undefined) {
         existing.add(path.basename(child));
@@ -150,8 +151,9 @@ export async function verifyExtensionPayload(
   manifest: readonly ExtensionManifestRecord[],
   signal?: AbortSignal,
 ): Promise<void> {
-  await validatePayloadDirectories(payload, roots, signal);
-  if (!(await hasPackageScope(payload))) throw new ManifestMismatch();
+  const payloadRoot = path.resolve(payload);
+  await validatePayloadDirectories(payloadRoot, roots, signal);
+  if (!(await hasPackageScope(payloadRoot))) throw new ManifestMismatch();
   await walkBounded(
     { size: manifest.length, next: 0, child: (index) => index },
     async (index) => {
@@ -160,7 +162,7 @@ export async function verifyExtensionPayload(
       if (
         record.stagedRelativePath !== cacheRelativePathForSource(record.sourcePath) ||
         !matchesCopy(
-          await lstat(`${payload}${path.sep}${record.stagedRelativePath}`, { bigint: true }),
+          await lstat(`${payloadRoot}${path.sep}${record.stagedRelativePath}`, { bigint: true }),
           record.stagedMetadata,
         )
       )

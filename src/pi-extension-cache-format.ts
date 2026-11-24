@@ -8,6 +8,7 @@ export const EXTENSION_CACHE_PACKAGE_JSON = '{"type":"module"}';
 export const EXTENSION_CACHE_FORMAT = 1;
 export const EXTENSION_CACHE_ID = /^[0-9a-f]{32}$/;
 export const EXTENSION_CACHE_KEY = /^[0-9a-f]{64}$/;
+export const EXTENSION_CACHE_SEQUENCE_FILE = "sequence";
 
 const MAX_ENTRIES = 500_000;
 const MAX_BYTES = 1024 ** 3;
@@ -138,6 +139,34 @@ export async function readCacheText(
   } finally {
     await handle.close();
   }
+}
+
+export interface ExtensionCacheGenerationOrder {
+  readonly sequence: bigint | undefined;
+  readonly created: bigint;
+}
+
+/** Generations published before sequence markers can still be validated and reused. */
+export async function readExtensionCacheSequence(directory: string): Promise<bigint | undefined> {
+  try {
+    const text = await readCacheText(path.join(directory, EXTENSION_CACHE_SEQUENCE_FILE), 64);
+    if (!/^[1-9][0-9]{0,31}\n$/.test(text)) throw invalidMetadata();
+    return BigInt(text);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+export function compareExtensionCacheGenerationOrder(
+  left: ExtensionCacheGenerationOrder,
+  right: ExtensionCacheGenerationOrder,
+): number {
+  if (left.sequence === undefined && right.sequence !== undefined) return -1;
+  if (right.sequence === undefined && left.sequence !== undefined) return 1;
+  const a = left.sequence ?? left.created;
+  const b = right.sequence ?? right.created;
+  return a === b ? 0 : a < b ? -1 : 1;
 }
 
 export async function readExtensionCacheManifest(
