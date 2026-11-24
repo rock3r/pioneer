@@ -142,6 +142,7 @@ export function extensionCacheKey(
         plan.selectedRoots,
         plan.agentDir,
         [...new Set(plan.privateDirectories)].sort(),
+        plan.credentialPathRoots,
       ]),
     )
     .digest("hex");
@@ -254,7 +255,6 @@ export async function readExtensionCacheGeneration(
   await inspectPrivateCacheDirectory(entry.payload);
   const manifest = await readExtensionCacheManifest(
     path.join(entry.directory, "manifest.jsonl"),
-    entry.payload,
     signal,
   );
   const metadata = await readCacheText(path.join(entry.directory, "snapshot.json"));
