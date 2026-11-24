@@ -59,13 +59,15 @@ function integers<K extends string>(value: unknown, fields: readonly K[]): Recor
 
 function manifestRecord(value: unknown): ExtensionManifestRecord {
   const record = metadata(value);
-  const { sourcePath, type, linkText } = record;
+  const { sourcePath, type, linkText, skippedLinkTarget } = record;
   if (
     !absolutePath(sourcePath) ||
     (type !== "file" && type !== "directory" && type !== "symlink" && type !== "other") ||
     (type === "symlink"
       ? typeof linkText !== "string" || linkText.length === 0 || linkText.includes("\0")
-      : linkText !== undefined)
+      : linkText !== undefined) ||
+    (skippedLinkTarget !== undefined &&
+      (type !== "symlink" || record.staged !== false || !absolutePath(skippedLinkTarget)))
   )
     throw invalidMetadata();
   const source = integers(record.source, SOURCE_FIELDS);
@@ -80,7 +82,11 @@ function manifestRecord(value: unknown): ExtensionManifestRecord {
     record.stagedRelativePath === undefined &&
     record.stagedMetadata === undefined
   )
-    return { ...entry, staged: false };
+    return {
+      ...entry,
+      staged: false,
+      ...(skippedLinkTarget === undefined ? {} : { skippedLinkTarget }),
+    };
   if (
     record.staged !== true ||
     type === "other" ||

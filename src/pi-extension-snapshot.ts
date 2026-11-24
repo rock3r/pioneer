@@ -171,7 +171,7 @@ interface ManifestSource {
 
 export type ExtensionManifestRecord = ManifestSource &
   (
-    | { readonly staged: false }
+    | { readonly staged: false; readonly skippedLinkTarget?: string }
     | {
         readonly staged: true;
         readonly stagedRelativePath: string;
@@ -188,6 +188,7 @@ export interface StagedExtensionSnapshot extends ExtensionSnapshot {
 
 interface ObservedEntry extends ManifestSource {
   readonly stagedRelativePath?: string;
+  readonly skippedLinkTarget?: string;
 }
 
 class ExtensionSnapshotChangedError extends Error {
@@ -453,6 +454,7 @@ export async function planExtensionSnapshot(
     }
   }
   const agentDir = storage === undefined ? undefined : await canonicalOrResolved(storage.agentDir);
+  const logs = agentDir === undefined ? [] : await rootLogFiles(agentDir);
   const privateDirectories =
     agentDir === undefined
       ? []
@@ -461,7 +463,7 @@ export async function planExtensionSnapshot(
             path.join(agentDir, "sessions"),
             path.join(agentDir, "logs"),
             path.join(agentDir, "skills"),
-            ...(await rootLogFiles(agentDir)),
+            ...logs,
             ...(storage?.sessionDirs ?? []),
           ].map(async (entry) => policyPath(await canonicalOrResolved(entry))),
         );
@@ -485,13 +487,13 @@ export async function planExtensionSnapshot(
       return true;
     }
     if (!details.isDirectory()) return true;
-    const dir = await opendir(root);
+    const dir = await opendir(root, { bufferSize: 128 });
     try {
-      for await (const entry of dir) {
+      for (let entry = await dir.read(); entry !== null; entry = await dir.read()) {
         if (!(await rememberPrivateFiles(path.join(root, entry.name)))) return false;
       }
     } finally {
-      await dir.close().catch(() => undefined);
+      await dir.close();
     }
     return true;
   };
@@ -505,7 +507,7 @@ export async function planExtensionSnapshot(
     ].map((name) => path.join(agentDir, name));
     const privateRoots = [
       ...namedCredentials,
-      ...(await rootLogFiles(agentDir)),
+      ...logs,
       path.join(agentDir, "sessions"),
       path.join(agentDir, "logs"),
       path.join(agentDir, "skills"),
@@ -521,6 +523,10 @@ export async function planExtensionSnapshot(
   const repositorySessionDirs = storage?.repositorySessionDirs?.map(policyPath) ?? [];
   const entryPoints = new Set<string>();
   const roots = new Set<string>();
+  const home = enabled.length > 0 ? await realpath(os.homedir()) : undefined;
+  const canonicalRoots = new Map<string, string>();
+  const canonicalEntries = new Set<string>();
+  const checkedAncestors = new Set<string>();
   for (const resource of enabled) {
     signal?.throwIfAborted();
     let root = path.dirname(resource.path);
@@ -528,14 +534,17 @@ export async function planExtensionSnapshot(
     if (resource.metadata.origin === "package" && base !== undefined) root = base;
     else if (base !== undefined && within(path.join(base, "extensions"), resource.path))
       root = path.join(base, "extensions");
-    root = await realpath(root);
+    const canonicalRoot = canonicalRoots.get(root) ?? (await realpath(root));
+    canonicalRoots.set(root, canonicalRoot);
+    root = canonicalRoot;
     const canonicalEntry = await realpath(resource.path);
+    canonicalEntries.add(canonicalEntry);
     entryPoints.add(policyPath(canonicalEntry));
     if (!within(root, canonicalEntry)) root = path.dirname(canonicalEntry);
     const modulesSegment = `${path.sep}node_modules${path.sep}`;
     const modulesIndex = root.indexOf(modulesSegment);
     if (modulesIndex >= 0) root = root.slice(0, modulesIndex + modulesSegment.length - 1);
-    if (root === path.parse(root).root || within(root, await realpath(os.homedir()))) {
+    if (root === path.parse(root).root || (home !== undefined && within(root, home))) {
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] Put local extensions in a dedicated directory with their dependencies and assets; a home or filesystem root cannot be staged.",
       );
@@ -546,6 +555,8 @@ export async function planExtensionSnapshot(
       ancestor !== path.dirname(ancestor);
       ancestor = path.dirname(ancestor)
     ) {
+      if (checkedAncestors.has(ancestor)) break;
+      checkedAncestors.add(ancestor);
       const modules = path.join(ancestor, "node_modules");
       try {
         if ((await lstat(modules)).isDirectory()) roots.add(await realpath(modules));
@@ -581,8 +592,7 @@ export async function planExtensionSnapshot(
       );
     }
   }
-  for (const resource of enabled) {
-    const canonical = await realpath(resource.path);
+  for (const canonical of canonicalEntries) {
     const parent = path.dirname(canonical);
     if (protectedParents.has(parent)) {
       throw new Error(
@@ -631,7 +641,7 @@ export async function stageExtensionSnapshot(
   const privateStorage = privateStorageMatcher(plan);
   const observed = new Map<string, ObservedEntry>();
   const stagedPath = (source: string): string => mirroredExtensionStagePath(destination, source);
-  async function skipEntry(source: string): Promise<StagedEntry> {
+  async function skipEntry(source: string, canonical?: string): Promise<StagedEntry> {
     // Most skips were already recorded by the prepass. An entry can appear between walks.
     if (!observed.has(source)) {
       const details = await lstatIfPresent(source);
@@ -639,6 +649,10 @@ export async function stageExtensionSnapshot(
         const observation = await observeSourceBestEffort(source, details);
         if (observation !== undefined) observed.set(source, observation.record);
       }
+    }
+    const record = observed.get(source);
+    if (canonical !== undefined && record?.type === "symlink") {
+      observed.set(source, { ...record, skippedLinkTarget: canonical });
     }
     return { items: [] };
   }
@@ -659,10 +673,11 @@ export async function stageExtensionSnapshot(
       if (checkCredentialPath && isSensitivePath(source)) return skipEntry(source);
       throw error;
     }
-    if (checkCredentialPath && isSensitivePath(source, canonical)) return skipEntry(source);
+    if (checkCredentialPath && isSensitivePath(source, canonical))
+      return skipEntry(source, canonical);
     if ([...excluded].some((entry) => within(entry, policyPath(canonical)))) {
       runSpecificFiltered = true;
-      return skipEntry(source);
+      return skipEntry(source, canonical);
     }
     const identity = await lstat(canonical, { bigint: true });
     const fileIdentity = `${identity.dev}:${identity.ino}`;
@@ -672,7 +687,7 @@ export async function stageExtensionSnapshot(
       (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity))
     ) {
       if (plan.excludedFiles.has(fileIdentity)) runSpecificFiltered = true;
-      return skipEntry(source);
+      return skipEntry(source, canonical);
     }
     if (
       identity.isFile() &&
@@ -684,14 +699,15 @@ export async function stageExtensionSnapshot(
     }
     const privateMatch = privateStorage(canonical);
     if (privateMatch === "private" || (privateMatch === "root-log" && identity.isFile()))
-      return skipEntry(source);
+      return skipEntry(source, canonical);
     // Project settings can only exclude session-shaped data, never an enabled entry point.
     if (identity.isFile() && isRepositorySessionFile(source, canonical, plan)) {
       runSpecificFiltered = true;
-      return skipEntry(source);
+      return skipEntry(source, canonical);
     }
     // Session history can sit anywhere a sessionDir Pioneer cannot see points, so check content.
-    if (await isPiSessionFile(canonical, scans, [source, canonical])) return skipEntry(source);
+    if (await isPiSessionFile(canonical, scans, [source, canonical]))
+      return skipEntry(source, canonical);
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency link escapes the selected code directories. Install its dependencies inside the package before retrying.",
@@ -983,9 +999,13 @@ async function finalizeExtensionManifest(
   await walkBounded(
     { size: entries.length, next: 0, child: (index) => index },
     async (index) => {
-      const { stagedRelativePath, ...entry } = entries[index] as ObservedEntry;
+      const { stagedRelativePath, skippedLinkTarget, ...entry } = entries[index] as ObservedEntry;
       if (stagedRelativePath === undefined) {
-        manifest[index] = { ...entry, staged: false };
+        manifest[index] = {
+          ...entry,
+          staged: false,
+          ...(skippedLinkTarget === undefined ? {} : { skippedLinkTarget }),
+        };
       } else {
         const details = await lstat(path.join(destination, stagedRelativePath), { bigint: true });
         manifest[index] = {
@@ -1016,25 +1036,65 @@ export async function validateCachedExtensionRunPolicy(
   const scans = createExtensionSessionScanBudget();
   const isSensitivePath = sensitiveCredentialPathMatcher(plan.credentialPathRoots);
   const privateStorage = privateStorageMatcher(plan);
+  const verifyExclusions = (
+    source: string,
+    canonical: string,
+    target: ExtensionManifestRecord | undefined,
+  ): void => {
+    const privateMatch = privateStorage(canonical);
+    if (privateMatch === "private" || (privateMatch === "root-log" && target?.type === "file"))
+      throw new ExtensionCacheRunExclusion();
+    if (plan.excluded.size > 0) {
+      const candidate = policyPath(canonical);
+      for (const excluded of plan.excluded) {
+        if (within(excluded, candidate)) throw new ExtensionCacheRunExclusion();
+      }
+    }
+    if (target?.type !== "file") return;
+    if (target.source.ino !== 0n && (plan.privateFiles.size > 0 || plan.excludedFiles.size > 0)) {
+      const identity = `${target.source.dev}:${target.source.ino}`;
+      if (plan.privateFiles.has(identity) || plan.excludedFiles.has(identity))
+        throw new ExtensionCacheRunExclusion();
+    }
+    if (isRepositorySessionFile(source, canonical, plan)) throw new ExtensionCacheRunExclusion();
+  };
+  const needsSessionScan = (target: ExtensionManifestRecord, source: string): boolean =>
+    target.type === "file" &&
+    (target.source.nlink > 1n ||
+      target.sourcePath.toLowerCase().endsWith(".jsonl") ||
+      (target.sourcePath !== source && source.toLowerCase().endsWith(".jsonl")));
   try {
+    signal?.throwIfAborted();
+    const filesystemChecks: ExtensionManifestRecord[] = [];
+    for (const record of manifest) {
+      if (!record.staged) {
+        if (record.skippedLinkTarget !== undefined) filesystemChecks.push(record);
+      } else if (record.type === "symlink") {
+        filesystemChecks.push(record);
+      } else {
+        verifyExclusions(record.sourcePath, record.sourcePath, record);
+        if (needsSessionScan(record, record.sourcePath)) filesystemChecks.push(record);
+      }
+    }
     await walkBounded(
-      { size: manifest.length, next: 0, child: (index) => index },
-      async (index) => {
-        const record = manifest[index];
-        if (!record?.staged) return undefined;
+      { size: filesystemChecks.length, next: 0, child: (index) => filesystemChecks[index] },
+      async (record) => {
+        if (record === undefined) return undefined;
+        if (!record.staged) {
+          // A link that staging resolved and skipped can become eligible through an off-tree
+          // hop. Links in wholly unvisited subtrees have no resolved target to check.
+          if (
+            record.skippedLinkTarget !== undefined &&
+            (await realpath(record.sourcePath)) !== record.skippedLinkTarget
+          )
+            throw new ExtensionCachePolicyMismatch();
+          return undefined;
+        }
         const source = record.sourcePath;
         const isLink = record.type === "symlink";
         const canonical = isLink ? await realpath(source) : source;
         const target = isLink ? sourceManifest.get(canonical) : record;
-        const privateMatch = privateStorage(canonical);
-        if (privateMatch === "private" || (privateMatch === "root-log" && target?.type === "file"))
-          throw new ExtensionCacheRunExclusion();
-        if (plan.excluded.size > 0) {
-          const candidate = policyPath(canonical);
-          for (const excluded of plan.excluded) {
-            if (within(excluded, candidate)) throw new ExtensionCacheRunExclusion();
-          }
-        }
+        if (isLink) verifyExclusions(source, canonical, target);
         if (target === undefined) throw new ExtensionCachePolicyMismatch();
         if (isLink) {
           if (
@@ -1050,21 +1110,8 @@ export async function validateCachedExtensionRunPolicy(
           );
           if ((await readlink(staged)) !== expected) throw new ExtensionCachePolicyMismatch();
         }
-        if (target.type !== "file") return undefined;
         if (
-          target.source.ino !== 0n &&
-          (plan.privateFiles.size > 0 || plan.excludedFiles.size > 0)
-        ) {
-          const identity = `${target.source.dev}:${target.source.ino}`;
-          if (plan.privateFiles.has(identity) || plan.excludedFiles.has(identity))
-            throw new ExtensionCacheRunExclusion();
-        }
-        if (isRepositorySessionFile(source, canonical, plan))
-          throw new ExtensionCacheRunExclusion();
-        if (
-          (target.source.nlink > 1n ||
-            canonical.toLowerCase().endsWith(".jsonl") ||
-            (isLink && source.toLowerCase().endsWith(".jsonl"))) &&
+          (!isLink || needsSessionScan(target, source)) &&
           (await isPiSessionFile(
             canonical,
             scans,
