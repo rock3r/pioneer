@@ -60,7 +60,12 @@ async function dismissOwner(lock: string, nonce: string): Promise<void> {
   try {
     await rmdir(lock);
   } catch (error) {
-    if (!isCacheError(error, "ENOENT") && !isCacheError(error, "ENOTEMPTY")) throw error;
+    if (
+      !isCacheError(error, "ENOENT") &&
+      !isCacheError(error, "ENOTEMPTY") &&
+      !isCacheError(error, "EEXIST")
+    )
+      throw error;
   }
 }
 
@@ -75,14 +80,20 @@ export async function reclaimExtensionCacheLock(
     if (entries.length === 0) {
       // An empty lock has no owner. rmdir is atomic and fails once another owner appears.
       await rmdir(lock).catch((error: unknown) => {
-        if (!isCacheError(error, "ENOTEMPTY")) throw error;
+        if (!isCacheError(error, "ENOTEMPTY") && !isCacheError(error, "EEXIST")) throw error;
       });
       return;
     }
     const nonce = entries[0];
     if (entries.length !== 1 || nonce === undefined || !EXTENSION_CACHE_ID.test(nonce))
       throw new Error("Invalid extension cache lock owner");
-    const owner = await readCacheText(path.join(lock, nonce), 1024);
+    const ownerFile = path.join(lock, nonce);
+    const owner = await readCacheText(ownerFile, 1024).catch(async (error: unknown) => {
+      // The owner can unlink the file after open and before fstat checks its link count.
+      // An absent nonce means the owner went away. A still-present invalid file is unsafe.
+      await lstat(ownerFile);
+      throw error;
+    });
     if (cacheProcessExited(owner, platform, nonce)) await dismissOwner(lock, nonce);
   } catch (error) {
     if (!isCacheError(error, "ENOENT")) throw error;
