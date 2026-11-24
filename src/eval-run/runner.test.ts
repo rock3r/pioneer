@@ -1,5 +1,5 @@
 import { closeSync, openSync } from "node:fs";
-import { chmod, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
@@ -40,6 +40,24 @@ it.skipIf(process.platform === "win32")(
     } finally {
       vi.unstubAllEnvs();
     }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "reports unresolved eval grants before Pi readiness",
+  async () => {
+    const root = await createTempDir("pioneer-eval-unresolvable-grants-");
+    const runDir = path.join(root, "run");
+    const dangling = path.join(root, "dangling");
+    await mkdir(runDir);
+    await symlink(path.join(root, "missing"), dangling);
+    const command = ["pi"] as const;
+    await expect(runEvalCommand({ runDir: dangling, command })).rejects.toThrow(
+      /\[PI_EXTENSION_CACHE_GRANT_UNAVAILABLE\].*--run-dir.*symbolic link/,
+    );
+    await expect(runEvalCommand({ runDir, command, runtimeReadPaths: [dangling] })).rejects.toThrow(
+      /\[PI_EXTENSION_CACHE_GRANT_UNAVAILABLE\].*--runtime-read.*symbolic link/,
+    );
   },
 );
 
