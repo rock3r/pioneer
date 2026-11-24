@@ -96,7 +96,7 @@ async function readCandidate(
   }
   const snapshot = path.join(directory, "snapshot.json");
   try {
-    const [bytes, created, lastUsed, bad] = await Promise.all([
+    const [payloadBytes, created, lastUsed, bad, manifest, packageScope, boot] = await Promise.all([
       readCacheText(snapshot).then(extensionCacheApparentSize),
       lstat(snapshot, { bigint: true }),
       lstat(path.join(directory, "last-used")),
@@ -107,7 +107,17 @@ async function readCandidate(
           throw error;
         },
       ),
+      lstat(path.join(directory, "manifest.jsonl")),
+      lstat(path.join(directory, "payload", "package.json")),
+      lstat(path.join(directory, "verified-boot")),
     ]);
+    const bytes =
+      payloadBytes +
+      Number(created.size) +
+      manifest.size +
+      packageScope.size +
+      boot.size +
+      lastUsed.size;
     return { key, id, directory, bytes, created: created.mtimeNs, usedAt: lastUsed.mtimeMs, bad };
   } catch {
     return { key, id, directory, bytes: 0, created: 0n, usedAt: 0, bad: true };

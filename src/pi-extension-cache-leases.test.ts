@@ -49,6 +49,9 @@ describe.skipIf(process.platform === "win32")("extension snapshot leases and col
     await mkdir(payload, { recursive: true, mode: 0o700 });
     const metadata = path.join(directory, "snapshot.json");
     await writeFile(metadata, `${JSON.stringify({ bytes, createdAt })}\n`, { mode: 0o600 });
+    await writeFile(path.join(directory, "manifest.jsonl"), "", { mode: 0o600 });
+    await writeFile(path.join(directory, "verified-boot"), "boot\n", { mode: 0o600 });
+    await writeFile(path.join(payload, "package.json"), '{"type":"module"}', { mode: 0o400 });
     const lastUsed = path.join(directory, "last-used");
     await writeFile(lastUsed, "", { mode: 0o600 });
     await utimes(metadata, new Date(createdAt), new Date(createdAt));
@@ -95,11 +98,18 @@ describe.skipIf(process.platform === "win32")("extension snapshot leases and col
     const first = await lease(active);
     const second = await lease(active);
     await first();
-    await collectExtensionCache(root, platform, { now, maxBytes: 1000 });
+    await collectExtensionCache(root, platform, { now, maxBytes: 1300 });
     await expect(lstat(oldest.directory)).rejects.toMatchObject({ code: "ENOENT" });
     expect((await lstat(recent.directory)).isDirectory()).toBe(true);
     expect(await readdir(path.join(root, "leases", active.id))).toHaveLength(1);
     await second();
+  });
+
+  it("counts persisted manifest bytes towards the apparent-size budget", async () => {
+    const entry = await generation("a", now, now, 0);
+    await writeFile(path.join(entry.directory, "manifest.jsonl"), "x".repeat(500));
+    await collectExtensionCache(root, platform, { now, maxBytes: 400 });
+    await expect(lstat(entry.directory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("reclaims leases only when the PID is absent or live with a different start identity", async () => {
