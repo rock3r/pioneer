@@ -1,7 +1,7 @@
 import { closeSync, openSync } from "node:fs";
 import { chmod, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { nativeSandboxReadinessErrors } from "../sandbox/platform-readiness.js";
 import { evalIsolatedPiHomeWritablePaths } from "./isolation.js";
@@ -63,6 +63,63 @@ describe("eval process capture", () => {
       ),
     ).resolves.toMatchObject({ exitCode: 3, signal: null, stdout: "out", stderr: "err" });
   });
+
+  it.each(["completion", "interruption"])(
+    "stops an observed macOS eval descendant on %s",
+    async (kind) => {
+      const descendantPid = 999_001;
+      const userId = 501;
+      const interruption = kind === "interruption";
+      const controller = new AbortController();
+      let rootPid: number | undefined;
+      let descendantAlive = true;
+      const signal = vi.fn((pid: number) => {
+        if (pid === descendantPid) descendantAlive = false;
+      });
+      const result = await captureEvalProcess(
+        actor(interruption ? "setInterval(() => {}, 10_000)" : "process.stdout.write('out')"),
+        process.cwd(),
+        process.env,
+        1_000,
+        controller.signal,
+        {},
+        {
+          userId,
+          readProcesses(pids?: readonly number[]) {
+            if (interruption && rootPid === undefined && pids !== undefined)
+              queueMicrotask(() => controller.abort());
+            rootPid ??= pids?.[0];
+            if (rootPid === undefined) return [];
+            return [
+              { pid: rootPid, parentPid: process.pid, groupId: rootPid, userId, startedAt: 2 },
+              ...(descendantAlive
+                ? [
+                    {
+                      pid: descendantPid,
+                      parentPid: rootPid,
+                      groupId: descendantPid,
+                      userId,
+                      startedAt: 3,
+                    },
+                  ]
+                : []),
+            ].filter(({ pid }) => pids === undefined || pids.includes(pid));
+          },
+          readWorkingDirectories: () => new Map(),
+          signal,
+        },
+      );
+
+      expect(signal).toHaveBeenCalledExactlyOnceWith(
+        descendantPid,
+        interruption ? "SIGTERM" : "SIGKILL",
+      );
+      if (interruption) {
+        expect(result).toMatchObject({ exitCode: 1, interrupted: "SIGTERM" });
+        expect(result.stderr).toContain("[EVAL_INTERRUPTED]");
+      } else expect(result).toMatchObject({ exitCode: 0, stdout: "out", stderr: "" });
+    },
+  );
 
   it("returns a bounded timeout diagnostic and kills descendants holding inherited pipes", async () => {
     const started = performance.now();

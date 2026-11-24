@@ -62,6 +62,7 @@ import {
   parseActorEnvironment,
   parseLoopbackTargets,
 } from "./actor-options.js";
+import { createEgressResolver, type EgressPolicy } from "./egress-policy.js";
 import {
   assertEvalWorkLogNotActorVisible,
   assertPiHomeSeparatedFromActorGrants,
@@ -84,6 +85,11 @@ import {
 } from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
 import {
+  type MacosEvalProcessOperations,
+  MacosEvalProcessTracker,
+  nativeMacosEvalProcessOperations,
+} from "./macos-process-tracker.js";
+import {
   macosFallbackDeveloperReadPaths,
   macosPrivateToolEnvironment,
   macosRuntimeReadPaths,
@@ -95,11 +101,8 @@ import {
   piPackageHostsAuthAdapter,
   piPackageHostsExtensionRuntime,
 } from "./pi-extension-host.js";
-import {
-  resolvePublicTarget,
-  startEgressProxy,
-  startPublicEgressProxy,
-} from "./public-egress-proxy.js";
+import { describeEgressPolicy, resolveProviderPolicy } from "./provider-network.js";
+import { type PublicEgressProxy, startEgressProxy } from "./public-egress-proxy.js";
 import {
   assertDistinctToolExtensionSources,
   assertToolExtensionCount,
@@ -129,6 +132,7 @@ export interface EvalRunResult {
 }
 
 export interface RunEvalOptions {
+  readonly onNetworkPolicy?: (message: string) => void;
   readonly deniedReadProbePaths?: readonly string[];
   readonly timeoutMs?: number;
   readonly workLogPath?: string;
@@ -250,6 +254,9 @@ function sanitizedBrokerEnvironment(runtimeEnvironment: NodeJS.ProcessEnv): Node
 }
 
 const EVAL_PIPE_CLOSE_GRACE_MS = 400;
+const MACOS_PROCESS_SAMPLE_MS = 50;
+const EVAL_CONTAINMENT_DIAGNOSTIC =
+  "[EVAL_PROCESS_CONTAINMENT_FAILED] Pioneer could not prove the eval actor process tree stopped";
 const EVAL_MAX_STDOUT_BYTES = 4 * 1024 * 1024;
 const EVAL_MAX_STDERR_BYTES = 64 * 1024;
 /** Disk bound for a stream written to a caller-owned file instead of memory. */
@@ -368,6 +375,7 @@ export async function captureEvalProcess(
   timeoutMs: number,
   abortSignal?: AbortSignal,
   sinks: EvalOutputSinks = {},
+  macosProcessOperations?: MacosEvalProcessOperations,
 ): Promise<EvalRunResult> {
   if (abortSignal?.aborted)
     return {
@@ -377,6 +385,21 @@ export async function captureEvalProcess(
       stderr: "[EVAL_INTERRUPTED] Process was cancelled before launch",
       interrupted: "SIGTERM",
     };
+  const initialProcesses = macosProcessOperations?.readProcesses();
+  if (macosProcessOperations !== undefined && initialProcesses === undefined) {
+    return {
+      exitCode: 1,
+      signal: null,
+      stdout: "",
+      stderr:
+        "[EVAL_PROCESS_CONTAINMENT_FAILED] Pioneer could not inspect the macOS process table before launch\n",
+      containmentFailure: true,
+    };
+  }
+  const macosProcessTracker =
+    macosProcessOperations === undefined || initialProcesses === undefined
+      ? undefined
+      : new MacosEvalProcessTracker(macosProcessOperations, cwd, initialProcesses);
   return await new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
       cwd,
@@ -404,6 +427,8 @@ export async function captureEvalProcess(
     let signal: NodeJS.Signals | null = null;
     let timeoutTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined;
+    let processSampleTimer: NodeJS.Timeout | undefined;
+    let pipesClosed = false;
     let onSigint: (() => void) | undefined;
     let onSigterm: (() => void) | undefined;
     let onAbort: (() => void) | undefined;
@@ -415,6 +440,7 @@ export async function captureEvalProcess(
     const cleanup = (): void => {
       if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
       if (graceTimer !== undefined) clearTimeout(graceTimer);
+      if (processSampleTimer !== undefined) clearInterval(processSampleTimer);
       if (onSigint !== undefined) process.off("SIGINT", onSigint);
       if (onSigterm !== undefined) process.off("SIGTERM", onSigterm);
       if (onAbort !== undefined) abortSignal?.removeEventListener("abort", onAbort);
@@ -424,15 +450,18 @@ export async function captureEvalProcess(
       settled = true;
       cleanup();
       const captured = output();
-      const diagnostic = timedOut
+      const primaryDiagnostic = timedOut
         ? `[EVAL_TIMEOUT] Eval actor timed out after ${timeoutMs}ms`
-        : containmentFailure
-          ? "[EVAL_PROCESS_CONTAINMENT_FAILED] Pioneer could not prove the eval actor process tree stopped"
-          : outputFailure !== undefined
-            ? outputFailure
-            : interrupted === undefined
-              ? undefined
-              : `[EVAL_INTERRUPTED] Eval actor interrupted by ${interrupted}`;
+        : (outputFailure ??
+          (interrupted === undefined
+            ? undefined
+            : `[EVAL_INTERRUPTED] Eval actor interrupted by ${interrupted}`));
+      let diagnostic = primaryDiagnostic;
+      if (containmentFailure) {
+        if (macosProcessTracker !== undefined && primaryDiagnostic !== undefined)
+          diagnostic = `${primaryDiagnostic}\n${EVAL_CONTAINMENT_DIAGNOSTIC}`;
+        else if (!timedOut) diagnostic = EVAL_CONTAINMENT_DIAGNOSTIC;
+      }
       resolve({
         exitCode:
           diagnostic === undefined && (exitCode ?? 1) === 0
@@ -451,10 +480,17 @@ export async function captureEvalProcess(
         ...(interrupted === undefined ? {} : { interrupted }),
       });
     };
+    const stopProcesses = (signal: NodeJS.Signals): void => {
+      if (macosProcessTracker === undefined) terminateEvalProcessTree(child, signal);
+      else {
+        macosProcessTracker.stop(signal);
+        if (!childExited) child.kill(signal);
+      }
+    };
     const containmentDeadline = (): void => {
       if (settled) return;
       containmentFailure = true;
-      terminateEvalProcessTree(child, "SIGKILL");
+      stopProcesses("SIGKILL");
       child.stdout?.destroy();
       child.stderr?.destroy();
       settle();
@@ -464,17 +500,18 @@ export async function captureEvalProcess(
       graceTimer = setTimeout(containmentDeadline, EVAL_PIPE_CLOSE_GRACE_MS);
     };
     const terminate = (kind: "timeout" | NodeJS.Signals): void => {
-      if (settled || childExited) return;
+      if (settled || (childExited && (kind === "timeout" || macosProcessTracker === undefined)))
+        return;
       if (kind === "timeout") timedOut = true;
       else interrupted = kind;
-      terminateEvalProcessTree(child, kind === "timeout" ? "SIGKILL" : kind);
+      stopProcesses(kind === "timeout" ? "SIGKILL" : kind);
       startGrace();
     };
 
     const failOutput = (diagnostic: string): void => {
       if (outputFailure !== undefined) return;
       outputFailure = diagnostic;
-      terminateEvalProcessTree(child, "SIGKILL");
+      stopProcesses("SIGKILL");
       startGrace();
     };
     const maxFileBytes = sinks.maxFileBytes ?? EVAL_MAX_OUTPUT_FILE_BYTES;
@@ -541,16 +578,16 @@ export async function captureEvalProcess(
       if (graceTimer !== undefined) clearTimeout(graceTimer);
       graceTimer = undefined;
       startGrace();
-      if (childSignal !== null || code !== null) {
-        // `close` below remains authoritative because descendants may retain the pipes.
-      }
     });
+    const settleAfterProcessCleanup = (): void => {
+      if (macosProcessTracker?.stop("SIGKILL") !== false) settle();
+    };
     child.once("close", (code, childSignal) => {
       childExited = true;
+      pipesClosed = true;
       exitCode = code;
       signal = childSignal;
-      if (!timedOut && !containmentFailure && interrupted === undefined) settle();
-      else settle();
+      settleAfterProcessCleanup();
     });
     onSigint = () => terminate("SIGINT");
     onSigterm = () => terminate("SIGTERM");
@@ -559,8 +596,14 @@ export async function captureEvalProcess(
     timeoutTimer = setTimeout(() => terminate("timeout"), timeoutMs);
     onAbort = () => terminate("SIGTERM");
     abortSignal?.addEventListener("abort", onAbort, { once: true });
+    if (macosProcessTracker !== undefined && child.pid !== undefined) {
+      macosProcessTracker.start(child.pid);
+      processSampleTimer = setInterval(() => {
+        if (pipesClosed) settleAfterProcessCleanup();
+        else macosProcessTracker.observe();
+      }, MACOS_PROCESS_SAMPLE_MS);
+    }
     if (abortSignal?.aborted) onAbort();
-    void childExited;
   });
 }
 
@@ -574,6 +617,7 @@ async function sandboxAndCapture(
   runtimeExecutable = process.execPath,
   loopbackRelays: readonly LinuxLoopbackRelay[] = [],
   sinks: EvalOutputSinks = {},
+  trackActor = false,
 ): Promise<EvalRunResult> {
   const launch =
     process.platform === "darwin"
@@ -599,6 +643,7 @@ async function sandboxAndCapture(
     timeoutMs,
     undefined,
     sinks,
+    trackActor && process.platform === "darwin" ? nativeMacosEvalProcessOperations : undefined,
   );
 }
 
@@ -923,6 +968,7 @@ async function stageEvalPiExtensions(
   controllerOnlyPaths: readonly string[] = [],
   toolExtensionSources: readonly ToolExtensionSource[] = [],
   piVersion?: string,
+  egressPolicy: EgressPolicy = { network: "public" },
 ): Promise<{
   readonly authBroker?: PiAuthBroker;
   readonly readPaths: readonly string[];
@@ -1050,7 +1096,8 @@ async function stageEvalPiExtensions(
     extensionRoot,
     home: piHome,
     extensions,
-    network: "public",
+    network: egressPolicy.network,
+    egressPolicy,
     ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: [...new Set(explicitCopies)] }),
   };
   let authBroker: Awaited<ReturnType<typeof prepareAuthBroker>>;
@@ -1480,7 +1527,7 @@ async function runEvalCommandWithInterruption(
     const loopbackBridges: LinuxProxyBridge[] = [];
     const loopbackRelays: LinuxLoopbackRelay[] = [];
     let lanProbe: Awaited<ReturnType<typeof listenForLanProbe>> | undefined;
-    let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
+    let proxy: PublicEgressProxy | undefined;
     let bridge: LinuxProxyBridge | undefined;
     let bridgeRoot: string | undefined;
     let authBroker: PiAuthBroker | undefined;
@@ -1506,6 +1553,16 @@ async function runEvalCommandWithInterruption(
         ...optimizedPi.environment,
         ...piHome.environment,
       };
+      const egressPolicy = await resolveProviderPolicy(
+        {
+          network: spec.network ?? "public",
+          ...(spec.allowHosts ? { allowHosts: spec.allowHosts } : {}),
+          ...(spec.blockHosts ? { blockHosts: spec.blockHosts } : {}),
+        },
+        piHome.agentDir,
+        readiness?.resolvedModel ?? requestedModel,
+      );
+      options.onNetworkPolicy?.(describeEgressPolicy(egressPolicy));
       const oauthProviders = await snapshotOAuthProviders(piHome.agentDir);
       if (
         oauthBrokerRequiredButUnavailable({
@@ -1554,6 +1611,7 @@ async function runEvalCommandWithInterruption(
           [workLog.path, ...(options.deniedReadProbePaths ?? [])],
           toolExtensionSources,
           readiness?.version,
+          egressPolicy,
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
@@ -1622,10 +1680,8 @@ async function runEvalCommandWithInterruption(
 
       recordEvalWorkLog(workLog, "stage_started", { stage: "network_proxy" });
       const proxyToken = randomBytes(32).toString("hex");
-      proxy =
-        authBroker === undefined
-          ? await startPublicEgressProxy(proxyToken)
-          : await startEgressProxy(proxyToken, authBroker.resolveWith(resolvePublicTarget));
+      const resolve = createEgressResolver(egressPolicy);
+      proxy = await startEgressProxy(proxyToken, authBroker?.resolveWith(resolve) ?? resolve);
       throwIfSetupInterrupted();
       const linuxBwrapPath =
         process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
@@ -1723,6 +1779,7 @@ async function runEvalCommandWithInterruption(
             sandboxRuntimeExecutable,
             loopbackRelays,
             sinks,
+            true,
           );
         } finally {
           closeEvalOutputFiles(sinks);

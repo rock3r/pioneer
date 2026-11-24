@@ -53,7 +53,9 @@ Pioneer does not probe the Bubblewrap version. Distribution `bwrap` packages pro
 
 On Linux, Bubblewrap runs as PID 1 in a `--unshare-pid` namespace. After the actor exits, the kernel destroys all remaining namespace processes and closes inherited pipes. A leaked descendant therefore produces a clean exit without a containment diagnostic.
 
-Seatbelt has no PID namespace on macOS. A descendant can survive with inherited pipes open. When the pipe-close grace expires, Pioneer fails with `[EVAL_PROCESS_CONTAINMENT_FAILED]`.
+On macOS, Pioneer samples the actor's process tree and detached group. Normal completion, timeout, and interruption trigger cleanup of observed descendants, including processes that already closed their capture pipes. Pioneer checks each process's current PID, owner, start time, and group immediately before signaling it. When an unfamiliar orphan has a working directory inside the run tree, Pioneer requires corroborating ownership from the original actor group before signaling it. An unresolved candidate or retained pipe at the end of the grace period produces `[EVAL_PROCESS_CONTAINMENT_FAILED]`.
+
+Eval networking defaults to `--network public`. Select `full` for LAN services or `provider-only` for restricted model access. `--allow-host` and `--block-host` accept repeated names, wildcard subdomains, IPs and CIDRs. All tiers enforce the same local interface and metadata protections. The CLI prints the effective policy as `[PIONEER_NETWORK]`.
 
 Linux exposes the host proxy through one mode-0600 Unix socket. A Pioneer Node supervisor listens on namespace loopback port 3128 and relays only to that socket. The review/eval process gets the authenticated proxy URL. It has no host network interface, so raw host/LAN/loopback connections remain unavailable. The parent proxy checks destinations and pins the selected DNS result before connecting.
 
@@ -87,7 +89,7 @@ Other failures use these diagnostics:
 - `[EVAL_INTERRUPTED]` for interruption;
 - `[EVAL_SPAWN_FAILED]` for launch failure;
 - `[EVAL_SHEBANG_RESOLUTION_FAILED]` for cyclic, excessively deep, or unterminated-overlong `/usr/bin/env` chains;
-- `[EVAL_PROCESS_CONTAINMENT_FAILED]` for retained inherited pipes where descendants can outlive the actor. Linux's PID namespace destroys those descendants, so this diagnostic is unreachable there.
+- `[EVAL_PROCESS_CONTAINMENT_FAILED]` when macOS process inspection is unavailable or the controller cannot confirm cleanup within the bounded grace. Retained inherited pipes and unresolved run-local orphan ownership can cause this result. Linux's PID namespace destroys remaining descendants.
 
 Diagnostics exclude the full environment, Pi configuration, and authenticated proxy URL.
 
@@ -233,6 +235,7 @@ Eval `doctor` reports unsupported. `run` stops before launching an actor or chan
 ## Remaining limitations
 
 - macOS uses legacy `sandbox-exec`. Apple offers no public drop-in replacement for dynamically sandboxing arbitrary CLI processes. Mandatory release smoke tests check its behavior.
+- macOS process sampling can miss a descendant whose ownership changes between observations and whose remaining state provides no run-local evidence. A shared run directory can yield an ambiguous orphan. Pioneer reports the ambiguity and leaves that PID untouched. macOS process start times have one-second resolution, and process metadata lookup and signal delivery are separate operations.
 - Provider-aware tools must honor standard HTTP(S) proxy variables. Linux's isolated network namespace provides no raw TCP egress.
 - Pioneer prepares and isolates eval arms. Complete grading and orchestration remain separate work.
 

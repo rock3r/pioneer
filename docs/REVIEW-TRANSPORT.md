@@ -27,6 +27,8 @@ const result = await runReview({
 
 `ReviewRequest.gitTargets` accepts multiple Git inspection targets: `working-tree`, `staged`, `untracked`, `commit:REF`, `range:FROM...TO`, or `range:FROM..TO`. Without it, Pioneer infers conservative targets from Git-target prompts. It rejects GitHub pull-request URLs. Collected Git output enters the prompt as untrusted context. Pi gets no shell on macOS or Windows.
 
+Git-target reviews require Git 2.45 or newer. Use `ReviewRequest.allowPartialClone` or `--allow-partial-clone` to inspect a partial clone offline. If a requested object is unavailable locally, populate it outside Pioneer or choose a target whose objects are already present, such as `range:BASE...HEAD`. Resume carries the partial-clone opt-in forward.
+
 `ReviewRequest.piHomeIncludes` selects exact paths relative to the chosen Pi home. Use it for required extra files or directories, including managed package directories. It accepts multiple paths but no globs, negation, or persistent configuration. The snapshot uses the CLI's hard exclusions and symlink checks.
 
 `ReviewRequest.controllerScratchBase` selects a controller-owned base for private scratch directories. [Path and network construction](#path-and-network-construction) describes its platform, ownership, overlap, stability, and path-length checks.

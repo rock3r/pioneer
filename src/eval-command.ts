@@ -25,7 +25,7 @@ export function evalUsage(commandName: string): string {
   return `Usage:
   ${commandName} prepare --skill DIR --evals FILE --output DIR [--allow-fixture-name GLOB]...
   ${commandName} install-linux
-  ${commandName} run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] [--work-log FILE] [--allow-loopback HOST:PORT]... [--env NAME=VALUE]... [--pi-extension PATH]... [--stdout-file FILE] [--stderr-file FILE] -- COMMAND [ARG ...]`;
+  ${commandName} run --run-dir DIR [--pi-home DIR] [--runtime-read PATH] [--deny-read-probe PATH] [--timeout-ms N] [--work-log FILE] [--network public|full|provider-only] [--allow-host PATTERN]... [--block-host PATTERN]... [--allow-loopback HOST:PORT]... [--env NAME=VALUE]... [--pi-extension PATH]... [--stdout-file FILE] [--stderr-file FILE] -- COMMAND [ARG ...]`;
 }
 
 function usage(commandName: string): never {
@@ -101,6 +101,11 @@ export async function runEvalCli(
     const timeoutText = takeOption(args, "--timeout-ms", commandName);
     const timeoutMs = timeoutText === undefined ? undefined : Number(timeoutText);
     const workLogPath = takeOption(args, "--work-log", commandName);
+    const network = takeOption(args, "--network", commandName) ?? "public";
+    if (network !== "public" && network !== "full" && network !== "provider-only")
+      usage(commandName);
+    const allowHosts = takeRepeatedOption(args, "--allow-host", commandName);
+    const blockHosts = takeRepeatedOption(args, "--block-host", commandName);
     const loopbackTargets = takeRepeatedOption(args, "--allow-loopback", commandName);
     const environmentEntries = takeRepeatedOption(args, "--env", commandName);
     const toolExtensionPaths = takeRepeatedOption(args, "--pi-extension", commandName);
@@ -128,6 +133,9 @@ export async function runEvalCli(
         runDir: resolvedRunDir,
         command: command as [string, ...string[]],
         runtimeReadPaths,
+        network,
+        ...(allowHosts.length ? { allowHosts } : {}),
+        ...(blockHosts.length ? { blockHosts } : {}),
         ...(piHomeSource === undefined ? {} : { piHomeSource: path.resolve(piHomeSource) }),
         ...(allowedLoopbackPorts.length === 0 ? {} : { allowedLoopbackPorts }),
         ...(environmentEntries.length === 0 ? {} : { environment }),
@@ -137,6 +145,7 @@ export async function runEvalCli(
       },
       {
         deniedReadProbePaths,
+        onNetworkPolicy: (message) => output.stderr(message + "\n"),
         onWorkLogReady: (logPath) => output.stderr(`[PIONEER_EVAL_WORK_LOG] ${logPath}\n`),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(workLogPath === undefined ? {} : { workLogPath: path.resolve(workLogPath) }),

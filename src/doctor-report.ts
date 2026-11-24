@@ -1,5 +1,6 @@
 import { type Diagnostic, parseDiagnostic } from "./diagnostics.js";
 import type { PiReadiness } from "./pi-readiness.js";
+import type { GitReadiness } from "./review/git-inspect.js";
 
 export const PIONEER_OUTER_SANDBOX_REQUIRED_WARNING =
   "[PIONEER_OUTER_SANDBOX_REQUIRED] Pioneer must run outside any enclosing agent sandbox so the controller can access Pi configuration and the configured provider. This does not weaken Pioneer's native sandbox for review and eval actors.";
@@ -14,6 +15,7 @@ export interface DoctorReport {
   readonly platform: NodeJS.Platform;
   readonly supported: boolean;
   readonly pi: { readonly version: string | null; readonly modelCount: number };
+  readonly git: { readonly version: string | null; readonly supported: boolean };
   readonly warnings: readonly string[];
   readonly errors: readonly string[];
   readonly diagnostics: readonly Diagnostic[];
@@ -23,6 +25,7 @@ export function createDoctorReport(
   platform: NodeJS.Platform,
   pi: PiReadiness,
   strictErrors: readonly string[],
+  git: GitReadiness,
 ): DoctorReport {
   const errors = [...pi.errors, ...strictErrors];
   const outerSandboxHintRequired = errors.some((error) =>
@@ -31,12 +34,14 @@ export function createDoctorReport(
   const warnings = [
     ...(pi.warning === undefined ? [] : [pi.warning]),
     ...(outerSandboxHintRequired ? [PIONEER_OUTER_SANDBOX_REQUIRED_WARNING] : []),
+    ...(git.supported ? [] : [git.warning]),
   ];
   return {
     schemaVersion: 1,
     platform,
     supported: pi.ready && errors.length === 0,
     pi: { version: pi.version ?? null, modelCount: pi.modelCount },
+    git: { version: git.version, supported: git.supported },
     warnings,
     errors,
     diagnostics: [

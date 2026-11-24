@@ -13,6 +13,8 @@ export interface ParsedReviewCliArgs {
   readonly workLogPath: string | undefined;
   readonly networkText: string;
   readonly networkSpecified: boolean;
+  readonly allowHosts: readonly string[];
+  readonly blockHosts: readonly string[];
   readonly timeoutText: string | undefined;
   readonly maxRpcOutputMbText: string | undefined;
   readonly allowUnsandboxedWindows: boolean;
@@ -20,6 +22,7 @@ export interface ParsedReviewCliArgs {
   readonly noExtensions: boolean;
   readonly resumeToken: string | undefined;
   readonly gitTargets: readonly string[];
+  readonly allowPartialClone: boolean;
   readonly gitSymlinkRoots: readonly string[];
   readonly androidRepoRoots: readonly string[];
   readonly remaining: readonly string[];
@@ -62,6 +65,9 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
   if (noResume) args.splice(args.indexOf("--no-resume"), 1);
   const noExtensions = args.includes("--no-extensions");
   if (noExtensions) args.splice(args.indexOf("--no-extensions"), 1);
+  const partialCloneIndex = args.indexOf("--allow-partial-clone");
+  const allowPartialClone = partialCloneIndex >= 0;
+  if (allowPartialClone) args.splice(partialCloneIndex, 1);
   const networkSpecified = args.some(
     (argument) => argument === "--network" || argument.startsWith("--network="),
   );
@@ -78,6 +84,8 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
     workLogPath: takeOption(args, "--work-log"),
     networkText: takeOption(args, "--network") ?? "full",
     networkSpecified,
+    allowHosts: takeRepeated(args, "--allow-host", false),
+    blockHosts: takeRepeated(args, "--block-host", false),
     timeoutText: takeOption(args, "--timeout-ms"),
     maxRpcOutputMbText: takeOption(args, "--max-rpc-output-mb"),
     allowUnsandboxedWindows,
@@ -85,6 +93,7 @@ export function parseReviewCliArgs(rawArgs: readonly string[]): ParsedReviewCliA
     noExtensions,
     resumeToken: takeOption(args, "--resume"),
     gitTargets: takeRepeated(args, "--git", false),
+    allowPartialClone,
     gitSymlinkRoots: takeRepeated(args, "--allow-git-symlink-root", true),
     androidRepoRoots: takeRepeated(args, "--allow-android-repo-root", true),
     remaining: args,

@@ -10,6 +10,9 @@ import { assertStableDirectoryChain } from "../stable-directory.js";
 export type EvalPlatform = "darwin" | "linux" | "win32";
 
 export interface EvalRunSpec {
+  readonly network?: import("./egress-policy.js").NetworkTier;
+  readonly allowHosts?: readonly string[];
+  readonly blockHosts?: readonly string[];
   readonly runDir: string;
   readonly command: readonly [string, ...string[]];
   readonly runtimeReadPaths?: readonly string[];

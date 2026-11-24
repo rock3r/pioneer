@@ -34,9 +34,13 @@ export interface ImmutableReviewScope {
   readonly allowReadPaths?: readonly string[];
   readonly allowWritePaths?: readonly string[];
   readonly network: StoredReviewNetworkMode;
+  readonly allowHosts?: readonly string[];
+  readonly blockHosts?: readonly string[];
+  readonly providerHosts?: readonly string[];
   readonly piVersion: string;
   readonly extensionDigest?: string;
   readonly gitTargets?: readonly string[];
+  readonly allowPartialClone?: boolean;
   readonly gitSymlinkRoots?: readonly string[];
   readonly androidRepoRoots?: readonly string[];
 }
@@ -183,9 +187,15 @@ export function immutableReviewScope(
     allowReadPaths: scope.allowReadPaths,
     allowWritePaths: scope.allowWritePaths,
     network: scope.network,
+    allowHosts: scope.allowHosts,
+    blockHosts: scope.blockHosts,
+    providerHosts: scope.providerHosts,
     piVersion: scope.piVersion,
     ...(scope.extensionDigest === undefined ? {} : { extensionDigest: scope.extensionDigest }),
     ...(scope.gitTargets === undefined ? {} : { gitTargets: scope.gitTargets }),
+    ...(scope.allowPartialClone === undefined
+      ? {}
+      : { allowPartialClone: scope.allowPartialClone }),
     ...(scope.gitSymlinkRoots === undefined ? {} : { gitSymlinkRoots: scope.gitSymlinkRoots }),
     ...(scope.androidRepoRoots === undefined ? {} : { androidRepoRoots: scope.androidRepoRoots }),
   };
@@ -1217,9 +1227,13 @@ async function readReviewResumeArchiveContents(
       (typeof rawScope.extensionDigest !== "string" ||
         !/^[a-f0-9]{64}$/.test(rawScope.extensionDigest))) ||
     !optionalStringList(rawScope.piHomeIncludes) ||
+    !optionalStringList(rawScope.allowHosts) ||
+    !optionalStringList(rawScope.blockHosts) ||
+    !optionalStringList(rawScope.providerHosts) ||
     !optionalStringList(rawScope.allowReadPaths) ||
     !optionalStringList(rawScope.allowWritePaths) ||
     !optionalStringList(rawScope.gitTargets) ||
+    (rawScope.allowPartialClone !== undefined && typeof rawScope.allowPartialClone !== "boolean") ||
     !optionalStringList(rawScope.gitSymlinkRoots) ||
     !optionalStringList(rawScope.androidRepoRoots)
   ) {
@@ -1272,7 +1286,12 @@ async function readReviewResumeArchiveContents(
   } catch {
     throw new Error("[REVIEW_RESUME_SESSION_INVALID] Review resume session archive is invalid");
   }
-  if (rawScope.network !== "full" && rawScope.network !== "public" && rawScope.network !== "none") {
+  if (
+    rawScope.network !== "full" &&
+    rawScope.network !== "public" &&
+    rawScope.network !== "provider-only" &&
+    rawScope.network !== "none"
+  ) {
     throw new Error("[REVIEW_RESUME_UNAVAILABLE] Review resume network policy is invalid");
   }
   const scope: ImmutableReviewScope = {
@@ -1291,11 +1310,19 @@ async function readReviewResumeArchiveContents(
       ? { allowWritePaths: rawScope.allowWritePaths as string[] }
       : {}),
     network: rawScope.network as StoredReviewNetworkMode,
+    ...(Array.isArray(rawScope.allowHosts) ? { allowHosts: rawScope.allowHosts as string[] } : {}),
+    ...(Array.isArray(rawScope.blockHosts) ? { blockHosts: rawScope.blockHosts as string[] } : {}),
+    ...(Array.isArray(rawScope.providerHosts)
+      ? { providerHosts: rawScope.providerHosts as string[] }
+      : {}),
     piVersion: rawScope.piVersion,
     ...(typeof rawScope.extensionDigest === "string"
       ? { extensionDigest: rawScope.extensionDigest }
       : {}),
     ...(Array.isArray(rawScope.gitTargets) ? { gitTargets: rawScope.gitTargets as string[] } : {}),
+    ...(typeof rawScope.allowPartialClone === "boolean"
+      ? { allowPartialClone: rawScope.allowPartialClone }
+      : {}),
     ...(Array.isArray(rawScope.gitSymlinkRoots)
       ? { gitSymlinkRoots: rawScope.gitSymlinkRoots as string[] }
       : {}),

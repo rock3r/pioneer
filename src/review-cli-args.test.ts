@@ -3,6 +3,22 @@ import { describe, expect, it } from "vitest";
 import { parseReviewCliArgs } from "./review-cli-args.js";
 
 describe("review CLI arguments", () => {
+  it("keeps host filters for provider-only networking", () => {
+    expect(
+      parseReviewCliArgs([
+        "--network",
+        "provider-only",
+        "--allow-host",
+        "*.mirror.test",
+        "--block-host=private.mirror.test",
+      ]),
+    ).toMatchObject({
+      networkText: "provider-only",
+      allowHosts: ["*.mirror.test"],
+      blockHosts: ["private.mirror.test"],
+      remaining: [],
+    });
+  });
   it("parses repeated Pi-home includes without resolving them against the caller", () => {
     expect(
       parseReviewCliArgs([
@@ -51,6 +67,15 @@ describe("review CLI arguments", () => {
       androidRepoRoots: [path.resolve("/aosp/.repo")],
       remaining: [],
     });
+  });
+
+  it("parses the opt-in for offline partial-clone inspection", () => {
+    expect(parseReviewCliArgs(["--allow-partial-clone", "--git", "staged"])).toMatchObject({
+      allowPartialClone: true,
+      gitTargets: ["staged"],
+      remaining: [],
+    });
+    expect(parseReviewCliArgs([]).allowPartialClone).toBe(false);
   });
 
   it("parses bounded RPC output and explicit no-resume options", () => {

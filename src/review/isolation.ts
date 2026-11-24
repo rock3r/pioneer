@@ -10,7 +10,7 @@ import {
 } from "../stable-directory.js";
 
 /** Network modes accepted for a newly-started review. */
-export type ReviewNetworkMode = "full" | "public";
+export type ReviewNetworkMode = "full" | "public" | "provider-only";
 
 /**
  * Network modes retained in an immutable resume archive. `none` is kept only

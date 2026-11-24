@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import path from "node:path";
+import { runCheckCommentsCli } from "./check-comments/command.js";
 import { cliErrorMessage } from "./cli-error.js";
 import { runDeepReviewCli } from "./deep-review-command.js";
 import { CliUsageError } from "./diagnostics.js";
@@ -39,7 +40,9 @@ function takeFlag(args: string[], name: string): boolean {
 
 function automaticallyCheckForUpdates(cliArgs: readonly string[]): boolean {
   const [subcommand] = cliArgs;
-  if (subcommand === "check-update" || subcommand === "update") return false;
+  if (subcommand === "check-update" || subcommand === "update" || subcommand === "check-comments") {
+    return false;
+  }
   return !(
     cliArgs.length === 1 &&
     (subcommand === "--version" ||
@@ -69,6 +72,7 @@ async function main(): Promise<void> {
     if (
       cliArgs[0] !== "eval" &&
       cliArgs[0] !== "deep-review" &&
+      cliArgs[0] !== "check-comments" &&
       cliArgs[0] !== "github" &&
       (cliArgs.includes("--help") || cliArgs.includes("-h"))
     ) {
@@ -76,6 +80,10 @@ async function main(): Promise<void> {
       return;
     }
     const [subcommand, ...rawArgs] = cliArgs;
+    if (subcommand === "check-comments") {
+      process.exitCode = await runCheckCommentsCli(rawArgs);
+      return;
+    }
     if (subcommand === "eval") {
       await runEvalCli(rawArgs, "pioneer eval");
       return;
@@ -156,6 +164,7 @@ async function main(): Promise<void> {
       noResume,
       resumeToken,
       gitTargets,
+      allowPartialClone,
       gitSymlinkRoots,
       androidRepoRoots,
       allowUnsandboxedWindows,
@@ -176,12 +185,15 @@ async function main(): Promise<void> {
         allowReadPaths.length > 0 ||
         allowWritePaths.length > 0 ||
         gitTargets.length > 0 ||
+        allowPartialClone ||
         gitSymlinkRoots.length > 0 ||
         androidRepoRoots.length > 0 ||
         networkText !== "full" ||
         noResume ||
         parsed.noExtensions ||
         networkSpecified ||
+        parsed.allowHosts.length > 0 ||
+        parsed.blockHosts.length > 0 ||
         parsed.remaining.length > 0 ||
         (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1))
       ) {
@@ -189,6 +201,7 @@ async function main(): Promise<void> {
       }
       const result = await resumeReview({
         resumeToken,
+        onNetworkPolicy: (message) => process.stderr.write(message + "\n"),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(maxRpcOutputBytes === undefined ? {} : { maxRpcOutputBytes }),
         ...(reportPath === undefined ? {} : { reportPath }),
@@ -221,7 +234,7 @@ async function main(): Promise<void> {
       !prompt ||
       resumeToken !== undefined ||
       parsed.remaining.length > 0 ||
-      !["full", "public", "none"].includes(networkText) ||
+      !["full", "public", "provider-only", "none"].includes(networkText) ||
       (thinkingText !== undefined && !isThinkingLevel(thinkingText)) ||
       (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1))
     )
@@ -237,8 +250,10 @@ async function main(): Promise<void> {
       ...(workLogPath === undefined ? {} : { workLogPath }),
       onWorkLogReady: (logPath) => process.stderr.write(`[PIONEER_WORK_LOG] ${logPath}\n`),
       // Preserve the actionable diagnostic for the retired CLI spelling.
-      // The public TypeScript API intentionally accepts only full or public.
-      network: networkText as "full" | "public",
+      network: networkText as "full" | "public" | "provider-only",
+      ...(parsed.allowHosts.length ? { allowHosts: parsed.allowHosts } : {}),
+      ...(parsed.blockHosts.length ? { blockHosts: parsed.blockHosts } : {}),
+      onNetworkPolicy: (message) => process.stderr.write(message + "\n"),
       allowUnsandboxedWindows,
       ...(model === undefined ? {} : { model }),
       ...(thinkingText === undefined ? {} : { thinking: thinkingText }),
@@ -247,6 +262,7 @@ async function main(): Promise<void> {
       ...(maxRpcOutputBytes === undefined ? {} : { maxRpcOutputBytes }),
       ...(noResume ? { resumable: false } : {}),
       ...(gitTargets.length === 0 ? {} : { gitTargets }),
+      ...(allowPartialClone ? { allowPartialClone } : {}),
       ...(gitSymlinkRoots.length === 0 ? {} : { gitSymlinkRoots }),
       ...(androidRepoRoots.length === 0 ? {} : { androidRepoRoots }),
       onReportReady: (reportFile) => process.stderr.write(`[PIONEER_REPORT] ${reportFile}\n`),

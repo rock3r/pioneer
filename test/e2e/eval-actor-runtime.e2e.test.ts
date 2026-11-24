@@ -186,6 +186,35 @@ const attempt = (port) => new Promise((resolve) => {
     expect(network?.allowedLoopback).toEqual([`127.0.0.1:${allowedPort}`]);
   });
 
+  it("applies provider-only host filters in the actor proxy and reports the policy", async () => {
+    const { created, runDir } = await workspace("provider-network");
+    const actor = `
+const proxy = new URL(process.env.HTTP_PROXY);
+const auth = Buffer.from(proxy.username + ":" + proxy.password).toString("base64");
+const request = require("node:http").get({
+ hostname: proxy.hostname, port: proxy.port, path: "http://private.mirror.invalid/",
+ headers: {"proxy-authorization": "Basic " + auth}
+}, response => {response.resume(); console.log(response.statusCode);});
+request.on("error", () => {process.exitCode = 1});
+`;
+    const result = await runPioneer(created, [
+      ...evalRun(created, runDir, "provider-network"),
+      "--network",
+      "provider-only",
+      "--allow-host",
+      "*.mirror.invalid",
+      "--block-host",
+      "private.mirror.invalid",
+      "--",
+      "node",
+      "-e",
+      actor,
+    ]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("403");
+    expect(result.stderr).toContain("[PIONEER_NETWORK] provider-only");
+  });
+
   it("keeps every loopback port closed without --allow-loopback", async () => {
     const { created, runDir } = await workspace("no-loopback");
     const port = await hostListener("loopback-reached");

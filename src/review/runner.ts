@@ -10,14 +10,11 @@ import {
   validateControllerScratchBase,
 } from "../controller-scratch.js";
 import { diagnosticMessage } from "../diagnostics.js";
+import { createEgressResolver } from "../eval-run/egress-policy.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
-import {
-  resolveAnyTarget,
-  resolvePublicTarget,
-  startEgressProxy,
-  type startPublicEgressProxy,
-} from "../eval-run/public-egress-proxy.js";
+import { describeEgressPolicy } from "../eval-run/provider-network.js";
+import { startEgressProxy, type startPublicEgressProxy } from "../eval-run/public-egress-proxy.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
 import { piPackageReadRoot, resolveManagedPiLauncher, resolvePiCommand } from "../pi-command.js";
 import {
@@ -110,12 +107,17 @@ export interface ReviewRequest {
   readonly workLogPath?: string;
   readonly onWorkLogReady?: (path: string) => void;
   readonly network?: ReviewNetworkMode;
+  readonly allowHosts?: readonly string[];
+  readonly blockHosts?: readonly string[];
+  readonly onNetworkPolicy?: (message: string) => void;
   readonly allowUnsandboxedWindows?: boolean;
   readonly timeoutMs?: number;
   readonly maxRpcOutputBytes?: number;
   readonly resumable?: boolean;
   readonly onReportReady?: (path: string) => void;
   readonly gitTargets?: readonly string[];
+  /** Permit inspection of locally available partial-clone objects with network access disabled in Git. */
+  readonly allowPartialClone?: boolean;
   /**
    * Directories outside the repository that Git metadata symbolic links may
    * resolve under during controller Git collection. Each must pass the
@@ -149,6 +151,7 @@ export interface ReviewResult {
 }
 
 export interface ResumeReviewRequest {
+  readonly onNetworkPolicy?: (message: string) => void;
   readonly resumeToken: string;
   readonly timeoutMs?: number;
   readonly maxRpcOutputBytes?: number;
@@ -464,7 +467,7 @@ export interface RunReviewRpcOptions {
 }
 
 const REVIEW_NETWORK_DISABLED_MESSAGE =
-  "`--network none` is unsupported for Pioneer reviews because it blocks the Pi actor from reaching its configured model provider. Start a new review with `--network public`, or use `--network full` only when the review needs LAN or loopback access.";
+  "`--network none` is unsupported for Pioneer reviews because it blocks the Pi actor from reaching its configured model provider. Start a new review with `--network public`, or use `--network full` only when the review needs LAN access.";
 
 function assertReviewNetworkCanReachModel(
   network: StoredReviewNetworkMode,
@@ -1564,6 +1567,7 @@ async function runReviewInternal(
     requestedNetwork !== undefined &&
     requestedNetwork !== "full" &&
     requestedNetwork !== "public" &&
+    requestedNetwork !== "provider-only" &&
     requestedNetwork !== "none"
   ) {
     throw new Error("Unsupported review network mode");
@@ -1583,6 +1587,13 @@ async function runReviewInternal(
   const timeoutMs = request.timeoutMs ?? 900_000;
   const maxRpcOutputBytes = validateRpcOutputBytes(request.maxRpcOutputBytes);
   const windows = process.platform === "win32";
+  if (
+    windows &&
+    (network === "provider-only" || request.allowHosts?.length || request.blockHosts?.length)
+  )
+    throw new Error(
+      "Windows unsandboxed reviews cannot enforce provider-only networking or host filters",
+    );
   if (windows && request.allowUnsandboxedWindows !== true) {
     throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
   }
@@ -1752,6 +1763,7 @@ async function runReviewInternal(
       recordReviewWorkLog(workLog, "stage_started", { stage: "git_inspect" });
       const collected = await collectGitContext(paths.sourceDir, gitTargets, {
         approvedSymlinkRoots,
+        allowPartialClone: request.allowPartialClone === true,
       });
       gitContextText = collected?.text;
       recordReviewWorkLog(workLog, "stage_completed", {
@@ -1788,7 +1800,21 @@ async function runReviewInternal(
       request.piHomeIncludes,
       request.extensions !== false,
       network,
+      undefined,
+      [],
+      request,
+      request.model,
     );
+    const egressPolicy = preparedRuntime.egressPolicy ?? { network };
+    const networkSummary = windows
+      ? "[PIONEER_NETWORK] Windows review has no enforced network isolation."
+      : describeEgressPolicy(egressPolicy);
+    if (
+      resumeContext &&
+      !sameStringList(resumeContext.loaded.scope.providerHosts, egressPolicy.providerHosts ?? [])
+    )
+      throw new Error("[REVIEW_RESUME_SCOPE_CHANGED] Provider endpoints have changed");
+    request.onNetworkPolicy?.(networkSummary);
     if (resumeContext !== undefined)
       assertSameExtensionSnapshot(
         resumeContext.loaded.scope.extensionDigest,
@@ -1894,9 +1920,13 @@ async function runReviewInternal(
               ? {}
               : { allowWritePaths: paths.allowWritePaths }),
             network,
+            ...(request.allowHosts ? { allowHosts: request.allowHosts } : {}),
+            ...(request.blockHosts ? { blockHosts: request.blockHosts } : {}),
+            ...(egressPolicy.providerHosts ? { providerHosts: egressPolicy.providerHosts } : {}),
             piVersion: readiness.version ?? "unknown",
             extensionDigest: preparedRuntime.extensions.digest,
             ...(gitTargets.length === 0 ? {} : { gitTargets: gitTargets.map(serializeGitTarget) }),
+            ...(request.allowPartialClone === true ? { allowPartialClone: true } : {}),
             ...gitSymlinkRootScope(approvedSymlinkRoots),
           },
           undefined,
@@ -1979,7 +2009,7 @@ async function runReviewInternal(
       const prompt = buildReviewPrompt(
         paths.sourceDir,
         resumeArchive === undefined ? scratchDirectory : undefined,
-        request.prompt,
+        networkSummary + "\n\n" + request.prompt,
         gitContextText,
         referencePaths,
       );
@@ -2013,11 +2043,10 @@ async function runReviewInternal(
         await assertNativeSandboxReady();
         recordReviewWorkLog(workLog, "stage_completed", { stage: "sandbox_readiness" });
         recordReviewWorkLog(workLog, "stage_started", { stage: "network_proxy" });
+        const resolve = createEgressResolver(egressPolicy);
         proxy = await startEgressProxy(
           crypto.randomUUID(),
-          preparedRuntime.authBroker?.resolveWith(
-            network === "public" ? resolvePublicTarget : resolveAnyTarget,
-          ) ?? (network === "public" ? resolvePublicTarget : resolveAnyTarget),
+          preparedRuntime.authBroker?.resolveWith(resolve) ?? resolve,
         );
         recordReviewWorkLog(workLog, "stage_completed", { stage: "network_proxy" });
         const bwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
@@ -2296,7 +2325,11 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
           ? {}
           : { allowWritePaths: loaded.scope.allowWritePaths }),
         network,
+        ...(loaded.scope.allowHosts ? { allowHosts: loaded.scope.allowHosts } : {}),
+        ...(loaded.scope.blockHosts ? { blockHosts: loaded.scope.blockHosts } : {}),
+        ...(request.onNetworkPolicy ? { onNetworkPolicy: request.onNetworkPolicy } : {}),
         ...(loaded.scope.gitTargets === undefined ? {} : { gitTargets: loaded.scope.gitTargets }),
+        ...(loaded.scope.allowPartialClone === true ? { allowPartialClone: true } : {}),
         ...(loaded.scope.gitSymlinkRoots === undefined
           ? {}
           : { gitSymlinkRoots: loaded.scope.gitSymlinkRoots }),

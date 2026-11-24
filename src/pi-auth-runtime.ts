@@ -161,6 +161,7 @@ async function startRuntimeAuthBroker(
             home,
             extensions: runtime.extensions,
             network: runtime.network,
+            ...(runtime.egressPolicy ? { egressPolicy: runtime.egressPolicy } : {}),
             ...(runtime.capabilityExtensions === undefined
               ? {}
               : { capabilityExtensions: runtime.capabilityExtensions }),
