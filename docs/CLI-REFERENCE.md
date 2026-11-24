@@ -218,10 +218,12 @@ Sending `SIGINT` or `SIGTERM` during Pi scoring stops the batch. Pioneer cleans 
 
 ## `pioneer models`
 
+Pass `--work-log /absolute/path/models.jsonl` to record the extension snapshot outcome. Each `extension_snapshot` event includes the cache decision and its reason. Choose a new file for each invocation.
+
 List configured models with the review's offline Pi readiness probe:
 
 ```text
-pioneer models [--pi-home DIR] [--json] [--no-extensions]
+pioneer models [--pi-home DIR] [--json] [--no-extensions] [--work-log FILE]
 ```
 
 Human output sorts qualified `provider/model` names, one per line. `--json` prints a schema-versioned catalog:

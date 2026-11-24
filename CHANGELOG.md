@@ -4,6 +4,13 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.6.0 - 2026-11-24
+
+- Reuse validated extension snapshots across native reviews, deep-review council members, model discovery and strict evals. Each actor keeps its own configuration and adapter. A lease keeps the shared payload available through OAuth refresh and cleanup.
+- Recheck source and staged metadata on every hit and verify the stored digest after a reboot. Retained review digests remain compatible with 0.4.9. Set `PIONEER_EXTENSION_CACHE=0` for per-run staging.
+- On macOS and Linux, grants overlapping the extension cache fail with `PI_EXTENSION_CACHE_GRANT_OVERLAP`. Select a narrower grant or move `XDG_CACHE_HOME`. Use `pioneer models --work-log FILE` to inspect cache decisions.
+- Reviews and deep reviews now honor the reviewed repository's session directory when excluding JSONL files from extension snapshots. Strict evals share enabled extensions when possible and keep tool extensions private to each arm.
+
 ## 0.5.0 - 2026-11-24
 
 - Fix macOS reviews with `--no-extensions` when the selected Pi profile uses only an API key. The direct Pi launcher now accepts the review command.

@@ -38,6 +38,10 @@ try {
   await mkdir(localAppDataSource);
   await mkdir(piHome);
   const localAppData = await realpath(localAppDataSource);
+  // Exercise missing Pi even on developer machines with a working global installation.
+  const environmentWithoutPath = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "PATH"),
+  );
   const optedIn = spawnSync(
     process.execPath,
     [
@@ -53,7 +57,8 @@ try {
       encoding: "utf8",
       shell: false,
       env: {
-        ...process.env,
+        ...environmentWithoutPath,
+        PATH: source,
         LOCALAPPDATA: localAppData,
         PI_CODING_AGENT_DIR: piHome,
       },

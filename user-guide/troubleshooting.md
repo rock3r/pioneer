@@ -147,6 +147,8 @@ Fix or disable the failing extension. For an eval that needs no user extensions,
 
 In evals, `--pi-extension` shares the snapshot budget with enabled user extensions. The message identifies their contribution. Add `--no-extensions` to the Pi command to exclude user extensions. The explicit `--pi-extension` still loads.
 
+If you see `[PI_EXTENSION_CACHE_GRANT_OVERLAP]`, narrow the reported path or set `XDG_CACHE_HOME` to a private directory outside the grant. To investigate repeated staging, run `pioneer models --work-log FILE` on macOS or Linux with a fresh log path each time. The log records whether Pioneer reused a generation, staged a new one, or bypassed the cache. [Extension cache lifecycle](../docs/PI-EXTENSIONS.md#resolution-and-staging)
+
 On macOS, `spawn EPERM` can mean the sandbox cannot read a helper executable, such as an MCP server. Grant the exact executable with `--runtime-read`, for example `--runtime-read ~/.local/bin/uv`. Keep its directory on `PATH`.
 
 The actor uses private scratch as `HOME`. Pioneer rejects `--env HOME=...`. For helpers that need real-home files, pass a configurable path through `--env` and grant it through `--runtime-read`.

@@ -182,7 +182,10 @@ function assertControllerOutputPathSyntax(candidate: string, kind: string): void
   }
 }
 
-async function canonicalControllerOutputPath(candidate: string, kind: string): Promise<string> {
+export async function canonicalControllerOutputPath(
+  candidate: string,
+  kind: string,
+): Promise<string> {
   assertControllerOutputPathSyntax(candidate, kind);
   const absolute = path.normalize(candidate);
   const parent = path.dirname(absolute);
