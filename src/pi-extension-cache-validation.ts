@@ -1,7 +1,10 @@
 import { type BigIntStats, constants } from "node:fs";
 import { lstat, open, opendir, readlink } from "node:fs/promises";
 import path from "node:path";
-import { EXTENSION_CACHE_PACKAGE_JSON } from "./pi-extension-cache-format.js";
+import {
+  cacheRelativePathForSource,
+  EXTENSION_CACHE_PACKAGE_JSON,
+} from "./pi-extension-cache-format.js";
 import {
   type ExtensionManifestRecord,
   type ExtensionSnapshotPlan,
@@ -156,15 +159,13 @@ export async function validateCachedExtensionSnapshot(
   try {
     await validatePayloadDirectories(payload, plan.selectedRoots, signal);
     if (!(await hasPackageScope(payload))) return "copy-mismatch";
-    // The cache runs on POSIX. The source walk already proved all paths are canonical.
-    const treePrefix = `tree${path.sep}${encodeURIComponent(path.sep)}`;
     await walkBounded(
       { size: manifest.length, next: 0, child: (index) => index },
       async (index) => {
         const record = manifest[index];
         if (!record?.staged) return undefined;
         if (
-          record.stagedRelativePath !== `${treePrefix}${record.sourcePath}` ||
+          record.stagedRelativePath !== cacheRelativePathForSource(record.sourcePath) ||
           !matchesCopy(
             await lstat(`${payload}${path.sep}${record.stagedRelativePath}`, { bigint: true }),
             record.stagedMetadata,
