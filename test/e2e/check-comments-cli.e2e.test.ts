@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   createEvalWorkspace,
@@ -140,7 +141,9 @@ describe("check-comments CLI entry point", () => {
   );
 });
 
-it.skipIf(!(await nativeEvalSandboxAvailable()))(
+const sandboxReady = await nativeEvalSandboxAvailable();
+
+it.skipIf(!sandboxReady)(
   "classifies the diff with a tool-free Pi isolated from the source",
   async () => {
     const ws = await createEvalWorkspace("pi-comment");
@@ -177,6 +180,106 @@ it.skipIf(!(await nativeEvalSandboxAvailable()))(
         complete: true,
         scored: 1,
         findings: [{ path: "work.ts", startLine: 1, category: "in_scope_todo" }],
+      });
+    } finally {
+      await ws.remove();
+    }
+  },
+);
+
+it.skipIf(!sandboxReady).each(["SIGINT", "SIGTERM"] as const)(
+  "stops the Pi batch and cleans up the active actor on %s",
+  async (signal) => {
+    const ws = await createEvalWorkspace("pi-comment-interrupt");
+    try {
+      const diff = path.join(ws.root, "unshared.diff");
+      const launches = path.join(ws.root, "launches.jsonl");
+      const intercept = path.join(ws.root, "interrupt-on-agent-start.mjs");
+      await writeFile(
+        diff,
+        [
+          "diff --git a/work.ts b/work.ts",
+          "--- a/work.ts",
+          "+++ b/work.ts",
+          "@@ -1,3 +1,6 @@",
+          "+// TODO implement retry",
+          " start();",
+          "+// TODO wait for interruption",
+          " work();",
+          "+// TODO finish cleanup",
+          " finish();",
+          "",
+        ].join("\n"),
+      );
+      await writeScriptedPi(ws, {
+        version: "1.6.0",
+        models: ["openrouter/fixture"],
+        actor: {
+          kind: "classify-comment",
+          deniedPath: diff,
+          hangOnComment: "wait for interruption",
+        },
+      });
+      // Observe controller spawns and send the signal only once the second actor has its prompt.
+      await writeFile(
+        intercept,
+        `import childProcess from 'node:child_process';
+import { appendFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { createInterface } from 'node:readline';
+const spawn = childProcess.spawn;
+childProcess.spawn = (file, args, options) => {
+  const child = spawn(file, args, options);
+  if (args?.includes('rpc')) {
+    appendFileSync(${JSON.stringify(launches)}, JSON.stringify({ pid: child.pid, agentDir: options.env.PI_CODING_AGENT_DIR }) + '\\n');
+    const lines = createInterface({ input: child.stdout });
+    lines.on('line', (line) => {
+      if (JSON.parse(line).type === 'agent_start') process.kill(process.pid, ${JSON.stringify(signal)});
+    });
+  }
+  return child;
+};
+syncBuiltinESMExports();\n`,
+      );
+      const result = await runPioneer(
+        {
+          ...ws,
+          environment: {
+            ...ws.environment,
+            PI_CODING_AGENT_DIR: ws.piHome,
+            NODE_OPTIONS: `--import=${pathToFileURL(intercept).href}`,
+          },
+        },
+        [
+          "check-comments",
+          "--diff-file",
+          diff,
+          "--scope",
+          "Implement retry",
+          "--provider",
+          "pi",
+          "--model",
+          "openrouter/fixture",
+          "--json",
+        ],
+      );
+      expect(result.exitCode, result.stdout + result.stderr).toBe(3);
+      const actors = (await readFile(launches, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { pid: number; agentDir: string });
+      expect(actors).toHaveLength(2);
+      for (const { pid, agentDir } of actors) {
+        expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+        await expect(access(agentDir)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        complete: false,
+        extracted: 3,
+        scored: 1,
+        omitted: 0,
+        findings: [{ startLine: 1 }],
+        failures: [{ message: `[COMMENT_PI_INTERRUPTED] Pi scoring stopped on ${signal}.` }],
       });
     } finally {
       await ws.remove();

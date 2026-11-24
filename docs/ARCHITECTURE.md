@@ -140,7 +140,7 @@ See [REVIEW-TRANSPORT.md](REVIEW-TRANSPORT.md) for the RPC contract and [SECURIT
 
 The comment checker accepts an explicit diff or collects patches through the guarded Git controller. Language-specific lexical rules extract added or modified comment blocks. Each candidate travels with task scope and clipped new-side hunk context. Direct decision APIs validate an operator-selected credential and separate quoted JSON evidence from the fixed questions.
 
-An explicit `--provider pi --model PROVIDER/MODEL` selection classifies the same evidence with a tool-free actor inside the native sandbox on macOS or Linux. Pi scores one candidate at a time. Both backends validate the returned scores before combining findings in diff order. The CLI distinguishes complete scoring, findings that trip the CI gate, and incomplete scoring. [Comment-check CLI reference](CLI-REFERENCE.md#pioneer-check-comments)
+An explicit `--provider pi --model PROVIDER/MODEL` selection classifies the same evidence with a tool-free actor inside the native sandbox on macOS or Linux. Pi scores one candidate at a time. `SIGINT` and `SIGTERM` stop the Pi batch, terminate the active actor, and wait for runtime cleanup. Both backends validate the returned scores before combining findings in diff order. The CLI distinguishes complete scoring, findings that trip the CI gate, and incomplete scoring. [Comment-check CLI reference](CLI-REFERENCE.md#pioneer-check-comments)
 
 ## Review OAuth lifecycle
 

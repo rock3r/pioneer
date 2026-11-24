@@ -221,21 +221,21 @@ export async function runPreparedPiRpc(
   command: PiLaunchCommand,
   prompt: string,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   // This directory is empty and belongs to the runtime's read-only grant.
   const source = path.join(runtime.extensionRoot, "source");
   await mkdir(source, { mode: 0o700 });
-  return await withPreparedPiSandbox(
-    runtime,
-    command,
-    undefined,
-    async (argv, environment) =>
-      await runReviewRpc(argv, source, environment, prompt, timeoutMs, {
-        maxRpcOutputBytes: 1024 * 1024,
-        forbidTools: true,
-        sensitiveValues: [prompt],
-      }),
-  );
+  return await withPreparedPiSandbox(runtime, command, signal, async (argv, environment) => {
+    signal?.throwIfAborted();
+    // Once launched, runReviewRpc handles OS signals and waits for the actor to stop.
+    return await runReviewRpc(argv, source, environment, prompt, timeoutMs, {
+      maxRpcOutputBytes: 1024 * 1024,
+      forbidTools: true,
+      sensitiveValues: [prompt],
+    });
+  });
 }
 
 async function withPreparedPiSandbox<T>(

@@ -214,6 +214,8 @@ Each classification sends the task scope, one candidate comment, and nearby new-
 
 Exit `0` means scoring completed. Exit `1` means invalid CLI arguments. Exit `2` means scoring completed with findings and `--fail-on-findings` was set. Exit `3` means the result is incomplete due to an input, configuration, scoring, or comment-limit failure. Results retain findings from completed scores when other requests fail.
 
+Sending `SIGINT` or `SIGTERM` during Pi scoring stops the batch. Pioneer cleans up the active actor and returns exit `3` with `[COMMENT_PI_INTERRUPTED]` and findings from completed scores.
+
 ## `pioneer models`
 
 List configured models with the review's offline Pi readiness probe:

@@ -8,7 +8,11 @@ import type { EvalWorkspace } from "./harness.js";
  */
 export type ScriptedPiActor =
   /** Returns fixed scores only from a tool-free classification in a private directory. */
-  | { readonly kind: "classify-comment"; readonly deniedPath: string }
+  | {
+      readonly kind: "classify-comment";
+      readonly deniedPath: string;
+      readonly hangOnComment?: string;
+    }
   /** Replies with the text a `Reply with exactly: TEXT` prompt requests. */
   | { readonly kind: "reply-verbatim" }
   /** Accepts a review prompt over RPC and returns a fixed report. */
@@ -112,7 +116,14 @@ if (SCENARIO.actor.kind === "classify-comment") {
   }
   process.stdin.once("data", (bytes) => {
     const message = JSON.parse(bytes.toString("utf8"));
-    if (message.type !== "prompt" || !message.message.includes("TODO implement retry")) fail("missing comment evidence");
+    if (message.type !== "prompt") fail("missing comment evidence");
+    const evidence = JSON.parse(message.message);
+    if (!evidence.comment.includes("TODO")) fail("missing comment evidence");
+    if (SCENARIO.actor.hangOnComment && evidence.comment.includes(SCENARIO.actor.hangOnComment)) {
+      console.log(JSON.stringify({type: "agent_start"}));
+      setInterval(() => {}, 10_000);
+      return;
+    }
     const content = JSON.stringify({excuse_skipped_ask: 0, dismissed_edge_case: 0, in_scope_todo: 1});
     console.log(JSON.stringify({type: "message_end", message: {role: "assistant", content}}));
     console.log(JSON.stringify({type: "agent_settled"}));

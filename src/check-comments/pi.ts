@@ -74,6 +74,7 @@ function parseScores(reply: string): CommentScores {
 
 export function createPiCommentScorer(
   model: string,
+  signal?: AbortSignal,
 ): (comment: DiffComment, scope: string) => Promise<CommentScores> {
   if (!isQualifiedPiCommentModel(model))
     throw new Error("[COMMENT_PI_CONFIG] Select a qualified Pi model with --model PROVIDER/MODEL");
@@ -83,6 +84,7 @@ export function createPiCommentScorer(
     );
 
   return async (comment, scope) => {
+    signal?.throwIfAborted();
     let runtime: PreparedReviewRuntime | undefined;
     let outcome: { scores: CommentScores } | { error: unknown };
     try {
@@ -98,7 +100,7 @@ export function createPiCommentScorer(
           undefined,
           false,
           "provider-only",
-          undefined,
+          signal,
           [],
           undefined,
           model,
@@ -111,9 +113,10 @@ export function createPiCommentScorer(
           requestedModel: model,
           runner: async (args) =>
             args.includes("--list-models")
-              ? await discoverPreparedExtensions(prepared, PI_PROBE_TIMEOUT_MS)
-              : await runPreparedPiCommand(prepared, [...pi, ...args], PI_PROBE_TIMEOUT_MS),
+              ? await discoverPreparedExtensions(prepared, PI_PROBE_TIMEOUT_MS, signal)
+              : await runPreparedPiCommand(prepared, [...pi, ...args], PI_PROBE_TIMEOUT_MS, signal),
           environment: { ...environment, ...prepared.home.environment },
+          ...(signal === undefined ? {} : { signal }),
         });
         const resolved = readiness.resolvedModel;
         if (resolved === undefined || resolved.toLowerCase() !== model.toLowerCase())
@@ -149,7 +152,7 @@ export function createPiCommentScorer(
       const prompt = commentEvidence(comment, scope);
       let reply: string;
       try {
-        reply = await runPreparedPiRpc(runtime, command, prompt, PI_SCORING_TIMEOUT_MS);
+        reply = await runPreparedPiRpc(runtime, command, prompt, PI_SCORING_TIMEOUT_MS, signal);
       } catch (error) {
         if (error instanceof Error && error.message.startsWith("[REVIEW_TIMEOUT]"))
           throw new Error("[COMMENT_PI_TIMEOUT] Pi did not finish scoring within 30 seconds");
@@ -168,6 +171,7 @@ export function createPiCommentScorer(
         );
       }
     }
+    signal?.throwIfAborted();
     if ("error" in outcome) throw outcome.error;
     return outcome.scores;
   };

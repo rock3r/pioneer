@@ -319,12 +319,13 @@ async function scoreComments(
   scope: string,
   score: CommentScorer,
   secret: string | undefined,
+  signal?: AbortSignal,
 ): Promise<Result> {
   const count = Math.min(comments.length, options.maxComments);
   const outcomes: Outcome[] = [];
   let next = 0;
   async function worker(): Promise<void> {
-    while (next < count) {
+    while (next < count && !signal?.aborted) {
       const index = next;
       next += 1;
       const comment = comments[index];
@@ -339,6 +340,7 @@ async function scoreComments(
           ).map((category) => ({ ...location, category, probability: probabilities[category] })),
         };
       } catch (error) {
+        if (signal?.aborted && error === signal.reason) return;
         outcomes[index] = {
           failure: {
             ...location,
@@ -356,7 +358,12 @@ async function scoreComments(
   const findings = outcomes.flatMap((outcome) => ("findings" in outcome ? outcome.findings : []));
   const failures = outcomes.flatMap((outcome) => ("failure" in outcome ? [outcome.failure] : []));
   const omitted = comments.length - count;
-  const scored = count - failures.length;
+  const scored = outcomes.length - failures.length;
+  if (signal?.aborted) {
+    failures.push({
+      message: userError(signal.reason, "[COMMENT_PI_INTERRUPTED] Pi scoring stopped.", []),
+    });
+  }
   return {
     complete: failures.length === 0 && omitted === 0,
     threshold: options.threshold,
@@ -411,11 +418,15 @@ export async function runCheckCommentsCli(
   const keyEnv = backend.kind === "http" ? commentProviderKeyEnv(backend.options) : undefined;
   const key =
     keyEnv !== undefined && Object.hasOwn(environment, keyEnv) ? environment[keyEnv] : undefined;
+  const interruption = backend.kind === "pi" ? new AbortController() : undefined;
+  const interrupt = (signal: NodeJS.Signals): void => {
+    interruption?.abort(new Error(`[COMMENT_PI_INTERRUPTED] Pi scoring stopped on ${signal}.`));
+  };
   let result: Result;
   try {
     const score =
       backend.kind === "pi"
-        ? createPiCommentScorer(backend.model)
+        ? createPiCommentScorer(backend.model, interruption?.signal)
         : createCommentScorer(
             backend.options,
             environment,
@@ -423,7 +434,11 @@ export async function runCheckCommentsCli(
           );
     const scope = await readScope(options);
     const comments = await readComments(options, dependencies.stdin ?? process.stdin);
-    result = await scoreComments(comments, options, scope, score, key);
+    if (interruption !== undefined) {
+      process.on("SIGINT", interrupt);
+      process.on("SIGTERM", interrupt);
+    }
+    result = await scoreComments(comments, options, scope, score, key, interruption?.signal);
   } catch (error) {
     result = {
       complete: false,
@@ -442,6 +457,11 @@ export async function runCheckCommentsCli(
         },
       ],
     };
+  } finally {
+    if (interruption !== undefined) {
+      process.off("SIGINT", interrupt);
+      process.off("SIGTERM", interrupt);
+    }
   }
   stdout(options.json ? `${JSON.stringify(result, null, 2)}\n` : formatText(result));
   if (!result.complete) return 3;

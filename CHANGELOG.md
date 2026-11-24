@@ -6,6 +6,7 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## 0.5.0 - 2026-11-24
 
+- Fix macOS reviews with `--no-extensions` when the selected Pi profile uses only an API key. The direct Pi launcher now accepts the review command.
 - Add `pioneer check-comments` to score changed comments against task scope. It accepts Git targets or a unified diff, detects skipped requirements, dismissed edge cases, and in-scope TODOs, and offers JSON output and CI exit codes. Direct decision APIs send each candidate with nearby changed code to the selected endpoint and run independently of Pi. [PR #150](https://github.com/rock3r/pioneer/pull/150)
 - Add explicit Pi-backed comment classification with `--provider pi --model PROVIDER/MODEL` on macOS and Linux. Pi runs in a tool-free native sandbox and returns self-estimated scores. Pioneer keeps the selected backend and exact model when scoring fails. Windows supports direct decision APIs.
 - Add `--network provider-only` and explicit host filters for native reviews and evals. The proxy applies hostname policy before DNS and pins a validated address. All tiers deny host interface, loopback, and metadata destinations through the proxy. `full` still permits other LAN hosts, and evals can open exact loopback ports. [PR #150](https://github.com/rock3r/pioneer/pull/150)

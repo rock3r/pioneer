@@ -113,7 +113,10 @@ describe("check-comments CLI", () => {
         input,
       ),
     ).resolves.toBe(2);
-    expect(createPiScorer).toHaveBeenCalledExactlyOnceWith("openrouter/vendor/model");
+    expect(createPiScorer).toHaveBeenCalledExactlyOnceWith(
+      "openrouter/vendor/model",
+      expect.any(AbortSignal),
+    );
     expect(input.fetch).not.toHaveBeenCalled();
     expect(maximumActive).toBe(1);
     expect(score).toHaveBeenCalledTimes(2);

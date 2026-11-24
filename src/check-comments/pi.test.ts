@@ -138,6 +138,20 @@ describe.skipIf(process.platform === "win32")("tool-free Pi comment classificati
     expect(cleanupReviewRuntime).toHaveBeenCalledExactlyOnceWith(runtime);
   });
 
+  it("preserves cancellation from readiness after cleaning up the prepared runtime", async () => {
+    const controller = new AbortController();
+    const interruption = new Error("[COMMENT_PI_INTERRUPTED] Pi scoring stopped on SIGINT.");
+    vi.mocked(assertPiReady).mockImplementation(async (options) => {
+      expect(options?.signal).toBe(controller.signal);
+      controller.abort(interruption);
+      throw interruption;
+    });
+    const score = createPiCommentScorer("openai-codex/fixture-model", controller.signal);
+    await expect(score(comment, "Validate")).rejects.toBe(interruption);
+    expect(runPreparedPiRpc).not.toHaveBeenCalled();
+    expect(cleanupReviewRuntime).toHaveBeenCalledExactlyOnceWith(runtime);
+  });
+
   it("requires a qualified model before performing readiness", () => {
     expect(() => createPiCommentScorer("fixture-model")).toThrow(/^\[COMMENT_PI_CONFIG\]/);
     expect(resolvePiCommand).not.toHaveBeenCalled();
