@@ -172,7 +172,9 @@ Pioneer cannot find every Pi session directory by location, so both snapshots al
 
 Pi merges global and project `sessionDir` settings. The project file is `.pi/settings.json` where the operator starts Pi. Pi reads it before resolving project trust. Project values override global values. Operators can also pass `--session-dir`.
 
-Pioneer sees only `PI_CODING_AGENT_SESSION_DIR` and global `settings.json`. Other projects can place sessions inside extension roots, selected `node_modules`, `skills/`, or explicit include paths. Content checks prevent those files from entering snapshots.
+Pioneer uses `PI_CODING_AGENT_SESSION_DIR` and global `settings.json` to locate private runtime storage. Reviews and deep reviews also try to read `.pi/settings.json` within the canonical reviewed repository. The controller ignores unreadable or invalid settings, targets outside that repository, and anything other than regular files of at most 64 KiB. It resolves relative project values from the reviewed source root and expands home paths and local file URLs as it does for global settings.
+
+The project value filters only regular `.jsonl` files and links to them in the extension snapshot. macOS and Windows fold case. Enabled entry points, directories, and other dependencies stay available, and the controller does not walk project-selected storage to collect file identities. A project can suppress matching JSONL dependency data in its own review. If filtering removes a file, it changes the snapshot digest used to validate resumed reviews. Evals, `models`, and `doctor` do not consult project settings.
 
 Verification used Pi 1.2.0's `SettingsManager` and `SessionManager` to write sessions in extension and Pi-home include paths. Without content checks, both snapshots copied those files. This test used Pi's library APIs without running the full CLI.
 
@@ -193,7 +195,7 @@ The two snapshots handle a detected file as follows:
 | Copied file is session history, because it changed after the check | Refused with `PI_EXTENSION_SNAPSHOT_CHANGED` | Refused with `PI_HOME_SNAPSHOT_CHANGED` |
 | Selected file was replaced, gained a `.jsonl` hard link, or a selected link was repointed to session history before the copy | Refused with `PI_EXTENSION_SNAPSHOT_CHANGED` | Refused with `PI_HOME_SNAPSHOT_CHANGED` |
 
-Pioneer does not read the reviewed repository's `.pi/settings.json` for this. The content rule does not need it, and trusting it would let a repository change snapshot policy or fail a review with an invalid value. The reviewed repository's settings also cannot redirect the review's own session: Pioneer always passes `--session-dir`, `--session`, or `--no-session`, and Pi gives those flags precedence over settings.
+The content check also covers sessions from other projects and past `--session-dir` overrides, including files inside extension roots, selected `node_modules`, `skills/`, and explicit include paths. Pioneer controls the review's own session with `--session-dir`, `--session`, or `--no-session`. Pi gives those flags precedence over settings.
 
 Header scans have separate per-snapshot totals of 500,000 opened files and 1 GiB read. Every scan counts, including skipped history. Pi-home totals also include link-target and copied-file checks. Exceeding a total stops preparation with `PI_HOME_SNAPSHOT_LIMIT` or `PI_EXTENSION_SNAPSHOT_LIMIT`. Selected-content limits remain separate.
 

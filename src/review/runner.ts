@@ -1871,7 +1871,7 @@ async function runReviewInternal(
       network,
       undefined,
       [],
-      request,
+      { egress: request, repositorySource: validatedPaths.sourceDir },
       request.model,
       controllerProviderAuth,
     );

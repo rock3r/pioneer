@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -60,6 +60,111 @@ describe("piRuntimeStorage", () => {
       }),
     ).resolves.toEqual({ agentDir, sessionDirs: [history] });
   });
+
+  it("resolves the review's project session directory against the source root", async () => {
+    const root = await realpath(await createTempDir("pi-project-settings-"));
+    const agent = path.join(root, "agent");
+    const globalSettings = path.join(root, "global.json");
+    const source = path.join(root, "repository");
+    const projectSettings = path.join(source, ".pi", "settings.json");
+    await mkdir(path.dirname(projectSettings), { recursive: true });
+    await writeFile(globalSettings, JSON.stringify({ sessionDir: "~/global-history" }));
+    await writeFile(projectSettings, JSON.stringify({ sessionDir: "history" }));
+    const env = { HOME: root, USERPROFILE: root };
+
+    await expect(piRuntimeStorage(agent, globalSettings, env, source)).resolves.toEqual({
+      agentDir: agent,
+      sessionDirs: [path.join(root, "global-history")],
+      repositorySessionDirs: [path.join(source, "history")],
+    });
+    await expect(piRuntimeStorage(agent, globalSettings, env)).resolves.toEqual({
+      agentDir: agent,
+      sessionDirs: [path.join(root, "global-history")],
+    });
+
+    for (const [value, expected] of [
+      ["~/tilde-history", path.join(root, "tilde-history")],
+      [pathToFileURL(path.join(root, "url-history")).href, path.join(root, "url-history")],
+    ] as const) {
+      await writeFile(projectSettings, `\uFEFF${JSON.stringify({ sessionDir: value })}`);
+      await expect(piRuntimeStorage(agent, globalSettings, env, source)).resolves.toMatchObject({
+        repositorySessionDirs: [expected],
+      });
+    }
+    await writeFile(globalSettings, JSON.stringify({ sessionDir: "relative" }));
+    await expect(piRuntimeStorage(agent, globalSettings, env, source)).rejects.toThrow(
+      "[PI_SESSION_DIR_RELATIVE]",
+    );
+  });
+
+  it("ignores unusable project settings and accepts a file at exactly 64 KiB", async () => {
+    const source = await realpath(await createTempDir("pi-project-settings-limit-"));
+    const agent = path.join(source, "agent");
+    const globalSettings = path.join(source, "global.json");
+    const settings = path.join(source, ".pi", "settings.json");
+    await mkdir(path.dirname(settings));
+    const storage = () => piRuntimeStorage(agent, globalSettings, {}, source);
+    const ignored = { repositorySessionDirs: [] };
+    await expect(storage()).resolves.toMatchObject(ignored);
+
+    const valid = JSON.stringify({ sessionDir: "history" });
+    for (const contents of [
+      "{",
+      "{}",
+      '{"sessionDir":42}',
+      '{"sessionDir":""}',
+      '{"sessionDir":"bad\\u0000path"}',
+      '{"sessionDir":"file:///%ZZ"}',
+      valid.padEnd(64 * 1024 + 1, " "),
+    ]) {
+      await writeFile(settings, contents);
+      await expect(storage()).resolves.toMatchObject(ignored);
+    }
+    await writeFile(settings, valid.padEnd(64 * 1024, " "));
+    await expect(storage()).resolves.toMatchObject({
+      repositorySessionDirs: [path.join(source, "history")],
+    });
+    const nonRegular = await realpath(await createTempDir("pi-project-settings-directory-"));
+    await mkdir(path.join(nonRegular, ".pi", "settings.json"), { recursive: true });
+    await expect(piRuntimeStorage(agent, globalSettings, {}, nonRegular)).resolves.toMatchObject(
+      ignored,
+    );
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "accepts contained settings links and ignores links outside the repository",
+    async () => {
+      const root = await realpath(await createTempDir("pi-project-settings-links-"));
+      const source = path.join(root, "source");
+      const adjacent = path.join(root, "source-adjacent");
+      await mkdir(path.join(source, ".pi"), { recursive: true });
+      await mkdir(adjacent);
+      await writeFile(path.join(source, "settings.json"), '{"sessionDir":"history"}');
+      await writeFile(path.join(adjacent, "settings.json"), '{"sessionDir":"unrelated"}');
+      await symlink("../settings.json", path.join(source, ".pi", "settings.json"));
+      await symlink(adjacent, path.join(source, "history"));
+      const agent = path.join(root, "agent");
+      const globalSettings = path.join(root, "global.json");
+      await expect(piRuntimeStorage(agent, globalSettings, {}, source)).resolves.toMatchObject({
+        repositorySessionDirs: [path.join(source, "history"), adjacent],
+      });
+      const elsewhere = path.join(root, "elsewhere");
+      await mkdir(elsewhere);
+      await symlink(adjacent, path.join(elsewhere, ".pi"));
+      await expect(piRuntimeStorage(agent, globalSettings, {}, elsewhere)).resolves.toMatchObject({
+        repositorySessionDirs: [],
+      });
+      const linkedFile = path.join(root, "linked-file");
+      await mkdir(path.join(linkedFile, ".pi"), { recursive: true });
+      await symlink(
+        path.join(adjacent, "settings.json"),
+        path.join(linkedFile, ".pi", "settings.json"),
+      );
+      await expect(piRuntimeStorage(agent, globalSettings, {}, linkedFile)).resolves.toMatchObject({
+        repositorySessionDirs: [],
+      });
+    },
+  );
 
   it.runIf(process.platform === "win32")(
     "normalizes Git Bash and WSL drive paths like Pi on Windows",

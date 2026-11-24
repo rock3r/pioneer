@@ -94,7 +94,10 @@ export async function prepareReviewRuntime(
   network: NetworkTier = "full",
   signal?: AbortSignal,
   capabilityExtensions: readonly string[] = [],
-  filters?: Pick<EgressPolicy, "allowHosts" | "blockHosts">,
+  options: {
+    readonly egress?: Pick<EgressPolicy, "allowHosts" | "blockHosts">;
+    readonly repositorySource?: string;
+  } = {},
   requestedModel?: string,
   protectProvider = false,
   homeMode: "review" | "classification" = "review",
@@ -107,8 +110,8 @@ export async function prepareReviewRuntime(
     extensionRoot = await createReviewScratchDirectory(scratchBase);
     const policy = {
       network,
-      ...(filters?.allowHosts ? { allowHosts: filters.allowHosts } : {}),
-      ...(filters?.blockHosts ? { blockHosts: filters.blockHosts } : {}),
+      ...(options.egress?.allowHosts ? { allowHosts: options.egress.allowHosts } : {}),
+      ...(options.egress?.blockHosts ? { blockHosts: options.egress.blockHosts } : {}),
     };
     if (protectProvider) {
       controllerProviderAuth = await prepareControllerProviderAuth(
@@ -143,6 +146,8 @@ export async function prepareReviewRuntime(
           signal,
           path.join(home.agentDir, "settings.json"),
           extensionsEnabled,
+          undefined,
+          options.repositorySource,
         )
       : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
     const providerNetwork =

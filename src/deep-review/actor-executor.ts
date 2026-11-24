@@ -115,6 +115,7 @@ async function launchStructuredActor(
     "public",
     request.signal,
     capabilityExtensions,
+    { repositorySource: validatedPaths.sourceDir },
   );
   try {
     const readiness = await assertPiReady({
