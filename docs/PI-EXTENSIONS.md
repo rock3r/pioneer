@@ -14,6 +14,8 @@ The controller resolves resources through the installed official Pi package's `D
 
 Pioneer copies enabled entry points, package assets, and dependencies as data into a private directory. Npm layouts retain `node_modules` and hoisted dependencies. Local extensions must have a dedicated directory containing their dependencies and assets. Copies cannot exceed 1 GiB or 500,000 entries. Dependency links must resolve inside selected code directories. Pioneer rejects filesystem/home roots, special files, and cycles, and excludes Git metadata and package caches.
 
+The controller first selects the source roots and identifies private storage without copying any files. The per-run stage then copies the tree, checks source identity, size, modification time, and change time after each file copy, and revalidates the enabled entry points. The stage records source metadata for every observed entry, including skipped Git metadata and credential files. It collects staged metadata after all copies and permission changes are complete. The manifest exists only in controller memory and is never included in actor grants. The digest still uses paths relative to the staging directory and hashes source sizes and execute bits with staged file bytes in the original order.
+
 Pioneer excludes Pi's private runtime storage by exact location:
 
 - the agent directory's `sessions/` and `logs/` directories;

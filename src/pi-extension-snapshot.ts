@@ -1,5 +1,5 @@
 import { createHash, type Hash } from "node:crypto";
-import { constants, createReadStream } from "node:fs";
+import { type BigIntStats, constants, createReadStream } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -215,6 +215,133 @@ export interface ExtensionSnapshot {
   readonly bytes: number;
 }
 
+export interface ExtensionSnapshotPlan {
+  readonly enabled: readonly ExtensionResource[];
+  readonly selectedRoots: readonly string[];
+  readonly agentDir: string | undefined;
+  readonly privateDirectories: readonly string[];
+  readonly privateFiles: ReadonlySet<string>;
+  readonly excluded: ReadonlySet<string>;
+  readonly excludedFiles: ReadonlySet<string>;
+}
+
+type StagedMetadata = Pick<BigIntStats, "ino" | "size" | "mode" | "mtimeNs" | "ctimeNs">;
+
+interface ManifestSource {
+  /** A canonical location that names the link itself for a symlink. */
+  readonly sourcePath: string;
+  readonly type: "file" | "directory" | "symlink" | "other";
+  readonly source: StagedMetadata & Pick<BigIntStats, "dev" | "nlink">;
+  readonly linkText?: string;
+}
+
+export type ExtensionManifestRecord = ManifestSource &
+  (
+    | { readonly staged: false }
+    | {
+        readonly staged: true;
+        readonly stagedRelativePath: string;
+        readonly stagedMetadata: StagedMetadata;
+      }
+  );
+
+export interface StagedExtensionSnapshot extends ExtensionSnapshot {
+  /** Controller-only. Includes names and metadata from excluded portions of the source tree. */
+  readonly manifest: readonly ExtensionManifestRecord[];
+}
+
+interface ObservedEntry extends ManifestSource {
+  readonly stagedRelativePath?: string;
+}
+
+class ExtensionSnapshotChangedError extends Error {
+  constructor() {
+    super(
+      "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
+    );
+  }
+}
+
+function sameSource(before: BigIntStats, after: BigIntStats): boolean {
+  return (
+    after.ino === before.ino &&
+    after.dev === before.dev &&
+    after.size === before.size &&
+    after.mtimeNs === before.mtimeNs &&
+    after.ctimeNs === before.ctimeNs
+  );
+}
+
+function isLinkObservationRace(error: unknown): boolean {
+  return (
+    error instanceof ExtensionSnapshotChangedError ||
+    (error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "EINVAL"))
+  );
+}
+
+function stagedMetadata(details: BigIntStats): StagedMetadata {
+  const { ino, size, mode, mtimeNs, ctimeNs } = details;
+  return { ino, size, mode, mtimeNs, ctimeNs };
+}
+
+async function observeSource(
+  sourcePath: string,
+  details: BigIntStats,
+  expectedTarget?: string,
+): Promise<ManifestSource> {
+  const type = details.isSymbolicLink()
+    ? "symlink"
+    : details.isFile()
+      ? "file"
+      : details.isDirectory()
+        ? "directory"
+        : "other";
+  const source = { ...stagedMetadata(details), dev: details.dev, nlink: details.nlink };
+  if (type === "symlink") {
+    const linkText = await readlink(sourcePath);
+    if (expectedTarget !== undefined && (await realpath(sourcePath)) !== expectedTarget)
+      throw new ExtensionSnapshotChangedError();
+    if (!sameSource(details, await lstat(sourcePath, { bigint: true })))
+      throw new ExtensionSnapshotChangedError();
+    return { sourcePath, type, source, linkText };
+  }
+  return { sourcePath, type, source };
+}
+
+async function lstatIfPresent(sourcePath: string): Promise<BigIntStats | undefined> {
+  try {
+    return await lstat(sourcePath, { bigint: true });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function tryObserveSource(
+  sourcePath: string,
+  details: BigIntStats,
+): Promise<{ readonly record: ManifestSource; readonly details: BigIntStats } | undefined> {
+  try {
+    return { record: await observeSource(sourcePath, details), details };
+  } catch (error) {
+    if (isLinkObservationRace(error)) return undefined;
+    throw error;
+  }
+}
+
+/** Give an entry that changed during the prepass one chance to supply a coherent record. */
+async function observeSourceBestEffort(
+  sourcePath: string,
+  details: BigIntStats,
+): ReturnType<typeof tryObserveSource> {
+  const observation = await tryObserveSource(sourcePath, details);
+  if (observation !== undefined) return observation;
+  const replacement = await lstatIfPresent(sourcePath);
+  return replacement === undefined ? undefined : tryObserveSource(sourcePath, replacement);
+}
+
 /** Capability paths have already been canonicalized and validated by their profile. */
 export function extensionPathsWithCapabilities(
   snapshot: ExtensionSnapshot,
@@ -309,14 +436,35 @@ export function mirroredExtensionStagePath(destination: string, source: string):
   );
 }
 
-export async function snapshotExtensionResources(
+async function isPrivateStorage(canonical: string, plan: ExtensionSnapshotPlan): Promise<boolean> {
+  const { agentDir, privateDirectories } = plan;
+  return (
+    privateDirectories.some((entry) => within(entry, policyPath(canonical))) ||
+    (agentDir !== undefined &&
+      policyPath(path.dirname(canonical)) === policyPath(agentDir) &&
+      policyPath(canonical).endsWith(".log") &&
+      (await lstat(canonical)).isFile()) ||
+    (agentDir !== undefined &&
+      policyPath(path.dirname(canonical)) === policyPath(agentDir) &&
+      [".json", ".md"].some((suffix) => policyPath(path.basename(canonical)).endsWith(suffix)) &&
+      ["auth.json", "models.json", "models-store.json", "settings.json", "agents.md"].includes(
+        policyPath(path.basename(canonical)),
+      ))
+  );
+}
+
+function refusePrivateStorage(): Error {
+  return new Error(
+    "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension is stored inside private Pi session or log storage. Move it to a dedicated extension directory.",
+  );
+}
+
+export async function planExtensionSnapshot(
   resources: readonly ExtensionResource[],
-  destination: string,
   signal?: AbortSignal,
   storage?: PiRuntimeStorage,
-  budget?: { readonly entries: number; readonly bytes: number },
   excludedPaths: readonly string[] = [],
-): Promise<ExtensionSnapshot> {
+): Promise<ExtensionSnapshotPlan> {
   const excluded = new Set<string>();
   const excludedFiles = new Set<string>();
   for (const candidate of excludedPaths) {
@@ -394,22 +542,6 @@ export async function snapshotExtensionResources(
       if (!(await rememberPrivateFiles(await canonicalOrResolved(root)))) break;
     }
   }
-  const isPrivateStorage = async (canonical: string): Promise<boolean> =>
-    privateDirectories.some((entry) => within(entry, policyPath(canonical))) ||
-    (agentDir !== undefined &&
-      policyPath(path.dirname(canonical)) === policyPath(agentDir) &&
-      policyPath(canonical).endsWith(".log") &&
-      (await lstat(canonical)).isFile()) ||
-    (agentDir !== undefined &&
-      policyPath(path.dirname(canonical)) === policyPath(agentDir) &&
-      [".json", ".md"].some((suffix) => policyPath(path.basename(canonical)).endsWith(suffix)) &&
-      ["auth.json", "models.json", "models-store.json", "settings.json", "agents.md"].includes(
-        policyPath(path.basename(canonical)),
-      ));
-  const refusePrivateStorage = (): Error =>
-    new Error(
-      "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension is stored inside private Pi session or log storage. Move it to a dedicated extension directory.",
-    );
   const enabled = resources.filter(
     (resource) => resource.enabled && resource.metadata.scope === "user",
   );
@@ -491,6 +623,25 @@ export async function snapshotExtensionResources(
       );
     }
   }
+  return {
+    enabled,
+    selectedRoots,
+    agentDir,
+    privateDirectories,
+    privateFiles,
+    excluded,
+    excludedFiles,
+  };
+}
+
+export async function stageExtensionSnapshot(
+  plan: ExtensionSnapshotPlan,
+  destination: string,
+  signal?: AbortSignal,
+  budget?: { readonly entries: number; readonly bytes: number },
+): Promise<StagedExtensionSnapshot> {
+  const { selectedRoots, excluded, privateFiles } = plan;
+  const excludedFiles = new Set(plan.excludedFiles);
   await mkdir(destination, { recursive: true, mode: 0o700 });
   let entries = budget?.entries ?? 0;
   let bytes = budget?.bytes ?? 0;
@@ -502,8 +653,19 @@ export async function snapshotExtensionResources(
       ),
   );
   const isSensitivePath = createSensitiveCredentialPathMatcher();
-  const mapped = new Map<string, string>();
+  const observed = new Map<string, ObservedEntry>();
   const stagedPath = (source: string): string => mirroredExtensionStagePath(destination, source);
+  async function skipEntry(source: string): Promise<StagedEntry> {
+    // Most skips were already recorded by the prepass. An entry can appear between walks.
+    if (!observed.has(source)) {
+      const details = await lstatIfPresent(source);
+      if (details !== undefined) {
+        const observation = await observeSourceBestEffort(source, details);
+        if (observation !== undefined) observed.set(source, observation.record);
+      }
+    }
+    return { items: [] };
+  }
   /**
    * Stages one entry without descending into it. A directory returns its sorted child names, so
    * the caller can stage the children concurrently and still assemble digest items in order.
@@ -518,11 +680,12 @@ export async function snapshotExtensionResources(
     try {
       canonical = await realpath(source);
     } catch (error) {
-      if (checkCredentialPath && isSensitivePath(source)) return { items: [] };
+      if (checkCredentialPath && isSensitivePath(source)) return skipEntry(source);
       throw error;
     }
-    if (checkCredentialPath && isSensitivePath(source, canonical)) return { items: [] };
-    if ([...excluded].some((entry) => within(entry, policyPath(canonical)))) return { items: [] };
+    if (checkCredentialPath && isSensitivePath(source, canonical)) return skipEntry(source);
+    if ([...excluded].some((entry) => within(entry, policyPath(canonical))))
+      return skipEntry(source);
     const identity = await lstat(canonical, { bigint: true });
     const fileIdentity = `${identity.dev}:${identity.ino}`;
     if (
@@ -530,7 +693,7 @@ export async function snapshotExtensionResources(
       identity.ino !== 0n &&
       (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity))
     ) {
-      return { items: [] };
+      return skipEntry(source);
     }
     if (
       identity.isFile() &&
@@ -540,9 +703,9 @@ export async function snapshotExtensionResources(
     ) {
       throw new Error("Explicit Pi extension uses an unsupported hard-link layout");
     }
-    if (await isPrivateStorage(canonical)) return { items: [] };
+    if (await isPrivateStorage(canonical, plan)) return skipEntry(source);
     // Session history can sit anywhere a sessionDir Pioneer cannot see points, so check content.
-    if (await isPiSessionFile(canonical, scans, [source, canonical])) return { items: [] };
+    if (await isPiSessionFile(canonical, scans, [source, canonical])) return skipEntry(source);
     if (!selectedRoots.some((root) => within(root, canonical))) {
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency link escapes the selected code directories. Install its dependencies inside the package before retrying.",
@@ -552,7 +715,9 @@ export async function snapshotExtensionResources(
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency contains a symlink cycle.",
       );
-    const lexical = await lstat(source);
+    const lexical = await lstatIfPresent(source);
+    if (lexical === undefined) throw new ExtensionSnapshotChangedError();
+    const stagedRelativePath = path.relative(destination, target);
     let stagedAlready = false;
     try {
       await lstat(target);
@@ -561,10 +726,17 @@ export async function snapshotExtensionResources(
       stagedAlready = false;
     }
     if (lexical.isSymbolicLink()) {
+      let observedSource: ManifestSource;
+      try {
+        observedSource = await observeSource(source, lexical, canonical);
+      } catch (error) {
+        if (isLinkObservationRace(error)) throw new ExtensionSnapshotChangedError();
+        throw error;
+      }
       if (!stagedAlready) entries += 1;
       if (entries > SNAPSHOT_ENTRY_LIMIT) throw snapshotLimitError(entries, bytes);
       const relative = path.relative(path.dirname(target), stagedPath(canonical));
-      const record = JSON.stringify([path.relative(destination, target), "symlink", relative]);
+      const record = JSON.stringify([stagedRelativePath, "symlink", relative]);
       try {
         await symlink(relative, target);
       } catch (error) {
@@ -575,27 +747,33 @@ export async function snapshotExtensionResources(
           (error as { code?: string }).code === "EEXIST";
         if (!exists) throw error;
         if ((await readlink(target)) !== relative) {
-          throw new Error(
-            "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
-          );
+          throw new ExtensionSnapshotChangedError();
         }
       }
+      observed.set(source, { ...observedSource, stagedRelativePath });
       return { items: [{ record }] };
     }
-    const details = await lstat(canonical);
+    if (path.relative(source, canonical) !== "") throw new ExtensionSnapshotChangedError();
+    const details = await lstat(canonical, { bigint: true });
+    const size = details.isFile() ? Number(details.size) : 0;
+    const ownerExecute = Number(details.mode & 0o100n);
     if (!stagedAlready) {
       entries += 1;
-      bytes += details.isFile() ? details.size : 0;
+      bytes += size;
     }
     if (entries > SNAPSHOT_ENTRY_LIMIT || bytes > SNAPSHOT_BYTE_LIMIT) {
       throw snapshotLimitError(entries, bytes);
     }
     const record = JSON.stringify([
-      path.relative(destination, target),
+      stagedRelativePath,
       details.isDirectory() ? "directory" : "file",
-      details.isFile() ? details.size : 0,
-      details.mode & 0o100,
+      size,
+      ownerExecute,
     ]);
+    observed.set(source, {
+      ...(await observeSource(source, details)),
+      stagedRelativePath,
+    });
     if (details.isDirectory()) {
       await mkdir(target, { recursive: true, mode: 0o700 });
       const names = (await readdir(canonical))
@@ -613,14 +791,11 @@ export async function snapshotExtensionResources(
     if (stagedAlready) {
       const staged = await lstat(target);
       const same =
-        staged.size === details.size &&
-        (await fileDigest(target)) === (await fileDigest(canonical));
+        staged.size === size && (await fileDigest(target)) === (await fileDigest(canonical));
       if (!same) {
-        throw new Error(
-          "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
-        );
+        throw new ExtensionSnapshotChangedError();
       }
-      const normalized = details.mode & 0o100 ? 0o700 : 0o600;
+      const normalized = ownerExecute ? 0o700 : 0o600;
       if ((staged.mode & 0o777) !== normalized) await chmod(target, normalized);
       // A resumed caller budget stages into the same tree; the earlier pass hashed these bytes.
       return { items: [{ record }] };
@@ -628,30 +803,21 @@ export async function snapshotExtensionResources(
     // A copy-on-write clone shares blocks with the source; filesystems without clones copy bytes.
     await copyFile(canonical, target, constants.COPYFILE_FICLONE);
     const copied = await lstat(target);
-    const after = await lstat(canonical);
-    if (
-      after.ino !== details.ino ||
-      after.dev !== details.dev ||
-      after.size !== details.size ||
-      copied.size !== details.size ||
-      after.mtimeMs !== details.mtimeMs
-    ) {
-      throw new Error(
-        "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
-      );
-    }
+    const after = await lstat(canonical, { bigint: true });
+    if (!sameSource(details, after) || copied.size !== size)
+      throw new ExtensionSnapshotChangedError();
     if (
       await isPiSessionFile(
         target,
         scans,
         [source, canonical],
-        Math.max(details.nlink, after.nlink),
+        Number(details.nlink > after.nlink ? details.nlink : after.nlink),
       )
     )
       throw new Error(
         "[PI_EXTENSION_SNAPSHOT_CHANGED] A file became Pi session history while it was being copied; retry.",
       );
-    await chmod(target, details.mode & 0o100 ? 0o700 : 0o600);
+    await chmod(target, ownerExecute ? 0o700 : 0o600);
     return { items: [{ record, content: target, size: copied.size }] };
   }
   /** A pending copy: where the entry comes from, where it goes, and its digest slot. */
@@ -701,7 +867,7 @@ export async function snapshotExtensionResources(
       `[PI_EXTENSION_SNAPSHOT_LIMIT] The selected extension directories hold more than ${SNAPSHOT_ENTRY_LIMIT} entries to scan, including skipped metadata such as .git. Move the extension into a smaller dedicated directory.`,
     );
   const countRootInodes = async (file: string): Promise<WalkLevel<string> | undefined> => {
-    let details: Awaited<ReturnType<typeof lstat>>;
+    let details: BigIntStats;
     try {
       details = await lstat(file, { bigint: true });
     } catch {
@@ -710,6 +876,10 @@ export async function snapshotExtensionResources(
     prepassVisits += 1;
     // This scan also visits entries the copy skips, such as .git, and has no shared budget.
     if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) throw prepassLimitError();
+    const observation = await observeSourceBestEffort(file, details);
+    if (observation === undefined) return undefined;
+    observed.set(file, observation.record);
+    details = observation.details;
     if (details.isSymbolicLink()) return undefined;
     if (details.isFile()) {
       if (details.ino === 0n) return undefined;
@@ -742,9 +912,8 @@ export async function snapshotExtensionResources(
   const rootSlots = new Array<DigestNode | undefined>(selectedRoots.length);
   const rootEntries: CopyEntry[] = [];
   for (const [index, root] of selectedRoots.entries()) {
-    if (await isPrivateStorage(root)) throw refusePrivateStorage();
+    if (await isPrivateStorage(root, plan)) throw refusePrivateStorage();
     const target = stagedPath(root);
-    mapped.set(root, target);
     rootEntries.push({
       source: root,
       target,
@@ -762,22 +931,82 @@ export async function snapshotExtensionResources(
   const items = flattenDigestItems(rootSlots);
   const digest = createHash("sha256");
   await updateDigestInOrder(digest, items, signal);
+  const { paths, sourcePaths } = await validateExtensionSnapshot(plan, destination);
+  digest.update(JSON.stringify(paths.map((entry) => path.relative(destination, entry))));
+  const manifest = await finalizeExtensionManifest(destination, observed, signal);
+  return { paths, sourcePaths, digest: digest.digest("hex"), entries, bytes, manifest };
+}
+
+async function finalizeExtensionManifest(
+  destination: string,
+  observed: ReadonlyMap<string, ObservedEntry>,
+  signal?: AbortSignal,
+): Promise<readonly ExtensionManifestRecord[]> {
+  const entries = [...observed.values()];
+  const manifest = new Array<ExtensionManifestRecord>(entries.length);
+  await walkBounded(
+    { size: entries.length, next: 0, child: (index) => index },
+    async (index) => {
+      const { stagedRelativePath, ...entry } = entries[index] as ObservedEntry;
+      if (stagedRelativePath === undefined) {
+        manifest[index] = { ...entry, staged: false };
+      } else {
+        const details = await lstat(path.join(destination, stagedRelativePath), { bigint: true });
+        manifest[index] = {
+          ...entry,
+          staged: true,
+          stagedRelativePath,
+          stagedMetadata: stagedMetadata(details),
+        };
+      }
+      return undefined;
+    },
+    signal,
+  );
+  return manifest;
+}
+
+/** Rechecks enabled source entry points and maps them to the staged tree. */
+export async function validateExtensionSnapshot(
+  plan: ExtensionSnapshotPlan,
+  destination: string,
+): Promise<Pick<ExtensionSnapshot, "paths" | "sourcePaths">> {
   const paths: string[] = [];
   const sourcePaths: string[] = [];
-  for (const resource of enabled) {
+  for (const resource of plan.enabled) {
     const canonical = await realpath(resource.path);
-    if (await isPrivateStorage(canonical)) throw refusePrivateStorage();
-    const root = selectedRoots.find((candidate) => within(candidate, canonical));
+    if (await isPrivateStorage(canonical, plan)) throw refusePrivateStorage();
+    const root = plan.selectedRoots.find((candidate) => within(candidate, canonical));
     if (root === undefined)
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension entry escapes its staged package directory.",
       );
-    const staged = path.join(mapped.get(root) ?? "", path.relative(root, canonical));
+    const staged = path.join(
+      mirroredExtensionStagePath(destination, root),
+      path.relative(root, canonical),
+    );
     if (!paths.includes(staged)) {
       paths.push(staged);
       sourcePaths.push(canonical);
     }
   }
-  digest.update(JSON.stringify(paths.map((entry) => path.relative(destination, entry))));
-  return { paths, sourcePaths, digest: digest.digest("hex"), entries, bytes };
+  return { paths, sourcePaths };
+}
+
+export async function snapshotExtensionResources(
+  resources: readonly ExtensionResource[],
+  destination: string,
+  signal?: AbortSignal,
+  storage?: PiRuntimeStorage,
+  budget?: { readonly entries: number; readonly bytes: number },
+  excludedPaths: readonly string[] = [],
+): Promise<ExtensionSnapshot> {
+  const plan = await planExtensionSnapshot(resources, signal, storage, excludedPaths);
+  const { paths, sourcePaths, digest, entries, bytes } = await stageExtensionSnapshot(
+    plan,
+    destination,
+    signal,
+    budget,
+  );
+  return { paths, sourcePaths, digest, entries, bytes };
 }
