@@ -2,11 +2,14 @@ import { lstat, mkdir, readdir, rename, rm, unlink, writeFile } from "node:fs/pr
 import path from "node:path";
 import type { ExtensionCacheEntry } from "./pi-extension-cache.js";
 import {
+  compareExtensionCacheGenerationOrder,
   EXTENSION_CACHE_ID,
   EXTENSION_CACHE_KEY,
+  type ExtensionCacheGenerationOrder,
   extensionCacheApparentSize,
   openPrivateCacheFile,
   readCacheText,
+  readExtensionCacheSequence,
 } from "./pi-extension-cache-format.js";
 import {
   cacheProcessExited,
@@ -22,12 +25,11 @@ const MAX_APPARENT_BYTES = 3 * 1024 ** 3;
 const MAX_UNUSED_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const ABANDONED_STAGING_AGE_MS = 60 * 60 * 1000;
 
-interface Candidate {
+interface Candidate extends ExtensionCacheGenerationOrder {
   readonly key: string;
   readonly id: string;
   readonly directory: string;
   readonly bytes: number;
-  readonly created: bigint;
   readonly usedAt: number;
   readonly bad: boolean;
 }
@@ -96,31 +98,43 @@ async function readCandidate(
   }
   const snapshot = path.join(directory, "snapshot.json");
   try {
-    const [payloadBytes, created, lastUsed, bad, manifest, packageScope, boot] = await Promise.all([
-      readCacheText(snapshot).then(extensionCacheApparentSize),
-      lstat(snapshot, { bigint: true }),
-      lstat(path.join(directory, "last-used")),
-      lstat(path.join(directory, "bad")).then(
-        () => true,
-        (error: unknown) => {
-          if (isCacheError(error, "ENOENT")) return false;
-          throw error;
-        },
-      ),
-      lstat(path.join(directory, "manifest.jsonl")),
-      lstat(path.join(directory, "payload", "package.json")),
-      lstat(path.join(directory, "verified-boot")),
-    ]);
+    const [payloadBytes, created, lastUsed, bad, manifest, packageScope, boot, sequence] =
+      await Promise.all([
+        readCacheText(snapshot).then(extensionCacheApparentSize),
+        lstat(snapshot, { bigint: true }),
+        lstat(path.join(directory, "last-used")),
+        lstat(path.join(directory, "bad")).then(
+          () => true,
+          (error: unknown) => {
+            if (isCacheError(error, "ENOENT")) return false;
+            throw error;
+          },
+        ),
+        lstat(path.join(directory, "manifest.jsonl")),
+        lstat(path.join(directory, "payload", "package.json")),
+        lstat(path.join(directory, "verified-boot")),
+        readExtensionCacheSequence(directory),
+      ]);
     const bytes =
       payloadBytes +
       Number(created.size) +
       manifest.size +
       packageScope.size +
       boot.size +
-      lastUsed.size;
-    return { key, id, directory, bytes, created: created.mtimeNs, usedAt: lastUsed.mtimeMs, bad };
+      lastUsed.size +
+      (sequence === undefined ? 0 : sequence.toString().length + 1);
+    return {
+      key,
+      id,
+      directory,
+      bytes,
+      created: created.mtimeNs,
+      sequence,
+      usedAt: lastUsed.mtimeMs,
+      bad,
+    };
   } catch {
-    return { key, id, directory, bytes: 0, created: 0n, usedAt: 0, bad: true };
+    return { key, id, directory, bytes: 0, created: 0n, sequence: undefined, usedAt: 0, bad: true };
   }
 }
 
@@ -188,18 +202,21 @@ export async function collectExtensionCache(
   const budget = options.maxBytes ?? MAX_APPARENT_BYTES;
   await withExtensionCacheLock(root, platform, async () => {
     const candidates = await readCandidates(root);
-    const newest = new Map<string, bigint>();
+    const newest = new Map<string, Candidate>();
     let remaining = 0;
     for (const candidate of candidates) {
       remaining += candidate.bytes;
       const current = newest.get(candidate.key);
-      if (!candidate.bad && (current === undefined || candidate.created > current))
-        newest.set(candidate.key, candidate.created);
+      if (
+        !candidate.bad &&
+        (current === undefined || compareExtensionCacheGenerationOrder(candidate, current) > 0)
+      )
+        newest.set(candidate.key, candidate);
     }
     const expired = (candidate: Candidate) =>
       candidate.bad ||
       now - candidate.usedAt > MAX_UNUSED_AGE_MS ||
-      candidate.created < (newest.get(candidate.key) ?? candidate.created);
+      compareExtensionCacheGenerationOrder(candidate, newest.get(candidate.key) ?? candidate) < 0;
     const candidatesByAge = candidates.sort(
       (left, right) => Number(expired(right)) - Number(expired(left)) || left.usedAt - right.usedAt,
     );
