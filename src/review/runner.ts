@@ -1787,7 +1787,9 @@ async function runReviewInternal(
       // Preserve readiness's stable, sanitized diagnostic for missing or unsafe launchers.
       await assertPiReady({
         environment: piEnvironment,
-        ...(request.extensions === false ? { extensions: false } : {}),
+        ...(request.extensions === false || network === "provider-only"
+          ? { extensions: false }
+          : {}),
         ...(request.model === undefined ? {} : { requestedModel: request.model }),
       });
       // If readiness succeeded, the launcher changed during the adjacent probes. Resolve it
@@ -1807,28 +1809,39 @@ async function runReviewInternal(
       request,
       request.model,
     );
-    const egressPolicy = preparedRuntime.egressPolicy ?? { network };
-    const networkSummary = windows
-      ? "[PIONEER_NETWORK] Windows review has no enforced network isolation."
-      : describeEgressPolicy(egressPolicy);
+    const providerNetwork = preparedRuntime.providerNetwork;
     if (
       resumeContext &&
-      !sameStringList(resumeContext.loaded.scope.providerHosts, egressPolicy.providerHosts ?? [])
+      !sameStringList(
+        resumeContext.loaded.scope.providerHosts,
+        providerNetwork?.policy.providerHosts ?? [],
+      )
     )
       throw new Error("[REVIEW_RESUME_SCOPE_CHANGED] Provider endpoints have changed");
-    request.onNetworkPolicy?.(networkSummary);
     if (resumeContext !== undefined)
       assertSameExtensionSnapshot(
         resumeContext.loaded.scope.extensionDigest,
         preparedRuntime.extensions.digest,
       );
+    const selection = request.model ?? providerNetwork?.defaultModel;
     const readiness = await assertPiReady({
       command: piCommand,
       environment: piEnvironment,
       preparedRuntime,
       ...(request.extensions === false ? { extensions: false } : {}),
-      ...(request.model === undefined ? {} : { requestedModel: request.model }),
+      ...(selection === undefined ? {} : { requestedModel: selection }),
     });
+    providerNetwork?.bind(readiness.resolvedModel);
+    const egressPolicy = providerNetwork?.policy ?? preparedRuntime.egressPolicy ?? { network };
+    if (
+      resumeContext &&
+      !sameStringList(resumeContext.loaded.scope.providerHosts, egressPolicy.providerHosts ?? [])
+    )
+      throw new Error("[REVIEW_RESUME_SCOPE_CHANGED] Provider endpoints have changed");
+    const networkSummary = windows
+      ? "[PIONEER_NETWORK] Windows review has no enforced network isolation."
+      : describeEgressPolicy(egressPolicy);
+    request.onNetworkPolicy?.(networkSummary);
     recordReviewWorkLog(workLog, "stage_completed", {
       stage: "pi_readiness",
       ...readinessMetadataForWorkLog(readiness, request.prompt),

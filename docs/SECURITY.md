@@ -254,6 +254,8 @@ All sandboxed network access is proxy-mediated and authenticated with a per-run 
 
 Every tier rejects the controller's live interface addresses, loopback, link-local, metadata and IPv6 transition destinations. The controller refreshes its interface inventory at least once per second of active use and denies connections if it cannot enumerate interfaces. Hostname blocks and provider-only hostname grants are checked before DNS. Block rules override grants. Each DNS answer must pass the address policy before the controller connects to a pinned address. A CIDR grant alone does not authorize arbitrary DNS queries in provider-only mode.
 
+Provider-only model discovery runs under the restricted proxy. When the provider is initially unknown, discovery can use explicit grants only. The controller captures provider settings before discovery and binds the actor's endpoint to the model resolved by readiness. An isolated OAuth worker refreshing the selected built-in provider can also reach that provider's known token issuer on port 443. The actor's provider allowlist stays limited to model hosts and explicit grants. The issuer remains subject to host blocks, address checks, and interface checks.
+
 On Linux, the actor has a private network namespace. A small Node supervisor exposes only a loopback port relayed to one mode-0600 Unix socket connected to the parent proxy. Raw host, LAN, or public TCP is unavailable; tools must honor standard HTTP(S) proxy variables.
 
 `eval run --allow-loopback 127.0.0.1:PORT` explicitly grants raw TCP access to an exact host loopback port. macOS adds a Seatbelt outbound rule for each port. Linux uses a dedicated mode-0600 Unix socket relay and an in-namespace supervisor listener.

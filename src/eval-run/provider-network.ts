@@ -38,6 +38,21 @@ const standardHosts = new Map([
   ["deepseek", "api.deepseek.com"],
 ]);
 
+// Pi's built-in OAuth refresh endpoints can differ from its model API endpoints.
+const oauthIssuers = new Map([
+  ["anthropic", "platform.claude.com"],
+  ["openai", "auth.openai.com"],
+  ["openai-codex", "auth.openai.com"],
+  ["xai", "auth.x.ai"],
+]);
+
+export interface PreparedProviderNetwork {
+  readonly policy: EgressPolicy;
+  readonly defaultModel: string | undefined;
+  bind(resolvedModel: string | undefined): void;
+  workerPolicy(provider: string): EgressPolicy;
+}
+
 function configuredModels(entry: Record<string, unknown>): Record<string, unknown>[] {
   return Array.isArray(entry.models) ? entry.models.map(record) : [];
 }
@@ -61,21 +76,19 @@ function selectProvider(
   return owners.length === 1 ? owners[0]?.[0] : undefined;
 }
 
-export async function resolveProviderPolicy(
+function resolveProviderEndpoint(
   policy: EgressPolicy,
-  agentDir: string,
-  requested?: string,
-): Promise<EgressPolicy> {
-  createEgressResolver(policy);
-  if (policy.network !== "provider-only") return policy;
-  const settings = await config(agentDir, "settings.json");
-  const models = await config(agentDir, "models.json");
-  const providers = record(models.providers ?? {});
-  const thinking = requested && thinkingFromModelShorthand(requested);
-  const selection = thinking ? requested?.slice(0, -thinking.length - 1) : requested;
+  settings: Record<string, unknown>,
+  providers: Record<string, unknown>,
+  requested: string | undefined,
+  discovery: boolean,
+): { policy: EgressPolicy; provider?: string } {
+  const trimmed = requested?.trim();
+  const thinking = trimmed && thinkingFromModelShorthand(trimmed);
+  const selection = thinking ? trimmed?.slice(0, -thinking.length - 1) : trimmed;
   const provider = selectProvider(selection, providers, settings);
   if (typeof provider !== "string" || !provider) {
-    if (policy.allowHosts?.length) return policy;
+    if (discovery || policy.allowHosts?.length) return { policy };
     throw new Error(
       "Cannot determine the provider endpoint. Specify a qualified provider/model, configure a Pi defaultProvider, or pass --allow-host.",
     );
@@ -107,12 +120,54 @@ export async function resolveProviderPolicy(
     host = url.hostname;
   }
   if (!host) {
-    if (policy.allowHosts?.length) return policy;
+    if (discovery || policy.allowHosts?.length) return { policy, provider };
     throw new Error(
       "Unknown provider endpoint. Configure models.json baseUrl or pass --allow-host.",
     );
   }
-  return { ...policy, providerHosts: [host] };
+  return { policy: { ...policy, providerHosts: [host] }, provider };
+}
+
+export async function prepareProviderNetwork(
+  policy: EgressPolicy,
+  agentDir: string,
+  requested?: string,
+): Promise<PreparedProviderNetwork> {
+  createEgressResolver(policy);
+  if (policy.network !== "provider-only") {
+    return { policy, defaultModel: undefined, bind: () => {}, workerPolicy: () => policy };
+  }
+  // Discovery can write its private Pi home. Bind the final route from the original snapshot.
+  const settings = await config(agentDir, "settings.json");
+  const models = await config(agentDir, "models.json");
+  const providers = record(models.providers ?? {});
+  const defaultModel =
+    typeof settings.defaultProvider === "string" &&
+    typeof settings.defaultModel === "string" &&
+    settings.defaultProvider &&
+    settings.defaultModel
+      ? settings.defaultProvider + "/" + settings.defaultModel
+      : undefined;
+  let current = resolveProviderEndpoint(policy, settings, providers, requested, true);
+  return {
+    get policy() {
+      return current.policy;
+    },
+    defaultModel,
+    bind(resolvedModel) {
+      current = resolveProviderEndpoint(
+        policy,
+        settings,
+        providers,
+        resolvedModel ?? requested,
+        false,
+      );
+    },
+    workerPolicy(provider) {
+      const issuer = provider === current.provider ? oauthIssuers.get(provider) : undefined;
+      return issuer === undefined ? current.policy : { ...current.policy, oauthIssuerHost: issuer };
+    },
+  };
 }
 
 export function describeEgressPolicy(policy: EgressPolicy): string {

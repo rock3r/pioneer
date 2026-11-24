@@ -155,13 +155,15 @@ async function startRuntimeAuthBroker(
         const workerResult = path.join(scratch, "auth-result.json");
         const authHandle = await open(workerResult, "wx+", 0o600);
         try {
+          const egressPolicy =
+            runtime.providerNetwork?.workerPolicy(provider) ?? runtime.egressPolicy;
           const workerRuntime: PreparedReviewRuntime = {
             scratch,
             extensionRoot: runtime.extensionRoot,
             home,
             extensions: runtime.extensions,
             network: runtime.network,
-            ...(runtime.egressPolicy ? { egressPolicy: runtime.egressPolicy } : {}),
+            ...(egressPolicy === undefined ? {} : { egressPolicy }),
             ...(runtime.capabilityExtensions === undefined
               ? {}
               : { capabilityExtensions: runtime.capabilityExtensions }),

@@ -215,6 +215,27 @@ request.on("error", () => {process.exitCode = 1});
     expect(result.stderr).toContain("[PIONEER_NETWORK] provider-only");
   });
 
+  it("binds a bare built-in model after restricted extension discovery", async () => {
+    const { created, runDir } = await workspace("provider-discovery", false);
+    await writeExtensionHostingPi(created, { builtinProvider: "openai" });
+    const result = await runPioneer(created, [
+      ...evalRun(created, runDir, "provider-discovery"),
+      "--network",
+      "provider-only",
+      "--",
+      "pi",
+      "--model",
+      "demo",
+      "--print",
+      "Say READY",
+    ]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("READY");
+    expect(result.stderr).toContain(
+      "[PIONEER_NETWORK] provider-only. Provider hosts: api.openai.com.",
+    );
+  });
+
   it("keeps every loopback port closed without --allow-loopback", async () => {
     const { created, runDir } = await workspace("no-loopback");
     const port = await hostListener("loopback-reached");
@@ -588,6 +609,7 @@ interface ExtensionHostingPiOptions {
    * returns, and a throwing entry becomes a load error.
    */
   readonly initializeExtensions?: boolean;
+  readonly builtinProvider?: string;
 }
 
 /**
@@ -631,7 +653,7 @@ if (argv.includes("--list-models")) {
         .map((model) => model.split("/").join("  ") + "  1K  1K  no  no\\n")
         .join("")
     : "";
-  process.stdout.write("provider  model  context  max-out  thinking  images\\nbuiltin  demo  1K  1K  no  no\\n" + extensionModels);
+  process.stdout.write("provider  model  context  max-out  thinking  images\\n" + ${JSON.stringify(options.builtinProvider ?? "builtin")} + "  demo  1K  1K  no  no\\n" + extensionModels);
   process.exit(0);
 }
 const loaded = new DefaultResourceLoader().getExtensions();

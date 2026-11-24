@@ -1,10 +1,78 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
-import { resolveProviderPolicy } from "./provider-network.js";
+import { createEgressResolver } from "./egress-policy.js";
+import { prepareProviderNetwork } from "./provider-network.js";
 
 const { createTempDir } = registerManagedTempPaths();
+
+it("discovers a bare built-in model without implicit network access and binds its resolved model", async () => {
+  const dir = await createTempDir("provider-bootstrap-");
+  const plan = await prepareProviderNetwork({ network: "provider-only" }, dir, "gpt-5.5");
+  expect(plan.policy.providerHosts).toBeUndefined();
+  const lookup = vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]);
+  const sources = { lookup, interfaces: () => ["127.0.0.1"] };
+  await expect(createEgressResolver(plan.policy, sources)("api.openai.com", 443)).rejects.toThrow();
+  expect(lookup).not.toHaveBeenCalled();
+  plan.bind("openai/gpt-5.5");
+  expect(plan.policy.providerHosts).toEqual(["api.openai.com"]);
+  await expect(createEgressResolver(plan.policy, sources)("api.openai.com", 443)).resolves.toEqual({
+    address: "8.8.8.8",
+    family: 4,
+  });
+});
+
+it("binds the readiness result using provider settings captured before discovery", async () => {
+  const dir = await createTempDir("provider-bind-");
+  const modelsFile = path.join(dir, "models.json");
+  function models(url: string) {
+    return JSON.stringify({
+      providers: {
+        gateway: { baseUrl: "https://default.test", models: [{ id: "model", baseUrl: url }] },
+      },
+    });
+  }
+  await writeFile(modelsFile, models("https://captured.test"));
+  await writeFile(
+    path.join(dir, "settings.json"),
+    JSON.stringify({
+      defaultProvider: "gateway",
+      defaultModel: "model",
+    }),
+  );
+  const plan = await prepareProviderNetwork({ network: "provider-only" }, dir);
+  expect(plan.defaultModel).toBe("gateway/model");
+  await writeFile(modelsFile, models("https://modified-during-discovery.test"));
+  plan.bind("gateway/model");
+  expect(plan.policy.providerHosts).toEqual(["captured.test"]);
+});
+
+it("grants the selected OAuth issuer only to the correct worker and on its HTTPS port", async () => {
+  const dir = await createTempDir("provider-oauth-");
+  const plan = await prepareProviderNetwork(
+    { network: "provider-only" },
+    dir,
+    "openai-codex/model",
+  );
+  plan.bind("openai-codex/model");
+  const lookup = vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]);
+  const sources = { lookup, interfaces: () => ["127.0.0.1"] };
+  const actor = createEgressResolver(plan.policy, sources);
+  const otherWorker = createEgressResolver(plan.workerPolicy("anthropic"), sources);
+  const workerPolicy = plan.workerPolicy("openai-codex");
+  const worker = createEgressResolver(workerPolicy, sources);
+  const blocked = createEgressResolver(
+    { ...workerPolicy, blockHosts: ["auth.openai.com"] },
+    sources,
+  );
+  await expect(actor("auth.openai.com", 443)).rejects.toThrow();
+  await expect(otherWorker("auth.openai.com", 443)).rejects.toThrow();
+  await expect(worker("auth.openai.com", 444)).rejects.toThrow();
+  await expect(blocked("auth.openai.com", 443)).rejects.toThrow();
+  expect(lookup).not.toHaveBeenCalled();
+  await expect(worker("auth.openai.com", 443)).resolves.toEqual({ address: "8.8.8.8", family: 4 });
+});
 
 it("binds a bare configured model to its own provider even when Pi has a different default", async () => {
   const dir = await createTempDir("provider-selection-");
@@ -17,10 +85,12 @@ it("binds a bare configured model to its own provider even when Pi has a differe
       },
     }),
   );
-  for (const name of ["custom-model", "org/team/custom-model"])
-    expect(
-      (await resolveProviderPolicy({ network: "provider-only" }, dir, name)).providerHosts,
-    ).toEqual(["team.test"]);
+  for (const name of ["custom-model", "org/team/custom-model"]) {
+    const plan = await prepareProviderNetwork({ network: "provider-only" }, dir, name);
+    expect(plan.policy.providerHosts).toEqual(["team.test"]);
+    plan.bind("org/team/custom-model");
+    expect(plan.policy.providerHosts).toEqual(["team.test"]);
+  }
 });
 it("selects only the selected provider endpoint from the staged configuration", async () => {
   const dir = await createTempDir("provider-policy-");
@@ -33,10 +103,8 @@ it("selects only the selected provider endpoint from the staged configuration", 
       },
     }),
   );
-  expect(
-    (await resolveProviderPolicy({ network: "provider-only" }, dir, "first/model")).providerHosts,
-  ).toEqual(["gateway.test"]);
-  await expect(
-    resolveProviderPolicy({ network: "provider-only" }, dir, "missing/model"),
-  ).rejects.toThrow(/endpoint/i);
+  const plan = await prepareProviderNetwork({ network: "provider-only" }, dir, "first/model");
+  plan.bind("first/model");
+  expect(plan.policy.providerHosts).toEqual(["gateway.test"]);
+  expect(() => plan.bind("missing/model")).toThrow(/endpoint/i);
 });

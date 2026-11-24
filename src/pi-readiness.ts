@@ -344,7 +344,10 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     }
     const baseRunner = createRunner(command, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, environment);
     runner = async (args, signal) => {
-      if (!args.includes("--list-models") || options.extensions === false)
+      if (
+        !args.includes("--list-models") ||
+        (options.extensions === false && options.preparedRuntime?.network !== "provider-only")
+      )
         return await baseRunner(args, signal);
       let runtime = options.preparedRuntime;
       try {

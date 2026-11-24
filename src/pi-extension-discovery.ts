@@ -7,7 +7,10 @@ import {
 } from "./eval-run/egress-policy.js";
 import { resolveLinuxBwrapPath } from "./eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "./eval-run/macos-runtime.js";
-import { resolveProviderPolicy } from "./eval-run/provider-network.js";
+import {
+  type PreparedProviderNetwork,
+  prepareProviderNetwork,
+} from "./eval-run/provider-network.js";
 import { startEgressProxy } from "./eval-run/public-egress-proxy.js";
 import { captureEvalProcess } from "./eval-run/runner.js";
 import type { PiAuthBroker } from "./pi-auth-broker.js";
@@ -51,6 +54,7 @@ export interface PreparedReviewRuntime {
   readonly extensions: PreparedExtensions;
   readonly network: NetworkTier;
   readonly egressPolicy?: EgressPolicy;
+  readonly providerNetwork?: PreparedProviderNetwork;
   readonly authBroker?: PiAuthBroker;
   readonly capabilityExtensions?: readonly string[];
 }
@@ -112,7 +116,7 @@ export async function prepareReviewRuntime(
           extensionsEnabled,
         )
       : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
-    const egressPolicy = await resolveProviderPolicy(
+    const providerNetwork = await prepareProviderNetwork(
       {
         network,
         ...(filters?.allowHosts ? { allowHosts: filters.allowHosts } : {}),
@@ -128,7 +132,7 @@ export async function prepareReviewRuntime(
       extensions,
       network,
       capabilityExtensions,
-      egressPolicy,
+      providerNetwork,
     };
     const authBroker = await prepareAuthBroker(runtime);
     return authBroker === undefined
@@ -153,7 +157,9 @@ export async function discoverPreparedExtensions(
   return await runPreparedPiCommand(
     runtime,
     [
-      ...withNoForkSandbox(runtime.extensions.command),
+      ...(runtime.extensions.runtimeRoot === undefined
+        ? runtime.extensions.command
+        : withNoForkSandbox(runtime.extensions.command)),
       "--offline",
       "--no-approve",
       "--no-extensions",
@@ -184,7 +190,9 @@ export async function runPreparedPiCommand(
       "[PI_EXTENSION_DISCOVERY_UNSUPPORTED] Extension discovery requires native sandbox support on macOS or Linux.",
     );
   await assertNativeSandboxReady();
-  const resolve = createEgressResolver(runtime.egressPolicy ?? { network: runtime.network });
+  const resolve = createEgressResolver(
+    runtime.providerNetwork?.policy ?? runtime.egressPolicy ?? { network: runtime.network },
+  );
   const proxy = await startEgressProxy(
     crypto.randomUUID(),
     runtime.authBroker?.resolveWith(resolve) ?? resolve,

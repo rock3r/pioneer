@@ -10,6 +10,7 @@ export interface EgressPolicy {
   readonly allowHosts?: readonly string[];
   readonly blockHosts?: readonly string[];
   readonly providerHosts?: readonly string[];
+  readonly oauthIssuerHost?: string;
 }
 
 const metadataNames = new Set([
@@ -116,7 +117,7 @@ export function createEgressResolver(
     refreshAfter = performance.now() + 1000;
     return list;
   }
-  return async (hostname) => {
+  return async (hostname, port) => {
     const host = normalized(hostname);
     const version = net.isIP(host);
     const denied = () => new Error("Network destination is not allowed");
@@ -127,7 +128,8 @@ export function createEgressResolver(
       host.includes("%")
     )
       throw denied();
-    const grantedName = allow.hostname(host) || provider.hostname(host);
+    const issuer = port === 443 && host === policy.oauthIssuerHost;
+    const grantedName = allow.hostname(host) || provider.hostname(host) || issuer;
     if (
       !version &&
       (!validHostname.test(host) ||

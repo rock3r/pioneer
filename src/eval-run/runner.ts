@@ -26,6 +26,7 @@ import {
   prepareAuthBroker,
   snapshotOAuthProviders,
 } from "../pi-auth-runtime.js";
+import { resolvePiCommand } from "../pi-command.js";
 import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
 import { preparePiExtensions, runtimeReadRoots } from "../pi-extension-runtime.js";
 import {
@@ -64,7 +65,7 @@ import {
   parseActorEnvironment,
   parseLoopbackTargets,
 } from "./actor-options.js";
-import { createEgressResolver, type EgressPolicy } from "./egress-policy.js";
+import { createEgressResolver } from "./egress-policy.js";
 import {
   assertEvalWorkLogNotActorVisible,
   assertPiHomeSeparatedFromActorGrants,
@@ -103,7 +104,11 @@ import {
   piPackageHostsAuthAdapter,
   piPackageHostsExtensionRuntime,
 } from "./pi-extension-host.js";
-import { describeEgressPolicy, resolveProviderPolicy } from "./provider-network.js";
+import {
+  describeEgressPolicy,
+  type PreparedProviderNetwork,
+  prepareProviderNetwork,
+} from "./provider-network.js";
 import { type PublicEgressProxy, startEgressProxy } from "./public-egress-proxy.js";
 import {
   assertDistinctToolExtensionSources,
@@ -968,7 +973,7 @@ async function stageEvalPiExtensions(
   controllerOnlyPaths: readonly string[] = [],
   toolExtensionSources: readonly ToolExtensionSource[] = [],
   piVersion?: string,
-  egressPolicy: EgressPolicy = { network: "public" },
+  providerNetwork: PreparedProviderNetwork | undefined = undefined,
 ): Promise<{
   readonly authBroker?: PiAuthBroker;
   readonly readPaths: readonly string[];
@@ -1096,8 +1101,8 @@ async function stageEvalPiExtensions(
     extensionRoot,
     home: piHome,
     extensions,
-    network: egressPolicy.network,
-    egressPolicy,
+    network: providerNetwork?.policy.network ?? "public",
+    ...(providerNetwork === undefined ? {} : { providerNetwork }),
     ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: [...new Set(explicitCopies)] }),
   };
   let authBroker: Awaited<ReturnType<typeof prepareAuthBroker>>;
@@ -1291,6 +1296,7 @@ async function runEvalCommandWithInterruption(
   );
   // --pi-extension sources are not model providers and never join discovery (#91).
   const deferExtensionReadiness = loadsUserExtensions || loadsExplicitExtensions;
+  const restrictedDiscovery = spec.network === "provider-only";
   const initialReadinessOptions = {
     extensions: false as const,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -1304,7 +1310,7 @@ async function runEvalCommandWithInterruption(
   // Extension-backed models are absent from a built-in-only probe. Defer that probe until
   // the same extension snapshot the actor will load is ready.
   let readiness =
-    spec.piHomeSource === undefined && !deferExtensionReadiness
+    spec.piHomeSource === undefined && !deferExtensionReadiness && !restrictedDiscovery
       ? await assertPiReady(initialReadinessOptions)
       : undefined;
   throwIfEvalInterrupted(interruption);
@@ -1467,7 +1473,7 @@ async function runEvalCommandWithInterruption(
       ...(requestedModel === undefined ? {} : { requestedModel }),
       signal: interruption.abortSignal,
     };
-    if (readiness === undefined && !deferExtensionReadiness) {
+    if (readiness === undefined && !deferExtensionReadiness && !restrictedDiscovery) {
       recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
       readiness = await assertPiReady(readinessOptions);
       recordEvalWorkLog(workLog, "stage_completed", {
@@ -1561,7 +1567,7 @@ async function runEvalCommandWithInterruption(
         ...optimizedPi.environment,
         ...piHome.environment,
       };
-      const egressPolicy = await resolveProviderPolicy(
+      const providerNetwork = await prepareProviderNetwork(
         {
           network: spec.network ?? "public",
           ...(spec.allowHosts ? { allowHosts: spec.allowHosts } : {}),
@@ -1570,7 +1576,7 @@ async function runEvalCommandWithInterruption(
         piHome.agentDir,
         readiness?.resolvedModel ?? requestedModel,
       );
-      options.onNetworkPolicy?.(describeEgressPolicy(egressPolicy));
+      const selection = requestedModel ?? providerNetwork.defaultModel;
       const oauthProviders = await snapshotOAuthProviders(piHome.agentDir);
       if (
         oauthBrokerRequiredButUnavailable({
@@ -1619,7 +1625,7 @@ async function runEvalCommandWithInterruption(
           [workLog.path, ...(options.deniedReadProbePaths ?? [])],
           toolExtensionSources,
           readiness?.version,
-          egressPolicy,
+          providerNetwork,
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
@@ -1631,13 +1637,13 @@ async function runEvalCommandWithInterruption(
           ...piHome.environment,
           ...staged.authBroker?.environment,
         };
-        if (deferExtensionReadiness && readiness === undefined) {
+        if ((deferExtensionReadiness || restrictedDiscovery) && readiness === undefined) {
           recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
           readiness = await assertPiReady({
             command: [resolvedExecutable.commandPath],
             environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
             preparedRuntime: staged.runtime,
-            ...(requestedModel === undefined ? {} : { requestedModel }),
+            ...(selection === undefined ? {} : { requestedModel: selection }),
             signal: interruption.abortSignal,
           });
           recordEvalWorkLog(workLog, "stage_completed", {
@@ -1652,6 +1658,39 @@ async function runEvalCommandWithInterruption(
           );
         }
       }
+      if (restrictedDiscovery && readiness === undefined) {
+        recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
+        const piCommand = await resolvePiCommand("pi", readinessOptions.environment);
+        const extensionRoot = path.join(isolationDir, "pi-discovery");
+        await mkdir(extensionRoot, { mode: 0o700 });
+        readiness = await assertPiReady({
+          ...readinessOptions,
+          command: piCommand,
+          ...(selection === undefined ? {} : { requestedModel: selection }),
+          preparedRuntime: {
+            scratch: actorScratchDir,
+            extensionRoot,
+            home: piHome,
+            extensions: {
+              command: piCommand,
+              paths: [],
+              sourcePaths: [],
+              digest: "0".repeat(64),
+              entries: 0,
+              bytes: 0,
+            },
+            network: "provider-only",
+            providerNetwork,
+          },
+        });
+        recordEvalWorkLog(workLog, "stage_completed", {
+          stage: "pi_readiness",
+          warning: readiness.warning !== undefined,
+        });
+      }
+      providerNetwork.bind(readiness?.resolvedModel);
+      const egressPolicy = providerNetwork.policy;
+      options.onNetworkPolicy?.(describeEgressPolicy(egressPolicy));
       throwIfSetupInterrupted();
       sandboxCommand = applyPiVersionToStartupCommand(
         sandboxCommand,
