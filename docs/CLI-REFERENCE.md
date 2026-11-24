@@ -177,6 +177,8 @@ Choose one diff input and one task-scope input. Git mode accepts `staged`, `work
 
 On macOS or Linux, choose `--provider pi` explicitly to classify comments with a configured Pi model. Use an exact qualified name from `pioneer models --no-extensions` in place of `PROVIDER/MODEL`. The classifier starts with user extensions disabled.
 
+The classifier uses `provider-only` networking. A model can appear in the Pi catalog even when Pioneer needs an explicit endpoint to reach it. For a provider without a built-in hostname mapping, set its public HTTPS `baseUrl` in the Pi agent directory's `models.json` before running the check. Without a known endpoint, Pioneer returns exit `3`.
+
 ```bash
 pioneer check-comments --source . --git staged --scope-file task.md \
   --provider pi --model PROVIDER/MODEL --json --fail-on-findings
