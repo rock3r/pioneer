@@ -112,6 +112,21 @@ describe.skipIf(process.platform === "win32")("extension snapshot leases and col
     await expect(lstat(entry.directory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("drops a released lease while another controller holds cache.lock", async () => {
+    const entry = await generation("a", now, now);
+    const release = await lease(entry);
+    let finished: Promise<void> | undefined;
+    try {
+      await withExtensionCacheLock(root, platform, async () => {
+        finished = release();
+        const directory = path.join(root, "leases", entry.id);
+        await vi.waitFor(async () => expect(await readdir(directory)).toEqual([]));
+      });
+    } finally {
+      await finished;
+    }
+  });
+
   it("reclaims leases only when the PID is absent or live with a different start identity", async () => {
     const dead = await generation("a", now - 15 * day, now - 15 * day);
     const reused = await generation("b", now - 15 * day, now - 15 * day);
