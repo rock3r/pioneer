@@ -1,0 +1,220 @@
+import { constants } from "node:fs";
+import { type FileHandle, open } from "node:fs/promises";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
+import {
+  type ExtensionManifestRecord,
+  type ExtensionSnapshot,
+  mirroredExtensionStagePath,
+} from "./pi-extension-snapshot.js";
+
+export const EXTENSION_CACHE_PACKAGE_JSON = '{"type":"module"}';
+export const EXTENSION_CACHE_FORMAT = 1;
+export const EXTENSION_CACHE_ID = /^[0-9a-f]{32}$/;
+export const EXTENSION_CACHE_KEY = /^[0-9a-f]{64}$/;
+
+const MAX_ENTRIES = 500_000;
+const MAX_BYTES = 1024 ** 3;
+const MAX_MANIFEST_LINE_BYTES = 64 * 1024;
+// Pi's resource resolution has a 1 MiB output ceiling. Absolute and relative copies of
+// canonical entry paths can be longer, but still need a finite snapshot metadata budget.
+const MAX_SNAPSHOT_METADATA_BYTES = 16 * 1024 * 1024;
+const SOURCE_FIELDS = ["dev", "ino", "size", "nlink", "mode", "mtimeNs", "ctimeNs"] as const;
+const STAGED_FIELDS = ["ino", "size", "mode", "mtimeNs", "ctimeNs"] as const;
+
+function invalidMetadata(): Error {
+  return new Error("Invalid cache snapshot metadata");
+}
+
+type CacheMetadata = Record<string, unknown>;
+
+function metadata(value: unknown): CacheMetadata {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw invalidMetadata();
+  return value as CacheMetadata;
+}
+
+function absolutePath(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    path.isAbsolute(value) &&
+    value === path.normalize(value) &&
+    !value.includes("\0")
+  );
+}
+
+function integers<K extends string>(value: unknown, fields: readonly K[]): Record<K, bigint> {
+  const object = metadata(value);
+  const parsed = {} as Record<K, bigint>;
+  for (const key of fields) {
+    const decimal = object[key];
+    if (typeof decimal !== "string" || !/^-?(?:0|[1-9][0-9]{0,19})$/.test(decimal))
+      throw invalidMetadata();
+    const number = BigInt(decimal);
+    if (number < 0n && key !== "mtimeNs" && key !== "ctimeNs") throw invalidMetadata();
+    parsed[key] = number;
+  }
+  return parsed;
+}
+
+function manifestRecord(value: unknown, payload: string): ExtensionManifestRecord {
+  const record = metadata(value);
+  const { sourcePath, type, linkText } = record;
+  if (
+    !absolutePath(sourcePath) ||
+    (type !== "file" && type !== "directory" && type !== "symlink" && type !== "other") ||
+    (type === "symlink"
+      ? typeof linkText !== "string" || linkText.length === 0 || linkText.includes("\0")
+      : linkText !== undefined)
+  )
+    throw invalidMetadata();
+  const source = integers(record.source, SOURCE_FIELDS);
+  const entry = {
+    sourcePath,
+    type,
+    source,
+    ...(typeof linkText === "string" ? { linkText } : {}),
+  } as const;
+  if (
+    record.staged === false &&
+    record.stagedRelativePath === undefined &&
+    record.stagedMetadata === undefined
+  )
+    return { ...entry, staged: false };
+  if (
+    record.staged !== true ||
+    type === "other" ||
+    record.stagedRelativePath !==
+      path.relative(payload, mirroredExtensionStagePath(payload, sourcePath))
+  )
+    throw invalidMetadata();
+  return {
+    ...entry,
+    staged: true,
+    stagedRelativePath: record.stagedRelativePath,
+    stagedMetadata: integers(record.stagedMetadata, STAGED_FIELDS),
+  };
+}
+
+async function openCacheFile(file: string): Promise<FileHandle> {
+  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stats = await handle.stat();
+    if (
+      !stats.isFile() ||
+      stats.nlink !== 1 ||
+      stats.uid !== process.getuid?.() ||
+      (stats.mode & 0o077) !== 0
+    )
+      throw invalidMetadata();
+    return handle;
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+export async function readCacheText(
+  file: string,
+  maxBytes = MAX_SNAPSHOT_METADATA_BYTES,
+): Promise<string> {
+  const handle = await openCacheFile(file);
+  try {
+    if ((await handle.stat()).size > maxBytes) throw invalidMetadata();
+    const value = await handle.readFile("utf8");
+    if (Buffer.byteLength(value) > maxBytes) throw invalidMetadata();
+    return value;
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function readExtensionCacheManifest(
+  file: string,
+  payload: string,
+  signal?: AbortSignal,
+): Promise<readonly ExtensionManifestRecord[]> {
+  const handle = await openCacheFile(file);
+  const records: ExtensionManifestRecord[] = [];
+  const seen = new Set<string>();
+  const stream = handle.createReadStream({ encoding: "utf8" });
+  let remainder = "";
+  for await (const chunk of stream) {
+    signal?.throwIfAborted();
+    const text = remainder + (chunk as string);
+    let start = 0;
+    for (let end = text.indexOf("\n"); end !== -1; end = text.indexOf("\n", start)) {
+      const line = text.slice(start, end);
+      if (Buffer.byteLength(line) > MAX_MANIFEST_LINE_BYTES || records.length === MAX_ENTRIES)
+        throw invalidMetadata();
+      const record = manifestRecord(JSON.parse(line), payload);
+      if (seen.has(record.sourcePath)) throw invalidMetadata();
+      seen.add(record.sourcePath);
+      records.push(record);
+      start = end + 1;
+    }
+    remainder = text.slice(start);
+    if (Buffer.byteLength(remainder) > MAX_MANIFEST_LINE_BYTES) throw invalidMetadata();
+  }
+  if (remainder.length !== 0) throw invalidMetadata();
+  return records;
+}
+
+export async function writeExtensionCacheManifest(
+  file: string,
+  manifest: readonly ExtensionManifestRecord[],
+): Promise<void> {
+  function* records(): Iterable<string> {
+    for (const record of manifest) {
+      yield `${JSON.stringify(record, (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value))}\n`;
+    }
+  }
+  const handle = await open(file, "wx", 0o600);
+  await pipeline(records(), handle.createWriteStream());
+}
+
+interface CacheSnapshotMetadata extends ExtensionSnapshot {
+  readonly createdAt: number;
+}
+
+function boundedInteger(input: unknown, min: number, max: number): input is number {
+  return typeof input === "number" && Number.isSafeInteger(input) && input >= min && input <= max;
+}
+
+export function extensionCacheSnapshotMetadata(
+  text: string,
+  manifest: readonly ExtensionManifestRecord[],
+  payload: string,
+): CacheSnapshotMetadata {
+  if (!text.endsWith("\n")) throw invalidMetadata();
+  const { paths, sourcePaths, digest, entries, bytes, createdAt } = metadata(JSON.parse(text));
+  if (
+    !Array.isArray(paths) ||
+    !Array.isArray(sourcePaths) ||
+    paths.length !== sourcePaths.length ||
+    typeof digest !== "string" ||
+    !EXTENSION_CACHE_KEY.test(digest) ||
+    !boundedInteger(entries, 0, MAX_ENTRIES) ||
+    !boundedInteger(bytes, 0, MAX_BYTES) ||
+    !boundedInteger(createdAt, 0, Number.MAX_SAFE_INTEGER)
+  )
+    throw invalidMetadata();
+  const mapped = new Map<string, string>();
+  let totalBytes = 0n;
+  for (const record of manifest) {
+    if (!record.staged) continue;
+    mapped.set(record.sourcePath, record.stagedRelativePath);
+    if (record.type === "file") totalBytes += record.source.size;
+  }
+  if (mapped.size !== entries || totalBytes !== BigInt(bytes)) throw invalidMetadata();
+  const actualPaths: string[] = [];
+  const actualSources: string[] = [];
+  for (const [index, source] of sourcePaths.entries()) {
+    if (!absolutePath(source)) throw invalidMetadata();
+    const relative = mapped.get(source);
+    if (relative === undefined || paths[index] !== relative) throw invalidMetadata();
+    mapped.delete(source);
+    actualPaths.push(path.join(payload, relative));
+    actualSources.push(source);
+  }
+  return { paths: actualPaths, sourcePaths: actualSources, digest, entries, bytes, createdAt };
+}
