@@ -29,6 +29,14 @@ import { createPiSessionScanBudget, isPiSessionFile } from "./pi-session-file.js
 
 export const SNAPSHOT_ENTRY_LIMIT = 500_000;
 const SNAPSHOT_BYTE_LIMIT = 1024 ** 3;
+const AGENT_INSTRUCTIONS_FILENAME = "AGENTS.md";
+const PRIVATE_AGENT_FILES = [
+  "auth.json",
+  "models.json",
+  "models-store.json",
+  "settings.json",
+  AGENT_INSTRUCTIONS_FILENAME,
+];
 /** Digest reads that run ahead of the in-order hash, and the largest file read whole for it. */
 const DIGEST_PREFETCH_ENTRIES = 64;
 const DIGEST_PREFETCH_FILE_BYTES = 1024 ** 2;
@@ -379,6 +387,7 @@ function directoryPrefix(dir: string): string {
 
 function privateStorageMatcher(plan: ExtensionSnapshotPlan) {
   const directories = plan.privateDirectories.map((dir) => [dir, directoryPrefix(dir)] as const);
+  const privateNames = new Set(PRIVATE_AGENT_FILES.map(policyPath));
   const agent =
     plan.agentDir === undefined ? undefined : directoryPrefix(policyPath(plan.agentDir));
   return (canonical: string): "private" | "root-log" | undefined => {
@@ -390,11 +399,7 @@ function privateStorageMatcher(plan: ExtensionSnapshotPlan) {
     const name = candidate.slice(agent.length);
     if (name.includes(path.sep)) return undefined;
     if (name.endsWith(".log")) return "root-log";
-    return ["auth.json", "models.json", "models-store.json", "settings.json", "agents.md"].includes(
-      name,
-    )
-      ? "private"
-      : undefined;
+    return privateNames.has(name) ? "private" : undefined;
   };
 }
 
@@ -463,6 +468,8 @@ export async function planExtensionSnapshot(
             path.join(agentDir, "sessions"),
             path.join(agentDir, "logs"),
             path.join(agentDir, "skills"),
+            // Protect the instructions even if they point to, or are stored as, a directory.
+            path.join(agentDir, AGENT_INSTRUCTIONS_FILENAME),
             ...logs,
             ...(storage?.sessionDirs ?? []),
           ].map(async (entry) => policyPath(await canonicalOrResolved(entry))),
@@ -498,13 +505,7 @@ export async function planExtensionSnapshot(
     return true;
   };
   if (agentDir !== undefined) {
-    const namedCredentials = [
-      "auth.json",
-      "models.json",
-      "models-store.json",
-      "settings.json",
-      "AGENTS.md",
-    ].map((name) => path.join(agentDir, name));
+    const namedCredentials = PRIVATE_AGENT_FILES.map((name) => path.join(agentDir, name));
     const privateRoots = [
       ...namedCredentials,
       ...logs,

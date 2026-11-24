@@ -26,6 +26,7 @@ Each controller acquires its own lease before validating or using a committed ge
 Pioneer excludes Pi's private runtime storage by exact location:
 
 - the agent directory's `sessions/` and `logs/` directories;
+- the agent directory's `AGENTS.md` and its canonical target when linked;
 - regular `.log` files directly in the agent directory;
 - session directories set through `PI_CODING_AGENT_SESSION_DIR` or `sessionDir`. A relative setting fails with `PI_SESSION_DIR_RELATIVE`.
 
