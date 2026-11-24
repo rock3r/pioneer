@@ -75,12 +75,12 @@ export async function takeExtensionCacheLease(
     await removeIfPresent(pending);
   }
   let released: Promise<void> | undefined;
+  // This nonce belongs to this run alone. Once its actor has stopped, unlinking its
+  // lease requires no lock. A collector racing the unlink conservatively keeps it.
   return () =>
-    (released ??= withExtensionCacheLock(entry.root, platform, async () => {
-      await removeIfPresent(filename);
-    })
-      .then(() => collectExtensionCache(entry.root, platform, { now: now() }))
-      .catch(() => undefined));
+    (released ??= removeIfPresent(filename).then(() =>
+      collectExtensionCache(entry.root, platform, { now: now() }).catch(() => undefined),
+    ));
 }
 
 async function readCandidate(
