@@ -1,12 +1,21 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import { runCheckCommentsCli } from "./command.js";
 import type { FetchDecision } from "./providers.js";
 
 const { createTempDir } = registerManagedTempPaths();
+const { createPiScorer } = vi.hoisted(() => ({ createPiScorer: vi.fn() }));
+vi.mock("./pi.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./pi.js")>()),
+  createPiCommentScorer: createPiScorer,
+}));
+
+beforeEach(() => {
+  createPiScorer.mockReset();
+});
 
 const answers = {
   excuse_skipped_ask: { type: "noul", noul: 0.1 },
@@ -83,6 +92,83 @@ describe("check-comments CLI", () => {
       failures: [{ path: "work.ts", startLine: 1, message: expect.stringContaining("HTTP 403") }],
     });
     expect(input.output()).not.toContain("fake-key");
+    expect(createPiScorer).not.toHaveBeenCalled();
+  });
+
+  it("uses Pi explicitly with a qualified model and scores one comment at a time", async () => {
+    const input = harness(DIFF, {});
+    let active = 0;
+    let maximumActive = 0;
+    const score = vi.fn(async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await Promise.resolve();
+      active -= 1;
+      return { excuse_skipped_ask: 0, dismissed_edge_case: 0, in_scope_todo: 1 };
+    });
+    createPiScorer.mockReturnValueOnce(score);
+    await expect(
+      runCheckCommentsCli(
+        [...ARGS, "--provider", "pi", "--model", "openrouter/vendor/model", "--fail-on-findings"],
+        input,
+      ),
+    ).resolves.toBe(2);
+    expect(createPiScorer).toHaveBeenCalledExactlyOnceWith(
+      "openrouter/vendor/model",
+      expect.any(AbortSignal),
+    );
+    expect(input.fetch).not.toHaveBeenCalled();
+    expect(maximumActive).toBe(1);
+    expect(score).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(input.output())).toMatchObject({ complete: true, scored: 2 });
+  });
+
+  it.each([undefined, "bare-model", "provider//model", "provider/model\n"])(
+    "rejects a missing or invalid qualified Pi model %j",
+    async (model) => {
+      const input = harness();
+      const modelArgs = model === undefined ? [] : ["--model", model];
+      await expect(
+        runCheckCommentsCli([...ARGS, "--provider", "pi", ...modelArgs], input),
+      ).rejects.toThrow(/qualified --model/);
+      expect(createPiScorer).not.toHaveBeenCalled();
+      expect(input.fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["--endpoint", "https://example.invalid", /^Pi scoring does not accept --endpoint/],
+    ["--api-key-env", "CUSTOM_API_KEY", /^Pi scoring does not accept --endpoint or --api-key-env/],
+    ["--concurrency", "2", /--concurrency 1/],
+  ])("rejects %s in the Pi backend", async (flag, value, error) => {
+    const input = harness();
+    await expect(
+      runCheckCommentsCli(
+        [...ARGS, "--provider", "pi", "--model", "provider/model", flag, value],
+        input,
+      ),
+    ).rejects.toThrow(error);
+    expect(createPiScorer).not.toHaveBeenCalled();
+    expect(input.fetch).not.toHaveBeenCalled();
+  });
+
+  it("reports Pi setup failure without trying the direct providers", async () => {
+    const input = harness();
+    createPiScorer.mockImplementationOnce(() => {
+      throw new Error("[COMMENT_PI_UNSUPPORTED] Pi comment scoring requires a native sandbox.");
+    });
+    await expect(
+      runCheckCommentsCli(
+        [...ARGS, "--provider", "pi", "--model", "provider/model", "--concurrency", "1"],
+        input,
+      ),
+    ).resolves.toBe(3);
+    expect(input.fetch).not.toHaveBeenCalled();
+    expect(JSON.parse(input.output())).toMatchObject({
+      complete: false,
+      scored: 0,
+      failures: [{ message: expect.stringContaining("COMMENT_PI_UNSUPPORTED") }],
+    });
   });
 
   it("reports a reached comment limit as incomplete and bounds calls", async () => {

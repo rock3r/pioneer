@@ -178,7 +178,7 @@ async function launchStructuredActor(
           ...(readiness.version === undefined ? {} : { piVersion: readiness.version }),
         }),
         [
-          ...withNoForkSandbox(runtime.extensions.command),
+          ...withNoForkSandbox(runtime.extensions),
           "--pioneer-inspection-extension",
           inspectionExtension,
         ],

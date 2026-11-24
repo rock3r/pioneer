@@ -7,8 +7,16 @@ import type { EvalWorkspace } from "./harness.js";
  * Every variant is deterministic and offline: no provider is ever contacted.
  */
 export type ScriptedPiActor =
+  /** Returns fixed scores only from a tool-free classification in a private directory. */
+  | {
+      readonly kind: "classify-comment";
+      readonly deniedPath: string;
+      readonly hangOnComment?: string;
+    }
   /** Replies with the text a `Reply with exactly: TEXT` prompt requests. */
   | { readonly kind: "reply-verbatim" }
+  /** Accepts a review prompt over RPC and returns a fixed report. */
+  | { readonly kind: "review-rpc" }
   /** Opens exactly the files the prompt names, relative to the actor working directory. */
   | { readonly kind: "review-referenced-files" }
   /** Lists the run directory and `fixtures/` without spawning a search process. */
@@ -62,6 +70,8 @@ const fail = (message) => {
   process.exit(1);
 };
 
+if (argv.includes("--pioneer-no-fork-sandbox")) fail("Unknown option: --pioneer-no-fork-sandbox");
+
 if (argv.includes("--version")) {
   process.stdout.write(SCENARIO.version + "\n");
   process.exit(0);
@@ -88,6 +98,50 @@ if (argv.includes("--list-models")) {
     ["provider  model  context  max-out  thinking  images", ...rows].join("\n") + "\n",
   );
   process.exit(0);
+}
+
+if (SCENARIO.actor.kind === "classify-comment") {
+  if (!["--no-extensions", "--no-skills", "--no-mcp", "--no-session", "--no-tools"].every(flag => argv.includes(flag))) {
+    fail("classification tools or session enabled");
+  }
+  const agent = process.env.PI_CODING_AGENT_DIR;
+  if (!agent || ["AGENTS.md", "skills/private-skill/SKILL.md"].some(file => fs.existsSync(path.join(agent, file)))) {
+    fail("private instructions visible to classifier");
+  }
+  try {
+    fs.readFileSync(SCENARIO.actor.deniedPath);
+    fail("source readable by classifier");
+  } catch (error) {
+    if (!["ENOENT", "EPERM", "EACCES"].includes(error.code)) throw error;
+  }
+  process.stdin.once("data", (bytes) => {
+    const message = JSON.parse(bytes.toString("utf8"));
+    if (message.type !== "prompt") fail("missing comment evidence");
+    const evidence = JSON.parse(message.message);
+    if (!evidence.comment.includes("TODO")) fail("missing comment evidence");
+    if (SCENARIO.actor.hangOnComment && evidence.comment.includes(SCENARIO.actor.hangOnComment)) {
+      console.log(JSON.stringify({type: "agent_start"}));
+      setInterval(() => {}, 10_000);
+      return;
+    }
+    const content = JSON.stringify({excuse_skipped_ask: 0, dismissed_edge_case: 0, in_scope_todo: 1});
+    console.log(JSON.stringify({type: "message_end", message: {role: "assistant", content}}));
+    console.log(JSON.stringify({type: "agent_settled"}));
+  });
+  return;
+}
+
+if (SCENARIO.actor.kind === "review-rpc") {
+  if (optionValue("--mode") !== "rpc") fail("missing RPC mode");
+  process.stdin.once("data", (bytes) => {
+    const request = JSON.parse(bytes.toString("utf8"));
+    if (request.type !== "prompt") fail("missing review prompt");
+    const content = "Scripted review report.";
+    console.log(JSON.stringify({type: "message_end", message: {role: "assistant", content}}));
+    console.log(JSON.stringify({type: "agent_settled"}));
+    process.stdin.pause();
+  });
+  return;
 }
 
 fs.writeFileSync(

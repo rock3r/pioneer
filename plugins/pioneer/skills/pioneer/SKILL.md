@@ -6,7 +6,7 @@ license: UEL-1.0
 
 # Pioneer
 
-Run independent reviews with the `pioneer` CLI and the operator's configured Pi installation. Keep native-session recovery enabled unless the caller explicitly chooses `--no-resume`.
+Run independent reviews with the `pioneer` CLI and the operator's configured Pi installation. Keep native-session recovery enabled for ordinary reviews unless the caller explicitly chooses `--no-resume`.
 
 ## Preconditions
 
@@ -33,7 +33,7 @@ pioneer review \
   --thinking high
 ```
 
-Repeat `--git` for multiple targets. Accepted values are `working-tree`, `staged`, `untracked`, `commit:REF`, `range:FROM...TO`, and `range:FROM..TO`. The controller collects Git context on every platform. Pi cannot run Git on macOS or Windows.
+Repeat `--git` for multiple targets. Accepted values are `working-tree`, `staged`, `untracked`, `commit:REF`, `range:FROM...TO`, and `range:FROM..TO`. The controller collects Git context on every platform and requires Git 2.45 or newer. Use the Git status from `doctor` or run `git --version` on Windows. `--allow-partial-clone` permits offline inspection when the required objects are already present.
 
 For a GitHub pull-request number or URL, request a local `--git` target. For source-only reviews, omit `--git`. Use a scope such as `Review the implementation under src for correctness, security, and regressions.`
 
@@ -60,13 +60,15 @@ Windows custom targets inherit their parent directory ACL. Pioneer cannot valida
 
 While the terminal session runs, inspect or tail the log for status. Five-second heartbeats and sanitized Pi events show activity, silence, retries, tool execution, settlement, and termination. Records exclude prompts and model/tool content.
 
-Networking defaults to `full`, allowing public, LAN, and loopback destinations through the authenticated proxy. Use `--network public` when local services are unnecessary. Do not use `--network none`. Pioneer rejects it before launch because Pi must reach its configured model provider. Start a new review with `--network public` instead.
+On macOS and Linux, reviews default to `--network full`, which permits public destinations and other LAN hosts through the authenticated proxy. Use `public` for public destinations and explicit host grants, or `provider-only` to limit DNS and connections to the selected model provider and explicit grants. Preserve the caller's `--allow-host` and `--block-host` settings. Every native tier blocks loopback, host interface addresses, and metadata destinations through the proxy. Only evals can grant direct access to an exact local service with `--allow-loopback 127.0.0.1:PORT`. Do not use `--network none` for reviews. Pi needs to reach its provider.
+
+Use `--controller-provider-auth` only when requested. It keeps the supported provider's credential in the controller, disables user extensions and resumption, and requires an exact `--model PROVIDER/MODEL` with a public HTTPS endpoint declared in the source Pi home's `models.json`. Preserve the caller's requested model and network policy. If protected auth is unsupported or OAuth has expired, present the diagnostic.
 
 Use `--pi-home /absolute/path` only when the caller provides a prepared Pi agent directory. The directory is copied into the isolated run; it is not mounted in place.
 
 ## Windows
 
-Windows review execution is not enforceably sandboxed. Never add `--allow-unsandboxed-windows` silently. Explain that source immutability is instruction-only and obtain the user's explicit approval before proceeding. Strict eval runs are unsupported on Windows. Native extension discovery is also unsupported there; an explicitly approved built-in-only review requires `--no-extensions`.
+Windows reviews rely on instructions for source immutability and use the host's network policy. Explain these limits and obtain the user's explicit approval before passing `--allow-unsandboxed-windows`. An approved Windows review requires `--no-extensions`. Strict evals, provider-only networking, host filters, and controller-only authentication require macOS or Linux.
 
 ## Extension failures
 

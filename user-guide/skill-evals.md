@@ -105,6 +105,8 @@ Pioneer rejects writable protected-system roots and descendants. It also rejects
 
 `--deny-read-probe` is also repeatable. Use it for every controller-side answer key or sensitive reference whose invisibility you want the mandatory preflight to prove.
 
+Eval networking defaults to `public`. Use `--network full` for other LAN hosts or `--network provider-only` to restrict egress to the selected provider and explicit host grants. All tiers block loopback through the proxy. [Network modes](sandbox-and-paths.md#network-modes)
+
 Three more repeatable options adapt an arm to a skill that drives a local tool:
 
 - `--allow-loopback 127.0.0.1:PORT` lets the actor reach one local port directly, for example a desktop app's HTTP bridge. Every other loopback port stays closed. Only `127.0.0.1` and `localhost` are accepted.
@@ -131,6 +133,8 @@ Pioneer initializes `--pi-extension` only in the actor. At startup, it can use `
 The eval runner copies required root Pi configuration into an isolated `agentDir` outside the persistent actor run. Pi can write credential lock directories there. The snapshot excludes configured skills and dependency/runtime content. Home/tmp scratch is separate, writable, and temporary. Evals have no Pi-home include option.
 
 Pioneer never mounts the source Pi home. It removes controller launch/probe files and the copied snapshot on every exit path.
+
+Use `--controller-provider-auth` with a compatible model when the credential must remain in the controller. Put the opt-in before `--` and the qualified model on the official Pi command. [Controller-only provider authentication](sandbox-and-paths.md#controller-only-provider-authentication)
 
 For Pi actors, Pioneer adds `--offline`, `--no-session`, `--no-approve`, `--no-extensions`, `--no-prompt-templates`, `--no-themes`, and `--no-skills`. It stages enabled user extensions from the trusted official Pi package and passes them with `--extension`. Their provider registrations remain available. Only `--pi-extension` tools remain enabled.
 

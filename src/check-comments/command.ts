@@ -6,6 +6,7 @@ import { CliUsageError, sanitizeDiagnostic } from "../diagnostics.js";
 import { collectGitDiffs, parseGitTargets } from "../review/git-inspect.js";
 import { MAX_COMMENT_DIFF_BYTES } from "./diff.js";
 import { type DiffComment, extractDiffComments } from "./extract.js";
+import { createPiCommentScorer, isQualifiedPiCommentModel } from "./pi.js";
 import {
   COMMENT_CATEGORIES,
   type CommentCategory,
@@ -19,14 +20,15 @@ import {
 const USAGE = `Usage:
   pioneer check-comments (--source DIR --git TARGET... | --diff-file FILE|-)
     (--scope TEXT | --scope-file FILE)
-    [--provider typesafe|cloudflare|gemini|custom] [--model ID]
+    [--provider typesafe|cloudflare|gemini|custom|pi] [--model ID]
     [--endpoint HTTPS_URL] [--api-key-env VAR] [--threshold FLOAT]
     [--max-comments N] [--concurrency N] [--allow-partial-clone] [--json] [--fail-on-findings]
 
 Defaults: TypeSafe Jev, threshold 0.8, up to 50 comments, four concurrent requests.
 Git targets: staged, working-tree, commit:REF, range:FROM...TO, range:FROM..TO.
 Credentials: TYPESAFE_API_KEY, CLOUDFLARE_API_TOKEN with CLOUDFLARE_ACCOUNT_ID, or GEMINI_API_KEY.
-Custom System One gateways require --endpoint, --model and --api-key-env.`;
+Custom System One gateways require --endpoint, --model and --api-key-env.
+Pi requires a qualified --model PROVIDER/MODEL and runs one comment at a time.`;
 
 const MAX_SCOPE_BYTES = 16 * 1024;
 const DEFAULT_THRESHOLD = 0.8;
@@ -52,6 +54,10 @@ const OPTIONS = {
 } as const;
 
 type TextStream = AsyncIterable<Uint8Array | string>;
+type CommentScorer = (comment: DiffComment, scope: string) => Promise<CommentScores>;
+type ScoringBackend =
+  | { readonly kind: "pi"; readonly model: string }
+  | { readonly kind: "http"; readonly options: CommentProviderOptions };
 interface CliDependencies {
   readonly environment?: NodeJS.ProcessEnv;
   readonly fetch?: FetchDecision;
@@ -124,6 +130,40 @@ function thresholdValue(value: string | undefined): number {
   return number;
 }
 
+function parseBackend(
+  provider: string,
+  model: string | undefined,
+  endpoint: string | undefined,
+  apiKeyEnv: string | undefined,
+): ScoringBackend {
+  if (provider === "pi") {
+    if (endpoint !== undefined || apiKeyEnv !== undefined) {
+      usage("Pi scoring does not accept --endpoint or --api-key-env.");
+    }
+    if (model === undefined || !isQualifiedPiCommentModel(model)) {
+      usage("Pi scoring requires a qualified --model PROVIDER/MODEL.");
+    }
+    return { kind: "pi", model };
+  }
+  if (
+    provider !== "typesafe" &&
+    provider !== "cloudflare" &&
+    provider !== "gemini" &&
+    provider !== "custom"
+  ) {
+    usage("Set --provider to typesafe, cloudflare, gemini, custom or pi.");
+  }
+  return {
+    kind: "http",
+    options: {
+      provider,
+      ...(model === undefined ? {} : { model }),
+      ...(endpoint === undefined ? {} : { endpoint }),
+      ...(apiKeyEnv === undefined ? {} : { apiKeyEnv }),
+    },
+  };
+}
+
 function parseOptions(rawArgs: readonly string[]) {
   let parsed: ReturnType<typeof parseArgs<{ options: typeof OPTIONS; tokens: true }>>;
   try {
@@ -158,17 +198,10 @@ function parseOptions(rawArgs: readonly string[]) {
   ) {
     usage("Choose either --scope TEXT or --scope-file FILE with a nonempty task scope.");
   }
-  if (
-    provider !== "typesafe" &&
-    provider !== "cloudflare" &&
-    provider !== "gemini" &&
-    provider !== "custom"
-  ) {
-    usage("Set --provider to typesafe, cloudflare, gemini or custom.");
+  const backend = parseBackend(provider, values.model, values.endpoint, values["api-key-env"]);
+  if (backend.kind === "pi" && values.concurrency !== undefined && values.concurrency !== "1") {
+    usage("Pi scoring requires --concurrency 1.");
   }
-  const model = values.model;
-  const endpoint = values.endpoint;
-  const apiKeyEnv = values["api-key-env"];
   return {
     diffFile,
     source,
@@ -176,12 +209,7 @@ function parseOptions(rawArgs: readonly string[]) {
     allowPartialClone: values["allow-partial-clone"] === true,
     scope,
     scopeFile,
-    provider: {
-      provider,
-      ...(model === undefined ? {} : { model }),
-      ...(endpoint === undefined ? {} : { endpoint }),
-      ...(apiKeyEnv === undefined ? {} : { apiKeyEnv }),
-    } satisfies CommentProviderOptions,
+    backend,
     threshold: thresholdValue(values.threshold),
     maxComments: boundedInteger(
       values["max-comments"],
@@ -189,7 +217,10 @@ function parseOptions(rawArgs: readonly string[]) {
       1_000,
       "--max-comments",
     ),
-    concurrency: boundedInteger(values.concurrency, DEFAULT_CONCURRENCY, 16, "--concurrency"),
+    concurrency:
+      backend.kind === "pi"
+        ? 1
+        : boundedInteger(values.concurrency, DEFAULT_CONCURRENCY, 16, "--concurrency"),
     json: values.json === true,
     failOnFindings: values["fail-on-findings"] === true,
   };
@@ -286,14 +317,15 @@ async function scoreComments(
   comments: readonly DiffComment[],
   options: CommandOptions,
   scope: string,
-  score: ReturnType<typeof createCommentScorer>,
+  score: CommentScorer,
   secret: string | undefined,
+  signal?: AbortSignal,
 ): Promise<Result> {
   const count = Math.min(comments.length, options.maxComments);
   const outcomes: Outcome[] = [];
   let next = 0;
   async function worker(): Promise<void> {
-    while (next < count) {
+    while (next < count && !signal?.aborted) {
       const index = next;
       next += 1;
       const comment = comments[index];
@@ -308,6 +340,7 @@ async function scoreComments(
           ).map((category) => ({ ...location, category, probability: probabilities[category] })),
         };
       } catch (error) {
+        if (signal?.aborted && error === signal.reason) return;
         outcomes[index] = {
           failure: {
             ...location,
@@ -325,7 +358,12 @@ async function scoreComments(
   const findings = outcomes.flatMap((outcome) => ("findings" in outcome ? outcome.findings : []));
   const failures = outcomes.flatMap((outcome) => ("failure" in outcome ? [outcome.failure] : []));
   const omitted = comments.length - count;
-  const scored = count - failures.length;
+  const scored = outcomes.length - failures.length;
+  if (signal?.aborted) {
+    failures.push({
+      message: userError(signal.reason, "[COMMENT_PI_INTERRUPTED] Pi scoring stopped.", []),
+    });
+  }
   return {
     complete: failures.length === 0 && omitted === 0,
     threshold: options.threshold,
@@ -376,18 +414,31 @@ export async function runCheckCommentsCli(
     return 0;
   }
   const environment = dependencies.environment ?? process.env;
-  const keyEnv = commentProviderKeyEnv(options.provider);
-  const key = Object.hasOwn(environment, keyEnv) ? environment[keyEnv] : undefined;
+  const { backend } = options;
+  const keyEnv = backend.kind === "http" ? commentProviderKeyEnv(backend.options) : undefined;
+  const key =
+    keyEnv !== undefined && Object.hasOwn(environment, keyEnv) ? environment[keyEnv] : undefined;
+  const interruption = backend.kind === "pi" ? new AbortController() : undefined;
+  const interrupt = (signal: NodeJS.Signals): void => {
+    interruption?.abort(new Error(`[COMMENT_PI_INTERRUPTED] Pi scoring stopped on ${signal}.`));
+  };
   let result: Result;
   try {
-    const score = createCommentScorer(
-      options.provider,
-      environment,
-      dependencies.fetch === undefined ? {} : { fetch: dependencies.fetch },
-    );
+    const score =
+      backend.kind === "pi"
+        ? createPiCommentScorer(backend.model, interruption?.signal)
+        : createCommentScorer(
+            backend.options,
+            environment,
+            dependencies.fetch === undefined ? {} : { fetch: dependencies.fetch },
+          );
     const scope = await readScope(options);
     const comments = await readComments(options, dependencies.stdin ?? process.stdin);
-    result = await scoreComments(comments, options, scope, score, key);
+    if (interruption !== undefined) {
+      process.on("SIGINT", interrupt);
+      process.on("SIGTERM", interrupt);
+    }
+    result = await scoreComments(comments, options, scope, score, key, interruption?.signal);
   } catch (error) {
     result = {
       complete: false,
@@ -406,6 +457,11 @@ export async function runCheckCommentsCli(
         },
       ],
     };
+  } finally {
+    if (interruption !== undefined) {
+      process.off("SIGINT", interrupt);
+      process.off("SIGTERM", interrupt);
+    }
   }
   stdout(options.json ? `${JSON.stringify(result, null, 2)}\n` : formatText(result));
   if (!result.complete) return 3;

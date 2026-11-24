@@ -1,6 +1,6 @@
 {
   "name": "@rock3r/pioneer",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "description": "Safely delegate reviews and isolated skill evals from coding agents to Pi",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -48,8 +48,8 @@
     "check": "npm run lint && npm run typecheck && npm test && npm run build && npm run test:e2e",
     "format": "biome format --write .",
     "lint": "biome check .",
-    "test": "vitest run",
-    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test": "vitest run && node --test scripts/evals/check-comments.test.mjs",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts && node scripts/evals/check-comments.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json",
     "pioneer": "npm run build --silent && node dist/review-cli.js",

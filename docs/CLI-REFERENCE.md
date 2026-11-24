@@ -25,7 +25,7 @@ pioneer --version
 
 Normal commands start a background npm update check without waiting for it. Pioneer checks at most once every 24 hours and caches the newest published version. Any update notice goes to stderr after the command finishes. A failed check prints nothing and leaves the command's exit status unchanged.
 
-`pioneer check-comments` contacts only the configured decision endpoint during scoring.
+Direct `pioneer check-comments` providers contact the configured decision endpoint. With explicit `--provider pi`, Pi uses the selected model's configured provider for scoring.
 
 Force a check now:
 
@@ -165,7 +165,7 @@ Pioneer gives Pi a per-run placeholder and routes requests for the selected mode
 
 ## `pioneer check-comments`
 
-Use a decision model to check added or edited comments for skipped requirements, dismissed edge cases, and unfinished TODOs within a task's scope. The command runs independently of Pi.
+Check added or edited comments for skipped requirements, dismissed edge cases, and unfinished TODOs within a task's scope. Direct decision APIs are available on macOS, Linux, and Windows and run independently of Pi.
 
 ```bash
 pioneer check-comments --source . --git staged --scope-file task.md --json --fail-on-findings
@@ -175,32 +175,46 @@ git diff --no-color origin/main...HEAD |
 
 Choose one diff input and one task-scope input. Git mode accepts `staged`, `working-tree`, `commit:REF`, and `range:FROM...TO` or `range:FROM..TO`. Repeat `--git` or list multiple targets after it. Working-tree mode checks tracked changes. Use `--diff-file FILE` for a UTF-8 unified diff, or `--diff-file -` for standard input.
 
+On macOS or Linux, choose `--provider pi` explicitly to classify comments with a configured Pi model. Use an exact qualified name from `pioneer models --no-extensions` in place of `PROVIDER/MODEL`. The classifier starts with user extensions disabled.
+
+The classifier uses `provider-only` networking. A model can appear in the Pi catalog even when Pioneer needs an explicit endpoint to reach it. For a provider without a built-in hostname mapping, set its public HTTPS `baseUrl` in the Pi agent directory's `models.json` before running the check. Without a known endpoint, Pioneer returns exit `3`.
+
+```bash
+pioneer check-comments --source . --git staged --scope-file task.md \
+  --provider pi --model PROVIDER/MODEL --json --fail-on-findings
+```
+
+The Pi classifier runs in a tool-free native sandbox and uses Pi's provider configuration. Omit `--endpoint` and `--api-key-env` when using Pi. It scores one comment at a time. General-purpose LLMs typically cost more than dedicated decision models for this task and can be less accurate. LLM classification is an explicit fallback only. A decision-provider failure leaves scoring incomplete (exit `3`). Callers must never turn this exit into an automatic retry through Pi.
+
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--scope TEXT` / `--scope-file FILE` | required | Task requirements and any agreed deferrals, up to 16 KiB |
-| `--provider NAME` | `typesafe` | Decision API protocol |
-| `--model ID` | provider default | Model or alias |
-| `--endpoint HTTPS_URL` | provider default | Full HTTPS endpoint with the selected provider's request and response format |
-| `--api-key-env VAR` | provider default | Name of the environment variable containing the credential |
-| `--threshold FLOAT` | `0.8` | Inclusive minimum yes probability, from `0` to `1` |
+| `--provider NAME` | `typesafe` | Direct decision API protocol or explicit `pi` |
+| `--model ID` | provider default | A direct API model or alias, or the required exact `PROVIDER/MODEL` for Pi |
+| `--endpoint HTTPS_URL` | provider default | Direct providers only. Full HTTPS endpoint with the selected provider's request and response format |
+| `--api-key-env VAR` | provider default | Direct providers only. Name of the environment variable containing the credential |
+| `--threshold FLOAT` | `0.8` | Inclusive minimum score, from `0` to `1` |
 | `--max-comments N` | `50` | Maximum comments to score, from `1` to `1000` |
-| `--concurrency N` | `4` | Maximum simultaneous requests, from `1` to `16` |
+| `--concurrency N` | `4` for direct APIs, `1` for Pi | Maximum simultaneous direct API requests, from `1` to `16`. Pi accepts `1`. |
 | `--allow-partial-clone` | disabled | Allow bounded offline Git inspection from a partial clone with all required objects already available |
 | `--json` | disabled | Emit one JSON result to stdout |
 | `--fail-on-findings` | disabled | Return exit `2` when scoring is complete and findings exist |
 
-| Provider | Default model | Credential and routing |
+| Provider | Model selection | Credential and routing |
 | --- | --- | --- |
 | `typesafe` | `jev-latest` | `TYPESAFE_API_KEY`. Supports pinned model IDs via `--model`. [TypeSafe API](https://docs.typesafe.ai/introduction/quickstart#call-it-the-api) |
 | `cloudflare` | `@cf/cloudflare/clef` | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Supports `@cf/cloudflare/clef-flash`. [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/models/clef/) |
 | `gemini` | `gemini-decision-1` | `GEMINI_API_KEY`. [Gemini Decisions API](https://aistudio.google.com/api-reference/decisions/create-decision) |
 | `custom` | required | Set `--endpoint`, `--model`, and `--api-key-env` for a System One-compatible HTTPS gateway using Bearer authentication. |
+| `pi` | exact `PROVIDER/MODEL` required | Uses the configured Pi provider on macOS or Linux. |
 
 The extractor supports Go, JavaScript and TypeScript including JSX and TSX, Python, Rust, C and C++, Java, Kotlin, Swift, shell, YAML, TOML, SQL, Lua, HTML, and Markdown. It ignores common lockfiles, generated and minified files, license headers, and compiler and linter directives. It uses the visible diff to track syntax, so a comment or literal opener outside the hunk can affect classification.
 
-Each request sends the task scope, one candidate comment, and nearby new-side hunk lines to the configured endpoint. Findings contain the path, new-side line range, category, and yes probability. JSON also reports `complete`, `threshold`, `extracted`, `scored`, `omitted`, and sanitized `failures`. File or stdin diffs are limited to 8 MiB, with the Git collector's smaller inspection limits applying to Git input. Each provider attempt times out after 10 seconds and may retry once on a transient failure.
+Each classification sends the task scope, one candidate comment, and nearby new-side hunk lines to the selected backend. Findings contain the path, new-side line range, category, and score in the `probability` field. Direct decision APIs return yes probabilities. Pi supplies self-estimated scores from `0` to `1` using the same field and threshold. JSON also reports `complete`, `threshold`, `extracted`, `scored`, `omitted`, and sanitized `failures`. File or stdin diffs are limited to 8 MiB, with the Git collector's smaller inspection limits applying to Git input. Direct API attempts time out after 10 seconds and may retry once on a transient failure.
 
 Exit `0` means scoring completed. Exit `1` means invalid CLI arguments. Exit `2` means scoring completed with findings and `--fail-on-findings` was set. Exit `3` means the result is incomplete due to an input, configuration, scoring, or comment-limit failure. Results retain findings from completed scores when other requests fail.
+
+Sending `SIGINT` or `SIGTERM` during Pi scoring stops the batch. Pioneer cleans up the active actor and returns exit `3` with `[COMMENT_PI_INTERRUPTED]` and findings from completed scores.
 
 ## `pioneer models`
 

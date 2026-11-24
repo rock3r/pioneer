@@ -4,7 +4,7 @@
 
 Pioneer lets coding agents run independent code reviews and isolated skill evaluations through a local [Pi coding agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). Pi uses its configured providers and models. Pioneer checks readiness, copies Pi configuration, applies path grants, and starts the native sandbox. You can select a thinking level up to `max`.
 
-`pioneer check-comments` scores changed diff comments against task scope through a dedicated decision model API. See the [comment-check CLI reference](docs/CLI-REFERENCE.md#pioneer-check-comments).
+`pioneer check-comments` scores changed comments against the task scope using a dedicated decision model. General-purpose LLMs typically cost more per comment and can be less accurate. On macOS and Linux, you can explicitly select an LLM with `--provider pi --model PROVIDER/MODEL`. Pioneer never switches to an LLM automatically. [Comment-check CLI reference](https://github.com/rock3r/pioneer/blob/main/docs/CLI-REFERENCE.md#pioneer-check-comments)
 
 ## Platform support
 
@@ -14,15 +14,19 @@ Pioneer lets coding agents run independent code reviews and isolated skill evalu
 | Linux | Enforced with Bubblewrap | Enforced with Bubblewrap |
 | Windows | Explicit opt-in, instruction-only | Unsupported; fails closed |
 
-On macOS and Linux, source and reference directories are read-only. Pi receives a private writable scratch directory and only the extra capabilities you grant. Review networking defaults to `full`, including loopback and LAN; use `public` to block loopback and LAN while retaining model-provider access.
+On macOS and Linux, source and reference directories are read-only. Pi receives private writable scratch and the extra capabilities you grant. The authenticated proxy's `full` mode allows other LAN hosts and public destinations. `public` uses public destinations by default, and `provider-only` restricts egress to the selected model provider and explicit host grants. All native tiers block loopback through the proxy. An eval can open a specific local service with `--allow-loopback 127.0.0.1:PORT`.
+
+Use `--controller-provider-auth` to keep a supported model's credentials in the controller during native reviews and Pi evals. Select a qualified model declared in the source Pi home's `models.json` with a public HTTPS endpoint. [Controller-only authentication](https://github.com/rock3r/pioneer/blob/main/docs/CLI-REFERENCE.md#controller-only-provider-authentication) lists supported protocols and options.
 
 Pioneer invokes the native sandbox mechanisms directly. It does not depend on Anthropic Sandbox Runtime and does not impose special bans on `.idea`, `.vscode`, or other source-tree names.
 
-The Pioneer controller must run outside any enclosing agent sandbox. It needs access to the operator's Pi configuration and configured model provider. Pioneer starts the review or eval actor inside its own native sandbox.
+When invoking Pi, run the Pioneer controller outside any enclosing agent sandbox so it can reach Pi configuration and the selected provider. Pioneer starts the Pi actor inside its own native sandbox on macOS and Linux.
 
 ## Quick start
 
-Pioneer requires Node.js 22.19.0 or newer and npm. Reviews and skill evaluations require a configured Pi installation at version `0.80.6` or newer. This release has tests through Pi `1.6.0`. Pioneer allows newer versions and prints a warning. Install the command-line interface (CLI):
+Pioneer requires Node.js 22.19.0 or newer and npm. Reviews, skill evals, and Pi-backed comment checks require a configured Pi installation at version `0.80.6` or newer. Compatibility is tested through Pi `1.6.0`. Pioneer allows newer versions and prints a warning. Git-backed reviews and comment checks require Git 2.45 or newer.
+
+Install the command-line interface (CLI) with npm.
 
 ```bash
 npm install -g @rock3r/pioneer
@@ -52,7 +56,7 @@ pioneer models
 
 If `doctor` reports a Pi catalog or configuration error, rerun Pioneer in an unsandboxed or approved escalated terminal first. An outer sandbox can hide configuration or block Pi's required lock files. Either problem can produce a catalog error. Pioneer checks metadata for this diagnosis without reading configuration contents. Its own actor sandbox remains enabled.
 
-On any supported platform, run a review from the repository root to inspect the current Git changes:
+On macOS or Linux, run a review from the repository root to inspect current Git changes:
 
 ```bash
 pioneer review \
@@ -145,7 +149,7 @@ Read [AGENTS.md](AGENTS.md) before changing production code. Run the live securi
 
 - Reviews are synchronous and return free-form Markdown.
 - Git-target reviews collect allowlisted read-only Git context in the controller on every platform. Linux Pi additionally has `bash` inside Bubblewrap; macOS and opt-in Windows keep Pi on `read` and `ls`.
-- Windows cannot enforce source immutability and requires `--allow-unsandboxed-windows` after explicit user approval.
+- Windows reviews require `--allow-unsandboxed-windows` after explicit user approval. Source immutability relies on instructions. Host filters, provider-only networking, and controller-only authentication require macOS or Linux.
 - The eval harness prepares and isolates baseline and with-skill actors; automated grading remains separate work.
 
 ## License

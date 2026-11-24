@@ -9,7 +9,7 @@ On macOS and Linux, Pioneer starts Pi inside a native sandbox. Reviews and evals
 The current product surface is:
 
 - a synchronous review CLI and TypeScript API;
-- a direct decision-model CLI for comments added or edited in a diff;
+- a CLI for comments added or edited in a diff, with direct decision APIs and an optional Pi classifier;
 - a fail-closed skill-eval preparation and execution CLI;
 - native macOS Seatbelt and Linux Bubblewrap transports;
 - one shared Agent Skill packaged for Agent Plugins v1, Codex, and Claude Code.
@@ -65,7 +65,7 @@ The plugin contains instructions only. Agent Plugins v1, Codex, and Claude manif
 | Network mediation | `src/eval-run/public-egress-proxy.ts`, `src/sandbox/linux-proxy-bridge.ts` | Authenticate proxy use, resolve and pin destinations, bridge Linux namespaces and allowed loopback ports |
 | Public API | `src/index.ts` | Export the supported TypeScript surface |
 | Deep review | `src/deep-review/*`, `src/github/deep-review/*` | Versioned council/president orchestration, schemas, bundled inspection extension, and GitHub adapter |
-| Comment checks | `src/check-comments/*` | Parse unified diffs, select changed comments, and collect bounded decision scores directly over HTTPS |
+| Comment checks | `src/check-comments/*` | Parse unified diffs, select changed comments, and score candidates through a direct HTTPS API or a tool-free native Pi actor |
 
 Dependencies flow from adapters and orchestration toward validation and transport helpers. Plugin files do not duplicate policy.
 
@@ -138,9 +138,9 @@ See [REVIEW-TRANSPORT.md](REVIEW-TRANSPORT.md) for the RPC contract and [SECURIT
 
 ## Comment-check lifecycle
 
-The comment checker validates its provider credential, accepts an explicit diff or collects patches through the guarded Git controller, and extracts added or modified comment blocks with language-specific lexical rules. It sends each candidate with the task scope and clipped new-side hunk context as quoted JSON evidence. Fixed question definitions live in a separate request field.
+The comment checker accepts an explicit diff or collects patches through the guarded Git controller. Language-specific lexical rules extract added or modified comment blocks. Each candidate travels with task scope and clipped new-side hunk context. Direct decision APIs validate an operator-selected credential and separate quoted JSON evidence from the fixed questions.
 
-Each bounded worker issues one request with three closed questions. It validates the answer type and yes probability before combining findings in diff order. The CLI distinguishes complete scoring, findings that trip the CI gate, and incomplete scoring. See the [comment-check CLI reference](CLI-REFERENCE.md#pioneer-check-comments).
+An explicit `--provider pi --model PROVIDER/MODEL` selection classifies the same evidence with a tool-free actor inside the native sandbox on macOS or Linux. Pi scores one candidate at a time. `SIGINT` and `SIGTERM` stop the Pi batch, terminate the active actor, and wait for runtime cleanup. Both backends validate the returned scores before combining findings in diff order. The CLI distinguishes complete scoring, findings that trip the CI gate, and incomplete scoring. [Comment-check CLI reference](CLI-REFERENCE.md#pioneer-check-comments)
 
 ## Review OAuth lifecycle
 

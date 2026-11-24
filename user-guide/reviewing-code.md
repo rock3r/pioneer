@@ -14,9 +14,11 @@ The portable Agent Plugin and the Codex and Claude adapters all call `pioneer re
 
 ## Describe the review target
 
-Pioneer grants access to a source directory. For Git-target reviews, the controller collects bounded read-only Git context on every platform. `--source` must be the repository root.
+Pioneer grants access to a source directory. For Git-target reviews, the controller collects bounded read-only Git context on every platform. Use Git 2.45 or newer and set `--source` to the repository root.
 
 Prefer an explicit `--git` target. Without it, Pioneer infers conservative scopes from Git-target prompts. GitHub pull requests cannot serve as Git targets.
+
+In a partial clone, pass `--allow-partial-clone` after making the required objects available locally. Pioneer inspects Git offline.
 
 ### Working tree
 
@@ -126,10 +128,27 @@ Use `--no-resume` for a new review only when the caller explicitly requests ephe
 
 ## Choose network scope
 
-- `--network full` is the default and permits public, LAN, and loopback destinations through the proxy.
-- `--network public` blocks local and reserved destinations.
+- `--network full` is the review default and permits public destinations and other LAN hosts through the proxy.
+- `--network public` uses public destinations by default and accepts explicit host grants.
+- `--network provider-only` restricts DNS and connections to the selected model provider and explicit host grants.
 
-Use `full` for local deployment checks. Prefer `public` when the review needs no local services. Pioneer rejects `--network none` because Pi needs access to its configured model provider. Ambient review extension discovery stays disabled.
+All native tiers block loopback, host interface addresses, and metadata destinations through the proxy. Use `--allow-host` and `--block-host` for individual names, wildcard subdomains, IP addresses, or CIDRs. The `[PIONEER_NETWORK]` line reports the effective policy. Windows reviews rely on the host's network policy. [Sandbox and path grants](sandbox-and-paths.md#network-modes)
+
+For compatible models, `--controller-provider-auth` keeps the credential in the controller and gives Pi a per-run placeholder. [Controller-only provider authentication](sandbox-and-paths.md#controller-only-provider-authentication)
+
+## Check changed comments
+
+This example checks staged comments against the task scope in `task.md`.
+
+```bash
+pioneer check-comments --source . --git staged --scope-file task.md --json --fail-on-findings
+```
+
+The default direct decision API receives the task scope, candidate comments, and nearby diff context. Direct decision APIs run independently of Pi and work on Windows.
+
+Prefer a dedicated decision model for routine checks. General-purpose LLMs typically cost more per comment and can miss findings or flag valid comments. On macOS or Linux, you can explicitly choose an LLM as a fallback by passing `--provider pi --model PROVIDER/MODEL` with a qualified name from `pioneer models --no-extensions`. Pi runs without tools in the native sandbox and returns self-estimated scores. If a decision API fails, Pioneer reports incomplete scoring. CI jobs and agent integrations must never automatically retry with an LLM.
+
+A completed check with findings exits `2` when you pass `--fail-on-findings`. Incomplete scoring exits `3`. [Comment-check CLI reference](../docs/CLI-REFERENCE.md#pioneer-check-comments)
 
 ## Set a timeout
 

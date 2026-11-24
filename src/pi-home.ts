@@ -20,7 +20,7 @@ import {
   type PiSessionScanBudget,
 } from "./pi-session-file.js";
 
-export type PiHomeMode = "review" | "eval";
+export type PiHomeMode = "review" | "eval" | "classification";
 
 export interface PreparePiHomeOptions {
   readonly destination: string;
@@ -508,7 +508,7 @@ async function buildSelection(
   environment: Readonly<NodeJS.ProcessEnv>,
   controllerProviderAuth: boolean,
 ): Promise<SelectionState> {
-  if (mode === "eval" && includes.length > 0) {
+  if (mode !== "review" && includes.length > 0) {
     throw new Error(
       "[PI_HOME_INCLUDE_UNSUPPORTED] Pi home includes are supported only for review snapshots",
     );
@@ -525,7 +525,14 @@ async function buildSelection(
     checkAborted,
     privatePaths: await privateStoragePaths(sourceRoot, environment),
   };
-  for (const name of controllerProviderAuth ? ["AGENTS.md"] : DEFAULT_ROOT_FILES) {
+  const defaultRootFiles =
+    mode === "classification"
+      ? ["auth.json", "models.json", "models-store.json"]
+      : DEFAULT_ROOT_FILES;
+  const rootFiles = controllerProviderAuth
+    ? defaultRootFiles.filter((name) => name === "AGENTS.md")
+    : defaultRootFiles;
+  for (const name of rootFiles) {
     state.checkAborted();
     try {
       await collectDefaultFile(sourceRoot, name, state);

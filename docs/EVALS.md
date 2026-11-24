@@ -28,7 +28,7 @@ The native timeout test returned `[EVAL_TIMEOUT]` and both pre-timeout markers i
 
 ## Native implementation
 
-On macOS, Pioneer invokes `/usr/bin/sandbox-exec` directly with a generated Seatbelt profile. Starting from `deny default`, it allows canonical read/write grants and required runtimes. Outbound TCP reaches only the per-run authenticated proxy port and explicit `--allow-loopback` ports.
+On macOS, Pioneer invokes `/usr/bin/sandbox-exec` directly with a generated Seatbelt profile. Starting from `deny default`, it allows canonical read/write grants and required runtimes. Outbound TCP reaches the per-run authenticated proxy, explicit `--allow-loopback` ports, and the private gateway when controller-only authentication is enabled.
 
 The profile permits reads and writes to `/dev/null`. Libuv's `posix_spawn` opens it for ignored stdio slots used by Pi's `bash` tool. Git also opens it at startup. An ioctl-only grant caused both to fail with `EPERM`.
 
@@ -56,8 +56,6 @@ Pioneer does not probe the Bubblewrap version. Distribution `bwrap` packages pro
 On Linux, Bubblewrap runs as PID 1 in a `--unshare-pid` namespace. After the actor exits, the kernel destroys all remaining namespace processes and closes inherited pipes. A leaked descendant therefore produces a clean exit without a containment diagnostic.
 
 On macOS, Pioneer samples the actor's process tree and detached group. Normal completion, timeout, and interruption trigger cleanup of observed descendants, including processes that already closed their capture pipes. Pioneer checks each process's current PID, owner, start time, and group immediately before signaling it. When an unfamiliar orphan has a working directory inside the run tree, Pioneer requires corroborating ownership from the original actor group before signaling it. An unresolved candidate or retained pipe at the end of the grace period produces `[EVAL_PROCESS_CONTAINMENT_FAILED]`.
-
-Eval networking defaults to `--network public`. Select `full` for LAN services or `provider-only` for restricted model access. `--allow-host` and `--block-host` accept repeated names, wildcard subdomains, IPs and CIDRs. All tiers enforce the same local interface and metadata protections. The CLI prints the effective policy as `[PIONEER_NETWORK]`.
 
 Linux exposes the host proxy through one mode-0600 Unix socket. A Pioneer Node supervisor listens on namespace loopback port 3128 and relays only to that socket. The review/eval process gets the authenticated proxy URL. It has no host network interface, so raw host/LAN/loopback connections remain unavailable. The parent proxy checks destinations and pins the selected DNS result before connecting.
 
@@ -97,18 +95,11 @@ Diagnostics exclude the full environment, Pi configuration, and authenticated pr
 
 ## Network policy
 
-Eval actors can use the public internet. They cannot reach loopback, link-local, private, carrier-grade NAT, documentation, multicast, reserved, or other non-global IPv4/IPv6 ranges by default.
+Eval networking defaults to `--network public`, which allows globally routable destinations by default. Use `full` for other LAN hosts or `provider-only` for the selected model provider and explicit host grants. Reviews default to `full` and require a proxy path to the model provider. Every tier denies loopback, host interface addresses, link-local and metadata destinations through the proxy.
 
-`eval run --allow-loopback 127.0.0.1:PORT` opens only that exact host loopback port. Pioneer sets `NO_PROXY=127.0.0.1,localhost` for direct connections from proxy-aware clients. The proxy still refuses loopback. Other loopback ports stay closed. The mandatory probe uses a listener outside the allow list.
+Repeat `--allow-host` and `--block-host` for exact names, wildcard subdomains, IP addresses, or CIDRs. Host blocks override grants. The authenticated proxy applies hostname restrictions before DNS and connects to a validated address from the answer. Read `[PIONEER_NETWORK]` on stderr for the effective policy.
 
-The authenticated parent proxy:
-
-- rejects local host suffixes;
-- resolves names before connecting;
-- requires every returned address to be globally routable; and
-- connects to the selected validated address, preventing a DNS-rebinding race.
-
-Review `full` uses the same proxy mediation and allows public, LAN, and loopback destinations. Review `public` uses eval-style public-only resolution. Pioneer rejects review `none` before launch because the model provider needs proxy-mediated egress.
+`eval run --allow-loopback 127.0.0.1:PORT` opens only that exact host loopback port. Pioneer sets `NO_PROXY=127.0.0.1,localhost` for direct connections from proxy-aware clients. The proxy still refuses loopback. Other loopback ports stay closed. The mandatory probe uses a listener outside the allow list. [Network policy](SECURITY.md#network-policy)
 
 ## Prepare and run a battery
 
@@ -139,9 +130,11 @@ Writable `--run-dir` and caller-supplied read-only `--runtime-read` grants must 
 
 Pioneer rejects writable protected-system roots and descendants. It also rejects broad filesystem, sensitive-configuration, home, temporary, and variable-data roots and canonical platform aliases. Narrow read-only system runtimes and disposable temporary descendants remain supported. Strict descendants of the caller's home stay allowed even when the home sits under a protected root; the home itself stays broad.
 
-The runner snapshots `PI_CODING_AGENT_DIR` or `~/.pi/agent` into a canonical private temporary tree outside the persistent eval run. The root allowlist is `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`. The actor gets a writable isolated `agentDir`, allowing Pi 0.84.x to create `auth.json.lock` and `settings.json.lock`. Home/tmp scratch is separate, writable, and temporary.
+The runner snapshots `PI_CODING_AGENT_DIR` or `~/.pi/agent` into a canonical private temporary tree outside the persistent eval run. The default root allowlist is `auth.json`, `models.json`, `models-store.json`, `settings.json`, and `AGENTS.md`. The actor gets a writable isolated `agentDir`, allowing Pi 0.84.x to create `auth.json.lock` and `settings.json.lock`. Home/tmp scratch is separate, writable, and temporary.
 
 Pioneer never mounts the source Pi home or puts controller launch/probe files in the actor run. It removes the whole temporary tree on every exit. The snapshot excludes configured skills and default-skipped package/runtime trees. Hard exclusions cover sessions, logs, `.npm`, `.cache`, transient directories, and log files, case-insensitively on macOS and Windows. Evals have no include flag.
+
+For compatible providers, `--controller-provider-auth` generates placeholder authentication and model configuration for the official Pi actor. Pass the option before `--` and select the qualified model on the Pi command. Configure its public HTTPS endpoint in the source Pi home's `models.json`. The controller's private gateway sends the original credential upstream and applies the configured network rules. [Controller-only authentication requirements](CLI-REFERENCE.md#controller-only-provider-authentication)
 
 Pioneer stages trusted official Pi user extensions read-only beside the snapshot and passes them explicitly. Ambient discovery stays disabled. `--pi-home DIR` selects a different source to validate and copy, never to use in place. The selected snapshot alone has 500,000-entry and 1 GiB limits.
 

@@ -125,6 +125,48 @@ The legacy adapter test checks that short-lived broker results cannot trigger a 
 
 Real provider smoke reviews are separate. Use the requested model and existing credentials. Never print credentials.
 
+## Comment-check semantic evaluation
+
+The [synthetic corpus](../scripts/evals/check-comments-corpus.json) has two matched pairs per comment-check category. Each pair uses the same comment and patch with two task scopes. The positive scope expects exactly the named category and CLI exit `2`. The control explains why the work was deferred or why the edge case is handled elsewhere and expects no findings and CLI exit `0`. Every case expects one extracted and one scored comment.
+
+Build once, validate all 12 cases against the local extractor, and test the runner's result accounting.
+
+```bash
+npm run build
+node scripts/evals/check-comments.mjs
+node --test scripts/evals/check-comments.test.mjs
+```
+
+For live direct API scoring, export the selected provider's credential variables. The runner sends only the synthetic patches and scopes through the built `pioneer check-comments` CLI.
+
+```bash
+# TYPESAFE_API_KEY
+node scripts/evals/check-comments.mjs --live --provider typesafe > jev.json
+
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+node scripts/evals/check-comments.mjs --live --provider cloudflare > clef.json
+
+# GEMINI_API_KEY
+node scripts/evals/check-comments.mjs --live --provider gemini > gemini.json
+
+# Credential in DECISION_GATEWAY_KEY for a System One-compatible gateway
+node scripts/evals/check-comments.mjs --live --provider custom \
+  --endpoint https://gateway.example/v1/systemone --model vendor/model \
+  --api-key-env DECISION_GATEWAY_KEY > gateway.json
+```
+
+On macOS or Linux, opt into the same corpus with Pi. Replace `PROVIDER/MODEL` with an exact qualified name from `pioneer models --no-extensions`. Pi uses its configured credentials and the tool-free native classifier.
+
+```bash
+node scripts/evals/check-comments.mjs --live --provider pi --model PROVIDER/MODEL > pi.json
+```
+
+Live reports record the CLI and corpus versions, model selector, threshold, extraction and scoring coverage, and exact category matches. They include false positives and false negatives per category and the observed findings and exit status for each case. Incomplete cases are excluded from semantic counts. Use the same corpus and threshold to compare classifications. The threshold defaults to `0.8`. The output's `probability` field holds direct API probabilities or Pi's self-estimated scores.
+
+The runner exits `0` for clean corpus validation or a full set of exact live matches, `1` for invalid setup or corpus validation failure, `2` for semantic mismatches with complete scoring, and `3` for incomplete live coverage. Local corpus validation and runner tests verify the fixtures and report handling. Live runs measure model classifications on this corpus.
+
+## Full validation
+
 ```bash
 npm test
 npm run test:e2e
