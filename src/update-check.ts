@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import { pioneerCacheDirectory } from "./pi-extension-cache-location.js";
 
 export const PIONEER_PACKAGE_NAME = "@rock3r/pioneer";
 export const PIONEER_PACKAGE_REGISTRY = "https://registry.npmjs.org/";
@@ -213,14 +214,7 @@ function validState(value: unknown): UpdateCheckState | undefined {
 }
 
 export function updateCachePath(environment: NodeJS.ProcessEnv = process.env): string {
-  const configuredCacheRoot = environment.XDG_CACHE_HOME;
-  const cacheRoot =
-    configuredCacheRoot !== undefined && path.isAbsolute(configuredCacheRoot)
-      ? configuredCacheRoot
-      : process.platform === "darwin"
-        ? path.join(homedir(), "Library", "Caches")
-        : path.join(homedir(), ".cache");
-  return path.join(cacheRoot, "pioneer", "update-check.json");
+  return path.join(pioneerCacheDirectory(environment), "update-check.json");
 }
 
 export function fileUpdateStateStore(cachePath = updateCachePath()): UpdateStateStore {
