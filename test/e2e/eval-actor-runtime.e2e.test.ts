@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, symlink, truncate, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -361,6 +361,88 @@ setTimeout(() => { socket.destroy(); process.stdout.write("timeout"); }, 3000).u
     expect(stripped?.tools).toBe(0);
   });
 
+  it("shares one enabled-extension generation across eval arms and stages uncovered explicit extensions locally", async () => {
+    const { created, runDir } = await workspace("extension-cache-arms", false);
+    const enabled = path.join(created.root, "enabled");
+    const explicit = path.join(created.root, "explicit");
+    const withSkill = path.join(created.root, "with-skill");
+    const skill = path.join(withSkill, ".pi", "skills", "fixture");
+    await Promise.all([mkdir(enabled), mkdir(explicit), mkdir(skill, { recursive: true })]);
+    const enabledEntry = path.join(enabled, "index.mjs");
+    const coveredEntry = path.join(enabled, "covered.mjs");
+    const uncoveredEntry = path.join(explicit, "uncovered.mjs");
+    await Promise.all([
+      writeFile(enabledEntry, "enabled fixture\n"),
+      writeFile(coveredEntry, "covered fixture\n"),
+      writeFile(uncoveredEntry, "uncovered fixture\n"),
+      writeFile(
+        path.join(skill, "SKILL.md"),
+        "---\nname: fixture\ndescription: Eval fixture\n---\n",
+      ),
+      writeExtensionHostingPi(created, { enabledExtensions: [enabledEntry] }),
+    ]);
+    // The cache keeps changes within two seconds of a stage private to that invocation.
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+
+    async function launch(arm: string, log: string, entry: string) {
+      const run = await runPioneer(created, [
+        ...evalRun(created, arm, log),
+        "--",
+        "pi",
+        "-e",
+        entry,
+        "--model",
+        "builtin/demo",
+        "--print",
+        "Say READY",
+      ]);
+      const event = (await readWorkLog(created.workLogPath(log))).find(
+        (record) => record.type === "extension_snapshot",
+      );
+      return { run, event };
+    }
+
+    async function loadPaths(arm: string): Promise<string[]> {
+      const actor = JSON.parse(await readFile(path.join(arm, ACTOR_INVOCATION_FILE), "utf8")) as {
+        extensions: { path: string }[];
+      };
+      return actor.extensions.map((extension) => extension.path).sort();
+    }
+
+    const baseline = await launch(runDir, "baseline", coveredEntry);
+    expect(baseline.run.exitCode, baseline.run.stderr).toBe(0);
+    expect(baseline.event).toMatchObject({ cache: "miss", reason: "staged" });
+    const treatment = await launch(withSkill, "with-skill", coveredEntry);
+    expect(treatment.run.exitCode, treatment.run.stderr).toBe(0);
+    expect(treatment.event).toMatchObject({ cache: "hit", reason: "validated" });
+    const baselinePaths = await loadPaths(runDir);
+    expect(await loadPaths(withSkill)).toEqual(baselinePaths);
+    expect(baselinePaths).toHaveLength(2);
+    for (const filename of baselinePaths) {
+      expect(filename).toContain(`extension-snapshots${path.sep}v1${path.sep}entries${path.sep}`);
+    }
+
+    const uncovered = await launch(runDir, "uncovered", uncoveredEntry);
+    expect(uncovered.run.exitCode, uncovered.run.stderr).toBe(0);
+    expect(uncovered.event).toMatchObject({ cache: "bypass", reason: "explicit-extension" });
+    const runLocal = await loadPaths(runDir);
+    expect(runLocal.map((filename) => path.basename(filename)).sort()).toEqual([
+      "index.mjs",
+      "uncovered.mjs",
+    ]);
+    for (const filename of runLocal)
+      expect(filename).toContain(`${path.sep}pi-extensions${path.sep}`);
+
+    const sparseAsset = path.join(explicit, "large.fixture");
+    await writeFile(sparseAsset, "");
+    // Its size alone fits the cap. The already staged enabled entries put the total over.
+    await truncate(sparseAsset, 1024 ** 3);
+    const limited = await launch(runDir, "uncovered-limit", uncoveredEntry);
+    expect(limited.run.exitCode).not.toBe(0);
+    expect(limited.run.stderr).toContain("[PI_EXTENSION_SNAPSHOT_LIMIT]");
+    expect(limited.event).toMatchObject({ cache: "bypass", reason: "explicit-extension" });
+  });
+
   it("refuses a --pi-extension that is also passed with -e", async () => {
     const { created, runDir } = await workspace("tool-extension-duplicate", false);
     await writeExtensionHostingPi(created);
@@ -610,6 +692,7 @@ interface ExtensionHostingPiOptions {
    */
   readonly initializeExtensions?: boolean;
   readonly builtinProvider?: string;
+  readonly enabledExtensions?: readonly string[];
 }
 
 /**
@@ -681,7 +764,15 @@ process.stdout.write("READY\\n");
   );
   await writeFile(
     path.join(root, "dist", "core", "package-manager.js"),
-    "export class DefaultPackageManager { async resolve() { return { extensions: [] }; } }\n",
+    `export class DefaultPackageManager { async resolve() {
+      return { extensions: ${JSON.stringify(
+        (options.enabledExtensions ?? []).map((file) => ({
+          path: file,
+          enabled: true,
+          metadata: { scope: "user" },
+        })),
+      )} };
+    } }\n`,
   );
   await writeFile(
     path.join(root, "dist", "core", "resource-loader.js"),
