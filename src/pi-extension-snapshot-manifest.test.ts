@@ -1,16 +1,37 @@
-import { lstat, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, realpath, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
 import * as staging from "./pi-extension-snapshot.js";
 
 const { createTempDir } = registerManagedTempPaths();
-const race = vi.hoisted(() => ({ source: undefined as string | undefined }));
+const race = vi.hoisted(() => ({
+  source: undefined as string | undefined,
+  linkRead: undefined as { source: string; replace: () => Promise<void> } | undefined,
+  linkResolve: undefined as { source: string; replace: () => Promise<void> } | undefined,
+}));
 
 vi.mock("node:fs/promises", async (original) => {
   const fs = await original<typeof import("node:fs/promises")>();
   return {
     ...fs,
+    readlink: async (...args: Parameters<typeof fs.readlink>) => {
+      if (race.linkRead !== undefined && args[0] === race.linkRead.source) {
+        const { replace } = race.linkRead;
+        race.linkRead = undefined;
+        await replace();
+      }
+      return fs.readlink(...args);
+    },
+    realpath: async (...args: Parameters<typeof fs.realpath>) => {
+      const resolved = await fs.realpath(...args);
+      if (race.linkResolve !== undefined && args[0] === race.linkResolve.source) {
+        const { replace } = race.linkResolve;
+        race.linkResolve = undefined;
+        await replace();
+      }
+      return resolved;
+    },
     copyFile: async (...args: Parameters<typeof fs.copyFile>) => {
       await fs.copyFile(...args);
       if (args[0] === race.source) {
@@ -108,6 +129,67 @@ it.skipIf(process.platform === "win32")(
       source: expect.objectContaining({ ino: (await lstat(alias, { bigint: true })).ino }),
     });
     expect(staged.manifest.find((record) => record.sourcePath === entry)?.type).toBe("file");
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["disappears", "becomes a file"])(
+  "stages successfully when an ignored metadata link %s during the prepass",
+  async (change) => {
+    const { extension, resources, destination } = await fixture();
+    const metadata = path.join(extension, ".git");
+    const alias = path.join(metadata, "alias");
+    await mkdir(metadata);
+    await symlink("../index.ts", alias);
+    race.linkRead = {
+      source: alias,
+      replace: async () => {
+        await unlink(alias);
+        if (change === "becomes a file") await writeFile(alias, "synthetic metadata\n");
+      },
+    };
+    try {
+      const plan = await staging.planExtensionSnapshot(resources);
+      const staged = await staging.stageExtensionSnapshot(plan, destination);
+      const record = staged.manifest.find((entry) => entry.sourcePath === alias);
+      expect(race.linkRead).toBeUndefined();
+      if (change === "becomes a file") {
+        expect(record).toMatchObject({
+          staged: false,
+          type: "file",
+          source: expect.objectContaining({ ino: (await lstat(alias, { bigint: true })).ino }),
+        });
+        expect(record).not.toHaveProperty("linkText");
+      } else {
+        expect(record).toBeUndefined();
+      }
+    } finally {
+      race.linkRead = undefined;
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "rejects a selected link whose destination changes after it is first resolved",
+  async () => {
+    const { extension, resources, destination } = await fixture();
+    const alias = path.join(extension, "alias.ts");
+    await symlink("index.ts", alias);
+    await writeFile(path.join(extension, "alternate.ts"), "export default 'alternate';\n");
+    race.linkResolve = {
+      source: alias,
+      replace: async () => {
+        await unlink(alias);
+        await symlink("alternate.ts", alias);
+      },
+    };
+    try {
+      await expect(staging.snapshotExtensionResources(resources, destination)).rejects.toThrow(
+        "[PI_EXTENSION_SNAPSHOT_CHANGED]",
+      );
+      expect(race.linkResolve).toBeUndefined();
+    } finally {
+      race.linkResolve = undefined;
+    }
   },
 );
 

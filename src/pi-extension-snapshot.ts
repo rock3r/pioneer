@@ -254,12 +254,43 @@ interface ObservedEntry extends ManifestSource {
   readonly stagedRelativePath?: string;
 }
 
+class ExtensionSnapshotChangedError extends Error {
+  constructor() {
+    super(
+      "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
+    );
+  }
+}
+
+function sameSource(before: BigIntStats, after: BigIntStats): boolean {
+  return (
+    after.ino === before.ino &&
+    after.dev === before.dev &&
+    after.size === before.size &&
+    after.mtimeNs === before.mtimeNs &&
+    after.ctimeNs === before.ctimeNs
+  );
+}
+
+function isLinkObservationRace(error: unknown): boolean {
+  return (
+    error instanceof ExtensionSnapshotChangedError ||
+    (error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "EINVAL"))
+  );
+}
+
 function stagedMetadata(details: BigIntStats): StagedMetadata {
   const { ino, size, mode, mtimeNs, ctimeNs } = details;
   return { ino, size, mode, mtimeNs, ctimeNs };
 }
 
-async function observeSource(sourcePath: string, details: BigIntStats): Promise<ManifestSource> {
+async function observeSource(
+  sourcePath: string,
+  details: BigIntStats,
+  expectedTarget?: string,
+): Promise<ManifestSource> {
   const type = details.isSymbolicLink()
     ? "symlink"
     : details.isFile()
@@ -268,8 +299,47 @@ async function observeSource(sourcePath: string, details: BigIntStats): Promise<
         ? "directory"
         : "other";
   const source = { ...stagedMetadata(details), dev: details.dev, nlink: details.nlink };
-  if (type === "symlink") return { sourcePath, type, source, linkText: await readlink(sourcePath) };
+  if (type === "symlink") {
+    const linkText = await readlink(sourcePath);
+    if (expectedTarget !== undefined && (await realpath(sourcePath)) !== expectedTarget)
+      throw new ExtensionSnapshotChangedError();
+    if (!sameSource(details, await lstat(sourcePath, { bigint: true })))
+      throw new ExtensionSnapshotChangedError();
+    return { sourcePath, type, source, linkText };
+  }
   return { sourcePath, type, source };
+}
+
+async function lstatIfPresent(sourcePath: string): Promise<BigIntStats | undefined> {
+  try {
+    return await lstat(sourcePath, { bigint: true });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+async function tryObserveSource(
+  sourcePath: string,
+  details: BigIntStats,
+): Promise<{ readonly record: ManifestSource; readonly details: BigIntStats } | undefined> {
+  try {
+    return { record: await observeSource(sourcePath, details), details };
+  } catch (error) {
+    if (isLinkObservationRace(error)) return undefined;
+    throw error;
+  }
+}
+
+/** Give an entry that changed during the prepass one chance to supply a coherent record. */
+async function observeSourceBestEffort(
+  sourcePath: string,
+  details: BigIntStats,
+): ReturnType<typeof tryObserveSource> {
+  const observation = await tryObserveSource(sourcePath, details);
+  if (observation !== undefined) return observation;
+  const replacement = await lstatIfPresent(sourcePath);
+  return replacement === undefined ? undefined : tryObserveSource(sourcePath, replacement);
 }
 
 /** Capability paths have already been canonicalized and validated by their profile. */
@@ -588,13 +658,11 @@ export async function stageExtensionSnapshot(
   async function skipEntry(source: string): Promise<StagedEntry> {
     // Most skips were already recorded by the prepass. An entry can appear between walks.
     if (!observed.has(source)) {
-      const details = await lstat(source, { bigint: true }).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code === "ENOENT") return undefined;
-          throw error;
-        },
-      );
-      if (details !== undefined) observed.set(source, await observeSource(source, details));
+      const details = await lstatIfPresent(source);
+      if (details !== undefined) {
+        const observation = await observeSourceBestEffort(source, details);
+        if (observation !== undefined) observed.set(source, observation.record);
+      }
     }
     return { items: [] };
   }
@@ -647,7 +715,8 @@ export async function stageExtensionSnapshot(
       throw new Error(
         "[PI_EXTENSION_RUNTIME_UNSUPPORTED] An extension dependency contains a symlink cycle.",
       );
-    const lexical = await lstat(source, { bigint: true });
+    const lexical = await lstatIfPresent(source);
+    if (lexical === undefined) throw new ExtensionSnapshotChangedError();
     const stagedRelativePath = path.relative(destination, target);
     let stagedAlready = false;
     try {
@@ -657,7 +726,13 @@ export async function stageExtensionSnapshot(
       stagedAlready = false;
     }
     if (lexical.isSymbolicLink()) {
-      const observedSource = await observeSource(source, lexical);
+      let observedSource: ManifestSource;
+      try {
+        observedSource = await observeSource(source, lexical, canonical);
+      } catch (error) {
+        if (isLinkObservationRace(error)) throw new ExtensionSnapshotChangedError();
+        throw error;
+      }
       if (!stagedAlready) entries += 1;
       if (entries > SNAPSHOT_ENTRY_LIMIT) throw snapshotLimitError(entries, bytes);
       const relative = path.relative(path.dirname(target), stagedPath(canonical));
@@ -672,14 +747,13 @@ export async function stageExtensionSnapshot(
           (error as { code?: string }).code === "EEXIST";
         if (!exists) throw error;
         if ((await readlink(target)) !== relative) {
-          throw new Error(
-            "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
-          );
+          throw new ExtensionSnapshotChangedError();
         }
       }
       observed.set(source, { ...observedSource, stagedRelativePath });
       return { items: [{ record }] };
     }
+    if (path.relative(source, canonical) !== "") throw new ExtensionSnapshotChangedError();
     const details = await lstat(canonical, { bigint: true });
     const size = details.isFile() ? Number(details.size) : 0;
     const ownerExecute = Number(details.mode & 0o100n);
@@ -719,9 +793,7 @@ export async function stageExtensionSnapshot(
       const same =
         staged.size === size && (await fileDigest(target)) === (await fileDigest(canonical));
       if (!same) {
-        throw new Error(
-          "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
-        );
+        throw new ExtensionSnapshotChangedError();
       }
       const normalized = ownerExecute ? 0o700 : 0o600;
       if ((staged.mode & 0o777) !== normalized) await chmod(target, normalized);
@@ -732,18 +804,8 @@ export async function stageExtensionSnapshot(
     await copyFile(canonical, target, constants.COPYFILE_FICLONE);
     const copied = await lstat(target);
     const after = await lstat(canonical, { bigint: true });
-    if (
-      after.ino !== details.ino ||
-      after.dev !== details.dev ||
-      after.size !== details.size ||
-      copied.size !== size ||
-      after.mtimeNs !== details.mtimeNs ||
-      after.ctimeNs !== details.ctimeNs
-    ) {
-      throw new Error(
-        "[PI_EXTENSION_SNAPSHOT_CHANGED] Extension code changed while it was being copied; retry after installation has finished.",
-      );
-    }
+    if (!sameSource(details, after) || copied.size !== size)
+      throw new ExtensionSnapshotChangedError();
     if (
       await isPiSessionFile(
         target,
@@ -814,7 +876,10 @@ export async function stageExtensionSnapshot(
     prepassVisits += 1;
     // This scan also visits entries the copy skips, such as .git, and has no shared budget.
     if (prepassVisits > SNAPSHOT_ENTRY_LIMIT) throw prepassLimitError();
-    observed.set(file, await observeSource(file, details));
+    const observation = await observeSourceBestEffort(file, details);
+    if (observation === undefined) return undefined;
+    observed.set(file, observation.record);
+    details = observation.details;
     if (details.isSymbolicLink()) return undefined;
     if (details.isFile()) {
       if (details.ino === 0n) return undefined;
