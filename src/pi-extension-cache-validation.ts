@@ -139,6 +139,34 @@ async function hasPackageScope(payload: string): Promise<boolean> {
   }
 }
 
+/** Check the leased bytes against the controller's original metadata before and after each actor. */
+export async function verifyExtensionPayload(
+  roots: readonly string[],
+  payload: string,
+  manifest: readonly ExtensionManifestRecord[],
+  signal?: AbortSignal,
+): Promise<void> {
+  await validatePayloadDirectories(payload, roots, signal);
+  if (!(await hasPackageScope(payload))) throw new ManifestMismatch();
+  await walkBounded(
+    { size: manifest.length, next: 0, child: (index) => index },
+    async (index) => {
+      const record = manifest[index];
+      if (!record?.staged) return undefined;
+      if (
+        record.stagedRelativePath !== cacheRelativePathForSource(record.sourcePath) ||
+        !matchesCopy(
+          await lstat(`${payload}${path.sep}${record.stagedRelativePath}`, { bigint: true }),
+          record.stagedMetadata,
+        )
+      )
+        throw new ManifestMismatch();
+      return undefined;
+    },
+    signal,
+  );
+}
+
 export async function validateCachedExtensionSnapshot(
   plan: ExtensionSnapshotPlan,
   payload: string,
@@ -157,25 +185,7 @@ export async function validateCachedExtensionSnapshot(
     return "source-mismatch";
   }
   try {
-    await validatePayloadDirectories(payload, plan.selectedRoots, signal);
-    if (!(await hasPackageScope(payload))) return "copy-mismatch";
-    await walkBounded(
-      { size: manifest.length, next: 0, child: (index) => index },
-      async (index) => {
-        const record = manifest[index];
-        if (!record?.staged) return undefined;
-        if (
-          record.stagedRelativePath !== cacheRelativePathForSource(record.sourcePath) ||
-          !matchesCopy(
-            await lstat(`${payload}${path.sep}${record.stagedRelativePath}`, { bigint: true }),
-            record.stagedMetadata,
-          )
-        )
-          throw new ManifestMismatch();
-        return undefined;
-      },
-      signal,
-    );
+    await verifyExtensionPayload(plan.selectedRoots, payload, manifest, signal);
   } catch {
     signal?.throwIfAborted();
     return "copy-mismatch";

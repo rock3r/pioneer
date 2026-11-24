@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { constants, type Stats } from "node:fs";
 import { lstat, open, opendir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
+import type { ExtensionSnapshotHandle } from "./pi-extension-cache.js";
 
 // One Pi-home snapshot and one combined extension snapshot, with room for their
 // controller-generated launch files and directories.
@@ -20,6 +21,7 @@ export class PiStagedIntegrityError extends Error {
 interface PiStagedIntegrityInputs {
   readonly agentDir?: string;
   readonly extensionRoot?: string;
+  readonly extensionSnapshot?: Pick<ExtensionSnapshotHandle, "verifyPayload"> | undefined;
   readonly controllerFiles?: readonly string[];
   readonly checkAborted?: () => void;
 }
@@ -184,6 +186,7 @@ export async function withPiStagedIntegrity<T>(
 ): Promise<T> {
   let verify: () => Promise<void>;
   try {
+    await inputs.extensionSnapshot?.verifyPayload();
     verify = await prepareStagedVerification(inputs);
   } catch {
     inputs.checkAborted?.();
@@ -197,6 +200,7 @@ export async function withPiStagedIntegrity<T>(
   }
   try {
     await verify();
+    await inputs.extensionSnapshot?.verifyPayload();
   } catch {
     throw new PiStagedIntegrityError();
   }

@@ -274,7 +274,11 @@ async function launchStructuredActor(
             );
 
       return await withPiStagedIntegrity(
-        { agentDir: runtime.home.agentDir, extensionRoot: runtime.extensionRoot },
+        {
+          agentDir: runtime.home.agentDir,
+          extensionRoot: runtime.extensionRoot,
+          extensionSnapshot: runtime.extensions.snapshotHandle,
+        },
         async () =>
           await runReviewRpc(
             launch.argv,

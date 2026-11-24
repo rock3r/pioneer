@@ -1937,6 +1937,7 @@ async function runEvalCommandWithInterruption(
           {
             agentDir: piHome.agentDir,
             ...(stagedExtensionRoot === undefined ? {} : { extensionRoot: stagedExtensionRoot }),
+            extensionSnapshot: snapshotHandle,
             controllerFiles: [launcherScript, launchSpec, ...identityFiles],
             checkAborted: throwIfSetupInterrupted,
           },

@@ -2227,7 +2227,11 @@ async function runReviewInternal(
           callerPrompt: request.prompt,
         };
         report = await withPiStagedIntegrity(
-          { agentDir: piHome.agentDir, extensionRoot: preparedRuntime.extensionRoot },
+          {
+            agentDir: piHome.agentDir,
+            extensionRoot: preparedRuntime.extensionRoot,
+            extensionSnapshot: preparedRuntime.extensions.snapshotHandle,
+          },
           async () =>
             await runReviewRpc(
               launch.argv,

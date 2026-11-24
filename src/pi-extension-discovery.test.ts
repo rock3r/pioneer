@@ -33,7 +33,7 @@ describe("prepareReviewRuntime", () => {
         digest: "0".repeat(64),
         entries: 0,
         bytes: 0,
-        snapshotHandle: { cacheRoot: root, payload, release },
+        snapshotHandle: { cacheRoot: root, payload, release, verifyPayload: async () => {} },
       });
       const runtime = await prepareReviewRuntime(["pi"], agentDir, {}, root);
       try {

@@ -30,6 +30,7 @@ it.skipIf(process.platform === "win32")(
       snapshotHandle: {
         cacheRoot: path.join(root, "cache"),
         payload: path.join(root, "payload"),
+        verifyPayload: async () => {},
         release,
       },
     });
