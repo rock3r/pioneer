@@ -21,6 +21,8 @@ The cache store uses `pioneer/extension-snapshots/v1/` below an absolute `XDG_CA
 After a machine restart, the store hashes the staged bytes again before granting reuse. It uses the original source sizes and execute bits to reproduce the digest that retained reviews use. If the boot ID is unavailable, this check runs on every lookup. `PIONEER_EXTENSION_CACHE=0` selects per-run staging. Windows also uses per-run staging.
 Before reusing a cached snapshot, the controller reads source directory membership, including skipped paths, and checks source identities, size, mode, nanosecond modification and change times, link counts, and symbolic link text. It also checks every staged entry's metadata, the generated parent directories, and the exact bytes of the generated package scope. It reruns the current private-storage exclusions, eval and repository filters, symbolic link checks, and bounded session-header scans. Canonical credential policy roots participate in the cache key so changes to XDG locations cannot reuse a snapshot staged under different credential exclusions.
 
+Each controller acquires its own lease before validating or using a committed generation. Concurrent controllers can lease the same generation while one creator stages a replacement. Collection preserves a leased generation until its owners release it or their process identities show that they exited. Unleased superseded and rejected generations, generations unused for more than 14 days, and the least recently used generations beyond the 3 GiB cache budget move to trash. Later runs drain trash and reclaim abandoned staging directories in the background.
+
 Pioneer excludes Pi's private runtime storage by exact location:
 
 - the agent directory's `sessions/` and `logs/` directories;

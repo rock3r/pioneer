@@ -17,6 +17,7 @@ import {
   extensionCacheKey,
   prepareCachedExtensionSnapshot,
 } from "./pi-extension-cache.js";
+import { collectExtensionCache } from "./pi-extension-cache-leases.js";
 import { validateCachedExtensionSnapshot } from "./pi-extension-cache-validation.js";
 import {
   assertSameExtensionSnapshot,
@@ -205,10 +206,53 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
   });
 
   it("shares one generation across concurrent cold preparations", async () => {
-    const results = await Promise.all([prepare("one"), prepare("two"), prepare("three")]);
+    const { takeLease: _override, ...defaults } = options();
+    const plan = await planExtensionSnapshot(resources());
+    const results = await Promise.all(
+      ["one", "two", "three"].map((name) =>
+        prepareCachedExtensionSnapshot(plan, path.join(base, name), defaults),
+      ),
+    );
     expect(new Set(results.map((result) => result.snapshotHandle?.payload)).size).toBe(1);
     expect(record.mock.calls.map(([value]) => value.cache).sort()).toEqual(["hit", "hit", "miss"]);
+    const payload = results[0]?.snapshotHandle?.payload as string;
+    const generationId = path.basename(path.dirname(payload));
+    expect(await readdir(path.join(cacheRoot, "leases", generationId))).toHaveLength(3);
     await Promise.all(results.map((result) => result.snapshotHandle?.release()));
+    expect(await readdir(path.join(cacheRoot, "leases", generationId))).toEqual([]);
+  });
+
+  it("leases before asynchronous validation and releases after rejecting a hit", async () => {
+    const { takeLease: _override, ...defaults } = options();
+    const plan = await planExtensionSnapshot(resources());
+    const initial = await prepareCachedExtensionSnapshot(
+      plan,
+      path.join(base, "initial"),
+      defaults,
+    );
+    await initial.snapshotHandle?.release();
+    const payload = initial.snapshotHandle?.payload as string;
+    const entered = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const preparing = prepareCachedExtensionSnapshot(plan, path.join(base, "next"), {
+      ...defaults,
+      async validate() {
+        entered.resolve();
+        await resume.promise;
+        return "copy-mismatch";
+      },
+    });
+    try {
+      await entered.promise;
+      await collectExtensionCache(cacheRoot, process.platform, { now: wallTime, maxBytes: 0 });
+      expect((await lstat(payload)).isDirectory()).toBe(true);
+    } finally {
+      resume.resolve();
+    }
+    const rebuilt = await preparing;
+    await expect(lstat(payload)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(rebuilt.digest).toBe(initial.digest);
+    await rebuilt.snapshotHandle?.release();
   });
 
   it("keeps staging private when either run-specific filter omits extension files", async () => {

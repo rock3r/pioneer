@@ -24,6 +24,11 @@ import {
   writeExtensionCacheManifest,
 } from "./pi-extension-cache-format.js";
 import {
+  collectExtensionCache,
+  startExtensionCacheBackgroundDeletion,
+  takeExtensionCacheLease,
+} from "./pi-extension-cache-leases.js";
+import {
   assertExtensionCacheDisjointFromGrants,
   extensionCacheRoot,
 } from "./pi-extension-cache-location.js";
@@ -119,6 +124,7 @@ interface ActiveCache {
   readonly signal: AbortSignal | undefined;
   readonly validate: Validate;
   readonly takeLease: (entry: ExtensionCacheEntry) => Promise<Release>;
+  readonly maintain: boolean;
 }
 
 export function extensionCacheKey(
@@ -456,6 +462,10 @@ async function stageCacheEntry(
       },
       cache.signal,
     );
+    if (cache.maintain)
+      await collectExtensionCache(cache.root, cache.platform, { now: cache.now() }).catch(
+        () => undefined,
+      );
     return {
       snapshot: {
         ...snapshot,
@@ -506,13 +516,10 @@ export async function prepareCachedExtensionSnapshot(
   );
   const uid = process.getuid?.();
   let result: CacheResult;
+  let previousDeletion: Promise<void> | undefined;
   if ((platform !== "darwin" && platform !== "linux") || uid === undefined) {
     result = { event: { cache: "bypass", reason: "unsupported-platform" } };
-  } else if (
-    environment.PIONEER_EXTENSION_CACHE === "0" ||
-    options.validate === undefined ||
-    options.takeLease === undefined
-  ) {
+  } else if (environment.PIONEER_EXTENSION_CACHE === "0" || options.validate === undefined) {
     result = { event: { cache: "bypass", reason: "disabled" } };
   } else if (plan.enabled.length === 0) {
     result = { event: { cache: "bypass", reason: "empty" } };
@@ -521,41 +528,74 @@ export async function prepareCachedExtensionSnapshot(
     if (root === undefined) {
       result = { event: { cache: "bypass", reason: "unsafe-cache" } };
     } else {
+      const now = options.now ?? Date.now;
+      const maintain = options.takeLease === undefined;
+      if (maintain) {
+        const deletion = startExtensionCacheBackgroundDeletion(root, platform, now());
+        previousDeletion = deletion.finished;
+        await deletion.started;
+      }
       const bootId = await (options.readBootId?.() ?? platformBootId(platform)).catch(
         () => undefined,
       );
-      options.signal?.throwIfAborted();
-      result = await useCache(plan, {
-        root,
-        key: extensionCacheKey(plan, platform, uid),
-        platform,
-        bootId,
-        now: options.now ?? Date.now,
-        signal: options.signal,
-        validate: options.validate,
-        takeLease: options.takeLease,
-      }).catch((error: unknown) => {
+      try {
+        options.signal?.throwIfAborted();
+        result = await useCache(plan, {
+          root,
+          key: extensionCacheKey(plan, platform, uid),
+          platform,
+          bootId,
+          now,
+          signal: options.signal,
+          validate: options.validate,
+          takeLease:
+            options.takeLease ?? ((entry) => takeExtensionCacheLease(entry, platform, now)),
+          maintain,
+        });
+      } catch (error) {
+        await previousDeletion;
         options.signal?.throwIfAborted();
         if (
           error instanceof Error &&
           (error.message.startsWith("[PI_") || error.message.startsWith("Explicit Pi extension"))
         )
           throw error;
-        return { event: { cache: "bypass", reason: "cache-unavailable" } };
-      });
+        result = { event: { cache: "bypass", reason: "cache-unavailable" } };
+      }
     }
   }
   try {
     options.record?.(result.event);
-    if (result.snapshot !== undefined) return result.snapshot;
+    if (result.snapshot !== undefined) {
+      const handle = result.snapshot.snapshotHandle;
+      if (handle === undefined || previousDeletion === undefined) return result.snapshot;
+      return {
+        ...result.snapshot,
+        snapshotHandle: ownedHandle(handle.cacheRoot, handle.payload, async () => {
+          try {
+            await handle.release();
+          } finally {
+            await previousDeletion;
+          }
+        }),
+      };
+    }
   } catch (error) {
-    await result.snapshot?.snapshotHandle?.release();
+    try {
+      await result.snapshot?.snapshotHandle?.release();
+    } finally {
+      await previousDeletion;
+    }
     throw error;
   }
-  const {
-    manifest: _manifest,
-    runSpecificFiltered: _runSpecificFiltered,
-    ...snapshot
-  } = await stageExtensionSnapshot(plan, destination, options.signal);
-  return snapshot;
+  try {
+    const {
+      manifest: _manifest,
+      runSpecificFiltered: _runSpecificFiltered,
+      ...snapshot
+    } = await stageExtensionSnapshot(plan, destination, options.signal);
+    return snapshot;
+  } finally {
+    await previousDeletion;
+  }
 }

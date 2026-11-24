@@ -95,7 +95,7 @@ function manifestRecord(value: unknown): ExtensionManifestRecord {
   };
 }
 
-async function openCacheFile(file: string): Promise<FileHandle> {
+export async function openPrivateCacheFile(file: string): Promise<FileHandle> {
   const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stats = await handle.stat();
@@ -117,7 +117,7 @@ export async function readCacheText(
   file: string,
   maxBytes = MAX_SNAPSHOT_METADATA_BYTES,
 ): Promise<string> {
-  const handle = await openCacheFile(file);
+  const handle = await openPrivateCacheFile(file);
   try {
     if ((await handle.stat()).size > maxBytes) throw invalidMetadata();
     const value = await handle.readFile("utf8");
@@ -132,7 +132,7 @@ export async function readExtensionCacheManifest(
   file: string,
   signal?: AbortSignal,
 ): Promise<readonly ExtensionManifestRecord[]> {
-  const handle = await openCacheFile(file);
+  const handle = await openPrivateCacheFile(file);
   const records: ExtensionManifestRecord[] = [];
   const seen = new Set<string>();
   const stream = handle.createReadStream({ encoding: "utf8", highWaterMark: 256 * 1024 });
@@ -177,6 +177,13 @@ interface CacheSnapshotMetadata extends ExtensionSnapshot {
 
 function boundedInteger(input: unknown, min: number, max: number): input is number {
   return typeof input === "number" && Number.isSafeInteger(input) && input >= min && input <= max;
+}
+
+export function extensionCacheApparentSize(text: string): number {
+  if (!text.endsWith("\n")) throw invalidMetadata();
+  const { bytes } = metadata(JSON.parse(text));
+  if (!boundedInteger(bytes, 0, MAX_BYTES)) throw invalidMetadata();
+  return bytes;
 }
 
 export function extensionCacheSnapshotMetadata(
