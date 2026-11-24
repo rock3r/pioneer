@@ -60,11 +60,15 @@ async function walkSource(
       // cannot allocate more space than the validated manifest/prepass limit.
       const names: string[] = [];
       const directory = await opendir(source, { bufferSize: 128 });
-      for await (const child of directory) {
-        signal?.throwIfAborted();
-        queued += 1;
-        if (queued > manifest.size) throw new ManifestMismatch();
-        names.push(child.name);
+      try {
+        for (let child = await directory.read(); child !== null; child = await directory.read()) {
+          signal?.throwIfAborted();
+          queued += 1;
+          if (queued > manifest.size) throw new ManifestMismatch();
+          names.push(child.name);
+        }
+      } finally {
+        await directory.close();
       }
       return {
         size: names.length,

@@ -250,6 +250,16 @@ async function newestEntry(cache: ActiveCache): Promise<ExtensionCacheEntry | un
       await inspectPrivateCacheDirectory(entry.directory);
       if (await exists(path.join(entry.directory, "bad"))) continue;
       const stats = await lstat(path.join(entry.directory, "snapshot.json"), { bigint: true });
+      const lastUsed = await lstat(path.join(entry.directory, "last-used"));
+      if (
+        !lastUsed.isFile() ||
+        lastUsed.nlink !== 1 ||
+        lastUsed.uid !== process.getuid?.() ||
+        (lastUsed.mode & 0o077) !== 0
+      ) {
+        await markBad(entry);
+        continue;
+      }
       if (newest === undefined || stats.mtimeNs > newest.created)
         newest = { entry, created: stats.mtimeNs };
     } catch (error) {

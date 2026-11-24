@@ -13,6 +13,10 @@ import {
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { registerManagedTempPaths } from "../test/support/temp-dir.js";
+import {
+  readExtensionCacheManifest,
+  writeExtensionCacheManifest,
+} from "./pi-extension-cache-format.js";
 import { validateCachedExtensionSnapshot } from "./pi-extension-cache-validation.js";
 import { planExtensionSnapshot, stageExtensionSnapshot } from "./pi-extension-snapshot.js";
 
@@ -163,6 +167,38 @@ describe.skipIf(process.platform === "win32")("extension cache validation", () =
       }
     },
   );
+
+  it("accepts a deliberately skipped link and misses when its canonical target changes", async () => {
+    const { root, source, entry, resources, storage, payload } = await fixture();
+    const privateDir = path.join(root, "synthetic-private");
+    const privateTarget = path.join(privateDir, "data.txt");
+    const alias = path.join(source, "alias.js");
+    await mkdir(privateDir);
+    await writeFile(privateTarget, "synthetic private file");
+    await symlink(privateTarget, alias);
+    const plan = await planExtensionSnapshot(resources, undefined, {
+      ...storage,
+      sessionDirs: [privateDir],
+    });
+    const snapshot = await stageExtensionSnapshot(plan, payload);
+    await writeFile(path.join(payload, "package.json"), '{"type":"module"}', { mode: 0o400 });
+    const manifestFile = path.join(root, "manifest.jsonl");
+    await writeExtensionCacheManifest(manifestFile, snapshot.manifest);
+    const manifest = await readExtensionCacheManifest(manifestFile);
+    expect(manifest.find((record) => record.sourcePath === alias)).toMatchObject({
+      staged: false,
+      skippedLinkTarget: privateTarget,
+    });
+    await expect(validateCachedExtensionSnapshot(plan, payload, manifest)).resolves.toBe("valid");
+    probe.redirectedLink = { source: alias, target: entry };
+    try {
+      await expect(validateCachedExtensionSnapshot(plan, payload, manifest)).resolves.toBe(
+        "source-mismatch",
+      );
+    } finally {
+      probe.redirectedLink = undefined;
+    }
+  });
 
   it("detects a link moved outside the selected roots within a previously skipped subtree", async () => {
     const { root, source, entry, stage } = await fixture();

@@ -22,16 +22,11 @@ export async function walkBounded<C>(
   const levels: WalkLevel<C>[] = [top];
   let failure: { readonly error: unknown } | undefined;
   let active = 0;
-  let wake = (): void => {};
-  let changed = new Promise<void>((resolve) => {
-    wake = resolve;
-  });
+  let changed: PromiseWithResolvers<void> | undefined;
   const notify = (): void => {
-    const resolve = wake;
-    changed = new Promise<void>((next) => {
-      wake = next;
-    });
-    resolve();
+    const waiting = changed;
+    changed = undefined;
+    waiting?.resolve();
   };
   const take = (): C | undefined => {
     for (;;) {
@@ -51,7 +46,8 @@ export async function walkBounded<C>(
       if (entry === undefined) {
         // Another worker may still open a directory; wait for it unless nothing is running.
         if (active === 0) return;
-        await changed;
+        changed ??= Promise.withResolvers<void>();
+        await changed.promise;
         continue;
       }
       active += 1;
