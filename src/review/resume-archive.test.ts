@@ -578,6 +578,7 @@ describe("recoverable review archive", () => {
         network: "none",
         piVersion: "0.84.2",
         gitTargets: ["working-tree", "commit:HEAD"],
+        allowPartialClone: true,
         gitSymlinkRoots: ["/objects-store"],
         androidRepoRoots: ["/aosp/.repo"],
       },
@@ -599,11 +600,13 @@ describe("recoverable review archive", () => {
         network: "none",
         piVersion: "0.84.2",
         gitTargets: ["working-tree", "commit:HEAD"],
+        allowPartialClone: true,
         gitSymlinkRoots: ["/objects-store"],
         androidRepoRoots: ["/aosp/.repo"],
       }),
     );
     expect(manifest.scope).toMatchObject({
+      allowPartialClone: true,
       gitSymlinkRoots: ["/objects-store"],
       androidRepoRoots: ["/aosp/.repo"],
     });
@@ -1369,6 +1372,7 @@ describe("recoverable review archive", () => {
       ["allowReadPaths", ["/reference", false]],
       ["allowWritePaths", "/output"],
       ["gitTargets", ["working-tree", 42]],
+      ["allowPartialClone", "true"],
       ["gitSymlinkRoots", "/objects-store"],
       ["androidRepoRoots", [false]],
     ] as const) {

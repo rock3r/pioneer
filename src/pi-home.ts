@@ -9,6 +9,7 @@ import {
   readdir,
   realpath,
   symlink,
+  writeFile,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +28,7 @@ export interface PreparePiHomeOptions {
   readonly sourceDir?: string;
   readonly piHomeIncludes?: readonly string[];
   readonly checkAborted?: () => void;
+  readonly controllerProviderFiles?: { readonly auth: string; readonly models: string };
   /** Environment Pi runs with; used to locate a configured session directory. */
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
 }
@@ -504,6 +506,7 @@ async function buildSelection(
   includes: readonly string[],
   checkAborted: () => void,
   environment: Readonly<NodeJS.ProcessEnv>,
+  controllerProviderAuth: boolean,
 ): Promise<SelectionState> {
   if (mode === "eval" && includes.length > 0) {
     throw new Error(
@@ -522,7 +525,7 @@ async function buildSelection(
     checkAborted,
     privatePaths: await privateStoragePaths(sourceRoot, environment),
   };
-  for (const name of DEFAULT_ROOT_FILES) {
+  for (const name of controllerProviderAuth ? ["AGENTS.md"] : DEFAULT_ROOT_FILES) {
     state.checkAborted();
     try {
       await collectDefaultFile(sourceRoot, name, state);
@@ -630,6 +633,11 @@ export async function prepareIsolatedPiHome(
   options: PreparePiHomeOptions,
 ): Promise<PreparedPiHome> {
   const checkAborted = options.checkAborted ?? (() => undefined);
+  if (options.controllerProviderFiles !== undefined && (options.piHomeIncludes?.length ?? 0) > 0) {
+    throw new Error(
+      "[PI_CONTROLLER_PROVIDER_AUTH_UNSUPPORTED] This mode does not support Pi home includes",
+    );
+  }
   checkAborted();
   const sourceDir = await realpath(options.sourceDir ?? defaultPiAgentDir());
   checkAborted();
@@ -643,6 +651,7 @@ export async function prepareIsolatedPiHome(
     options.piHomeIncludes ?? [],
     checkAborted,
     options.environment ?? process.env,
+    options.controllerProviderFiles !== undefined,
   );
   checkAborted();
   const requestedRoot = path.resolve(options.destination);
@@ -660,6 +669,16 @@ export async function prepareIsolatedPiHome(
   await mkdir(agentDir, { mode: 0o700 });
   checkAborted();
   await copySelection(sourceDir, selection, agentDir);
+  if (options.controllerProviderFiles !== undefined) {
+    await writeFile(path.join(agentDir, "auth.json"), options.controllerProviderFiles.auth, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await writeFile(path.join(agentDir, "models.json"), options.controllerProviderFiles.models, {
+      flag: "wx",
+      mode: 0o600,
+    });
+  }
   checkAborted();
   await mkdir(homeDir, { mode: 0o700 });
   checkAborted();

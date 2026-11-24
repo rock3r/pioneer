@@ -1,12 +1,22 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
+import {
+  assertControllerProviderAuthOutsideGrants,
+  type ControllerProviderAuth,
+  prepareControllerProviderAuth,
+} from "./controller-provider-auth.js";
+import {
+  createEgressResolver,
+  type EgressPolicy,
+  type NetworkTier,
+} from "./eval-run/egress-policy.js";
 import { resolveLinuxBwrapPath } from "./eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "./eval-run/macos-runtime.js";
 import {
-  resolveAnyTarget,
-  resolvePublicTarget,
-  startEgressProxy,
-} from "./eval-run/public-egress-proxy.js";
+  type PreparedProviderNetwork,
+  prepareProviderNetwork,
+} from "./eval-run/provider-network.js";
+import { startEgressProxy } from "./eval-run/public-egress-proxy.js";
 import { captureEvalProcess } from "./eval-run/runner.js";
 import type { PiAuthBroker } from "./pi-auth-broker.js";
 import { prepareAuthBroker, snapshotOAuthProviders } from "./pi-auth-runtime.js";
@@ -20,6 +30,7 @@ import {
 import { extensionPathsWithCapabilities } from "./pi-extension-snapshot.js";
 import { type PreparedPiHome, prepareIsolatedPiHome } from "./pi-home.js";
 import type { PiProbeResult } from "./pi-readiness.js";
+import { withPiStagedIntegrity } from "./pi-staged-integrity.js";
 import {
   createReviewScratchDirectory,
   piRuntimePaths,
@@ -46,16 +57,23 @@ export interface PreparedReviewRuntime {
   readonly extensionRoot: string;
   readonly home: PreparedPiHome;
   readonly extensions: PreparedExtensions;
-  readonly network: "full" | "public";
+  readonly network: NetworkTier;
+  readonly egressPolicy?: EgressPolicy;
+  readonly providerNetwork?: PreparedProviderNetwork;
   readonly authBroker?: PiAuthBroker;
+  readonly controllerProviderAuth?: ControllerProviderAuth;
   readonly capabilityExtensions?: readonly string[];
 }
 
 export async function cleanupReviewRuntime(
-  runtime: Pick<PreparedReviewRuntime, "scratch" | "extensionRoot" | "authBroker">,
+  runtime: Pick<
+    PreparedReviewRuntime,
+    "scratch" | "extensionRoot" | "authBroker" | "controllerProviderAuth"
+  >,
 ): Promise<void> {
   await runtime.authBroker?.close();
   const results = await Promise.allSettled([
+    runtime.controllerProviderAuth?.gateway.close(),
     rm(runtime.scratch, { recursive: true, force: true }),
     rm(runtime.extensionRoot, { recursive: true, force: true }),
   ]);
@@ -72,15 +90,31 @@ export async function prepareReviewRuntime(
   scratchBase = "/tmp",
   includes?: readonly string[],
   extensionsEnabled = true,
-  network: "full" | "public" = "full",
+  network: NetworkTier = "full",
   signal?: AbortSignal,
   capabilityExtensions: readonly string[] = [],
+  filters?: Pick<EgressPolicy, "allowHosts" | "blockHosts">,
+  requestedModel?: string,
+  protectProvider = false,
 ): Promise<PreparedReviewRuntime> {
   signal?.throwIfAborted();
   const scratch = await createReviewScratchDirectory(scratchBase);
   let extensionRoot: string | undefined;
+  let controllerProviderAuth: ControllerProviderAuth | undefined;
   try {
     extensionRoot = await createReviewScratchDirectory(scratchBase);
+    const policy = {
+      network,
+      ...(filters?.allowHosts ? { allowHosts: filters.allowHosts } : {}),
+      ...(filters?.blockHosts ? { blockHosts: filters.blockHosts } : {}),
+    };
+    if (protectProvider) {
+      controllerProviderAuth = await prepareControllerProviderAuth(
+        agentDir,
+        requestedModel,
+        policy,
+      );
+    }
     const home = await prepareIsolatedPiHome({
       sourceDir: agentDir,
       destination: path.join(scratch, "pi-home"),
@@ -88,6 +122,9 @@ export async function prepareReviewRuntime(
       environment,
       checkAborted: () => signal?.throwIfAborted(),
       ...(includes === undefined ? {} : { piHomeIncludes: includes }),
+      ...(controllerProviderAuth === undefined
+        ? {}
+        : { controllerProviderFiles: controllerProviderAuth.files }),
     });
     const needsAuthAdapter =
       process.platform !== "win32" && (await snapshotOAuthProviders(home.agentDir)).size > 0;
@@ -106,7 +143,19 @@ export async function prepareReviewRuntime(
           extensionsEnabled,
         )
       : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
-    const runtime = { scratch, extensionRoot, home, extensions, network, capabilityExtensions };
+    const providerNetwork =
+      controllerProviderAuth?.providerNetwork ??
+      (await prepareProviderNetwork(policy, home.agentDir, requestedModel));
+    const runtime = {
+      scratch,
+      extensionRoot,
+      home,
+      extensions,
+      network,
+      capabilityExtensions,
+      providerNetwork,
+      ...(controllerProviderAuth === undefined ? {} : { controllerProviderAuth }),
+    };
     const authBroker = await prepareAuthBroker(runtime);
     return authBroker === undefined
       ? runtime
@@ -116,6 +165,7 @@ export async function prepareReviewRuntime(
           home: { ...home, environment: { ...home.environment, ...authBroker.environment } },
         };
   } catch (error) {
+    await controllerProviderAuth?.gateway.close().catch(() => undefined);
     await rm(scratch, { recursive: true, force: true });
     if (extensionRoot !== undefined) await rm(extensionRoot, { recursive: true, force: true });
     throw error;
@@ -130,7 +180,9 @@ export async function discoverPreparedExtensions(
   return await runPreparedPiCommand(
     runtime,
     [
-      ...withNoForkSandbox(runtime.extensions.command),
+      ...(runtime.extensions.runtimeRoot === undefined
+        ? runtime.extensions.command
+        : withNoForkSandbox(runtime.extensions.command)),
       "--offline",
       "--no-approve",
       "--no-extensions",
@@ -161,7 +213,9 @@ export async function runPreparedPiCommand(
       "[PI_EXTENSION_DISCOVERY_UNSUPPORTED] Extension discovery requires native sandbox support on macOS or Linux.",
     );
   await assertNativeSandboxReady();
-  const resolve = runtime.network === "public" ? resolvePublicTarget : resolveAnyTarget;
+  const resolve = createEgressResolver(
+    runtime.providerNetwork?.policy ?? runtime.egressPolicy ?? { network: runtime.network },
+  );
   const proxy = await startEgressProxy(
     crypto.randomUUID(),
     runtime.authBroker?.resolveWith(resolve) ?? resolve,
@@ -187,6 +241,12 @@ export async function runPreparedPiCommand(
       proxyUrl: proxy.url,
       allowProcessFork: false,
     };
+    if (runtime.controllerProviderAuth !== undefined) {
+      await assertControllerProviderAuthOutsideGrants(runtime.home.sourceDir, [
+        ...config.readOnlyPaths,
+        ...config.writablePaths,
+      ]);
+    }
     let launch: ReturnType<typeof buildLinuxSandboxArgv>;
     if (process.platform === "darwin") launch = buildMacosSandboxArgv(config, command);
     else {
@@ -197,19 +257,27 @@ export async function runPreparedPiCommand(
       bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
       launch = buildLinuxSandboxArgv(config, command, bwrap, bridge.socketPath);
     }
-    return await captureEvalProcess(
-      launch.argv,
-      runtime.home.homeDir,
-      reviewProcessEnvironment(launch.environment, {
-        ...runtime.home.environment,
-        HOME: runtime.home.homeDir,
-        TMPDIR: runtime.home.tmpDir,
-        PI_OFFLINE: "1",
-        PI_TELEMETRY: "0",
-        NO_COLOR: "1",
-      }),
-      timeoutMs,
-      signal,
+    return await withPiStagedIntegrity(
+      {
+        agentDir: runtime.home.agentDir,
+        extensionRoot: runtime.extensionRoot,
+        checkAborted: () => signal?.throwIfAborted(),
+      },
+      async () =>
+        await captureEvalProcess(
+          launch.argv,
+          runtime.home.homeDir,
+          reviewProcessEnvironment(launch.environment, {
+            ...runtime.home.environment,
+            HOME: runtime.home.homeDir,
+            TMPDIR: runtime.home.tmpDir,
+            PI_OFFLINE: "1",
+            PI_TELEMETRY: "0",
+            NO_COLOR: "1",
+          }),
+          timeoutMs,
+          signal,
+        ),
     );
   } finally {
     await bridge?.close();

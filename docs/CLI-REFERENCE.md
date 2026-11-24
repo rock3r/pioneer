@@ -4,7 +4,7 @@
 
 Build and link the source checkout to use the executable:
 
-- `pioneer` — review readiness, model discovery, synchronous code reviews, and isolated eval workflows.
+- `pioneer` — review readiness, model discovery, synchronous code reviews, comment checks, and isolated eval workflows.
 
 Repository npm scripts build before running Pioneer:
 
@@ -24,6 +24,8 @@ pioneer --version
 ## Package updates
 
 Normal commands start a background npm update check without waiting for it. Pioneer checks at most once every 24 hours and caches the newest published version. Any update notice goes to stderr after the command finishes. A failed check prints nothing and leaves the command's exit status unchanged.
+
+`pioneer check-comments` contacts only the configured decision endpoint during scoring.
 
 Force a check now:
 
@@ -52,7 +54,7 @@ pioneer review --source DIR --prompt TEXT
   [--allow-write DIR]...
   [--report FILE]
   [--work-log FILE]
-  [--network full|public]
+  [--network full|public|provider-only] [--allow-host PATTERN]... [--block-host PATTERN]...
   [--git TARGET]...
   [--allow-git-symlink-root DIR]...
   [--allow-android-repo-root DIR]...
@@ -78,11 +80,13 @@ pioneer review --resume TOKEN
 | `--allow-read DIR` | none | Additional read-only directory; repeatable; exact broad system roots such as `/tmp` are refused |
 | `--allow-write DIR` | none | Additional writable directory; repeatable, forbidden from overlapping read grants, and refused for broad or protected-system roots |
 | `--git TARGET` | inferred for Git-target prompts | Repeatable controller Git inspection target: `working-tree`, `staged`, `untracked`, `commit:REF`, or `range:FROM...TO` / `range:FROM..TO`. Incompatible with `--resume`. |
+| `--allow-partial-clone` | false | Inspect locally available objects in a partial clone. Git inspection runs offline. Resume reuses the original opt-in. |
 | `--allow-git-symlink-root DIR` | none | Repeatable. Lets symbolic links in Git metadata resolve under this directory during controller Git collection. Refused for symbolic links, broad roots, and directories that are or contain your home or `/`. Not granted to the review actor. Incompatible with `--resume`, which reuses the stored canonical path and fails if it now resolves elsewhere. |
 | `--allow-android-repo-root DIR` | none | Repeatable. Same as `--allow-git-symlink-root`, for the `.repo` directory of an Android `repo` checkout; the directory must be named `.repo` and hold `projects/` or `project-objects/`. |
 | `--report FILE` | private default | Absolute controller-owned output path for the final report; must not exist, must not be visible to the review actor, and on macOS and Linux every folder above it must be owned by you or root and not writable by other users unless sticky |
 | `--work-log FILE` | platform log directory | Absolute controller-owned create-only JSONL path; must not exist, contain control characters, or be visible to the review actor |
-| `--network MODE` | `full` | Proxy destination policy |
+| `--network MODE` | `full` | Proxy destination policy. Evals default to `public`. |
+| `--allow-host PATTERN`, `--block-host PATTERN` | none | Repeatable exact hostname, wildcard subdomain, IP address or CIDR. |
 | `--timeout-ms N` | `900000` | Positive integer review timeout |
 | `--max-rpc-output-mb N` | `20` | Integral cumulative Pi RPC stdout bound from 1 through 64 MiB |
 | `--no-extensions` | false | Explicitly use built-in providers only; also available for models and doctor |
@@ -97,7 +101,7 @@ If writing fails, Pioneer restores the marker. If target identity changes, it fa
 
 If saving fails, stdout still contains the verified report. Pioneer retains a recoverable session when available and exits nonzero with `[REVIEW_REPORT_WRITE_FAILED]`. Diagnostics and warnings go to stderr.
 
-Pioneer rejects `--network none` before Pi starts with `[REVIEW_NETWORK_DISABLED]`. The actor needs access to its model provider. Start a new review with `--network public`. Use `--network full` only for required LAN or loopback access.
+Pioneer rejects `--network none` before Pi starts with `[REVIEW_NETWORK_DISABLED]`. The actor needs access to its model provider. Start a new review with `--network public`. Use `--network full` for LAN access. All native modes deny host interfaces, loopback and metadata destinations. Use an exact `--allow-loopback` port for an eval that needs a local service. `provider-only` limits DNS and connections to the resolved model's provider endpoint and explicit grants. Select a qualified model, a uniquely configured bare model, or set Pi's default model and provider. For an unknown endpoint, configure `models.json` or pass `--allow-host`. Windows cannot enforce host filters or provider-only networking.
 
 RPC stdout has a cumulative 20 MiB default bound. `--max-rpc-output-mb` accepts integral values from 1 through 64. Overflow terminates the process tree with `[REVIEW_RPC_OUTPUT_LIMIT]` and logs byte metadata. After the first 1,000 high-volume delta events, Pioneer batches metadata by type/subtype in five-second windows. The independent 16 MiB work-log cap still fails closed.
 
@@ -151,6 +155,53 @@ Transport success confirms report delivery. The report itself states the review 
 
 Containment, retry-layout, and in-use failures never issue a usable resume token.
 
+## Controller-only provider authentication
+
+Pass `--controller-provider-auth` to `review` or before the `--` separator in `eval run`. Select an exact `--model PROVIDER/MODEL` on the review or Pi command. Define the selected provider and model in the source Pi home's `models.json` with a public HTTPS `baseUrl` and an `openai-completions`, `openai-responses`, or `anthropic-messages` API.
+
+Pioneer accepts a literal API key, Pi environment interpolation in the configured key, or a current standard bearer OAuth credential for an OpenAI-compatible API. Renew expired OAuth in Pi. Specialized OAuth transports and custom authentication headers are unsupported. Protected reviews disable extensions and resumption. Protected evals use the official Pi actor with user extensions disabled. Pi home includes, explicit extensions, `--pi-extension`, `--api-key`, and eval `--env` are incompatible with this mode.
+
+Pioneer gives Pi a per-run placeholder and routes requests for the selected model through a private loopback gateway. The original credential stays in the controller. Windows does not support this option.
+
+## `pioneer check-comments`
+
+Use a decision model to check added or edited comments for skipped requirements, dismissed edge cases, and unfinished TODOs within a task's scope. The command runs independently of Pi.
+
+```bash
+pioneer check-comments --source . --git staged --scope-file task.md --json --fail-on-findings
+git diff --no-color origin/main...HEAD |
+  pioneer check-comments --diff-file - --scope "Implement retries for transient failures"
+```
+
+Choose one diff input and one task-scope input. Git mode accepts `staged`, `working-tree`, `commit:REF`, and `range:FROM...TO` or `range:FROM..TO`. Repeat `--git` or list multiple targets after it. Working-tree mode checks tracked changes. Use `--diff-file FILE` for a UTF-8 unified diff, or `--diff-file -` for standard input.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--scope TEXT` / `--scope-file FILE` | required | Task requirements and any agreed deferrals, up to 16 KiB |
+| `--provider NAME` | `typesafe` | Decision API protocol |
+| `--model ID` | provider default | Model or alias |
+| `--endpoint HTTPS_URL` | provider default | Full HTTPS endpoint with the selected provider's request and response format |
+| `--api-key-env VAR` | provider default | Name of the environment variable containing the credential |
+| `--threshold FLOAT` | `0.8` | Inclusive minimum yes probability, from `0` to `1` |
+| `--max-comments N` | `50` | Maximum comments to score, from `1` to `1000` |
+| `--concurrency N` | `4` | Maximum simultaneous requests, from `1` to `16` |
+| `--allow-partial-clone` | disabled | Allow bounded offline Git inspection from a partial clone with all required objects already available |
+| `--json` | disabled | Emit one JSON result to stdout |
+| `--fail-on-findings` | disabled | Return exit `2` when scoring is complete and findings exist |
+
+| Provider | Default model | Credential and routing |
+| --- | --- | --- |
+| `typesafe` | `jev-latest` | `TYPESAFE_API_KEY`. Supports pinned model IDs via `--model`. [TypeSafe API](https://docs.typesafe.ai/introduction/quickstart#call-it-the-api) |
+| `cloudflare` | `@cf/cloudflare/clef` | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Supports `@cf/cloudflare/clef-flash`. [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/models/clef/) |
+| `gemini` | `gemini-decision-1` | `GEMINI_API_KEY`. [Gemini Decisions API](https://aistudio.google.com/api-reference/decisions/create-decision) |
+| `custom` | required | Set `--endpoint`, `--model`, and `--api-key-env` for a System One-compatible HTTPS gateway using Bearer authentication. |
+
+The extractor supports Go, JavaScript and TypeScript including JSX and TSX, Python, Rust, C and C++, Java, Kotlin, Swift, shell, YAML, TOML, SQL, Lua, HTML, and Markdown. It ignores common lockfiles, generated and minified files, license headers, and compiler and linter directives. It uses the visible diff to track syntax, so a comment or literal opener outside the hunk can affect classification.
+
+Each request sends the task scope, one candidate comment, and nearby new-side hunk lines to the configured endpoint. Findings contain the path, new-side line range, category, and yes probability. JSON also reports `complete`, `threshold`, `extracted`, `scored`, `omitted`, and sanitized `failures`. File or stdin diffs are limited to 8 MiB, with the Git collector's smaller inspection limits applying to Git input. Each provider attempt times out after 10 seconds and may retry once on a transient failure.
+
+Exit `0` means scoring completed. Exit `1` means invalid CLI arguments. Exit `2` means scoring completed with findings and `--fail-on-findings` was set. Exit `3` means the result is incomplete due to an input, configuration, scoring, or comment-limit failure. Results retain findings from completed scores when other requests fail.
+
 ## `pioneer models`
 
 List configured models with the review's offline Pi readiness probe:
@@ -183,7 +234,7 @@ Includes accept no glob, negation, or persistent configuration syntax. Paths can
 
 ## `pioneer doctor`
 
-Check Pi, configured models, enabled user extensions, and strict platform sandbox dependencies. `pioneer doctor --no-extensions` checks only built-in providers. Doctor prints schema-versioned JSON and exits nonzero for unsupported or unready setups. Human-readable `errors` start with a stable diagnostic ID. Machine consumers should use `diagnostics[].id`.
+Check Pi, configured models, enabled user extensions, Git, and strict platform sandbox dependencies. `pioneer doctor --no-extensions` checks only built-in providers. Doctor prints schema-versioned JSON and exits nonzero for unsupported or unready setups. The `git` field reports the installed version and whether it supports Git inspection, which requires Git 2.45 or newer. A Git readiness warning leaves source-only review and eval readiness intact. Human-readable `errors` start with a stable diagnostic ID. Machine consumers should use `diagnostics[].id`.
 
 ```json
 {

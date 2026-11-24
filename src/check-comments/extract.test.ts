@@ -1,0 +1,188 @@
+import { describe, expect, it } from "vitest";
+import { extractDiffComments } from "./extract.js";
+
+function hunk(path: string, lines: readonly string[], start = 1): string {
+  const old = lines.filter((line) => !line.startsWith("+")).length;
+  const next = lines.filter((line) => !line.startsWith("-")).length;
+  return [
+    `diff --git a/${path} b/${path}`,
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    `@@ -${start},${old} +${start},${next} @@`,
+    ...lines,
+    "",
+  ].join("\n");
+}
+
+describe("extractDiffComments", () => {
+  it("anchors modified comments to new-side line numbers and preserves bounded local context", () => {
+    const diff = hunk(
+      "src/changes.ts",
+      [
+        " function schedule() {",
+        "-  // Old behavior.",
+        "+  // TODO: Implement retry.",
+        "+  // Retry would otherwise be silently dropped.",
+        "   return run();",
+        " }",
+        " const distant = true;",
+      ],
+      10,
+    );
+    expect(extractDiffComments(diff)).toEqual([
+      {
+        path: "src/changes.ts",
+        startLine: 11,
+        endLine: 12,
+        text: "// TODO: Implement retry.\n// Retry would otherwise be silently dropped.",
+        context: [
+          " function schedule() {",
+          "+  // TODO: Implement retry.",
+          "+  // Retry would otherwise be silently dropped.",
+          "   return run();",
+          " }",
+        ].join("\n"),
+      },
+    ]);
+  });
+
+  it("extracts only new comment text, including added continuations of existing blocks", () => {
+    const diff = hunk("src/changes.ts", [
+      " /* Already documented.",
+      "+ * TODO: Finish retry behavior.",
+      "  */",
+      "-const old = 0; // This explanation stays.",
+      "+const old = 1; // This explanation stays.",
+      "-// Removed comment.",
+      " // Existing comment.",
+    ]);
+    expect(extractDiffComments(diff).map((comment) => [comment.startLine, comment.text])).toEqual([
+      [2, "* TODO: Finish retry behavior."],
+    ]);
+  });
+
+  it.each([
+    ["file.go", ["+s := `// fake", "+/* still a string */`", "+// TODO real"]],
+    ["file.ts", ["+const re = /[/*]/;", '+const url = "https://example.net";', "+// TODO real"]],
+    [
+      "file.jsx",
+      ['+const node = <div title="// fake">https://example.net</div>;', "+// TODO real"],
+    ],
+    ["file.tsx", ["+const node = <div>{/* TODO real */}</div>;"]],
+    ["file.py", ['+s = """', "+# fake", '+"""', "+# TODO real"]],
+    ["file.rs", ['+let s = r#"text "', "+// fake", '+more"#;', "+// TODO real"]],
+    ["file.cpp", ['+const char *s = R"x(', "+// fake", '+)x";', "+// TODO real"]],
+    ["file.java", ['+String s = """', "+// fake", '+""";', "+// TODO real"]],
+    ["file.kt", ['+val s = """', "+// fake", '+"""', "+// TODO real"]],
+    ["file.swift", ['+let s = #"""', "+// fake", '+"""#', "+// TODO real"]],
+    ["file.sh", ['+echo "# fake"', "+cat <<'END'", "+# fake here", "+END", "+# TODO real"]],
+    ["file.yaml", ["+content: |", "+  # scalar, not a comment", "+plain: ab#cd", "+# TODO real"]],
+    ["file.toml", ['+data = """', "+# fake", '+"""', "+# TODO real"]],
+    ["file.sql", ["+select $$", "+-- fake", "+$$;", "+-- TODO real"]],
+    ["file.lua", ["+local s = [=[", "+-- fake", "+]=]", "+-- TODO real"]],
+    ["file.html", ['+<a title="<!-- fake -->">Link</a>', "+<!-- TODO real -->"]],
+    ["file.md", ["+`<!-- fake -->`", "+```html", "+<!-- fake -->", "+```", "+<!-- TODO real -->"]],
+  ])("distinguishes comments from literals in %s", (path, lines) => {
+    const comments = extractDiffComments(hunk(path, lines));
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.text).toContain("TODO real");
+    expect(comments[0]?.text).not.toContain("fake");
+  });
+
+  it.each([
+    ["+const identity = <T extends unknown>(value: T) => value;"],
+    ["+const identity = <T = string>(value: T) => value;"],
+    ["+const identity = <T ,>(value: T) => value;"],
+    ["+const identity = <const T extends { value: string }>(value: T) => value;"],
+    ["+const identity = <T extends", "+  unknown", "+>(value: T) => value;"],
+    ["+const identity = <T", "+  extends unknown", "+>(value: T) => value;"],
+  ])("preserves comments after the TSX generic arrow %s", (...lines) => {
+    const diff = hunk("view.tsx", [...lines, "+// TODO finish validation"]);
+    expect(extractDiffComments(diff).map(({ text }) => text)).toEqual([
+      "// TODO finish validation",
+    ]);
+  });
+
+  it("keeps TSX tags with an extends attribute in JSX mode", () => {
+    const diff = hunk("view.tsx", [
+      '+const first = <Panel extends="base">',
+      "+  // JSX text",
+      "+  {/* TODO first panel */}",
+      "+</Panel>;",
+      "+const second = <Panel extends",
+      '+  ="base">',
+      "+  // JSX text",
+      "+  {/* TODO second panel */}",
+      "+</Panel>;",
+      "+// TODO after the panels",
+    ]);
+    expect(extractDiffComments(diff).map(({ text }) => text)).toEqual([
+      "/* TODO first panel */",
+      "/* TODO second panel */",
+      "// TODO after the panels",
+    ]);
+  });
+
+  it("skips generated, minified and lockfile diffs, license headers and directives", () => {
+    const diff = [
+      hunk("dist/app.min.js", ["+// TODO generated"]),
+      hunk("generated/app.ts", ["+// TODO generated"]),
+      hunk("Cargo.lock", ["+# TODO locked"]),
+      hunk("parser.go", ["+// Code generated by generator. DO NOT EDIT.", "+// TODO generated"]),
+      hunk("source.ts", [
+        "+/* Copyright 2026 Example Corp",
+        "+ * SPDX-License-Identifier: Apache-2.0",
+        "+ */",
+        "+// eslint-disable-next-line no-console",
+        "+console.log(value);",
+        "+// TODO real",
+      ]),
+      hunk("type.py", ["+value = 'example' # type: ignore[assignment]", "+# TODO real"]),
+    ].join("");
+    expect(extractDiffComments(diff).map((comment) => [comment.path, comment.text])).toEqual([
+      ["source.ts", "// TODO real"],
+      ["type.py", "# TODO real"],
+    ]);
+  });
+
+  it.each([
+    ["work.ts", "+const fraction = count++ / 2; // TODO real", "// TODO real"],
+    ["work.swift", "+let matcher = #/[/*]/#; // TODO real", "// TODO real"],
+    ["work.yaml", "+notes: a customer 'left # TODO real", "# TODO real"],
+    [
+      "work.html",
+      '+<script>const text = "<!-- fake -->"</script><!-- TODO real -->',
+      "<!-- TODO real -->",
+    ],
+  ])("follows lexical boundaries on the same line in %s", (path, line, comment) => {
+    expect(extractDiffComments(hunk(path, [line])).map((part) => part.text)).toEqual([comment]);
+  });
+
+  it("decodes quoted Git paths and rejects a truncated hunk", () => {
+    const diff = hunk('"caf\\303\\251.js"', ["+// TODO real"])
+      .replace('--- a/"caf', '--- "a/caf')
+      .replace('+++ b/"caf', '+++ "b/caf');
+    expect(extractDiffComments(diff)[0]?.path).toBe("café.js");
+    expect(() => extractDiffComments(diff.replace("+1,1 @@", "+1,2 @@"))).toThrow(
+      /COMMENT_DIFF_INVALID/,
+    );
+  });
+
+  it("bounds unusually dense single-line comment input", () => {
+    const diff = hunk("work.ts", [`+${"/* TODO */".repeat(5_000)}`]);
+    expect(() => extractDiffComments(diff)).toThrow(/COMMENT_DIFF_LIMIT/);
+  });
+
+  it("preserves ordinary comments adjacent to compiler directives", () => {
+    const diff = hunk("work.ts", [
+      "+// SPDX-License-Identifier: MIT",
+      "+// TODO real",
+      "+// @ts-expect-error backwards-compatible call",
+      "+// TODO second",
+    ]);
+    expect(extractDiffComments(diff).map((comment) => comment.text)).toEqual([
+      "// TODO real",
+      "// TODO second",
+    ]);
+  });
+});

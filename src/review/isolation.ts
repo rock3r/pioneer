@@ -2,7 +2,11 @@ import { constants } from "node:fs";
 import { access, lstat, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { isBroadRuntimePath, isBroadWritablePath } from "../eval-run/isolation.js";
+import {
+  isBroadRuntimePath,
+  isBroadWritablePath,
+  isSensitiveCredentialPath,
+} from "../eval-run/isolation.js";
 import type { SandboxPolicy } from "../sandbox/launcher.js";
 import {
   assertStableDirectoryChain,
@@ -10,7 +14,7 @@ import {
 } from "../stable-directory.js";
 
 /** Network modes accepted for a newly-started review. */
-export type ReviewNetworkMode = "full" | "public";
+export type ReviewNetworkMode = "full" | "public" | "provider-only";
 
 /**
  * Network modes retained in an immutable resume archive. `none` is kept only
@@ -95,7 +99,7 @@ export async function assertDistinctExistingReviewOutputs(
 async function canonicalGrant(
   candidate: string,
   platform: NodeJS.Platform = process.platform,
-  writable = false,
+  kind: "read" | "write" | "controller" = "read",
 ): Promise<string> {
   const absolute = path.resolve(candidate);
   let stats: Awaited<ReturnType<typeof lstat>>;
@@ -123,21 +127,30 @@ async function canonicalGrant(
   if (isBroadRuntimePath(canonical, platform)) {
     throw new Error(`Refusing broad review path grant: ${canonical}`);
   }
-  if (writable && isBroadWritablePath(canonical, platform)) {
+  if (kind === "write" && isBroadWritablePath(canonical, platform)) {
     throw new Error(`Refusing broad writable review path grant: ${canonical}`);
+  }
+  if (
+    kind !== "controller" &&
+    (isSensitiveCredentialPath(absolute) ||
+      (canonical !== absolute && isSensitiveCredentialPath(canonical)))
+  ) {
+    throw new Error(
+      "[REVIEW_SENSITIVE_GRANT] Review grants cannot point to sensitive credential storage",
+    );
   }
   return canonical;
 }
 
 /**
  * Canonicalize a read-only directory with the same symbolic-link, broad-path,
- * and home/filesystem-root refusals as `--allow-read` grants.
+ * credential-path, and home/filesystem-root refusals as `--allow-read` grants.
  */
 export async function canonicalReviewReadGrant(
   candidate: string,
   platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
-  return await canonicalGrant(candidate, platform, false);
+  return await canonicalGrant(candidate, platform);
 }
 
 async function canonicalList(
@@ -147,7 +160,7 @@ async function canonicalList(
 ): Promise<string[]> {
   const values: string[] = [];
   for (const candidate of paths) {
-    const canonical = await canonicalGrant(candidate, platform, writable);
+    const canonical = await canonicalGrant(candidate, platform, writable ? "write" : "read");
     if (!values.includes(canonical)) values.push(canonical);
   }
   return values;
@@ -261,7 +274,9 @@ async function validateReviewPathsInternal(
 ): Promise<ValidatedReviewPaths> {
   const sourceDir = await canonicalGrant(spec.sourceDir, platform);
   const piHomeSource =
-    spec.piHomeSource === undefined ? undefined : await canonicalGrant(spec.piHomeSource, platform);
+    spec.piHomeSource === undefined
+      ? undefined
+      : await canonicalGrant(spec.piHomeSource, platform, "controller");
   const allowReadPaths = await canonicalList(spec.allowReadPaths ?? [], platform);
   const allowWritePaths = await canonicalList(spec.allowWritePaths ?? [], platform, true);
   const reportPath =
@@ -395,6 +410,25 @@ export async function validateReviewPaths(
   platform: NodeJS.Platform = process.platform,
 ): Promise<ValidatedReviewPaths> {
   return await validateReviewPathsInternal(spec, false, false, platform);
+}
+
+export async function validateProspectiveResumeOutputs(
+  archiveDir: string,
+  reportPath: string,
+  workLogPath: string,
+): Promise<void> {
+  const archive = await canonicalGrant(archiveDir, process.platform, "controller");
+  for (const [kind, candidate] of [
+    ["report", reportPath],
+    ["work log", workLogPath],
+  ] as const) {
+    const target = await canonicalProspectiveControllerOutputPath(candidate, kind);
+    if (contains(archive, target)) {
+      throw new Error(
+        `[REVIEW_RESUME_OUTPUT_INVALID] Review ${kind} target overlaps the retained archive: ${candidate}`,
+      );
+    }
+  }
 }
 
 export function buildReviewSandboxConfig(options: ReviewSandboxConfigOptions): SandboxPolicy {

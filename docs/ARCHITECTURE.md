@@ -9,6 +9,7 @@ On macOS and Linux, Pioneer starts Pi inside a native sandbox. Reviews and evals
 The current product surface is:
 
 - a synchronous review CLI and TypeScript API;
+- a direct decision-model CLI for comments added or edited in a diff;
 - a fail-closed skill-eval preparation and execution CLI;
 - native macOS Seatbelt and Linux Bubblewrap transports;
 - one shared Agent Skill packaged for Agent Plugins v1, Codex, and Claude Code.
@@ -53,17 +54,18 @@ The plugin contains instructions only. Agent Plugins v1, Codex, and Claude manif
 | Pi preparation | `src/pi-home.ts`, `src/pi-startup.ts` | Copy the Pi agent directory and apply fast, ephemeral startup flags |
 | Review authentication | `src/pi-auth-broker.ts`, `src/pi-auth-runtime.ts`, `src/pi-auth-client.ts`, `src/pi-auth-worker.ts` | Broker OAuth refreshes through a separate sandboxed, model-free worker; persist only provider-scoped results under Pi's source credential lock |
 | Review orchestration | `src/review/runner.ts`, `src/review/resume-archive.ts`, `src/review/rpc-limits.ts` | Validate, prepare, sandbox, run bounded RPC, persist reports, retain/recover opaque native sessions, stream controller-owned work-log events, collect the final report, clean up |
-| Review Git inspection | `src/review/git-inspect.ts` | Parse explicit `--git` targets, infer conservative Git-target prompts, and collect bounded read-only Git context in the controller |
+| Review Git inspection | `src/review/git-inspect.ts` | Validate Git readiness, parse or infer targets, and collect bounded offline Git context or raw patches in the controller |
 | Review policy | `src/review/isolation.ts` | Canonicalize grants and prevent broad or overlapping writable access |
 | Review work log | `src/review/work-log.ts` | Create bounded private JSONL logs, flush records, sanitize Pi event metadata, and manage default retention |
 | Eval orchestration | `src/eval-run/setup.ts`, `src/eval-run/runner.ts` | Stage isolated eval arms, prove containment, run the actor |
 | Eval fixtures | `src/eval-run/fixture-leak.ts`, `src/eval-run/fixture-source.ts` | Reject leaking fixture paths and content markers; open each fixture once and scan and stage it from that descriptor within the 64 MiB ceiling |
-| Eval policy | `src/eval-run/isolation.ts` | Reject unsafe runtime grants and define public-only networking |
+| Eval policy | `src/eval-run/isolation.ts` | Reject unsafe runtime grants and classify public IP ranges |
 | Native sandbox | `src/sandbox/launcher.ts` | Compile one policy into Seatbelt or Bubblewrap argv |
 | Eval actor options | `src/eval-run/actor-options.ts`, `src/eval-run/tool-extensions.ts` | Validate `--allow-loopback` and `--env` values; resolve and stage `--pi-extension` sources |
 | Network mediation | `src/eval-run/public-egress-proxy.ts`, `src/sandbox/linux-proxy-bridge.ts` | Authenticate proxy use, resolve and pin destinations, bridge Linux namespaces and allowed loopback ports |
 | Public API | `src/index.ts` | Export the supported TypeScript surface |
 | Deep review | `src/deep-review/*`, `src/github/deep-review/*` | Versioned council/president orchestration, schemas, bundled inspection extension, and GitHub adapter |
+| Comment checks | `src/check-comments/*` | Parse unified diffs, select changed comments, and collect bounded decision scores directly over HTTPS |
 
 Dependencies flow from adapters and orchestration toward validation and transport helpers. Plugin files do not duplicate policy.
 
@@ -82,8 +84,9 @@ Normal commands start an npm version check in the background. The check never de
    Create and announce the private work log first. Then reserve and announce the private report target with a random ownership marker and randomly named controller-owned sibling link.
    Record later stages in real time. macOS and Linux files use mode `0600`; Windows uses the per-user application-data ACL.
 3. Collect bounded read-only Git context for explicit `--git` targets and Git-target prompts. Require `--source` to be the repository root.
-   Use canonical Git, argument arrays, and an allowlist. Disable hooks, pager, editor, external-diff, credential helpers, LFS filters, and unsafe protocols.
+   Require Git 2.45 or newer. Use canonical Git, argument arrays, and an allowlist. Disable hooks, pager, editor, external diff, credential helpers, signature verification, and LFS filters. Deny every transport protocol and disable lazy fetching.
    Walk the Git and common directories without following links. Reject any link whose hop chain leaves the repository or an operator-approved `--allow-git-symlink-root` / `--allow-android-repo-root` directory. Pin Git to the validated directories, then re-walk and discard the context if the layout changed.
+   Detect partial clones from configuration and promisor pack markers. Require `--allow-partial-clone` and use locally available objects only.
    Add validated refs and output to the prompt as untrusted text. Reject GitHub pull-request targets and request an explicit local `--git` value.
    Keep collected targets in the immutable resume scope.
 4. Resolve Pi through the controller's selected `PATH` and check `pi --version`. Reject versions below the minimum or malformed versions before model discovery. Warn on versions above the tested maximum.
@@ -115,7 +118,7 @@ Normal commands start an npm version check in the background. The check never de
 
    Token loading acquires the archive lease before reading or validating retained manifests, scope, attempts, or sessions. Validation failure releases that exact lease.
    On success, hold the lease through readiness, attempt copying, and execution. Concurrent pruning cannot remove the leased recovery point.
-8. Reject `--network none` for reviews before launch: the supported Pi actor needs proxy-mediated egress to its configured model provider. Start an authenticated loopback proxy for `public` or `full` networking.
+8. Reject `--network none` for reviews before launch: the supported Pi actor needs proxy-mediated egress to its configured model provider. Use the same validated destination policy for model discovery, the native actor proxy and its OAuth worker. The controller pins DNS answers and reports the effective tier and host rules.
 9. Compile the native sandbox policy and start Pi without a shell, using a narrow actor environment on every platform.
 10. Send one JSONL prompt request and collect bounded RPC events until `agent_settled`, failure, or timeout. Flush sanitized event metadata and five-second liveness heartbeats to the work log without recording prompts, assistant text or thinking, tool arguments or output, or environment values.
 11. Wait for the child process and its stdio pipes to close on every terminal path, including timeout and protocol failure. Only then report completion; success additionally requires exit code zero and a non-empty final report.
@@ -133,6 +136,12 @@ Normal commands start an npm version check in the background. The check never de
 
 See [REVIEW-TRANSPORT.md](REVIEW-TRANSPORT.md) for the RPC contract and [SECURITY.md](SECURITY.md) for the trust boundaries.
 
+## Comment-check lifecycle
+
+The comment checker validates its provider credential, accepts an explicit diff or collects patches through the guarded Git controller, and extracts added or modified comment blocks with language-specific lexical rules. It sends each candidate with the task scope and clipped new-side hunk context as quoted JSON evidence. Fixed question definitions live in a separate request field.
+
+Each bounded worker issues one request with three closed questions. It validates the answer type and yes probability before combining findings in diff order. The CLI distinguishes complete scoring, findings that trip the CI gate, and incomplete scoring. See the [comment-check CLI reference](CLI-REFERENCE.md#pioneer-check-comments).
+
 ## Review OAuth lifecycle
 
 Native review preparation creates an authenticated refresh broker when the snapshot contains OAuth credentials. The Pi adapter sends refresh operations to that broker. It accepts only an existing provider name.
@@ -140,6 +149,12 @@ Native review preparation creates an authenticated refresh broker when the snaps
 The controller reads current source credentials under Pi's shared lock. It runs the same extension snapshot in a separate model-free sandbox. This worker has no source or review-scratch grant and follows the review's network policy.
 
 The controller saves validated provider results before cleanup and returns them to the private review credential store. Concurrent reviews and ordinary Pi reuse these rotations. The review actor cannot choose data written to source credentials. [Security](SECURITY.md#oauth-refresh-in-native-reviews-and-evals) defines the remaining limits.
+
+## Controller-only provider authentication
+
+Native review and eval can opt into a shared per-run provider gateway. The controller reads the selected provider configuration and credential, resolves a fixed public HTTPS upstream, and writes a generated models configuration and run-scoped placeholder into the isolated Pi home. Model discovery uses that generated home. Source authentication and model configuration stay outside actor grants.
+
+The actor connects to the gateway over private loopback. Linux uses the existing per-port relay across its network namespace. The gateway checks the expected request path, model ID, and authentication header before injecting the credential into a pinned HTTPS inference request. It blocks upstream redirects, forwards selected response content, and removes reflected credential bytes from the response stream. The gateway closes during run cleanup.
 
 ## Eval lifecycle
 
@@ -177,9 +192,11 @@ Before creating isolation artifacts, the controller resolves the actor executabl
 
 `/usr/bin/env` shebang checks read a bounded prefix and follow canonical interpreters within cycle/depth limits. When lexical and canonical launcher paths differ, both receive exact read-only grants. Parent roots remain unchanged. Pi detection and startup optimization use the original command before this rewrite.
 
-On macOS and Linux, the capture controller starts the sandbox in a separate process group. It forwards timeout/interruption signals to the group and waits for stdio and process closure.
+On macOS and Linux, the capture controller starts the sandbox in a separate process group. Linux forwards timeout and interruption signals to the group and destroys remaining descendants with the actor's PID namespace.
 
-Descendants retaining pipes beyond the bounded grace produce `[EVAL_PROCESS_CONTAINMENT_FAILED]`. Linux destroys descendants with the actor's PID namespace, so this diagnostic is unreachable there. Timeout, interruption, spawn, and output-limit failures exit nonzero and preserve bounded partial stdout/stderr.
+For macOS eval actors, the controller records a prelaunch process baseline and samples the detached leader's group and observed descendants. Closing the capture pipes triggers a bounded cleanup check. The controller revalidates each tracked process's user, start time, and group before signaling its individual PID. An orphan's run-local working directory helps find candidates after the leader exits. A surviving member of the original group supplies corroborating ownership before the controller signals a newly found orphan.
+
+Retained pipes or unresolved macOS process ownership at the end of the grace period produce `[EVAL_PROCESS_CONTAINMENT_FAILED]`. Timeout, interruption, spawn, and output-limit failures exit nonzero and preserve bounded partial stdout/stderr.
 
 The eval runner is an isolation primitive. It does not schedule all cases, call a grader, compare scores, or publish a report. See [EVALS.md](EVALS.md).
 

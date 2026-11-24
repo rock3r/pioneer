@@ -324,6 +324,24 @@ describe("review RPC runner", () => {
     ).rejects.toThrow(/archive/i);
   });
 
+  it("validates resume outputs when the controller archive is in protected application data", async () => {
+    const root = await createTempDir("pioneer-resume-protected-");
+    const archive = path.join(root, ".local", "share", "pioneer", "review-resumes");
+    await mkdir(archive, { recursive: true });
+
+    await expect(
+      assertReviewResumeOutputsOutsideArchive(archive, {
+        reportPath: path.join(root, "report.md"),
+        workLogPath: path.join(root, "review.jsonl"),
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      assertReviewResumeOutputsOutsideArchive(archive, {
+        reportPath: path.join(archive, "report.md"),
+      }),
+    ).rejects.toThrow("[REVIEW_RESUME_OUTPUT_INVALID]");
+  });
+
   it("rejects a default resume work log inside the retained archive", async () => {
     const archive = await createTempDir("pioneer-resume-output-");
     const environment =

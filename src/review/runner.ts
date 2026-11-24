@@ -5,19 +5,21 @@ import os from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import {
+  assertControllerProviderAuthOutsideGrants,
+  unsupportedControllerProviderAuth,
+} from "../controller-provider-auth.js";
+import {
   adoptCreatedScratchDirectory,
   assertScratchBaseOutsideGrants,
   validateControllerScratchBase,
 } from "../controller-scratch.js";
 import { diagnosticMessage } from "../diagnostics.js";
+import { createEgressResolver } from "../eval-run/egress-policy.js";
+import { assertPiHomeSeparatedFromActorGrants } from "../eval-run/isolation.js";
 import { resolveLinuxBwrapPath } from "../eval-run/linux-install.js";
 import { macosRuntimeReadPaths } from "../eval-run/macos-runtime.js";
-import {
-  resolveAnyTarget,
-  resolvePublicTarget,
-  startEgressProxy,
-  type startPublicEgressProxy,
-} from "../eval-run/public-egress-proxy.js";
+import { describeEgressPolicy } from "../eval-run/provider-network.js";
+import { startEgressProxy, type startPublicEgressProxy } from "../eval-run/public-egress-proxy.js";
 import { PIONEER_VERSION } from "../package-metadata.js";
 import { piPackageReadRoot, resolveManagedPiLauncher, resolvePiCommand } from "../pi-command.js";
 import {
@@ -34,13 +36,18 @@ import {
 import { defaultPiAgentDir } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
+import { PiStagedIntegrityError, withPiStagedIntegrity } from "../pi-staged-integrity.js";
 import {
   applyPiVersionToStartup,
   applyResolvedPiLaunch,
   optimizePiStartupCommand,
 } from "../pi-startup.js";
 import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../sandbox/launcher.js";
-import { type LinuxProxyBridge, startLinuxProxyBridge } from "../sandbox/linux-proxy-bridge.js";
+import {
+  type LinuxProxyBridge,
+  startLinuxLoopbackBridge,
+  startLinuxProxyBridge,
+} from "../sandbox/linux-proxy-bridge.js";
 import { assertNativeSandboxReady } from "../sandbox/platform-readiness.js";
 import { isThinkingLevel, type ThinkingLevel } from "../thinking-level.js";
 import type { FailureCauseContext } from "./failure-cause.js";
@@ -56,6 +63,7 @@ import {
   buildReviewSandboxConfig,
   type ReviewNetworkMode,
   type StoredReviewNetworkMode,
+  validateProspectiveResumeOutputs,
   validateProspectiveReviewReportPath,
   validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
@@ -98,6 +106,7 @@ import {
 
 export interface ReviewRequest {
   readonly extensions?: boolean;
+  readonly controllerProviderAuth?: boolean;
   readonly sourceDir: string;
   readonly prompt: string;
   readonly model?: string;
@@ -110,12 +119,17 @@ export interface ReviewRequest {
   readonly workLogPath?: string;
   readonly onWorkLogReady?: (path: string) => void;
   readonly network?: ReviewNetworkMode;
+  readonly allowHosts?: readonly string[];
+  readonly blockHosts?: readonly string[];
+  readonly onNetworkPolicy?: (message: string) => void;
   readonly allowUnsandboxedWindows?: boolean;
   readonly timeoutMs?: number;
   readonly maxRpcOutputBytes?: number;
   readonly resumable?: boolean;
   readonly onReportReady?: (path: string) => void;
   readonly gitTargets?: readonly string[];
+  /** Permit inspection of locally available partial-clone objects with network access disabled in Git. */
+  readonly allowPartialClone?: boolean;
   /**
    * Directories outside the repository that Git metadata symbolic links may
    * resolve under during controller Git collection. Each must pass the
@@ -149,6 +163,7 @@ export interface ReviewResult {
 }
 
 export interface ResumeReviewRequest {
+  readonly onNetworkPolicy?: (message: string) => void;
   readonly resumeToken: string;
   readonly timeoutMs?: number;
   readonly maxRpcOutputBytes?: number;
@@ -464,7 +479,7 @@ export interface RunReviewRpcOptions {
 }
 
 const REVIEW_NETWORK_DISABLED_MESSAGE =
-  "`--network none` is unsupported for Pioneer reviews because it blocks the Pi actor from reaching its configured model provider. Start a new review with `--network public`, or use `--network full` only when the review needs LAN or loopback access.";
+  "`--network none` is unsupported for Pioneer reviews because it blocks the Pi actor from reaching its configured model provider. Start a new review with `--network public`, or use `--network full` only when the review needs LAN access.";
 
 function assertReviewNetworkCanReachModel(
   network: StoredReviewNetworkMode,
@@ -1564,6 +1579,7 @@ async function runReviewInternal(
     requestedNetwork !== undefined &&
     requestedNetwork !== "full" &&
     requestedNetwork !== "public" &&
+    requestedNetwork !== "provider-only" &&
     requestedNetwork !== "none"
   ) {
     throw new Error("Unsupported review network mode");
@@ -1583,6 +1599,26 @@ async function runReviewInternal(
   const timeoutMs = request.timeoutMs ?? 900_000;
   const maxRpcOutputBytes = validateRpcOutputBytes(request.maxRpcOutputBytes);
   const windows = process.platform === "win32";
+  if (
+    windows &&
+    (network === "provider-only" || request.allowHosts?.length || request.blockHosts?.length)
+  )
+    throw new Error(
+      "Windows unsandboxed reviews cannot enforce provider-only networking or host filters",
+    );
+  const controllerProviderAuth = request.controllerProviderAuth === true;
+  const resumable = request.resumable !== false && !controllerProviderAuth;
+  if (
+    controllerProviderAuth &&
+    (windows ||
+      request.model === undefined ||
+      !request.model.includes("/") ||
+      (request.piHomeIncludes?.length ?? 0) > 0)
+  ) {
+    throw unsupportedControllerProviderAuth(
+      "Use native review with --model PROVIDER/MODEL and without Pi home includes",
+    );
+  }
   if (windows && request.allowUnsandboxedWindows !== true) {
     throw new Error(`${WINDOWS_WARNING} Pass --allow-unsandboxed-windows to proceed.`);
   }
@@ -1614,6 +1650,13 @@ async function runReviewInternal(
   const piHomeSource = await canonicalReviewPiHomeSource(
     request.piHomeSource ?? defaultPiAgentDir(),
   );
+  if (controllerProviderAuth) {
+    assertPiHomeSeparatedFromActorGrants(piHomeSource, [
+      validatedPaths.sourceDir,
+      ...validatedPaths.allowReadPaths,
+      ...validatedPaths.allowWritePaths,
+    ]);
+  }
   if (requestedScratchBase !== undefined) {
     // Scratch inside the selected Pi home would create and recursively remove `pir-*` in the
     // real configuration tree, and put the supposedly isolated snapshot underneath its own
@@ -1752,6 +1795,7 @@ async function runReviewInternal(
       recordReviewWorkLog(workLog, "stage_started", { stage: "git_inspect" });
       const collected = await collectGitContext(paths.sourceDir, gitTargets, {
         approvedSymlinkRoots,
+        allowPartialClone: request.allowPartialClone === true,
       });
       gitContextText = collected?.text;
       recordReviewWorkLog(workLog, "stage_completed", {
@@ -1770,10 +1814,14 @@ async function runReviewInternal(
     try {
       piCommand = await resolvePiCommand("pi", piEnvironment);
     } catch {
+      if (controllerProviderAuth)
+        throw unsupportedControllerProviderAuth("Install the official Pi coding agent and retry");
       // Preserve readiness's stable, sanitized diagnostic for missing or unsafe launchers.
       await assertPiReady({
         environment: piEnvironment,
-        ...(request.extensions === false ? { extensions: false } : {}),
+        ...(request.extensions === false || network === "provider-only"
+          ? { extensions: false }
+          : {}),
         ...(request.model === undefined ? {} : { requestedModel: request.model }),
       });
       // If readiness succeeded, the launcher changed during the adjacent probes. Resolve it
@@ -1786,21 +1834,49 @@ async function runReviewInternal(
       reviewRuntimeEnvironment(piEnvironment),
       requestedScratchBase ?? (windows ? os.tmpdir() : "/tmp"),
       request.piHomeIncludes,
-      request.extensions !== false,
+      request.extensions !== false && !controllerProviderAuth,
       network,
+      undefined,
+      [],
+      request,
+      request.model,
+      controllerProviderAuth,
     );
+    const providerNetwork = preparedRuntime.providerNetwork;
+    if (
+      resumeContext &&
+      !sameStringList(
+        resumeContext.loaded.scope.providerHosts,
+        providerNetwork?.policy.providerHosts ?? [],
+      )
+    )
+      throw new Error("[REVIEW_RESUME_SCOPE_CHANGED] Provider endpoints have changed");
     if (resumeContext !== undefined)
       assertSameExtensionSnapshot(
         resumeContext.loaded.scope.extensionDigest,
         preparedRuntime.extensions.digest,
       );
+    const selection = request.model ?? providerNetwork?.defaultModel;
     const readiness = await assertPiReady({
       command: piCommand,
-      environment: piEnvironment,
+      environment: controllerProviderAuth
+        ? reviewProcessEnvironment({}, preparedRuntime.home.environment)
+        : piEnvironment,
       preparedRuntime,
-      ...(request.extensions === false ? { extensions: false } : {}),
-      ...(request.model === undefined ? {} : { requestedModel: request.model }),
+      ...(request.extensions === false && !controllerProviderAuth ? { extensions: false } : {}),
+      ...(selection === undefined ? {} : { requestedModel: selection }),
     });
+    providerNetwork?.bind(readiness.resolvedModel);
+    const egressPolicy = providerNetwork?.policy ?? preparedRuntime.egressPolicy ?? { network };
+    if (
+      resumeContext &&
+      !sameStringList(resumeContext.loaded.scope.providerHosts, egressPolicy.providerHosts ?? [])
+    )
+      throw new Error("[REVIEW_RESUME_SCOPE_CHANGED] Provider endpoints have changed");
+    const networkSummary = windows
+      ? "[PIONEER_NETWORK] Windows review has no enforced network isolation."
+      : describeEgressPolicy(egressPolicy);
+    request.onNetworkPolicy?.(networkSummary);
     recordReviewWorkLog(workLog, "stage_completed", {
       stage: "pi_readiness",
       ...readinessMetadataForWorkLog(readiness, request.prompt),
@@ -1817,11 +1893,7 @@ async function runReviewInternal(
       );
     }
 
-    if (
-      resumeContext === undefined &&
-      request.resumable !== false &&
-      readiness.version === undefined
-    ) {
+    if (resumeContext === undefined && resumable && readiness.version === undefined) {
       throw new Error(
         "[REVIEW_RESUME_CREATE_FAILED] Pioneer could not determine the current Pi version for a resumable review",
       );
@@ -1868,7 +1940,7 @@ async function runReviewInternal(
         }
         throw failure;
       }
-    } else if (request.resumable !== false) {
+    } else if (resumable) {
       recordReviewWorkLog(workLog, "stage_started", { stage: "resume_archive" });
       try {
         resumeArchive = await createReviewResumeArchive(
@@ -1894,9 +1966,13 @@ async function runReviewInternal(
               ? {}
               : { allowWritePaths: paths.allowWritePaths }),
             network,
+            ...(request.allowHosts ? { allowHosts: request.allowHosts } : {}),
+            ...(request.blockHosts ? { blockHosts: request.blockHosts } : {}),
+            ...(egressPolicy.providerHosts ? { providerHosts: egressPolicy.providerHosts } : {}),
             piVersion: readiness.version ?? "unknown",
             extensionDigest: preparedRuntime.extensions.digest,
             ...(gitTargets.length === 0 ? {} : { gitTargets: gitTargets.map(serializeGitTarget) }),
+            ...(request.allowPartialClone === true ? { allowPartialClone: true } : {}),
             ...gitSymlinkRootScope(approvedSymlinkRoots),
           },
           undefined,
@@ -1928,6 +2004,7 @@ async function runReviewInternal(
     let scratch: string | undefined;
     let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
     let bridge: LinuxProxyBridge | undefined;
+    let providerBridge: LinuxProxyBridge | undefined;
     let bridgeRoot: string | undefined;
     let reviewResult: ReviewResult | undefined;
     let runFailure: Error | undefined;
@@ -1979,7 +2056,7 @@ async function runReviewInternal(
       const prompt = buildReviewPrompt(
         paths.sourceDir,
         resumeArchive === undefined ? scratchDirectory : undefined,
-        request.prompt,
+        networkSummary + "\n\n" + request.prompt,
         gitContextText,
         referencePaths,
       );
@@ -2013,11 +2090,10 @@ async function runReviewInternal(
         await assertNativeSandboxReady();
         recordReviewWorkLog(workLog, "stage_completed", { stage: "sandbox_readiness" });
         recordReviewWorkLog(workLog, "stage_started", { stage: "network_proxy" });
+        const resolve = createEgressResolver(egressPolicy);
         proxy = await startEgressProxy(
           crypto.randomUUID(),
-          preparedRuntime.authBroker?.resolveWith(
-            network === "public" ? resolvePublicTarget : resolveAnyTarget,
-          ) ?? (network === "public" ? resolvePublicTarget : resolveAnyTarget),
+          preparedRuntime.authBroker?.resolveWith(resolve) ?? resolve,
         );
         recordReviewWorkLog(workLog, "stage_completed", { stage: "network_proxy" });
         const bwrapPath = process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
@@ -2029,6 +2105,12 @@ async function runReviewInternal(
           // bridge socket remains within the reserved Linux path-length budget.
           bridgeRoot = await mkdtemp(path.join(scratchBase, "pir-bridge-"));
           bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
+          const gateway = preparedRuntime.controllerProviderAuth?.gateway;
+          if (gateway !== undefined)
+            providerBridge = await startLinuxLoopbackBridge(
+              gateway.port,
+              path.join(bridgeRoot, "provider.sock"),
+            );
         }
         recordReviewWorkLog(workLog, "stage_started", { stage: "sandbox_launch" });
         const config = buildReviewSandboxConfig({
@@ -2044,30 +2126,56 @@ async function runReviewInternal(
           ...(resumeArchive === undefined ? {} : { sessionDir: resumeArchive.activeAttemptDir }),
           ...(proxy === undefined ? {} : { parentProxyUrl: proxy.url }),
         });
+        const gateway = preparedRuntime.controllerProviderAuth?.gateway;
+        if (gateway !== undefined) {
+          await assertControllerProviderAuthOutsideGrants(piHomeSource, [
+            ...config.readOnlyPaths,
+            ...config.writablePaths,
+          ]);
+        }
+        const providerConfig =
+          gateway === undefined ? config : { ...config, loopbackPorts: [gateway.port] };
         const launch =
           process.platform === "darwin"
-            ? buildMacosSandboxArgv({ ...config, allowProcessFork: false }, optimized.command)
-            : buildLinuxSandboxArgv(config, optimized.command, bwrapPath ?? "", bridge?.socketPath);
+            ? buildMacosSandboxArgv(
+                { ...providerConfig, allowProcessFork: false },
+                optimized.command,
+              )
+            : buildLinuxSandboxArgv(
+                providerConfig,
+                optimized.command,
+                bwrapPath ?? "",
+                bridge?.socketPath,
+                undefined,
+                providerBridge === undefined || gateway === undefined
+                  ? []
+                  : [{ port: gateway.port, socketPath: providerBridge.socketPath }],
+              );
         recordReviewWorkLog(workLog, "stage_completed", { stage: "sandbox_launch" });
         recordReviewWorkLog(workLog, "stage_started", { stage: "pi_rpc" });
-        report = await runReviewRpc(
-          launch.argv,
-          paths.sourceDir,
-          reviewProcessEnvironment(launch.environment, environment),
-          prompt,
-          timeoutMs,
-          {
-            workLog,
-            sensitiveValues: [request.prompt],
-            onActorWarning: (warning) => actorWarnings.push(warning),
-            extensionPackages: extensionPackageNames([
-              ...preparedRuntime.extensions.paths,
-              ...preparedRuntime.extensions.sourcePaths,
-            ]),
-            maxRpcOutputBytes,
-            providerContext: providerContextFor(model),
-            callerPrompt: request.prompt,
-          },
+        const rpcOptions = {
+          workLog,
+          sensitiveValues: [request.prompt],
+          onActorWarning: (warning: string) => actorWarnings.push(warning),
+          extensionPackages: extensionPackageNames([
+            ...preparedRuntime.extensions.paths,
+            ...preparedRuntime.extensions.sourcePaths,
+          ]),
+          maxRpcOutputBytes,
+          providerContext: providerContextFor(model),
+          callerPrompt: request.prompt,
+        };
+        report = await withPiStagedIntegrity(
+          { agentDir: piHome.agentDir, extensionRoot: preparedRuntime.extensionRoot },
+          async () =>
+            await runReviewRpc(
+              launch.argv,
+              paths.sourceDir,
+              reviewProcessEnvironment(launch.environment, environment),
+              prompt,
+              timeoutMs,
+              rpcOptions,
+            ),
         );
         sandboxed = true;
       }
@@ -2124,6 +2232,8 @@ async function runReviewInternal(
       };
     } catch (error) {
       runFailure = error instanceof Error ? error : new Error(String(error));
+      if (runFailure instanceof PiStagedIntegrityError)
+        runFailure = classifyReviewResumeFailure(runFailure, "containment");
       if (
         resumeContext !== undefined &&
         reviewResumeFailureKind(runFailure) === "prompt_rejected"
@@ -2152,6 +2262,7 @@ async function runReviewInternal(
     }
     for (const cleanup of [
       async () => bridge?.close(),
+      async () => providerBridge?.close(),
       async () => {
         if (bridgeRoot !== undefined) await rm(bridgeRoot, { recursive: true, force: true });
       },
@@ -2296,7 +2407,11 @@ export async function resumeReview(request: ResumeReviewRequest): Promise<Review
           ? {}
           : { allowWritePaths: loaded.scope.allowWritePaths }),
         network,
+        ...(loaded.scope.allowHosts ? { allowHosts: loaded.scope.allowHosts } : {}),
+        ...(loaded.scope.blockHosts ? { blockHosts: loaded.scope.blockHosts } : {}),
+        ...(request.onNetworkPolicy ? { onNetworkPolicy: request.onNetworkPolicy } : {}),
         ...(loaded.scope.gitTargets === undefined ? {} : { gitTargets: loaded.scope.gitTargets }),
+        ...(loaded.scope.allowPartialClone === true ? { allowPartialClone: true } : {}),
         ...(loaded.scope.gitSymlinkRoots === undefined
           ? {}
           : { gitSymlinkRoots: loaded.scope.gitSymlinkRoots }),
@@ -2349,38 +2464,13 @@ export async function assertReviewResumeOutputsOutsideArchive(
       defaultReviewReportDirectory(environment, platform, home),
       `prospective-${crypto.randomUUID()}.md`,
     );
-  try {
-    await validateProspectiveReviewReportPath({
-      sourceDir: archiveDir,
-      reportPath,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("actor-visible")) {
-      throw new Error(
-        `[REVIEW_RESUME_OUTPUT_INVALID] Review report target overlaps the retained archive: ${reportPath}`,
-      );
-    }
-    throw error;
-  }
   const workLogPath =
     outputs.workLogPath ??
     path.join(
       reviewWorkLogDirectory(environment, platform, home),
       `prospective-${crypto.randomUUID()}.jsonl`,
     );
-  try {
-    await validateProspectiveReviewWorkLogPath({
-      sourceDir: archiveDir,
-      workLogPath,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("actor-visible")) {
-      throw new Error(
-        `[REVIEW_RESUME_OUTPUT_INVALID] Review work log target overlaps the retained archive: ${workLogPath}`,
-      );
-    }
-    throw error;
-  }
+  await validateProspectiveResumeOutputs(archiveDir, reportPath, workLogPath);
 }
 
 export async function assertReviewResumeOutputsOutsideStorage(

@@ -26,6 +26,8 @@ Pioneer copies package dependency directories named `sessions` or `logs` in full
 
 Staged code has a separate read-only sandbox grant. Pi authentication and configuration use a private writable run-local copy. Native reviews, including built-in-only reviews with `--no-extensions`, refresh OAuth through a controller-owned broker and a separate sandboxed authentication worker. The controller saves rotations under Pi's credential lock. It never copies the review actor's modified credentials back.
 
+On macOS and Linux, Pioneer verifies bounded SHA-256 digests of staged immutable Pi-home inputs and extension code before and after each native actor. It verifies eval launch and probe inputs the same way. The controller revalidates the original roots and file identities and checks read-only directory membership. It compares staged symlink targets without following them. Private `auth.json`, `settings.json`, `models-store.json`, and new runtime files in the writable agent root can still change. A failed check produces `[PI_STAGED_INTEGRITY_FAILED]` and the actor's result fails containment.
+
 Discovery and execution share the configuration and extension snapshot. Pioneer removes both temporary directories after the run. Retained sessions store a SHA-256 digest of the extension snapshot. Before loading a resumed session, Pioneer re-stages and checks the code, dependency bytes, and entry-point order. Changes fail with `REVIEW_RESUME_EXTENSIONS_CHANGED`. Older archives without a digest keep their original built-in-only policy.
 
 ## Execution and capabilities

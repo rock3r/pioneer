@@ -44,6 +44,8 @@ async function gitOrSkip(ctx: { skip: () => void }): Promise<RunGit | undefined>
   }
   const env = {
     ...gitInspectEnvironment(),
+    // Fixture setup can clone local repositories while the controller stays offline.
+    GIT_ALLOW_PROTOCOL: "file",
     GIT_AUTHOR_NAME: "Pioneer Test",
     GIT_AUTHOR_EMAIL: "pioneer@example.test",
     GIT_COMMITTER_NAME: "Pioneer Test",
@@ -51,11 +53,7 @@ async function gitOrSkip(ctx: { skip: () => void }): Promise<RunGit | undefined>
   };
   return async (cwd, args) =>
     await new Promise<string>((resolve, reject) => {
-      const child = spawn(
-        git,
-        ["-c", "commit.gpgsign=false", "-c", "protocol.file.allow=always", ...args],
-        { cwd, env, shell: false },
-      );
+      const child = spawn(git, ["-c", "commit.gpgsign=false", ...args], { cwd, env, shell: false });
       let stdout = "";
       let stderr = "";
       child.stdout?.on("data", (chunk: Buffer) => {

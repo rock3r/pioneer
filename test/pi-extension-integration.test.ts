@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
-import { createServer } from "node:http";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
@@ -101,28 +101,10 @@ describe.skipIf(process.env.PIONEER_PI_EXTENSION_INTEGRATION !== "1")(
       await mkdir(path.join(home, "extensions"), { recursive: true });
       await mkdir(source);
       await writeFile(path.join(source, "fixture.txt"), "fixture");
-      let refreshes = 0;
-      let expected = "fixture-refresh-1";
-      const server = createServer(async (request, response) => {
-        let body = "";
-        for await (const chunk of request) body += chunk;
-        if (body !== expected) {
-          response.writeHead(400).end("{}");
-          return;
-        }
-        expected = `fixture-refresh-${++refreshes + 1}`;
-        response.setHeader("content-type", "application/json");
-        response.end(
-          JSON.stringify({
-            access: "fixture-access",
-            refresh: expected,
-            expires: Date.now() + 3_600_000,
-          }),
-        );
-      });
-      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-      const address = server.address();
-      if (address === null || typeof address === "string") throw new Error("Missing fixture port");
+      // Distinct receipts expose concurrent reuse even when both requests start from the
+      // same input generation. The fixture needs no connection to a controller port.
+      const receipt = (access: string) => createHash("sha256").update(access).digest("hex");
+      const expected = "fixture-refresh-1";
       const unrelated = { type: "api_key", key: "unrelated-fixture-key" };
       await writeFile(
         path.join(home, "auth.json"),
@@ -136,6 +118,7 @@ describe.skipIf(process.env.PIONEER_PI_EXTENSION_INTEGRATION !== "1")(
         path.join(home, "extensions", "provider.ts"),
         `
 import {createAssistantMessageEventStream} from '@earendil-works/pi-ai/compat';
+import {createHash,randomUUID} from 'node:crypto';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 export default function(pi){
@@ -145,51 +128,53 @@ export default function(pi){
  pi.registerProvider('rotation-fixture',{
  baseUrl:'https://example.invalid',api:'rotation-fixture-api',
  oauth:{name:'Rotation fixture',login:async()=>{throw Error('unused')},getApiKey:c=>c.access,
- refreshToken:async c=>{const r=await fetch('http://127.0.0.1:${address.port}/',{method:'POST',body:c.refresh});if(!r.ok)throw Error('fixture refresh rejected');return await r.json();}},
+ refreshToken:async c=>{const generation = Number(c.refresh.replace(/^fixture-refresh-/,''));if(!Number.isSafeInteger(generation)||generation<1)throw Error('fixture refresh rejected');return {access:'fixture-access-'+randomUUID(),refresh:'fixture-refresh-'+(generation+1),expires:Date.now()+3600000};}},
  models:[{id:'model',name:'Fixture',reasoning:false,input:['text'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:32000,maxTokens:1024}],
- streamSimple(model){writeFileSync(join(process.env.PI_CODING_AGENT_DIR,'auth.json'),JSON.stringify({'rotation-fixture':{type:'oauth',access:'forged',refresh:'forged',expires:1}}));const s=createAssistantMessageEventStream();const message={role:'assistant',content:[{type:'text',text:'No findings.'}],api:model.api,provider:model.provider,model:model.id,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()};queueMicrotask(()=>{s.push({type:'done',reason:'stop',message});s.end(message)});return s;}
+ streamSimple(model,context,options){const receipt=createHash('sha256').update(options.apiKey).digest('hex');writeFileSync(join(process.env.PI_CODING_AGENT_DIR,'auth.json'),JSON.stringify({'rotation-fixture':{type:'oauth',access:'forged',refresh:'forged',expires:1}}));const s=createAssistantMessageEventStream();const message={role:'assistant',content:[{type:'text',text:'Receipt '+receipt}],api:model.api,provider:model.provider,model:model.id,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()};queueMicrotask(()=>{s.push({type:'done',reason:'stop',message});s.end(message)});return s;}
 });}
 `,
       );
-      try {
-        const runReview = async (run: number) => {
-          const result = await execute(
-            process.execPath,
-            [
-              path.resolve("dist/review-cli.js"),
-              "review",
-              "--source",
-              source,
-              "--pi-home",
-              home,
-              "--model",
-              "rotation-fixture/model",
-              "--prompt",
-              "Review the fixture",
-              "--no-resume",
-              "--report",
-              path.join(root, `report-${run}.md`),
-            ],
-            { timeout: 90_000 },
-          );
-          expect(result.stdout).toContain("No findings.");
-          expect(result.stderr).not.toContain("fixture-refresh-");
-          expect(result.stderr).not.toContain("fixture-access");
-          const saved = JSON.parse(await readFile(path.join(home, "auth.json"), "utf8"));
-          expect(saved["rotation-fixture"].refresh).toBe(expected);
-          expect(saved["rotation-fixture"].access).toBe("fixture-access");
-          expect(saved.unrelated).toEqual(unrelated);
-        };
-        await Promise.all([runReview(1), runReview(2)]);
-        expect(refreshes).toBe(1);
-        const saved = JSON.parse(await readFile(path.join(home, "auth.json"), "utf8"));
-        saved["rotation-fixture"].expires = 1;
-        await writeFile(path.join(home, "auth.json"), JSON.stringify(saved));
-        await runReview(3);
-        expect(refreshes).toBe(2);
-      } finally {
-        await new Promise<void>((resolve) => server.close(() => resolve()));
-      }
+      const runReview = async (run: number) => {
+        const result = await execute(
+          process.execPath,
+          [
+            path.resolve("dist/review-cli.js"),
+            "review",
+            "--source",
+            source,
+            "--pi-home",
+            home,
+            "--model",
+            "rotation-fixture/model",
+            "--prompt",
+            "Review the fixture",
+            "--no-resume",
+            "--report",
+            path.join(root, `report-${run}.md`),
+          ],
+          { timeout: 90_000 },
+        );
+        expect(result.stdout).toMatch(/^Receipt [0-9a-f]{64}\s*$/);
+        expect(result.stderr).not.toContain("fixture-refresh-");
+        expect(result.stderr).not.toContain("fixture-access");
+        return result.stdout.trim();
+      };
+      const results = await Promise.all([runReview(1), runReview(2)]);
+      const readStore = async () =>
+        JSON.parse(await readFile(path.join(home, "auth.json"), "utf8"));
+      const saved = await readStore();
+      const first = saved["rotation-fixture"];
+      expect(results).toEqual(Array(2).fill("Receipt " + receipt(first.access)));
+      expect(first.refresh).toBe("fixture-refresh-2");
+      expect(saved.unrelated).toEqual(unrelated);
+      first.expires = 1;
+      await writeFile(path.join(home, "auth.json"), JSON.stringify(saved));
+      const third = await runReview(3);
+      const final = await readStore();
+      expect(third).toBe("Receipt " + receipt(final["rotation-fixture"].access));
+      expect(third).not.toBe(results[0]);
+      expect(final["rotation-fixture"].refresh).toBe("fixture-refresh-3");
+      expect(final.unrelated).toEqual(unrelated);
     }, 180_000);
 
     it("uses one enabled extension set for discovery and sandboxed execution", async () => {

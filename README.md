@@ -4,6 +4,8 @@
 
 Pioneer lets coding agents run independent code reviews and isolated skill evaluations through a local [Pi coding agent](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). Pi uses its configured providers and models. Pioneer checks readiness, copies Pi configuration, applies path grants, and starts the native sandbox. You can select a thinking level up to `max`.
 
+`pioneer check-comments` scores changed diff comments against task scope through a dedicated decision model API. See the [comment-check CLI reference](docs/CLI-REFERENCE.md#pioneer-check-comments).
+
 ## Platform support
 
 | Platform | Reviews | Skill eval actors |
@@ -20,7 +22,7 @@ The Pioneer controller must run outside any enclosing agent sandbox. It needs ac
 
 ## Quick start
 
-Pioneer requires Node.js 22.19.0 or newer, npm, and a configured Pi installation. It requires Pi `0.80.6` or newer. This release has tests through Pi `1.6.0`. Pioneer allows newer versions and prints a warning. Install the command-line interface (CLI):
+Pioneer requires Node.js 22.19.0 or newer and npm. Reviews and skill evaluations require a configured Pi installation at version `0.80.6` or newer. This release has tests through Pi `1.6.0`. Pioneer allows newer versions and prints a warning. Install the command-line interface (CLI):
 
 ```bash
 npm install -g @rock3r/pioneer

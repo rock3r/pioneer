@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { registerManagedTempPaths } from "../../test/support/temp-dir.js";
 import {
   collectGitContext,
+  collectGitDiffs,
   defaultGitRunner,
   type GitRunner,
   gitInspectEnvironment,
@@ -18,6 +19,29 @@ import {
 } from "./git-inspect.js";
 
 const { createTempDir } = registerManagedTempPaths();
+
+function withGitVersion(runner: GitRunner, mockConfig = true): GitRunner {
+  return async (...args) => {
+    if (args[1][0] === "--version") {
+      return { stdout: "git version 2.56.1\n", stderr: "", exitCode: 0 };
+    }
+    if (mockConfig && args[1].includes("config")) {
+      return { stdout: "", stderr: "", exitCode: 1 };
+    }
+    return await runner(...args);
+  };
+}
+
+function mockGitRepository(root: string, run: GitRunner): GitRunner {
+  return withGitVersion(async (executable, args, cwd, env) => {
+    if (args.includes("--show-toplevel")) return { stdout: root, stderr: "", exitCode: 0 };
+    if (args.includes("--show-object-format")) return { stdout: "sha1\n", stderr: "", exitCode: 0 };
+    if (args.includes("--absolute-git-dir") || args.includes("--git-common-dir")) {
+      return { stdout: path.join(root, ".git"), stderr: "", exitCode: 0 };
+    }
+    return await run(executable, args, cwd, env);
+  }, false);
+}
 
 describe("git target parsing", () => {
   it("parses explicit working-tree, staged, commit, and range targets", () => {
@@ -102,7 +126,7 @@ describe("controller Git collection", () => {
     await expect(
       collectGitContext(root, [{ kind: "working-tree" }], {
         gitExecutable: process.execPath,
-        runner,
+        runner: withGitVersion(runner),
       }),
     ).rejects.toThrow("Git-target reviews require --source to be the repository root");
     expect(commands[0]?.slice(0, 4)).toEqual([
@@ -118,6 +142,12 @@ describe("controller Git collection", () => {
     expect(argv).toContain("protocol.file.allow=never");
     expect(argv).toContain("protocol.ext.allow=never");
     expect(argv).toContain("core.attributesFile=");
+    expect(argv).toContain("--no-lazy-fetch");
+    expect(argv).toContain("log.showSignature=false");
+    const nullDevice = process.platform === "win32" ? "NUL" : "/dev/null";
+    for (const setting of ["gpg", "gpg.openpgp", "gpg.x509", "gpg.ssh"]) {
+      expect(argv).toContain(`${setting}.program=${nullDevice}`);
+    }
     expect(commands[0]?.some((arg) => ["commit", "checkout", "reset", "push"].includes(arg))).toBe(
       false,
     );
@@ -131,6 +161,7 @@ describe("controller Git collection", () => {
     expect(environment.GIT_PAGER).toBe("");
     expect(environment.GIT_ATTR_NOSYSTEM).toBe("1");
     expect(environment.GIT_NO_LAZY_FETCH).toBe("1");
+    expect(environment.GIT_ALLOW_PROTOCOL).toBe("");
     expect(environment).not.toHaveProperty("SSH_AUTH_SOCK");
     expect(environment).not.toHaveProperty("GIT_DIR");
     expect(environment).not.toHaveProperty("GIT_SSH_COMMAND");
@@ -162,7 +193,7 @@ describe("controller Git collection", () => {
     const collected = await collectGitContext(
       root,
       [{ kind: "working-tree" }, { kind: "staged" }],
-      { gitExecutable: process.execPath, runner },
+      { gitExecutable: process.execPath, runner: withGitVersion(runner) },
     );
     expect(collected?.text).toContain("Controller-collected Git context");
     expect(collected?.text).toContain("worktree-diff");
@@ -193,7 +224,7 @@ describe("controller Git collection", () => {
     await expect(
       collectGitContext(root, [{ kind: "commit", ref: "HEAD" }], {
         gitExecutable: process.execPath,
-        runner,
+        runner: withGitVersion(runner),
       }),
     ).rejects.toThrow("[REVIEW_GIT_REF_INVALID]");
   });
@@ -216,7 +247,7 @@ describe("controller Git collection", () => {
     await expect(
       collectGitContext(root, [{ kind: "commit", ref: "HEAD" }], {
         gitExecutable: process.execPath,
-        runner,
+        runner: withGitVersion(runner),
       }),
     ).rejects.toThrow("[REVIEW_GIT_REF_INVALID]");
   });
@@ -227,7 +258,7 @@ describe("controller Git collection", () => {
     await expect(
       collectGitContext(root, [{ kind: "working-tree" }], {
         gitExecutable: process.execPath,
-        runner,
+        runner: withGitVersion(runner),
       }),
     ).rejects.toThrow("[REVIEW_GIT_REPOSITORY_INVALID]");
   });
@@ -246,7 +277,7 @@ describe("controller Git collection", () => {
     };
     const collected = await collectGitContext(root, [{ kind: "working-tree" }], {
       gitExecutable: process.execPath,
-      runner,
+      runner: withGitVersion(runner),
     });
     expect(collected?.text).toContain("[REVIEW_GIT_CONTEXT_TRUNCATED]");
     expect(Buffer.byteLength(collected?.text ?? "")).toBeLessThanOrEqual(1 * 1024 * 1024 + 64);
@@ -263,6 +294,97 @@ describe("controller Git collection", () => {
         50,
       ),
     ).rejects.toThrow("[REVIEW_GIT_COMMAND_FAILED]");
+  });
+
+  it.each(["2.44.9", "unexpected version"])(
+    "rejects unsupported Git %s before repository inspection",
+    async (version) => {
+      const root = await createTempDir("pioneer-git-version-");
+      const commands: string[][] = [];
+      const runner: GitRunner = async (_executable, args) => {
+        commands.push([...args]);
+        return { stdout: `git version ${version}\n`, stderr: "", exitCode: 0 };
+      };
+      await expect(
+        collectGitContext(root, [{ kind: "staged" }], { gitExecutable: process.execPath, runner }),
+      ).rejects.toThrow("Git 2.45.0 or newer");
+      expect(commands).toEqual([["--version"]]);
+    },
+  );
+
+  it.each([
+    "extensions.partialclone\norigin\0",
+    "remote.origin.promisor\ntrue\0",
+    "remote.origin.partialclonefilter\nblob:none\0",
+  ])("requires an offline opt-in for partial-clone configuration %j", async (configuration) => {
+    const root = await createTempDir("pioneer-git-partial-");
+    await mkdir(path.join(root, ".git"));
+    const runner = mockGitRepository(root, async (_executable, args, _cwd, env) => {
+      expect(env.GIT_ALLOW_PROTOCOL).toBe("");
+      expect(args).toContain("--no-lazy-fetch");
+      if (args.includes("config")) return { stdout: configuration, stderr: "", exitCode: 0 };
+      return { stdout: "staged diff\n", stderr: "", exitCode: 0 };
+    });
+    const options = { gitExecutable: process.execPath, runner };
+    await expect(collectGitContext(root, [{ kind: "staged" }], options)).rejects.toThrow(
+      "--allow-partial-clone",
+    );
+    await expect(
+      collectGitContext(root, [{ kind: "staged" }], { ...options, allowPartialClone: true }),
+    ).resolves.toMatchObject({ text: expect.stringContaining("staged diff") });
+  });
+
+  it("requires the offline opt-in for promisor pack markers and gives missing-object guidance", async () => {
+    const root = await createTempDir("pioneer-git-partial-pack-");
+    const packDir = path.join(root, ".git", "objects", "pack");
+    await mkdir(packDir, { recursive: true });
+    await writeFile(path.join(packDir, "pack-fixture.promisor"), "");
+    const runner = mockGitRepository(root, async (_executable, args) =>
+      args.includes("config")
+        ? { stdout: "", stderr: "", exitCode: 1 }
+        : { stdout: "", stderr: "private subprocess text", exitCode: 128 },
+    );
+    const options = { gitExecutable: process.execPath, runner };
+    await expect(collectGitContext(root, [{ kind: "staged" }], options)).rejects.toThrow(
+      "--allow-partial-clone",
+    );
+    const inspect = collectGitContext(root, [{ kind: "staged" }], {
+      ...options,
+      allowPartialClone: true,
+    });
+    await expect(inspect).rejects.toThrow("range:BASE...HEAD");
+    await expect(inspect).rejects.not.toThrow("private subprocess text");
+  });
+
+  it("returns only bounded patch text for comment checks", async () => {
+    const root = await createTempDir("pioneer-git-raw-");
+    await mkdir(path.join(root, ".git"));
+    const patch = "diff --git a/example.ts b/example.ts\n+// new comment\n";
+    const runner = mockGitRepository(root, async (_executable, args) => {
+      if (args.includes("config")) return { stdout: "", stderr: "", exitCode: 1 };
+      expect(args).not.toContain("status");
+      expect(args).toEqual(
+        expect.arrayContaining([
+          "--patch",
+          "--cached",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--no-color",
+          "--unified=3",
+          "--src-prefix=a/",
+          "--dst-prefix=b/",
+        ]),
+      );
+      return { stdout: patch, stderr: "", exitCode: 0, stdoutTruncated: true };
+    });
+    const target = { kind: "staged" } as const;
+    const options = { gitExecutable: process.execPath, runner };
+    await expect(collectGitDiffs(root, [target], options)).resolves.toEqual([
+      { target, diff: patch, truncated: true },
+    ]);
+    await expect(collectGitDiffs(root, [{ kind: "untracked" }], options)).rejects.toThrow(
+      "[REVIEW_GIT_TARGET_UNSUPPORTED]",
+    );
   });
 });
 
@@ -390,14 +512,37 @@ describe("real Git inspection", () => {
         child.once("close", (code) => resolve({ stdout, exitCode: code ?? 1 }));
       });
     expect((await runGit(["init"])).exitCode).toBe(0);
-    await writeFile(path.join(root, "tracked.txt"), "base\n");
+    await writeFile(path.join(root, "tracked.txt"), "base\n\nlast\n");
     expect((await runGit(["add", "tracked.txt"])).exitCode).toBe(0);
     expect((await runGit(["commit", "-m", "init"])).exitCode).toBe(0);
-    await writeFile(path.join(root, "tracked.txt"), "staged-change\n");
+    const base = (await runGit(["rev-parse", "HEAD"])).stdout.trim();
+    await writeFile(path.join(root, "tracked.txt"), "staged-change\n\nlast\n");
     expect((await runGit(["add", "tracked.txt"])).exitCode).toBe(0);
 
     const collected = await collectGitContext(root, [{ kind: "working-tree" }]);
     expect(collected?.text).toContain("staged-change");
+
+    await writeFile(path.join(root, "tracked.txt"), "working-change\n");
+    await writeFile(path.join(root, "untracked.txt"), "untracked-change\n");
+    await runGit(["config", "diff.noprefix", "true"]);
+    await runGit(["config", "diff.suppressBlankEmpty", "true"]);
+    const [staged, worktree] = await collectGitDiffs(root, [
+      { kind: "staged" },
+      { kind: "working-tree" },
+    ]);
+    expect(staged?.diff).toContain("+++ b/tracked.txt\n");
+    expect(staged?.diff).toContain("+staged-change\n \n last\n");
+    expect(staged?.diff).not.toContain("working-change");
+    expect(worktree?.diff).toContain("+working-change\n");
+    expect(worktree?.diff).not.toContain("untracked-change");
+
+    expect((await runGit(["commit", "-m", "staged only"])).exitCode).toBe(0);
+    const [branchRange, lastCommit] = await collectGitDiffs(root, [
+      { kind: "range", from: base, to: "HEAD", symmetric: true },
+      { kind: "commit", ref: "HEAD" },
+    ]);
+    expect(branchRange?.diff).toContain("+staged-change\n");
+    expect(lastCommit?.diff).toBe(branchRange?.diff);
   });
 
   it("rejects repositories that expose alternate object stores", async (ctx) => {

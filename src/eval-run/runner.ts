@@ -15,6 +15,12 @@ import {
 import net from "node:net";
 import path from "node:path";
 import {
+  assertControllerProviderAuthOutsideGrants,
+  type ControllerProviderAuth,
+  prepareControllerProviderAuth,
+  unsupportedControllerProviderAuth,
+} from "../controller-provider-auth.js";
+import {
   adoptCreatedScratchDirectory,
   assertScratchBaseOutsideGrants,
   validateControllerScratchBase,
@@ -26,6 +32,7 @@ import {
   prepareAuthBroker,
   snapshotOAuthProviders,
 } from "../pi-auth-runtime.js";
+import { resolvePiCommand } from "../pi-command.js";
 import type { PreparedReviewRuntime } from "../pi-extension-discovery.js";
 import { preparePiExtensions, runtimeReadRoots } from "../pi-extension-runtime.js";
 import {
@@ -36,6 +43,7 @@ import {
 import { defaultPiAgentDir, type PreparedPiHome, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
 import { piRuntimeStorage } from "../pi-runtime-storage.js";
+import { PiStagedIntegrityError, withPiStagedIntegrity } from "../pi-staged-integrity.js";
 import {
   applyPiVersionToStartup,
   applyPiVersionToStartupCommand,
@@ -50,6 +58,7 @@ import {
   type LinuxLoopbackRelay,
   type SandboxPolicy,
 } from "../sandbox/launcher.js";
+import { stageLinuxIdentity } from "../sandbox/linux-identity.js";
 import {
   type LinuxProxyBridge,
   startLinuxLoopbackBridge,
@@ -62,6 +71,7 @@ import {
   parseActorEnvironment,
   parseLoopbackTargets,
 } from "./actor-options.js";
+import { createEgressResolver } from "./egress-policy.js";
 import {
   assertEvalWorkLogNotActorVisible,
   assertPiHomeSeparatedFromActorGrants,
@@ -84,6 +94,11 @@ import {
 } from "./isolation.js";
 import { resolveLinuxBwrapPath } from "./linux-install.js";
 import {
+  type MacosEvalProcessOperations,
+  MacosEvalProcessTracker,
+  nativeMacosEvalProcessOperations,
+} from "./macos-process-tracker.js";
+import {
   macosFallbackDeveloperReadPaths,
   macosPrivateToolEnvironment,
   macosRuntimeReadPaths,
@@ -96,10 +111,11 @@ import {
   piPackageHostsExtensionRuntime,
 } from "./pi-extension-host.js";
 import {
-  resolvePublicTarget,
-  startEgressProxy,
-  startPublicEgressProxy,
-} from "./public-egress-proxy.js";
+  describeEgressPolicy,
+  type PreparedProviderNetwork,
+  prepareProviderNetwork,
+} from "./provider-network.js";
+import { type PublicEgressProxy, startEgressProxy } from "./public-egress-proxy.js";
 import {
   assertDistinctToolExtensionSources,
   assertToolExtensionCount,
@@ -129,6 +145,7 @@ export interface EvalRunResult {
 }
 
 export interface RunEvalOptions {
+  readonly onNetworkPolicy?: (message: string) => void;
   readonly deniedReadProbePaths?: readonly string[];
   readonly timeoutMs?: number;
   readonly workLogPath?: string;
@@ -207,8 +224,6 @@ async function existingRuntimePaths(): Promise<string[]> {
             "/etc/resolv.conf",
             "/etc/hosts",
             "/etc/nsswitch.conf",
-            "/etc/passwd",
-            "/etc/group",
           ]
         : [
             path.win32.join(process.env.SystemRoot ?? "C:\\Windows"),
@@ -250,6 +265,9 @@ function sanitizedBrokerEnvironment(runtimeEnvironment: NodeJS.ProcessEnv): Node
 }
 
 const EVAL_PIPE_CLOSE_GRACE_MS = 400;
+const MACOS_PROCESS_SAMPLE_MS = 50;
+const EVAL_CONTAINMENT_DIAGNOSTIC =
+  "[EVAL_PROCESS_CONTAINMENT_FAILED] Pioneer could not prove the eval actor process tree stopped";
 const EVAL_MAX_STDOUT_BYTES = 4 * 1024 * 1024;
 const EVAL_MAX_STDERR_BYTES = 64 * 1024;
 /** Disk bound for a stream written to a caller-owned file instead of memory. */
@@ -368,6 +386,7 @@ export async function captureEvalProcess(
   timeoutMs: number,
   abortSignal?: AbortSignal,
   sinks: EvalOutputSinks = {},
+  macosProcessOperations?: MacosEvalProcessOperations,
 ): Promise<EvalRunResult> {
   if (abortSignal?.aborted)
     return {
@@ -377,6 +396,21 @@ export async function captureEvalProcess(
       stderr: "[EVAL_INTERRUPTED] Process was cancelled before launch",
       interrupted: "SIGTERM",
     };
+  const initialProcesses = macosProcessOperations?.readProcesses();
+  if (macosProcessOperations !== undefined && initialProcesses === undefined) {
+    return {
+      exitCode: 1,
+      signal: null,
+      stdout: "",
+      stderr:
+        "[EVAL_PROCESS_CONTAINMENT_FAILED] Pioneer could not inspect the macOS process table before launch\n",
+      containmentFailure: true,
+    };
+  }
+  const macosProcessTracker =
+    macosProcessOperations === undefined || initialProcesses === undefined
+      ? undefined
+      : new MacosEvalProcessTracker(macosProcessOperations, cwd, initialProcesses);
   return await new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
       cwd,
@@ -404,6 +438,8 @@ export async function captureEvalProcess(
     let signal: NodeJS.Signals | null = null;
     let timeoutTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined;
+    let processSampleTimer: NodeJS.Timeout | undefined;
+    let pipesClosed = false;
     let onSigint: (() => void) | undefined;
     let onSigterm: (() => void) | undefined;
     let onAbort: (() => void) | undefined;
@@ -415,6 +451,7 @@ export async function captureEvalProcess(
     const cleanup = (): void => {
       if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
       if (graceTimer !== undefined) clearTimeout(graceTimer);
+      if (processSampleTimer !== undefined) clearInterval(processSampleTimer);
       if (onSigint !== undefined) process.off("SIGINT", onSigint);
       if (onSigterm !== undefined) process.off("SIGTERM", onSigterm);
       if (onAbort !== undefined) abortSignal?.removeEventListener("abort", onAbort);
@@ -424,15 +461,18 @@ export async function captureEvalProcess(
       settled = true;
       cleanup();
       const captured = output();
-      const diagnostic = timedOut
+      const primaryDiagnostic = timedOut
         ? `[EVAL_TIMEOUT] Eval actor timed out after ${timeoutMs}ms`
-        : containmentFailure
-          ? "[EVAL_PROCESS_CONTAINMENT_FAILED] Pioneer could not prove the eval actor process tree stopped"
-          : outputFailure !== undefined
-            ? outputFailure
-            : interrupted === undefined
-              ? undefined
-              : `[EVAL_INTERRUPTED] Eval actor interrupted by ${interrupted}`;
+        : (outputFailure ??
+          (interrupted === undefined
+            ? undefined
+            : `[EVAL_INTERRUPTED] Eval actor interrupted by ${interrupted}`));
+      let diagnostic = primaryDiagnostic;
+      if (containmentFailure) {
+        if (macosProcessTracker !== undefined && primaryDiagnostic !== undefined)
+          diagnostic = `${primaryDiagnostic}\n${EVAL_CONTAINMENT_DIAGNOSTIC}`;
+        else if (!timedOut) diagnostic = EVAL_CONTAINMENT_DIAGNOSTIC;
+      }
       resolve({
         exitCode:
           diagnostic === undefined && (exitCode ?? 1) === 0
@@ -451,10 +491,17 @@ export async function captureEvalProcess(
         ...(interrupted === undefined ? {} : { interrupted }),
       });
     };
+    const stopProcesses = (signal: NodeJS.Signals): void => {
+      if (macosProcessTracker === undefined) terminateEvalProcessTree(child, signal);
+      else {
+        macosProcessTracker.stop(signal);
+        if (!childExited) child.kill(signal);
+      }
+    };
     const containmentDeadline = (): void => {
       if (settled) return;
       containmentFailure = true;
-      terminateEvalProcessTree(child, "SIGKILL");
+      stopProcesses("SIGKILL");
       child.stdout?.destroy();
       child.stderr?.destroy();
       settle();
@@ -464,17 +511,18 @@ export async function captureEvalProcess(
       graceTimer = setTimeout(containmentDeadline, EVAL_PIPE_CLOSE_GRACE_MS);
     };
     const terminate = (kind: "timeout" | NodeJS.Signals): void => {
-      if (settled || childExited) return;
+      if (settled || (childExited && (kind === "timeout" || macosProcessTracker === undefined)))
+        return;
       if (kind === "timeout") timedOut = true;
       else interrupted = kind;
-      terminateEvalProcessTree(child, kind === "timeout" ? "SIGKILL" : kind);
+      stopProcesses(kind === "timeout" ? "SIGKILL" : kind);
       startGrace();
     };
 
     const failOutput = (diagnostic: string): void => {
       if (outputFailure !== undefined) return;
       outputFailure = diagnostic;
-      terminateEvalProcessTree(child, "SIGKILL");
+      stopProcesses("SIGKILL");
       startGrace();
     };
     const maxFileBytes = sinks.maxFileBytes ?? EVAL_MAX_OUTPUT_FILE_BYTES;
@@ -541,16 +589,16 @@ export async function captureEvalProcess(
       if (graceTimer !== undefined) clearTimeout(graceTimer);
       graceTimer = undefined;
       startGrace();
-      if (childSignal !== null || code !== null) {
-        // `close` below remains authoritative because descendants may retain the pipes.
-      }
     });
+    const settleAfterProcessCleanup = (): void => {
+      if (macosProcessTracker?.stop("SIGKILL") !== false) settle();
+    };
     child.once("close", (code, childSignal) => {
       childExited = true;
+      pipesClosed = true;
       exitCode = code;
       signal = childSignal;
-      if (!timedOut && !containmentFailure && interrupted === undefined) settle();
-      else settle();
+      settleAfterProcessCleanup();
     });
     onSigint = () => terminate("SIGINT");
     onSigterm = () => terminate("SIGTERM");
@@ -559,8 +607,14 @@ export async function captureEvalProcess(
     timeoutTimer = setTimeout(() => terminate("timeout"), timeoutMs);
     onAbort = () => terminate("SIGTERM");
     abortSignal?.addEventListener("abort", onAbort, { once: true });
+    if (macosProcessTracker !== undefined && child.pid !== undefined) {
+      macosProcessTracker.start(child.pid);
+      processSampleTimer = setInterval(() => {
+        if (pipesClosed) settleAfterProcessCleanup();
+        else macosProcessTracker.observe();
+      }, MACOS_PROCESS_SAMPLE_MS);
+    }
     if (abortSignal?.aborted) onAbort();
-    void childExited;
   });
 }
 
@@ -574,6 +628,7 @@ async function sandboxAndCapture(
   runtimeExecutable = process.execPath,
   loopbackRelays: readonly LinuxLoopbackRelay[] = [],
   sinks: EvalOutputSinks = {},
+  trackActor = false,
 ): Promise<EvalRunResult> {
   const launch =
     process.platform === "darwin"
@@ -599,6 +654,7 @@ async function sandboxAndCapture(
     timeoutMs,
     undefined,
     sinks,
+    trackActor && process.platform === "darwin" ? nativeMacosEvalProcessOperations : undefined,
   );
 }
 
@@ -923,6 +979,7 @@ async function stageEvalPiExtensions(
   controllerOnlyPaths: readonly string[] = [],
   toolExtensionSources: readonly ToolExtensionSource[] = [],
   piVersion?: string,
+  providerNetwork: PreparedProviderNetwork | undefined = undefined,
 ): Promise<{
   readonly authBroker?: PiAuthBroker;
   readonly readPaths: readonly string[];
@@ -1050,7 +1107,8 @@ async function stageEvalPiExtensions(
     extensionRoot,
     home: piHome,
     extensions,
-    network: "public",
+    network: providerNetwork?.policy.network ?? "public",
+    ...(providerNetwork === undefined ? {} : { providerNetwork }),
     ...(explicitCopies.length === 0 ? {} : { capabilityExtensions: [...new Set(explicitCopies)] }),
   };
   let authBroker: Awaited<ReturnType<typeof prepareAuthBroker>>;
@@ -1204,7 +1262,26 @@ async function runEvalCommandWithInterruption(
   const requestedModel =
     requestedPiModel(spec.command) ??
     (piActorInspection.trusted ? requestedPiModel(["pi", ...spec.command.slice(1)]) : undefined);
+  const controllerProviderMode = spec.controllerProviderAuth === true;
+  if (
+    controllerProviderMode &&
+    (process.platform === "win32" ||
+      !piActorInspection.trusted ||
+      requestedModel === undefined ||
+      !requestedModel.includes("/") ||
+      commandRequestsExplicitExtension(spec.command.slice(1)) ||
+      (spec.toolExtensionPaths?.length ?? 0) > 0 ||
+      Object.keys(spec.environment ?? {}).length > 0 ||
+      spec.command
+        .slice(1)
+        .some((argument) => argument === "--api-key" || argument.startsWith("--api-key=")))
+  ) {
+    throw unsupportedControllerProviderAuth(
+      "Use native eval with the official Pi actor, --model PROVIDER/MODEL, and no explicit extensions, --api-key, or --env",
+    );
+  }
   const loadsUserExtensions =
+    !controllerProviderMode &&
     piActorInspection.trusted &&
     piActorInspection.hostsExtensionRuntime &&
     !commandDisablesExtensions(spec.command.slice(1));
@@ -1213,6 +1290,7 @@ async function runEvalCommandWithInterruption(
     piActorInspection.hostsExtensionRuntime &&
     commandRequestsExplicitExtension(spec.command.slice(1));
   if (
+    !controllerProviderMode &&
     piActorInspection.trusted &&
     !piActorInspection.hostsExtensionRuntime &&
     !commandDisablesExtensions(spec.command.slice(1))
@@ -1244,6 +1322,12 @@ async function runEvalCommandWithInterruption(
   );
   // --pi-extension sources are not model providers and never join discovery (#91).
   const deferExtensionReadiness = loadsUserExtensions || loadsExplicitExtensions;
+  const restrictedDiscovery = spec.network === "provider-only" || controllerProviderMode;
+  const requestedNetwork = {
+    network: spec.network ?? "public",
+    ...(spec.allowHosts ? { allowHosts: spec.allowHosts } : {}),
+    ...(spec.blockHosts ? { blockHosts: spec.blockHosts } : {}),
+  } as const;
   const initialReadinessOptions = {
     extensions: false as const,
     environment: { ...process.env, PI_CODING_AGENT_DIR: piHomeSource },
@@ -1257,7 +1341,7 @@ async function runEvalCommandWithInterruption(
   // Extension-backed models are absent from a built-in-only probe. Defer that probe until
   // the same extension snapshot the actor will load is ready.
   let readiness =
-    spec.piHomeSource === undefined && !deferExtensionReadiness
+    spec.piHomeSource === undefined && !deferExtensionReadiness && !restrictedDiscovery
       ? await assertPiReady(initialReadinessOptions)
       : undefined;
   throwIfEvalInterrupted(interruption);
@@ -1420,7 +1504,7 @@ async function runEvalCommandWithInterruption(
       ...(requestedModel === undefined ? {} : { requestedModel }),
       signal: interruption.abortSignal,
     };
-    if (readiness === undefined && !deferExtensionReadiness) {
+    if (readiness === undefined && !deferExtensionReadiness && !restrictedDiscovery) {
       recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
       readiness = await assertPiReady(readinessOptions);
       recordEvalWorkLog(workLog, "stage_completed", {
@@ -1480,11 +1564,13 @@ async function runEvalCommandWithInterruption(
     const loopbackBridges: LinuxProxyBridge[] = [];
     const loopbackRelays: LinuxLoopbackRelay[] = [];
     let lanProbe: Awaited<ReturnType<typeof listenForLanProbe>> | undefined;
-    let proxy: Awaited<ReturnType<typeof startPublicEgressProxy>> | undefined;
+    let proxy: PublicEgressProxy | undefined;
     let bridge: LinuxProxyBridge | undefined;
     let bridgeRoot: string | undefined;
     let authBroker: PiAuthBroker | undefined;
+    let controllerProvider: ControllerProviderAuth | undefined;
     let extensionReadPaths: readonly string[] = [];
+    let stagedExtensionRoot: string | undefined;
     try {
       const actorGrantPaths = [validated.runDir, ...completeActorReadPaths];
       if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
@@ -1494,18 +1580,43 @@ async function runEvalCommandWithInterruption(
       await mkdir(actorScratchDir, { mode: 0o700 });
       throwIfSetupInterrupted();
       recordEvalWorkLog(workLog, "stage_started", { stage: "pi_home_snapshot" });
+      if (controllerProviderMode) {
+        controllerProvider = await prepareControllerProviderAuth(
+          validatedPiHomeSource,
+          requestedModel,
+          requestedNetwork,
+        );
+      }
       const piHome = await prepareIsolatedPiHome({
         sourceDir: validatedPiHomeSource,
         destination: path.join(actorScratchDir, "pi-home"),
         mode: "eval",
         checkAborted: throwIfSetupInterrupted,
+        ...(controllerProvider === undefined
+          ? {}
+          : { controllerProviderFiles: controllerProvider.files }),
       });
+      const linuxIdentity =
+        process.platform === "linux"
+          ? await stageLinuxIdentity(isolationDir, piHome.homeDir)
+          : undefined;
+      const identityPolicy = linuxIdentity === undefined ? {} : { linuxIdentity };
+      const identityFiles =
+        linuxIdentity === undefined ? [] : [linuxIdentity.passwd, linuxIdentity.group];
       recordEvalWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
       throwIfSetupInterrupted();
       let actorEnvironment: Readonly<Record<string, string>> = {
         ...optimizedPi.environment,
         ...piHome.environment,
       };
+      const providerNetwork =
+        controllerProvider?.providerNetwork ??
+        (await prepareProviderNetwork(
+          requestedNetwork,
+          piHome.agentDir,
+          readiness?.resolvedModel ?? requestedModel,
+        ));
+      const selection = requestedModel ?? providerNetwork.defaultModel;
       const oauthProviders = await snapshotOAuthProviders(piHome.agentDir);
       if (
         oauthBrokerRequiredButUnavailable({
@@ -1554,9 +1665,11 @@ async function runEvalCommandWithInterruption(
           [workLog.path, ...(options.deniedReadProbePaths ?? [])],
           toolExtensionSources,
           readiness?.version,
+          providerNetwork,
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
+        stagedExtensionRoot = staged.runtime.extensionRoot;
         optimizedPi = staged.optimized;
         sandboxCommand = [...staged.command] as [string, ...string[]];
         actorEnvironment = {
@@ -1564,13 +1677,13 @@ async function runEvalCommandWithInterruption(
           ...piHome.environment,
           ...staged.authBroker?.environment,
         };
-        if (deferExtensionReadiness && readiness === undefined) {
+        if ((deferExtensionReadiness || restrictedDiscovery) && readiness === undefined) {
           recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
           readiness = await assertPiReady({
             command: [resolvedExecutable.commandPath],
             environment: { ...process.env, PI_CODING_AGENT_DIR: validatedPiHomeSource },
             preparedRuntime: staged.runtime,
-            ...(requestedModel === undefined ? {} : { requestedModel }),
+            ...(selection === undefined ? {} : { requestedModel: selection }),
             signal: interruption.abortSignal,
           });
           recordEvalWorkLog(workLog, "stage_completed", {
@@ -1585,6 +1698,48 @@ async function runEvalCommandWithInterruption(
           );
         }
       }
+      if (restrictedDiscovery && readiness === undefined) {
+        recordEvalWorkLog(workLog, "stage_started", { stage: "pi_readiness" });
+        const environment =
+          controllerProvider === undefined
+            ? readinessOptions.environment
+            : { ...sanitizedBrokerEnvironment(process.env), ...piHome.environment };
+        const piCommand = await resolvePiCommand("pi", environment);
+        const extensionRoot = path.join(isolationDir, "pi-discovery");
+        await mkdir(extensionRoot, { mode: 0o700 });
+        readiness = await assertPiReady({
+          ...readinessOptions,
+          command: piCommand,
+          environment,
+          ...(controllerProvider === undefined ? {} : { extensions: true }),
+          ...(selection === undefined ? {} : { requestedModel: selection }),
+          preparedRuntime: {
+            scratch: actorScratchDir,
+            extensionRoot,
+            home: piHome,
+            extensions: {
+              command: piCommand,
+              paths: [],
+              sourcePaths: [],
+              digest: "0".repeat(64),
+              entries: 0,
+              bytes: 0,
+            },
+            network: requestedNetwork.network,
+            providerNetwork,
+            ...(controllerProvider === undefined
+              ? {}
+              : { controllerProviderAuth: controllerProvider }),
+          },
+        });
+        recordEvalWorkLog(workLog, "stage_completed", {
+          stage: "pi_readiness",
+          warning: readiness.warning !== undefined,
+        });
+      }
+      providerNetwork.bind(readiness?.resolvedModel);
+      const egressPolicy = providerNetwork.policy;
+      options.onNetworkPolicy?.(describeEgressPolicy(egressPolicy));
       throwIfSetupInterrupted();
       sandboxCommand = applyPiVersionToStartupCommand(
         sandboxCommand,
@@ -1621,11 +1776,13 @@ async function runEvalCommandWithInterruption(
       throwIfSetupInterrupted();
 
       recordEvalWorkLog(workLog, "stage_started", { stage: "network_proxy" });
+      const actorLoopbackPorts =
+        controllerProvider === undefined
+          ? allowedLoopbackPorts
+          : [...new Set([...allowedLoopbackPorts, controllerProvider.gateway.port])];
       const proxyToken = randomBytes(32).toString("hex");
-      proxy =
-        authBroker === undefined
-          ? await startPublicEgressProxy(proxyToken)
-          : await startEgressProxy(proxyToken, authBroker.resolveWith(resolvePublicTarget));
+      const resolve = createEgressResolver(egressPolicy);
+      proxy = await startEgressProxy(proxyToken, authBroker?.resolveWith(resolve) ?? resolve);
       throwIfSetupInterrupted();
       const linuxBwrapPath =
         process.platform === "linux" ? await resolveLinuxBwrapPath() : undefined;
@@ -1636,7 +1793,7 @@ async function runEvalCommandWithInterruption(
         bridgeRoot = await mkdtemp(path.join(controllerTempRoot, "pir-bridge-"));
         bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
         throwIfSetupInterrupted();
-        for (const port of allowedLoopbackPorts) {
+        for (const port of actorLoopbackPorts) {
           const socketPath = path.join(bridgeRoot, `loopback-${port}.sock`);
           loopbackBridges.push(await startLinuxLoopbackBridge(port, socketPath));
           loopbackRelays.push({ port, socketPath });
@@ -1668,8 +1825,14 @@ async function runEvalCommandWithInterruption(
         ],
         writableScratchPaths: [...evalIsolatedPiHomeWritablePaths(piHome)],
         parentProxyUrl: proxy.url,
-        loopbackPorts: allowedLoopbackPorts,
+        loopbackPorts: actorLoopbackPorts,
       });
+      if (controllerProvider !== undefined) {
+        await assertControllerProviderAuthOutsideGrants(validatedPiHomeSource, [
+          ...actorConfig.readOnlyPaths,
+          ...actorConfig.writablePaths,
+        ]);
+      }
       recordEvalWorkLog(workLog, "stage_completed", {
         stage: "network_proxy",
         allowedLoopback: allowedLoopbackPorts.map(formatLoopbackTarget),
@@ -1678,15 +1841,22 @@ async function runEvalCommandWithInterruption(
       const timeoutMs = options.timeoutMs ?? 300_000;
       throwIfSetupInterrupted();
       recordEvalWorkLog(workLog, "stage_started", { stage: "isolation_probe" });
-      const probeResult = await sandboxAndCapture(
-        probeConfig,
-        [sandboxRuntimeExecutable, probeScript, probeSpec],
-        validated.runDir,
-        Math.min(timeoutMs, 30_000),
-        linuxBwrapPath,
-        bridge?.socketPath,
-        sandboxRuntimeExecutable,
-        loopbackRelays,
+      const probeResult = await withPiStagedIntegrity(
+        {
+          controllerFiles: [probeScript, probeSpec, ...identityFiles],
+          checkAborted: throwIfSetupInterrupted,
+        },
+        async () =>
+          await sandboxAndCapture(
+            { ...probeConfig, ...identityPolicy },
+            [sandboxRuntimeExecutable, probeScript, probeSpec],
+            validated.runDir,
+            Math.min(timeoutMs, 30_000),
+            linuxBwrapPath,
+            bridge?.socketPath,
+            sandboxRuntimeExecutable,
+            loopbackRelays.filter(({ port }) => allowedLoopbackPorts.includes(port)),
+          ),
       );
       recordEvalWorkLog(workLog, "stage_completed", {
         stage: "isolation_probe",
@@ -1710,23 +1880,33 @@ async function runEvalCommandWithInterruption(
           stdoutFile: outputTargets.stdout !== undefined,
           stderrFile: outputTargets.stderr !== undefined,
         });
-        const sinks = openEvalOutputFiles(outputTargets);
-        let result: EvalRunResult;
-        try {
-          result = await sandboxAndCapture(
-            actorConfig,
-            [sandboxRuntimeExecutable, launcherScript, launchSpec],
-            validated.runDir,
-            timeoutMs,
-            linuxBwrapPath,
-            bridge?.socketPath,
-            sandboxRuntimeExecutable,
-            loopbackRelays,
-            sinks,
-          );
-        } finally {
-          closeEvalOutputFiles(sinks);
-        }
+        const result = await withPiStagedIntegrity(
+          {
+            agentDir: piHome.agentDir,
+            ...(stagedExtensionRoot === undefined ? {} : { extensionRoot: stagedExtensionRoot }),
+            controllerFiles: [launcherScript, launchSpec, ...identityFiles],
+            checkAborted: throwIfSetupInterrupted,
+          },
+          async () => {
+            const sinks = openEvalOutputFiles(outputTargets);
+            try {
+              return await sandboxAndCapture(
+                { ...actorConfig, ...identityPolicy },
+                [sandboxRuntimeExecutable, launcherScript, launchSpec],
+                validated.runDir,
+                timeoutMs,
+                linuxBwrapPath,
+                bridge?.socketPath,
+                sandboxRuntimeExecutable,
+                loopbackRelays,
+                sinks,
+                true,
+              );
+            } finally {
+              closeEvalOutputFiles(sinks);
+            }
+          },
+        );
         recordEvalWorkLog(workLog, "stage_completed", {
           stage: "actor",
           exitCode: result.exitCode,
@@ -1746,6 +1926,17 @@ async function runEvalCommandWithInterruption(
     } catch (error) {
       if (error instanceof EvalSetupInterrupted)
         completedResult = withWorkLogPath(interruptedEvalResult(error.signal), workLog.path);
+      else if (error instanceof PiStagedIntegrityError)
+        completedResult = withWorkLogPath(
+          {
+            exitCode: 1,
+            signal: null,
+            stdout: "",
+            stderr: error.message,
+            containmentFailure: true,
+          },
+          workLog.path,
+        );
       else primaryFailure = error;
     } finally {
       delete process.env.PIONEER_HOST_SECRET;
@@ -1758,6 +1949,7 @@ async function runEvalCommandWithInterruption(
         brokerCloseFailure = error;
       }
       const cleanupResults = await Promise.allSettled([
+        controllerProvider?.gateway.close(),
         bridge?.close(),
         ...loopbackBridges.map((loopbackBridge) => loopbackBridge.close()),
         bridgeRoot === undefined ? undefined : rm(bridgeRoot, { recursive: true, force: true }),

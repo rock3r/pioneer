@@ -1,10 +1,9 @@
 import { timingSafeEqual } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net from "node:net";
 import type { Duplex } from "node:stream";
 import { URL } from "node:url";
-import { isPublicInternetAddress } from "./isolation.js";
+import { createEgressResolver } from "./egress-policy.js";
 
 export interface PublicEgressProxy {
   readonly url: string;
@@ -18,64 +17,8 @@ export interface ResolvedTarget {
 
 export type EgressTargetResolver = (hostname: string, port?: number) => Promise<ResolvedTarget>;
 
-const LOCAL_HOST_SUFFIXES = [
-  "localhost",
-  ".localhost",
-  ".local",
-  ".lan",
-  ".internal",
-  ".home.arpa",
-] as const;
-
-function normalizeHostname(hostname: string): string {
-  const unwrapped =
-    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
-  return unwrapped.replace(/\.$/, "").toLowerCase();
-}
-
-export async function resolvePublicTarget(hostname: string): Promise<ResolvedTarget> {
-  const normalized = normalizeHostname(hostname);
-  if (
-    normalized.length === 0 ||
-    LOCAL_HOST_SUFFIXES.some((suffix) => normalized === suffix || normalized.endsWith(suffix))
-  ) {
-    throw new Error(`Local network destination is not allowed: ${hostname}`);
-  }
-
-  if (net.isIP(normalized) !== 0) {
-    if (!isPublicInternetAddress(normalized)) {
-      throw new Error(`Non-public destination is not allowed: ${hostname}`);
-    }
-    return {
-      address: normalized,
-      family: net.isIP(normalized) as 4 | 6,
-    };
-  }
-
-  const addresses = await lookup(normalized, { all: true, verbatim: true });
-  if (
-    addresses.length === 0 ||
-    addresses.some(({ address }) => !isPublicInternetAddress(address))
-  ) {
-    throw new Error(`Destination does not resolve exclusively to public addresses: ${hostname}`);
-  }
-  const selected = addresses[0];
-  if (!selected) {
-    throw new Error(`Destination did not resolve: ${hostname}`);
-  }
-  return { address: selected.address, family: selected.family === 6 ? 6 : 4 };
-}
-
-export async function resolveAnyTarget(hostname: string): Promise<ResolvedTarget> {
-  const normalized = normalizeHostname(hostname);
-  if (normalized.length === 0) throw new Error("Empty network destination");
-  const family = net.isIP(normalized);
-  if (family !== 0) return { address: normalized, family: family as 4 | 6 };
-  const addresses = await lookup(normalized, { all: true, verbatim: true });
-  const selected = addresses[0];
-  if (!selected) throw new Error(`Destination did not resolve: ${hostname}`);
-  return { address: selected.address, family: selected.family === 6 ? 6 : 4 };
-}
+export const resolvePublicTarget = createEgressResolver({ network: "public" });
+export const resolveAnyTarget = createEgressResolver({ network: "full" });
 
 function authorized(request: IncomingMessage, token: string): boolean {
   const supplied = request.headers["proxy-authorization"];

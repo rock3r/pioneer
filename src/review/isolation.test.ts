@@ -12,6 +12,30 @@ import {
 
 const { createTempDir } = registerManagedTempPaths();
 
+it("refuses sensitive actor grants but accepts a controller-only Pi-home copy source", async () => {
+  const root = await createTempDir("pioneer-review-credentials-");
+  const sourceDir = path.join(root, "source");
+  const sensitiveDir = path.join(root, ".ssh", "workspace");
+  const alias = path.join(root, "alias");
+  await Promise.all([mkdir(sourceDir), mkdir(sensitiveDir, { recursive: true })]);
+  await symlink(path.dirname(sensitiveDir), alias, "junction");
+
+  await expect(validateReviewPaths({ sourceDir: sensitiveDir })).rejects.toThrow(
+    "[REVIEW_SENSITIVE_GRANT]",
+  );
+  await expect(
+    validateReviewPaths({ sourceDir, allowReadPaths: [path.join(alias, "workspace")] }),
+  ).rejects.toThrow("[REVIEW_SENSITIVE_GRANT]");
+  await expect(validateReviewPaths({ sourceDir, allowWritePaths: [sensitiveDir] })).rejects.toThrow(
+    "[REVIEW_SENSITIVE_GRANT]",
+  );
+  await expect(
+    validateReviewPaths({ sourceDir, piHomeSource: sensitiveDir }),
+  ).resolves.toMatchObject({
+    sourceDir: await realpath(sourceDir),
+  });
+});
+
 describe("review path grants", () => {
   it("canonicalizes explicit read and write grants", async () => {
     const root = await createTempDir("pi-review-paths-");

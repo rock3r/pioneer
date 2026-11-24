@@ -14,6 +14,7 @@ import {
 } from "../pi-extension-subprocess-guard.js";
 import { defaultPiAgentDir } from "../pi-home.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
+import { withPiStagedIntegrity } from "../pi-staged-integrity.js";
 import {
   applyPiVersionToStartup,
   applyResolvedPiLaunch,
@@ -257,16 +258,20 @@ async function launchStructuredActor(
               bridge?.socketPath,
             );
 
-      return await runReviewRpc(
-        launch.argv,
-        validatedPaths.sourceDir,
-        reviewProcessEnvironment(launch.environment, environment),
-        request.prompt,
-        request.timeoutMs,
-        {
-          onActorWarning: (warning) => options.onActorWarning?.(request.member.id, warning),
-          extensionPackages,
-        },
+      return await withPiStagedIntegrity(
+        { agentDir: runtime.home.agentDir, extensionRoot: runtime.extensionRoot },
+        async () =>
+          await runReviewRpc(
+            launch.argv,
+            validatedPaths.sourceDir,
+            reviewProcessEnvironment(launch.environment, environment),
+            request.prompt,
+            request.timeoutMs,
+            {
+              onActorWarning: (warning) => options.onActorWarning?.(request.member.id, warning),
+              extensionPackages,
+            },
+          ),
       );
     } finally {
       await bridge?.close();

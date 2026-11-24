@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { LinuxSandboxIdentity } from "./linux-identity.js";
 
 export interface SandboxPolicy {
   readonly readOnlyPaths: readonly string[];
@@ -9,6 +10,7 @@ export interface SandboxPolicy {
   readonly allowProcessFork?: boolean;
   /** Exact host loopback ports the actor may reach directly, bypassing the proxy. */
   readonly loopbackPorts?: readonly number[];
+  readonly linuxIdentity?: LinuxSandboxIdentity;
 }
 
 export interface LinuxLoopbackRelay {
@@ -178,13 +180,23 @@ export function buildLinuxSandboxArgv(
     return relay;
   });
   const supervisorPath = fileURLToPath(new URL("./linux-network-supervisor.js", import.meta.url));
+  const identityMounts =
+    policy.linuxIdentity === undefined
+      ? []
+      : ([
+          [policy.linuxIdentity.passwd, "/etc/passwd"],
+          [policy.linuxIdentity.group, "/etc/group"],
+        ] as const);
+  const identityTargets: ReadonlySet<string> = new Set(identityMounts.map(([, target]) => target));
+  const readOnlyPaths = policy.readOnlyPaths.filter((entry) => !identityTargets.has(entry));
   const paths = [
-    ...policy.readOnlyPaths,
+    ...readOnlyPaths,
     ...policy.writablePaths,
     ...(proxySocketPath === undefined ? [] : [proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : [supervisorPath]),
     ...(runtimeExecutable === undefined ? [] : [runtimeExecutable]),
     ...relays.map((relay) => relay.socketPath),
+    ...identityMounts.map(([, target]) => target),
   ];
   const libTarget = policy.readOnlyPaths.includes("/usr/lib") ? "usr/lib" : undefined;
   const lib64Target = policy.readOnlyPaths.includes("/usr/lib64") ? "usr/lib64" : libTarget;
@@ -220,8 +232,9 @@ export function buildLinuxSandboxArgv(
     "/",
     ...runtimeLinkerAliases,
     ...ancestorDirectories(paths).flatMap((entry) => ["--dir", entry]),
-    ...policy.readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
+    ...readOnlyPaths.flatMap((entry) => ["--ro-bind", entry, entry]),
     ...policy.writablePaths.flatMap((entry) => ["--bind", entry, entry]),
+    ...identityMounts.flatMap(([source, target]) => ["--ro-bind", source, target]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", proxySocketPath, proxySocketPath]),
     ...(proxySocketPath === undefined ? [] : ["--ro-bind", supervisorPath, supervisorPath]),
     ...relays.flatMap((relay) => ["--ro-bind", relay.socketPath, relay.socketPath]),

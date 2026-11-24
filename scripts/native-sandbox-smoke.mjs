@@ -11,6 +11,13 @@ import { buildLinuxSandboxArgv, buildMacosSandboxArgv } from "../dist/sandbox/la
 import { startLinuxProxyBridge } from "../dist/sandbox/linux-proxy-bridge.js";
 import { executableRuntimeRoot } from "../dist/sandbox/runtime-paths.js";
 
+async function assertHeartbeatStopped(heartbeat) {
+  const before = await readFile(heartbeat, "utf8");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const after = await readFile(heartbeat, "utf8");
+  if (after !== before) throw new Error("eval containment descendant outlived the actor");
+}
+
 if (process.platform !== "darwin" && process.platform !== "linux") {
   throw new Error(`Native smoke test is unsupported on ${process.platform}`);
 }
@@ -118,11 +125,13 @@ try {
   const evalContainmentActor = path.join(evalBin, "eval-containment-actor");
   const evalTimeoutRun = path.join(root, "timeout-run");
   const evalContainmentRun = path.join(root, "containment-run");
+  const evalClosedPipesRun = path.join(root, "closed-pipes-run");
   const evalSetupInterruptionRun = path.join(root, "setup-interruption-run");
   await mkdir(evalHome);
   await mkdir(evalBin, { recursive: true });
   await mkdir(evalTimeoutRun);
   await mkdir(evalContainmentRun);
+  await mkdir(evalClosedPipesRun);
   await mkdir(evalSetupInterruptionRun);
   await writeFile(path.join(evalHome, "auth.json"), '{"marker":"eval-auth-secret"}\n');
   await writeFile(
@@ -152,10 +161,10 @@ try {
   );
   // The descendant heartbeats into the writable run directory so the smoke can tell a
   // reaped descendant from one that never started, and can prove it stopped after the run.
-  const containmentHeartbeat = path.join(evalContainmentRun, "descendant-heartbeat");
+  const heartbeatName = "descendant-heartbeat";
   await writeFile(
     evalContainmentActor,
-    `#!${nodeExecutable}\nconst { spawn } = require("node:child_process");\nconst fs = require("node:fs");\nconst heartbeat = ${JSON.stringify(containmentHeartbeat)};\nspawn(process.execPath, ["-e", "const fs=require('node:fs');setInterval(()=>{try{fs.writeFileSync(process.argv[1],String(Date.now()));}catch{}},50);", heartbeat], { stdio: "inherit" });\nconst deadline = Date.now() + 5000;\nwhile (!fs.existsSync(heartbeat) && Date.now() < deadline) {}\nprocess.stdout.write("containment-before\\n");\nprocess.exit(0);\n`,
+    `#!${nodeExecutable}\nconst { spawn } = require("node:child_process");\nconst fs = require("node:fs");\nconst heartbeat = ${JSON.stringify(heartbeatName)};\nconst child = spawn(process.execPath, ["-e", "const fs=require('node:fs');setInterval(()=>{try{fs.writeFileSync(process.argv[1],String(Date.now()));}catch{}},50);setTimeout(()=>process.exit(0),7000);", heartbeat], { stdio: process.argv[2] === "ignore-pipes" ? "ignore" : "inherit" });\nchild.unref();\nconst deadline = Date.now() + 5000;\nwhile (!fs.existsSync(heartbeat) && Date.now() < deadline) {}\nprocess.stdout.write("containment-before\\n");\nprocess.exit(0);\n`,
     { mode: 0o755 },
   );
   const previousPath = process.env.PATH;
@@ -336,17 +345,25 @@ try {
       );
     }
     // The descendant must have been running before the actor exited, and must not outlive it.
-    const heartbeatBefore = await readFile(containmentHeartbeat, "utf8").catch(() => undefined);
-    if (heartbeatBefore === undefined) {
-      throw new Error("eval containment descendant never started, so containment proved nothing");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const heartbeatAfter = await readFile(containmentHeartbeat, "utf8").catch(() => undefined);
-    if (heartbeatAfter !== heartbeatBefore) {
+    await assertHeartbeatStopped(path.join(evalContainmentRun, heartbeatName));
+
+    const closedPipesResult = await runEvalCommand(
+      {
+        runDir: evalClosedPipesRun,
+        command: ["eval-containment-actor", "ignore-pipes"],
+        piHomeSource: evalHome,
+      },
+      { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
+    );
+    if (
+      closedPipesResult.exitCode !== 0 ||
+      !closedPipesResult.stdout.includes("containment-before")
+    ) {
       throw new Error(
-        `eval containment descendant outlived the actor (${String(heartbeatBefore)} -> ${String(heartbeatAfter)})`,
+        `production eval closed-pipe cleanup failed: ${JSON.stringify(closedPipesResult)}`,
       );
     }
+    await assertHeartbeatStopped(path.join(evalClosedPipesRun, heartbeatName));
   } finally {
     if (previousPath === undefined) delete process.env.PATH;
     else process.env.PATH = previousPath;
