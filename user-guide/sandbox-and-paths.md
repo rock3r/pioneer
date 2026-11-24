@@ -40,7 +40,7 @@ Both modes cap selected content at 500,000 entries and 1 GiB. Skipped content do
 
 Review and eval actors disable ambient extension discovery. They load staged enabled user extensions through explicit `--extension` paths. Both modes strip extension tools.
 
-Eval snapshots use an external private temporary tree. Pi can write credential lock directories in the isolated `agentDir`. Home/tmp scratch is separate and writable. Pioneer never mounts the source Pi home and removes the temporary tree after the run.
+On macOS and Linux, reviews and strict evals can reuse a validated, read-only copy of enabled extensions. Each actor still gets its own Pi home, adapter and writable scratch. Two eval arms can read the same extension payload while keeping their explicit tool extensions private. Pioneer releases the shared copy when the run finishes and removes the private files. [Extension cache lifecycle](../docs/PI-EXTENSIONS.md#resolution-and-staging)
 
 Use `--pi-home /absolute/path` to select a prepared source directory. Pioneer still validates and copies it; it never points the actor directly at the original.
 

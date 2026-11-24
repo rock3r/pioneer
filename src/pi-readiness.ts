@@ -82,6 +82,9 @@ export interface PiReadiness {
 }
 
 export interface PiReadinessOptions {
+  readonly onExtensionSnapshot?: (
+    event: import("./pi-extension-cache.js").ExtensionSnapshotCacheEvent,
+  ) => void;
   readonly extensions?: boolean;
   readonly preparedRuntime?: PreparedReviewRuntime;
   readonly command?: PiLaunchCommand;
@@ -362,6 +365,10 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
           true,
           "full",
           signal,
+          [],
+          options.onExtensionSnapshot === undefined
+            ? {}
+            : { cache: { record: options.onExtensionSnapshot } },
         );
         const discovery = await discoverPreparedExtensions(runtime, options.timeoutMs, signal);
         return {

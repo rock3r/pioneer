@@ -203,6 +203,12 @@ Extension scans apply these limits per staging call. An eval staging user, expli
 
 Renaming singly linked session files away from `.jsonl` can evade detection. Changing the first parseable line to a non-session header also evades it. Pi would not list those files as sessions either. Keep session storage outside extension, dependency, and skill directories.
 
+## Shared extension snapshot cache
+
+On macOS and Linux the controller owns the cache and checks ownership and permissions before use. It leases a generation under the cross-process lock, checks directory membership and file identities on the source and the copy, and reapplies session and private-path exclusions. After a machine restart it hashes the payload bytes before trusting the stored digest. Unavailable boot identity requires the same full verification on each lease.
+
+Only the generation's `payload/` enters the actor's read-only grants. Its manifest, lease records, sibling generations and their names remain outside those grants. User grants that contain the cache or fall inside it are rejected even when the run disables caching. A live actor cannot gain write access to another controller's validated snapshot through a broad scratch or source grant. The authentication worker finishes before its caller releases the lease.
+
 ## Environment policy
 
 Pi readiness probes receive an allowlist of runtime, home-directory, certificate, temporary-directory, and `PI_CODING_AGENT_DIR` variables. Provider secrets, coding-agent control state, and other ambient host variables are not inherited. Pi authentication and provider configuration should come from the selected Pi agent directory.
@@ -340,6 +346,7 @@ Background checks run alongside the requested command and cannot affect its resu
 
 ## Residual risks
 
+- A local process with the operator's privileges can change source or cached files outside Pioneer's sandbox. Within a boot, cache validation relies on filesystem identity and change times. A process able to manipulate the system clock and preserve the observed metadata could evade that comparison.
 - Review skills execute inside the sandbox and can still alter the review, exfiltrate any granted content, or consume provider quota. Deep review actors disable skill discovery entirely.
 - Deep review actors disable skill discovery, generic built-in tools, and unrestricted `bash`. They load the enabled user extension snapshot, Pioneer's bundled inspection extension, and explicitly pinned provider extensions selected from a trusted capability profile outside the reviewed source tree; each selected extension must declare a SHA-256 content digest verified before launch. Actors use `public` networking, never inherit `GITHUB_TOKEN`, and receive packet/candidate data only through typed extension tools bounded by the controller.
 - `full` networking permits proxy access to other LAN machines. Hostname grants authorize traffic to services on the granted hosts, including shared hosting services.

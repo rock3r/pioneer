@@ -95,6 +95,8 @@ Eval snapshot tests must deny source-home overlap with any actor grant. Keep con
 
 Use sparse or mocked oversized fixtures. Do not allocate a real gigabyte.
 
+The extension cache suites cover staging-manifest parity, changed source and copy metadata, directory membership, session and credential exclusions, package scope, boot verification, process ownership and lease-aware collection. Run `npm run sandbox:smoke` on both macOS and Linux to check read, write, mode, timestamp and deletion permissions on a leased payload and visibility of neighboring metadata. The scripted CLI suites check cold and warm model listings, invalidation after editing an extension, and the shared budget for eval arms and explicit extensions. Windows exercises its supported bypass and fail-closed contracts.
+
 Extension tests must load dependency resources, including JSON, from source directories named `sessions` or `logs`. Exclude private agent sessions/logs, root `.log` files, configured session directories, and links into them.
 
 Both suites must identify session `.jsonl` files outside known locations by content. Skip or reject links to history and still copy non-session `.jsonl` files.

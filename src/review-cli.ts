@@ -10,8 +10,10 @@ import { runGitHubDeepReviewCli } from "./github/deep-review/command.js";
 import { formatModelCatalog, modelCatalogJson } from "./model-catalog-output.js";
 import { PIONEER_VERSION } from "./package-metadata.js";
 import { checkPiReadiness } from "./pi-readiness.js";
+import { canonicalControllerOutputPath } from "./review/isolation.js";
 import { validateRpcOutputLimitMiB } from "./review/rpc-limits.js";
 import { resumeReview, runReview } from "./review/runner.js";
+import { openReviewWorkLog } from "./review/work-log.js";
 import { parseReviewCliArgs } from "./review-cli-args.js";
 import { REVIEW_USAGE } from "./review-cli-usage.js";
 import { isThinkingLevel } from "./thinking-level.js";
@@ -123,6 +125,7 @@ async function main(): Promise<void> {
     }
     if (subcommand === "models") {
       const args = [...rawArgs];
+      const logPath = takeOption(args, "--work-log");
       const piHomeSource = takeOption(args, "--pi-home");
       const json = takeFlag(args, "--json");
       const noExtensions = takeFlag(args, "--no-extensions");
@@ -131,7 +134,24 @@ async function main(): Promise<void> {
         piHomeSource === undefined
           ? process.env
           : { ...process.env, PI_CODING_AGENT_DIR: path.resolve(piHomeSource) };
-      const readiness = await checkPiReadiness({ environment, extensions: !noExtensions });
+      const workLog =
+        logPath === undefined
+          ? undefined
+          : await openReviewWorkLog(await canonicalControllerOutputPath(logPath, "work log"));
+      let readiness: Awaited<ReturnType<typeof checkPiReadiness>>;
+      try {
+        readiness = await checkPiReadiness({
+          environment,
+          extensions: !noExtensions,
+          ...(workLog === undefined
+            ? {}
+            : {
+                onExtensionSnapshot: (event) => workLog.record("extension_snapshot", { ...event }),
+              }),
+        });
+      } finally {
+        workLog?.close();
+      }
       if (!readiness.ready) throw new Error(readiness.errors.join("\n"));
       if (readiness.warning !== undefined) {
         process.stderr.write(`WARNING: ${readiness.warning}\n`);

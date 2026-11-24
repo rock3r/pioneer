@@ -152,11 +152,12 @@ try {
   const evalSiblingSecret = path.join(evalBin, "sibling-secret.txt");
   const evalPackageSecret = path.join(evalPackageRoot, "package-secret.txt");
   const evalPi = path.join(evalBin, "pi");
-  const evalFinal = path.join(evalBin, "final");
-  const evalMiddle = path.join(evalBin, "middle");
-  const evalActor = path.join(evalBin, "eval-actor");
-  const evalTimeoutActor = path.join(evalBin, "eval-timeout-actor");
-  const evalContainmentActor = path.join(evalBin, "eval-containment-actor");
+  // Explicit CommonJS fixtures keep Node from probing the ungranted parent package.
+  const evalFinal = path.join(evalBin, "final.cjs");
+  const evalMiddle = path.join(evalBin, "middle.cjs");
+  const evalActor = path.join(evalBin, "eval-actor.cjs");
+  const evalTimeoutActor = path.join(evalBin, "eval-timeout-actor.cjs");
+  const evalContainmentActor = path.join(evalBin, "eval-containment-actor.cjs");
   const evalTimeoutRun = path.join(root, "timeout-run");
   const evalContainmentRun = path.join(root, "containment-run");
   const evalClosedPipesRun = path.join(root, "closed-pipes-run");
@@ -182,10 +183,10 @@ try {
   const nestedInterpreter =
     'const { spawnSync } = require("node:child_process");\nconst [script, ...args] = process.argv.slice(2);\nconst child = spawnSync(process.execPath, [script, ...args], { stdio: "inherit" });\nprocess.exit(child.status ?? 1);\n';
   await writeFile(evalFinal, `#!${nodeExecutable}\n${nestedInterpreter}`, { mode: 0o755 });
-  await writeFile(evalMiddle, `#!/usr/bin/env final\n${nestedInterpreter}`, { mode: 0o755 });
+  await writeFile(evalMiddle, `#!/usr/bin/env final.cjs\n${nestedInterpreter}`, { mode: 0o755 });
   await writeFile(
     evalActor,
-    `#!/usr/bin/env middle\nconst fs = require("node:fs");\nconst path = require("node:path");\nconst probes = ${JSON.stringify([evalSiblingSecret, evalPackageSecret])};\nconst leaked = probes.filter((probe) => { try { fs.readFileSync(probe); return true; } catch { return false; } });\nif (leaked.length > 0) { process.stdout.write("implicit-read-allowed:" + leaked.join(",") + "\\n"); process.exit(1); }\nconst piAgentDir = process.env.PI_CODING_AGENT_DIR;\nif (!piAgentDir || !path.relative(process.cwd(), piAgentDir).startsWith("..")) { process.stdout.write("pi-home-not-externalized\\n"); process.exit(1); }\nfor (const name of ["auth.json.lock", "settings.json.lock"]) {\n  try {\n    const lockDir = path.join(piAgentDir, name);\n    fs.mkdirSync(lockDir);\n    fs.writeFileSync(path.join(lockDir, "owner"), "eval-lock");\n  } catch (error) {\n    process.stdout.write("pi-lock-failed:" + name + ":" + (error.code || error.message) + "\\n");\n    process.exit(1);\n  }\n}\nfs.writeFileSync(path.join(process.cwd(), "pi-home-path.txt"), path.dirname(piAgentDir));\nif (fs.existsSync(path.join(process.cwd(), ".isolation"))) { process.stdout.write("controller-artifacts-visible\\n"); process.exit(1); }\nif (process.argv.at(-1) !== "nested-argument") { process.stdout.write("nested-argument-lost\\n"); process.exit(1); }\nprocess.stdout.write("eval-production-path-ok\\n"); process.stderr.write("eval-production-path-err\\n");\n`,
+    `#!/usr/bin/env middle.cjs\nconst fs = require("node:fs");\nconst path = require("node:path");\nconst probes = ${JSON.stringify([evalSiblingSecret, evalPackageSecret])};\nconst leaked = probes.filter((probe) => { try { fs.readFileSync(probe); return true; } catch { return false; } });\nif (leaked.length > 0) { process.stdout.write("implicit-read-allowed:" + leaked.join(",") + "\\n"); process.exit(1); }\nconst piAgentDir = process.env.PI_CODING_AGENT_DIR;\nif (!piAgentDir || !path.relative(process.cwd(), piAgentDir).startsWith("..")) { process.stdout.write("pi-home-not-externalized\\n"); process.exit(1); }\nfor (const name of ["auth.json.lock", "settings.json.lock"]) {\n  try {\n    const lockDir = path.join(piAgentDir, name);\n    fs.mkdirSync(lockDir);\n    fs.writeFileSync(path.join(lockDir, "owner"), "eval-lock");\n  } catch (error) {\n    process.stdout.write("pi-lock-failed:" + name + ":" + (error.code || error.message) + "\\n");\n    process.exit(1);\n  }\n}\nfs.writeFileSync(path.join(process.cwd(), "pi-home-path.txt"), path.dirname(piAgentDir));\nif (fs.existsSync(path.join(process.cwd(), ".isolation"))) { process.stdout.write("controller-artifacts-visible\\n"); process.exit(1); }\nif (process.argv.at(-1) !== "nested-argument") { process.stdout.write("nested-argument-lost\\n"); process.exit(1); }\nprocess.stdout.write("eval-production-path-ok\\n"); process.stderr.write("eval-production-path-err\\n");\n`,
     { mode: 0o755 },
   );
   await writeFile(
@@ -211,7 +212,7 @@ try {
     const evalResult = await runEvalCommand(
       {
         runDir: scratch,
-        command: ["eval-actor", "nested-argument"],
+        command: ["eval-actor.cjs", "nested-argument"],
         piHomeSource: evalHome,
       },
       { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
@@ -241,7 +242,7 @@ try {
     let defaultPiHomeOverlapRejected = false;
     try {
       await runEvalCommand(
-        { runDir: scratch, command: ["eval-actor", "nested-argument"] },
+        { runDir: scratch, command: ["eval-actor.cjs", "nested-argument"] },
         { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
       );
     } catch (error) {
@@ -260,7 +261,7 @@ try {
     let missingDefaultError = "no error";
     try {
       await runEvalCommand(
-        { runDir: evalSetupInterruptionRun, command: ["eval-actor", "nested-argument"] },
+        { runDir: evalSetupInterruptionRun, command: ["eval-actor.cjs", "nested-argument"] },
         { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
       );
     } catch (error) {
@@ -284,7 +285,7 @@ try {
       const environmentControlledTempResult = await runEvalCommand(
         {
           runDir: evalSetupInterruptionRun,
-          command: ["eval-actor", "nested-argument"],
+          command: ["eval-actor.cjs", "nested-argument"],
           piHomeSource: evalHome,
         },
         { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
@@ -301,7 +302,7 @@ try {
     const setupInterruptionPromise = runEvalCommand(
       {
         runDir: evalSetupInterruptionRun,
-        command: ["eval-actor", "nested-argument"],
+        command: ["eval-actor.cjs", "nested-argument"],
         piHomeSource: evalHome,
       },
       { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
@@ -322,7 +323,7 @@ try {
     const timeoutResult = await runEvalCommand(
       {
         runDir: evalTimeoutRun,
-        command: ["eval-timeout-actor"],
+        command: ["eval-timeout-actor.cjs"],
         piHomeSource: evalHome,
       },
       { timeoutMs: 500, workLogPath: nextEvalWorkLog() },
@@ -344,7 +345,7 @@ try {
     const containmentResult = await runEvalCommand(
       {
         runDir: evalContainmentRun,
-        command: ["eval-containment-actor"],
+        command: ["eval-containment-actor.cjs"],
         piHomeSource: evalHome,
       },
       { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },
@@ -384,7 +385,7 @@ try {
     const closedPipesResult = await runEvalCommand(
       {
         runDir: evalClosedPipesRun,
-        command: ["eval-containment-actor", "ignore-pipes"],
+        command: ["eval-containment-actor.cjs", "ignore-pipes"],
         piHomeSource: evalHome,
       },
       { timeoutMs: 5_000, workLogPath: nextEvalWorkLog() },

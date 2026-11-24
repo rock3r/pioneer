@@ -54,6 +54,7 @@ The plugin contains instructions only. Agent Plugins v1, Codex, and Claude manif
 | Pi preparation | `src/pi-home.ts`, `src/pi-startup.ts` | Copy the Pi agent directory and apply fast, ephemeral startup flags |
 | Extension snapshot | `src/pi-extension-snapshot.ts` | Plan per-run extension roots and private exclusions, stage the selected files, validate entry points, and record a controller-only manifest |
 | Extension cache store | `src/pi-extension-cache.ts`, `src/pi-extension-cache-format.ts`, `src/pi-extension-cache-lock.ts` | Check private storage, store immutable payloads and controller metadata, coordinate generation creation, and verify the stored digest after a restart |
+| Snapshot validation and leases | `src/pi-extension-cache-validation.ts`, `src/pi-extension-cache-leases.ts` | Recheck source and staged entries, hold generations while an actor or an auth worker uses them, and collect expired or superseded generations |
 | Review authentication | `src/pi-auth-broker.ts`, `src/pi-auth-runtime.ts`, `src/pi-auth-client.ts`, `src/pi-auth-worker.ts` | Broker OAuth refreshes through a separate sandboxed, model-free worker; persist only provider-scoped results under Pi's source credential lock |
 | Review orchestration | `src/review/runner.ts`, `src/review/resume-archive.ts`, `src/review/rpc-limits.ts` | Validate, prepare, sandbox, run bounded RPC, persist reports, retain/recover opaque native sessions, stream controller-owned work-log events, collect the final report, clean up |
 | Review Git inspection | `src/review/git-inspect.ts` | Validate Git readiness, parse or infer targets, and collect bounded offline Git context or raw patches in the controller |
@@ -92,7 +93,7 @@ Normal commands start an npm version check in the background. The check never de
    Add validated refs and output to the prompt as untrusted text. Reject GitHub pull-request targets and request an explicit local `--git` value.
    Keep collected targets in the immutable resume scope.
 4. Resolve Pi through the controller's selected `PATH` and check `pi --version`. Reject versions below the minimum or malformed versions before model discovery. Warn on versions above the tested maximum.
-   Prepare private configuration and enabled-extension snapshots, then discover models inside the native sandbox. Reject invalid `models.json` and its partial catalog.
+   Prepare private configuration and a per-run adapter. On macOS and Linux, lease and validate the enabled extension payload or stage a fresh snapshot. Grant discovery read-only access to that payload and adapter inside the native sandbox. Reject invalid `models.json` and its partial catalog.
    If Pi returns no models, use access-only probes to distinguish missing configuration from outer-sandbox restrictions.
    Readiness inherits only allowlisted runtime variables. It excludes provider secrets and outer-agent control state.
    Controller preparation retains `PI_CODING_AGENT_SESSION_DIR` to exclude session storage. That preparation environment never reaches the actor.
@@ -174,7 +175,7 @@ Review and eval callers can select `controllerScratchBase`. Pioneer canonicalize
 
 Pi receives an isolated writable `agentDir` for configuration and lock directories such as `auth.json.lock` and `settings.json.lock`. Home/tmp scratch is separate and writable. Pioneer never mounts the source Pi home.
 
-For the trusted official Pi package, Pioneer stages enabled user extensions read-only. Explicit `--extension` paths load them while `--no-extensions` blocks ambient discovery. The adapter removes extension tools and retains provider/authentication hooks.
+For the trusted official Pi package, the two eval arms can lease the same read-only generation. Each keeps its own writable Pi home, adapter and tool extensions. Explicit `-e` files can use the generation when the staged snapshot covers all of them. Otherwise the run stages its own copy and applies the same entry and byte budgets. Explicit `--extension` paths load the selected code while `--no-extensions` blocks ambient discovery. The adapter removes extension tools and retains provider/authentication hooks.
 
 An actor command containing `--no-extensions` or `-ne` selects built-in providers. OAuth still uses the broker when credentials exist and the package supports the auth adapter. Explicit `--extension` or `-e` paths still load through the tool-stripping adapter. Evals have no `--pi-home-include`.
 

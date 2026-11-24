@@ -8,7 +8,7 @@ export const REVIEW_USAGE = `Usage:
   pioneer review --resume TOKEN [--timeout-ms N] [--max-rpc-output-mb N]
     [--report FILE] [--work-log FILE] [--allow-unsandboxed-windows]
   pioneer doctor [--no-extensions]
-  pioneer models [--pi-home DIR] [--json] [--no-extensions]
+  pioneer models [--pi-home DIR] [--json] [--no-extensions] [--work-log FILE]
   pioneer check-comments --help
   pioneer check-update
   pioneer update [--changelog] [--yes|-y]

@@ -4,6 +4,23 @@ All notable user-facing changes are recorded here. The project follows semantic 
 
 ## Unreleased
 
+## 0.6.0 - 2026-11-24
+
+- Reuse validated extension snapshots across native reviews, deep-review council members, model discovery and strict evals. Each actor keeps its own configuration and adapter. A lease keeps the shared payload available through OAuth refresh and cleanup.
+- Recheck source and staged metadata on every hit and verify the stored digest after a reboot. Retained review digests remain compatible with 0.4.9. Set `PIONEER_EXTENSION_CACHE=0` for per-run staging.
+- On macOS and Linux, grants overlapping the extension cache fail with `PI_EXTENSION_CACHE_GRANT_OVERLAP`. Select a narrower grant or move `XDG_CACHE_HOME`. Use `pioneer models --work-log FILE` to inspect cache decisions.
+- Reviews and deep reviews now honor the reviewed repository's session directory when excluding JSONL files from extension snapshots. Strict evals share enabled extensions when possible and keep tool extensions private to each arm.
+
+  We repeated the #130 benchmark on its original extension set: 29 entry points, 55,936 staged entries and 528,874,785 bytes. The table reports seconds. Warm values are medians of seven fresh Node processes with a warm filesystem cache. Model discovery and actor execution are outside these measurements.
+
+  | Host and operation | 0.4.9 per-run staging, median | 0.6.0 cold | 0.6.0 warm, median (range) |
+  | --- | ---: | ---: | ---: |
+  | macOS, APFS, complete extension preparation including Pi resolution | 11.627 | 11.796 | 1.062 (1.038–2.241) |
+  | macOS, APFS, planning and snapshot acquisition | — | 9.194 | 0.944 (0.852–1.983) |
+  | Linux, ext4 source, planning and snapshot acquisition | 4.949 | 5.676 | 0.955 (0.937–0.966) |
+
+  On macOS we used Node 26.13.1 and Pi 1.5.2. The staged digest matched the original #130 digest. On Linux we used Node 24.20.0 and the same code tree relocated to Bepi. Pioneer 0.4.9 staged it on tmpfs and 0.6.0 kept its cache on ext4. The digests matched between releases on that host as well. Releasing a warm lease took milliseconds on both hosts. Deleting the per-run 0.4.9 copy took 2.81–3.14 s on macOS and 0.21–0.23 s on Linux.
+
 ## 0.5.0 - 2026-11-24
 
 - Fix macOS reviews with `--no-extensions` when the selected Pi profile uses only an API key. The direct Pi launcher now accepts the review command.
