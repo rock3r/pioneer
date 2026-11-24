@@ -5,6 +5,7 @@ import {
   readdir,
   readFile,
   realpath,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -16,6 +17,7 @@ import {
   extensionCacheKey,
   prepareCachedExtensionSnapshot,
 } from "./pi-extension-cache.js";
+import { validateCachedExtensionSnapshot } from "./pi-extension-cache-validation.js";
 import {
   assertSameExtensionSnapshot,
   planExtensionSnapshot,
@@ -114,6 +116,27 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
     await first.snapshotHandle?.release();
     await second.snapshotHandle?.release();
   });
+
+  it.each(["changed copy", "missing package scope after reboot"])(
+    "marks a generation bad and builds a new one for a %s",
+    async (damage) => {
+      const validated = { validate: validateCachedExtensionSnapshot };
+      const initial = await prepare("entry", validated);
+      const payload = initial.snapshotHandle?.payload as string;
+      await initial.snapshotHandle?.release();
+      if (damage === "changed copy") {
+        await chmod(initial.paths[0] as string, 0o700);
+      } else {
+        await rm(path.join(payload, "package.json"));
+        bootId = "second-boot";
+      }
+      const next = await prepare("replacement", validated);
+      expect(next.snapshotHandle?.payload).not.toBe(payload);
+      expect(next.digest).toBe(initial.digest);
+      expect(await readFile(path.join(payload, "..", "bad"), "utf8")).toBe("");
+      await next.snapshotHandle?.release();
+    },
+  );
 
   it("stores no committed generation if an observed source entry was recently modified", async () => {
     wallTime = Date.now();
