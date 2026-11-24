@@ -38,10 +38,25 @@ export async function assertExtensionCacheDisjointFromGrants(
 ): Promise<void> {
   if (platform === "win32") return;
   const parent = path.dirname(versionRoot);
-  const cache = path.basename(parent) === "extension-snapshots" ? parent : versionRoot;
+  const cache = path.resolve(
+    path.basename(parent) === "extension-snapshots" ? parent : versionRoot,
+  );
   const normalize = (entry: string) =>
     platform === "darwin" ? entry.normalize("NFD").toLowerCase() : entry;
-  const roots = [normalize(cache), normalize(await canonicalProspectivePathForContainment(cache))];
+  const canonical = await canonicalProspectivePathForContainment(cache).catch((error: unknown) => {
+    // The store will bypass an unusable directory. The lexical path still needs protection.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (
+      code === "ENOENT" ||
+      code === "ENOTDIR" ||
+      code === "ELOOP" ||
+      code === "EACCES" ||
+      code === "EPERM"
+    )
+      return cache;
+    throw error;
+  });
+  const roots = [normalize(cache), normalize(canonical)];
   for (const [label, paths] of Object.entries(grants)) {
     for (const grant of new Set(paths)) {
       const names = [

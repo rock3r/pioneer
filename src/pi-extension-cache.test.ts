@@ -262,6 +262,18 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
     expect(await readFile(staged.paths[0] as string, "utf8")).toBe("export const extension = 1;\n");
   });
 
+  it("bypasses a dangling cache directory without allowing a lexical overlap", async () => {
+    const family = path.dirname(cacheRoot);
+    await mkdir(path.dirname(family), { recursive: true, mode: 0o700 });
+    await symlink(path.join(base, "missing-cache"), family);
+    const staged = await prepare("dangling");
+    expect(staged.snapshotHandle).toBeUndefined();
+    expect(record).toHaveBeenCalledWith({ cache: "bypass", reason: "unsafe-cache" });
+    await expect(prepare("overlap", { cacheRoot: path.join(source, "cache") })).rejects.toThrow(
+      "PI_EXTENSION_CACHE_GRANT_OVERLAP",
+    );
+  });
+
   it.each([
     { environment: { PIONEER_EXTENSION_CACHE: "0" } },
     { platform: "win32" },
