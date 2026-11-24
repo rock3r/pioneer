@@ -46,6 +46,45 @@ async function readWorkLog(logPath: string): Promise<WorkLogRecord[]> {
 }
 
 describe.skipIf(!sandboxReady)("pioneer eval run actor lifecycle", () => {
+  it.skipIf(process.platform !== "linux")("mounts a minimal synthetic Linux identity", async () => {
+    const { created, runDir } = await workspace("synthetic-identity");
+    await writeScriptedPi(created, { actor: { kind: "reply-verbatim" } });
+    const readIdentity = `
+      const { readFileSync } = require("node:fs");
+      const entries = (file) => readFileSync(file, "utf8").trim().split("\\n").map((row) => row.split(":"));
+      const passwd = entries("/etc/passwd");
+      const group = entries("/etc/group");
+      const active = passwd.find((entry) => Number(entry[2]) === process.getuid());
+      console.log(JSON.stringify({
+        users: passwd.map((entry) => entry[0]),
+        groups: group.map((entry) => entry[0]),
+        homeMatches: active?.[5] === process.env.HOME,
+      }));
+    `;
+    const run = await runPioneer(created, [
+      "eval",
+      "run",
+      "--run-dir",
+      runDir,
+      "--pi-home",
+      created.piHome,
+      "--work-log",
+      created.workLogPath("synthetic-identity"),
+      "--",
+      process.execPath,
+      "-e",
+      readIdentity,
+    ]);
+
+    expect(run.stderr).not.toContain("[PI_STAGED_INTEGRITY_FAILED]");
+    expect(run.exitCode).toBe(0);
+    expect(JSON.parse(run.stdout)).toEqual({
+      users: process.getuid?.() === 0 ? ["root"] : ["root", "pioneer"],
+      groups: process.getgid?.() === 0 ? ["root"] : ["root", "pioneer"],
+      homeMatches: true,
+    });
+  });
+
   it("completes a minimal no-tools Pi actor with exactly the requested output", async () => {
     const { created, runDir } = await workspace("minimal-actor");
     await writeScriptedPi(created, { actor: { kind: "reply-verbatim" } });

@@ -371,7 +371,7 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
       } catch (error) {
         const code =
           error instanceof Error
-            ? /^\[(PI_EXTENSION_[A-Z_]+)\]/.exec(error.message)?.[1]
+            ? /^\[(PI_EXTENSION_[A-Z_]+|PI_STAGED_INTEGRITY_FAILED)\]/.exec(error.message)?.[1]
             : undefined;
         return {
           exitCode: 1,
@@ -421,6 +421,16 @@ export async function checkPiReadiness(options: PiReadinessOptions = {}): Promis
     "--no-extensions",
     "--list-models",
   ]);
+  if (modelsResult.errorCode === "PI_STAGED_INTEGRITY_FAILED") {
+    return {
+      ready: false,
+      version,
+      modelCount: 0,
+      errors: [
+        "[PI_STAGED_INTEGRITY_FAILED] Pioneer could not verify the integrity of staged Pi inputs",
+      ],
+    };
+  }
   // A contained subprocess denial is a warning, not a startup failure.
   const extensionFailure = [...modelsResult.stderr.matchAll(/\[(PI_EXTENSION_[A-Z_]+)\]/g)]
     .map((match) => match[1])

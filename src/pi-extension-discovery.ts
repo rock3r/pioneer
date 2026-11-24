@@ -22,6 +22,7 @@ import {
 import { extensionPathsWithCapabilities } from "./pi-extension-snapshot.js";
 import { type PreparedPiHome, prepareIsolatedPiHome } from "./pi-home.js";
 import type { PiProbeResult } from "./pi-readiness.js";
+import { withPiStagedIntegrity } from "./pi-staged-integrity.js";
 import {
   createReviewScratchDirectory,
   piRuntimePaths,
@@ -219,19 +220,27 @@ export async function runPreparedPiCommand(
       bridge = await startLinuxProxyBridge(proxy.url, path.join(bridgeRoot, "proxy.sock"));
       launch = buildLinuxSandboxArgv(config, command, bwrap, bridge.socketPath);
     }
-    return await captureEvalProcess(
-      launch.argv,
-      runtime.home.homeDir,
-      reviewProcessEnvironment(launch.environment, {
-        ...runtime.home.environment,
-        HOME: runtime.home.homeDir,
-        TMPDIR: runtime.home.tmpDir,
-        PI_OFFLINE: "1",
-        PI_TELEMETRY: "0",
-        NO_COLOR: "1",
-      }),
-      timeoutMs,
-      signal,
+    return await withPiStagedIntegrity(
+      {
+        agentDir: runtime.home.agentDir,
+        extensionRoot: runtime.extensionRoot,
+        checkAborted: () => signal?.throwIfAborted(),
+      },
+      async () =>
+        await captureEvalProcess(
+          launch.argv,
+          runtime.home.homeDir,
+          reviewProcessEnvironment(launch.environment, {
+            ...runtime.home.environment,
+            HOME: runtime.home.homeDir,
+            TMPDIR: runtime.home.tmpDir,
+            PI_OFFLINE: "1",
+            PI_TELEMETRY: "0",
+            NO_COLOR: "1",
+          }),
+          timeoutMs,
+          signal,
+        ),
     );
   } finally {
     await bridge?.close();

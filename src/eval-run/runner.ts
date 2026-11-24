@@ -36,6 +36,7 @@ import {
 import { defaultPiAgentDir, type PreparedPiHome, prepareIsolatedPiHome } from "../pi-home.js";
 import { assertPiReady } from "../pi-readiness.js";
 import { piRuntimeStorage } from "../pi-runtime-storage.js";
+import { PiStagedIntegrityError, withPiStagedIntegrity } from "../pi-staged-integrity.js";
 import {
   applyPiVersionToStartup,
   applyPiVersionToStartupCommand,
@@ -50,6 +51,7 @@ import {
   type LinuxLoopbackRelay,
   type SandboxPolicy,
 } from "../sandbox/launcher.js";
+import { stageLinuxIdentity } from "../sandbox/linux-identity.js";
 import {
   type LinuxProxyBridge,
   startLinuxLoopbackBridge,
@@ -211,8 +213,6 @@ async function existingRuntimePaths(): Promise<string[]> {
             "/etc/resolv.conf",
             "/etc/hosts",
             "/etc/nsswitch.conf",
-            "/etc/passwd",
-            "/etc/group",
           ]
         : [
             path.win32.join(process.env.SystemRoot ?? "C:\\Windows"),
@@ -1532,6 +1532,7 @@ async function runEvalCommandWithInterruption(
     let bridgeRoot: string | undefined;
     let authBroker: PiAuthBroker | undefined;
     let extensionReadPaths: readonly string[] = [];
+    let stagedExtensionRoot: string | undefined;
     try {
       const actorGrantPaths = [validated.runDir, ...completeActorReadPaths];
       if (actorGrantPaths.some((grantPath) => pathsOverlap(isolationDir, grantPath))) {
@@ -1547,6 +1548,13 @@ async function runEvalCommandWithInterruption(
         mode: "eval",
         checkAborted: throwIfSetupInterrupted,
       });
+      const linuxIdentity =
+        process.platform === "linux"
+          ? await stageLinuxIdentity(isolationDir, piHome.homeDir)
+          : undefined;
+      const identityPolicy = linuxIdentity === undefined ? {} : { linuxIdentity };
+      const identityFiles =
+        linuxIdentity === undefined ? [] : [linuxIdentity.passwd, linuxIdentity.group];
       recordEvalWorkLog(workLog, "stage_completed", { stage: "pi_home_snapshot" });
       throwIfSetupInterrupted();
       let actorEnvironment: Readonly<Record<string, string>> = {
@@ -1615,6 +1623,7 @@ async function runEvalCommandWithInterruption(
         );
         authBroker = staged.authBroker;
         extensionReadPaths = staged.readPaths;
+        stagedExtensionRoot = staged.runtime.extensionRoot;
         optimizedPi = staged.optimized;
         sandboxCommand = [...staged.command] as [string, ...string[]];
         actorEnvironment = {
@@ -1734,15 +1743,22 @@ async function runEvalCommandWithInterruption(
       const timeoutMs = options.timeoutMs ?? 300_000;
       throwIfSetupInterrupted();
       recordEvalWorkLog(workLog, "stage_started", { stage: "isolation_probe" });
-      const probeResult = await sandboxAndCapture(
-        probeConfig,
-        [sandboxRuntimeExecutable, probeScript, probeSpec],
-        validated.runDir,
-        Math.min(timeoutMs, 30_000),
-        linuxBwrapPath,
-        bridge?.socketPath,
-        sandboxRuntimeExecutable,
-        loopbackRelays,
+      const probeResult = await withPiStagedIntegrity(
+        {
+          controllerFiles: [probeScript, probeSpec, ...identityFiles],
+          checkAborted: throwIfSetupInterrupted,
+        },
+        async () =>
+          await sandboxAndCapture(
+            { ...probeConfig, ...identityPolicy },
+            [sandboxRuntimeExecutable, probeScript, probeSpec],
+            validated.runDir,
+            Math.min(timeoutMs, 30_000),
+            linuxBwrapPath,
+            bridge?.socketPath,
+            sandboxRuntimeExecutable,
+            loopbackRelays,
+          ),
       );
       recordEvalWorkLog(workLog, "stage_completed", {
         stage: "isolation_probe",
@@ -1766,24 +1782,33 @@ async function runEvalCommandWithInterruption(
           stdoutFile: outputTargets.stdout !== undefined,
           stderrFile: outputTargets.stderr !== undefined,
         });
-        const sinks = openEvalOutputFiles(outputTargets);
-        let result: EvalRunResult;
-        try {
-          result = await sandboxAndCapture(
-            actorConfig,
-            [sandboxRuntimeExecutable, launcherScript, launchSpec],
-            validated.runDir,
-            timeoutMs,
-            linuxBwrapPath,
-            bridge?.socketPath,
-            sandboxRuntimeExecutable,
-            loopbackRelays,
-            sinks,
-            true,
-          );
-        } finally {
-          closeEvalOutputFiles(sinks);
-        }
+        const result = await withPiStagedIntegrity(
+          {
+            agentDir: piHome.agentDir,
+            ...(stagedExtensionRoot === undefined ? {} : { extensionRoot: stagedExtensionRoot }),
+            controllerFiles: [launcherScript, launchSpec, ...identityFiles],
+            checkAborted: throwIfSetupInterrupted,
+          },
+          async () => {
+            const sinks = openEvalOutputFiles(outputTargets);
+            try {
+              return await sandboxAndCapture(
+                { ...actorConfig, ...identityPolicy },
+                [sandboxRuntimeExecutable, launcherScript, launchSpec],
+                validated.runDir,
+                timeoutMs,
+                linuxBwrapPath,
+                bridge?.socketPath,
+                sandboxRuntimeExecutable,
+                loopbackRelays,
+                sinks,
+                true,
+              );
+            } finally {
+              closeEvalOutputFiles(sinks);
+            }
+          },
+        );
         recordEvalWorkLog(workLog, "stage_completed", {
           stage: "actor",
           exitCode: result.exitCode,
@@ -1803,6 +1828,17 @@ async function runEvalCommandWithInterruption(
     } catch (error) {
       if (error instanceof EvalSetupInterrupted)
         completedResult = withWorkLogPath(interruptedEvalResult(error.signal), workLog.path);
+      else if (error instanceof PiStagedIntegrityError)
+        completedResult = withWorkLogPath(
+          {
+            exitCode: 1,
+            signal: null,
+            stdout: "",
+            stderr: error.message,
+            containmentFailure: true,
+          },
+          workLog.path,
+        );
       else primaryFailure = error;
     } finally {
       delete process.env.PIONEER_HOST_SECRET;

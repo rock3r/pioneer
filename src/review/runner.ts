@@ -31,6 +31,7 @@ import {
 import { defaultPiAgentDir } from "../pi-home.js";
 import { thinkingFromModelShorthand } from "../pi-model-selection.js";
 import { assertPiReady, reviewRuntimeEnvironment } from "../pi-readiness.js";
+import { PiStagedIntegrityError, withPiStagedIntegrity } from "../pi-staged-integrity.js";
 import {
   applyPiVersionToStartup,
   applyResolvedPiLaunch,
@@ -53,6 +54,7 @@ import {
   buildReviewSandboxConfig,
   type ReviewNetworkMode,
   type StoredReviewNetworkMode,
+  validateProspectiveResumeOutputs,
   validateProspectiveReviewReportPath,
   validateProspectiveReviewWorkLogPath,
   validateReviewPaths,
@@ -2079,24 +2081,29 @@ async function runReviewInternal(
             : buildLinuxSandboxArgv(config, optimized.command, bwrapPath ?? "", bridge?.socketPath);
         recordReviewWorkLog(workLog, "stage_completed", { stage: "sandbox_launch" });
         recordReviewWorkLog(workLog, "stage_started", { stage: "pi_rpc" });
-        report = await runReviewRpc(
-          launch.argv,
-          paths.sourceDir,
-          reviewProcessEnvironment(launch.environment, environment),
-          prompt,
-          timeoutMs,
-          {
-            workLog,
-            sensitiveValues: [request.prompt],
-            onActorWarning: (warning) => actorWarnings.push(warning),
-            extensionPackages: extensionPackageNames([
-              ...preparedRuntime.extensions.paths,
-              ...preparedRuntime.extensions.sourcePaths,
-            ]),
-            maxRpcOutputBytes,
-            providerContext: providerContextFor(model),
-            callerPrompt: request.prompt,
-          },
+        const rpcOptions = {
+          workLog,
+          sensitiveValues: [request.prompt],
+          onActorWarning: (warning: string) => actorWarnings.push(warning),
+          extensionPackages: extensionPackageNames([
+            ...preparedRuntime.extensions.paths,
+            ...preparedRuntime.extensions.sourcePaths,
+          ]),
+          maxRpcOutputBytes,
+          providerContext: providerContextFor(model),
+          callerPrompt: request.prompt,
+        };
+        report = await withPiStagedIntegrity(
+          { agentDir: piHome.agentDir, extensionRoot: preparedRuntime.extensionRoot },
+          async () =>
+            await runReviewRpc(
+              launch.argv,
+              paths.sourceDir,
+              reviewProcessEnvironment(launch.environment, environment),
+              prompt,
+              timeoutMs,
+              rpcOptions,
+            ),
         );
         sandboxed = true;
       }
@@ -2153,6 +2160,8 @@ async function runReviewInternal(
       };
     } catch (error) {
       runFailure = error instanceof Error ? error : new Error(String(error));
+      if (runFailure instanceof PiStagedIntegrityError)
+        runFailure = classifyReviewResumeFailure(runFailure, "containment");
       if (
         resumeContext !== undefined &&
         reviewResumeFailureKind(runFailure) === "prompt_rejected"
@@ -2382,38 +2391,13 @@ export async function assertReviewResumeOutputsOutsideArchive(
       defaultReviewReportDirectory(environment, platform, home),
       `prospective-${crypto.randomUUID()}.md`,
     );
-  try {
-    await validateProspectiveReviewReportPath({
-      sourceDir: archiveDir,
-      reportPath,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("actor-visible")) {
-      throw new Error(
-        `[REVIEW_RESUME_OUTPUT_INVALID] Review report target overlaps the retained archive: ${reportPath}`,
-      );
-    }
-    throw error;
-  }
   const workLogPath =
     outputs.workLogPath ??
     path.join(
       reviewWorkLogDirectory(environment, platform, home),
       `prospective-${crypto.randomUUID()}.jsonl`,
     );
-  try {
-    await validateProspectiveReviewWorkLogPath({
-      sourceDir: archiveDir,
-      workLogPath,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("actor-visible")) {
-      throw new Error(
-        `[REVIEW_RESUME_OUTPUT_INVALID] Review work log target overlaps the retained archive: ${workLogPath}`,
-      );
-    }
-    throw error;
-  }
+  await validateProspectiveResumeOutputs(archiveDir, reportPath, workLogPath);
 }
 
 export async function assertReviewResumeOutputsOutsideStorage(

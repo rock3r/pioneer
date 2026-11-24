@@ -28,6 +28,7 @@ For reviews:
 - the private native Pi session attempt directory is a separate controller-created writable path; prior attempts and the archive parent are never granted to the actor;
 - the private scratch directory and repeated `--allow-write` grants are writable;
 - `--source`, `--pi-home`, `--allow-read`, and `--allow-write` grants refuse exact broad runtime roots such as `/`, `/tmp`, `/run`, `/etc`, and the caller's home; writable grants also refuse protected-system roots and their descendants, the same tables evals use;
+- source, read, and write grants also refuse paths into sensitive credential stores, including canonical aliases. The controller can still use a selected Pi home as a private snapshot source;
 - The controller owns each create-only report target, including `--report`. It must be absolute, absent, and outside every actor-visible grant.
 - every review work log is controller-owned, create-only, and never granted to the actor; an explicit `--work-log` target must be absolute, absent, free of control characters, and outside every actor-visible grant;
 - On macOS and Linux, output ancestors must belong to the caller or root. This includes ancestors of the nearest existing folder when Pioneer creates descendants.
@@ -276,6 +277,8 @@ macOS uses the legacy `sandbox-exec` interface, for which Apple provides no publ
 ### Linux
 
 Bubblewrap creates an empty tmpfs root, explicit read-only/writable binds, new user/PID/network/IPC/UTS namespaces, and private `/proc` and `/dev`. It drops all capabilities and enables parent-death behavior. The detached capture controller owns the session/process group used for termination.
+
+Linux evals mount synthetic read-only `/etc/passwd` and `/etc/group` for root and the active numeric identity. The eval probe uses the same synthetic files. Host usernames, home directories, and supplemental group memberships are absent from these files.
 
 Bubblewrap runs as PID 1 in the actor's PID namespace. When the actor exits, the kernel destroys every remaining namespace process. Descendants cannot retain pipes beyond the run, so `[EVAL_PROCESS_CONTAINMENT_FAILED]` is unreachable on Linux.
 
