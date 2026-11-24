@@ -25,7 +25,7 @@ export default async function setup(): Promise<() => Promise<void>> {
   useTestTempRoot(root);
 
   return async () => {
-    await rm(path.join(root, "cache"), {recursive: true, force: true});
+    await rm(path.join(root, "cache"), { recursive: true, force: true });
     const leaked = (await readdir(root)).filter(
       (entry) => !UNMANAGED_TEMP_ROOT_ENTRIES.includes(entry),
     );

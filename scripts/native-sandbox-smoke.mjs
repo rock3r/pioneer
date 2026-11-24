@@ -33,8 +33,8 @@ await Promise.all([
   mkdir(path.join(source, ".idea"), { recursive: true }),
   mkdir(path.join(source, ".vscode"), { recursive: true }),
   mkdir(scratch),
-  mkdir(payload, {recursive: true}),
-  mkdir(sibling, {recursive: true}),
+  mkdir(payload, { recursive: true }),
+  mkdir(sibling, { recursive: true }),
 ]);
 await Promise.all([
   writeFile(path.join(source, ".idea", "marker.txt"), "idea-readable\n"),
@@ -88,7 +88,13 @@ const runtimeCandidates =
 const nodeRuntime = await executableRuntimeRoot(process.execPath);
 const nodeExecutable = await realpath(process.execPath);
 const policy = {
-  readOnlyPaths: [source, payload, ...runtimeCandidates.filter(existsSync), nodeRuntime, nodeExecutable],
+  readOnlyPaths: [
+    source,
+    payload,
+    ...runtimeCandidates.filter(existsSync),
+    nodeRuntime,
+    nodeExecutable,
+  ],
   extensionCacheDirectory: cache,
   writablePaths: [scratch],
   network: "none",

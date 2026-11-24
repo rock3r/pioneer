@@ -35,6 +35,14 @@ export function extensionCacheDirectory(versionRoot: string): string {
   return path.basename(parent) === "extension-snapshots" ? parent : versionRoot;
 }
 
+export class ExtensionCacheGrantOverlapError extends Error {
+  constructor(label: string, grant: string, cache: string) {
+    super(
+      `[PI_EXTENSION_CACHE_GRANT_OVERLAP] The ${label} grant ${grant} overlaps Pioneer's extension cache at ${cache}. Pass a narrower grant outside that directory.`,
+    );
+  }
+}
+
 /** Keep even a disabled cache outside user grants. A different process can hold a live lease. */
 export async function assertExtensionCacheDisjointFromGrants(
   grants: Readonly<Record<string, readonly string[]>>,
@@ -68,9 +76,7 @@ export async function assertExtensionCacheDisjointFromGrants(
       if (
         names.some((name) => roots.some((root) => contains(root, name) || contains(name, root)))
       ) {
-        throw new Error(
-          `[PI_EXTENSION_CACHE_GRANT_OVERLAP] The ${label} grant ${grant} overlaps Pioneer's extension cache at ${cache}. Pass a narrower grant outside that directory.`,
-        );
+        throw new ExtensionCacheGrantOverlapError(label, grant, cache);
       }
     }
   }

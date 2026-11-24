@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { resolvePiCommand } from "../src/pi-command.js";
@@ -134,6 +135,7 @@ export default function(pi){
 });}
 `,
       );
+      await delay(2100);
       const runReview = async (run: number) => {
         const result = await execute(
           process.execPath,
@@ -151,6 +153,8 @@ export default function(pi){
             "--no-resume",
             "--report",
             path.join(root, `report-${run}.md`),
+            "--work-log",
+            path.join(root, `work-${run}.jsonl`),
           ],
           { timeout: 90_000 },
         );
@@ -170,6 +174,13 @@ export default function(pi){
       first.expires = 1;
       await writeFile(path.join(home, "auth.json"), JSON.stringify(saved));
       const third = await runReview(3);
+      const workLog = await readFile(path.join(root, "work-3.jsonl"), "utf8");
+      expect(
+        workLog
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+      ).toContainEqual(expect.objectContaining({ type: "extension_snapshot", cache: "hit" }));
       const final = await readStore();
       expect(third).toBe("Receipt " + receipt(final["rotation-fixture"].access));
       expect(third).not.toBe(results[0]);
