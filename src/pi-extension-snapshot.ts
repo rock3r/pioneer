@@ -250,6 +250,8 @@ export type ExtensionManifestRecord = ManifestSource &
 export interface StagedExtensionSnapshot extends ExtensionSnapshot {
   /** Controller-only. Includes names and metadata from excluded portions of the source tree. */
   readonly manifest: readonly ExtensionManifestRecord[];
+  /** A caller-specific filter omitted an entry from this copy. */
+  readonly runSpecificFiltered: boolean;
 }
 
 interface ObservedEntry extends ManifestSource {
@@ -646,12 +648,14 @@ export async function stageExtensionSnapshot(
   destination: string,
   signal?: AbortSignal,
   budget?: { readonly entries: number; readonly bytes: number },
+  readOnly = false,
 ): Promise<StagedExtensionSnapshot> {
   const { selectedRoots, excluded, privateFiles } = plan;
   const excludedFiles = new Set(plan.excludedFiles);
   await mkdir(destination, { recursive: true, mode: 0o700 });
   let entries = budget?.entries ?? 0;
   let bytes = budget?.bytes ?? 0;
+  let runSpecificFiltered = false;
   // Session-header scans have their own bound, because skipped files are never staged or counted.
   const scans = createPiSessionScanBudget(
     (detail) =>
@@ -691,8 +695,10 @@ export async function stageExtensionSnapshot(
       throw error;
     }
     if (checkCredentialPath && isSensitivePath(source, canonical)) return skipEntry(source);
-    if ([...excluded].some((entry) => within(entry, policyPath(canonical))))
+    if ([...excluded].some((entry) => within(entry, policyPath(canonical)))) {
+      runSpecificFiltered = true;
       return skipEntry(source);
+    }
     const identity = await lstat(canonical, { bigint: true });
     const fileIdentity = `${identity.dev}:${identity.ino}`;
     if (
@@ -700,6 +706,7 @@ export async function stageExtensionSnapshot(
       identity.ino !== 0n &&
       (excludedFiles.has(fileIdentity) || privateFiles.has(fileIdentity))
     ) {
+      if (plan.excludedFiles.has(fileIdentity)) runSpecificFiltered = true;
       return skipEntry(source);
     }
     if (
@@ -720,8 +727,10 @@ export async function stageExtensionSnapshot(
         plan.repositorySessionDirs.some(
           (dir) => within(dir, file) || within(dir, policyPath(source)),
         )
-      )
+      ) {
+        runSpecificFiltered = true;
         return skipEntry(source);
+      }
     }
     // Session history can sit anywhere a sessionDir Pioneer cannot see points, so check content.
     if (await isPiSessionFile(canonical, scans, [source, canonical])) return skipEntry(source);
@@ -776,6 +785,7 @@ export async function stageExtensionSnapshot(
     const details = await lstat(canonical, { bigint: true });
     const size = details.isFile() ? Number(details.size) : 0;
     const ownerExecute = Number(details.mode & 0o100n);
+    const fileMode = (readOnly ? 0o400 : 0o600) | ownerExecute;
     if (!stagedAlready) {
       entries += 1;
       bytes += size;
@@ -814,8 +824,7 @@ export async function stageExtensionSnapshot(
       if (!same) {
         throw new ExtensionSnapshotChangedError();
       }
-      const normalized = ownerExecute ? 0o700 : 0o600;
-      if ((staged.mode & 0o777) !== normalized) await chmod(target, normalized);
+      if ((staged.mode & 0o777) !== fileMode) await chmod(target, fileMode);
       // A resumed caller budget stages into the same tree; the earlier pass hashed these bytes.
       return { items: [{ record }] };
     }
@@ -836,7 +845,7 @@ export async function stageExtensionSnapshot(
       throw new Error(
         "[PI_EXTENSION_SNAPSHOT_CHANGED] A file became Pi session history while it was being copied; retry.",
       );
-    await chmod(target, ownerExecute ? 0o700 : 0o600);
+    await chmod(target, fileMode);
     return { items: [{ record, content: target, size: copied.size }] };
   }
   /** A pending copy: where the entry comes from, where it goes, and its digest slot. */
@@ -953,7 +962,57 @@ export async function stageExtensionSnapshot(
   const { paths, sourcePaths } = await validateExtensionSnapshot(plan, destination);
   digest.update(JSON.stringify(paths.map((entry) => path.relative(destination, entry))));
   const manifest = await finalizeExtensionManifest(destination, observed, signal);
-  return { paths, sourcePaths, digest: digest.digest("hex"), entries, bytes, manifest };
+  return {
+    paths,
+    sourcePaths,
+    digest: digest.digest("hex"),
+    entries,
+    bytes,
+    manifest,
+    runSpecificFiltered,
+  };
+}
+
+/** Reproduce staging's pre-order hash using the source modes and current staged bytes. */
+export async function recomputeExtensionSnapshotDigest(
+  destination: string,
+  manifest: readonly ExtensionManifestRecord[],
+  relativePaths: readonly string[],
+  selectedRoots: readonly string[],
+  signal?: AbortSignal,
+): Promise<string> {
+  const staged = manifest.flatMap((record) => {
+    if (!record.staged) return [];
+    const rootIndex = selectedRoots.findIndex((root) => within(root, record.sourcePath));
+    if (rootIndex < 0) throw new ExtensionSnapshotChangedError();
+    // Replacing separators with NUL keeps the traversal pre-order even when a sibling
+    // sorts before the platform path separator (for example "a-test" and "a/item").
+    return [{ record, rootIndex, order: record.stagedRelativePath.replaceAll(path.sep, "\0") }];
+  });
+  staged.sort((left, right) => {
+    if (left.rootIndex !== right.rootIndex) return left.rootIndex - right.rootIndex;
+    if (left.order === right.order) return 0;
+    return left.order < right.order ? -1 : 1;
+  });
+  const items: DigestItem[] = [];
+  for (const { record } of staged) {
+    signal?.throwIfAborted();
+    const relative = record.stagedRelativePath;
+    const content = path.join(destination, relative);
+    if (record.type === "symlink") {
+      items.push({ record: JSON.stringify([relative, "symlink", await readlink(content)]) });
+    } else {
+      const size = record.type === "file" ? Number(record.source.size) : 0;
+      items.push({
+        record: JSON.stringify([relative, record.type, size, Number(record.source.mode & 0o100n)]),
+        ...(record.type === "file" ? { content, size } : {}),
+      });
+    }
+  }
+  const digest = createHash("sha256");
+  await updateDigestInOrder(digest, items, signal);
+  digest.update(JSON.stringify(relativePaths));
+  return digest.digest("hex");
 }
 
 async function finalizeExtensionManifest(

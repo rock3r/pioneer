@@ -102,6 +102,12 @@ async function nearestExistingAncestor(target: string): Promise<ExistingAncestor
   }
 }
 
+export async function canonicalProspectivePathForContainment(target: string): Promise<string> {
+  const absolute = path.resolve(target);
+  const ancestor = await nearestExistingAncestor(absolute);
+  return path.resolve(await realpath(ancestor.path), path.relative(ancestor.path, absolute));
+}
+
 async function assertStableExistingAncestor(
   ancestor: ExistingAncestor,
   platform: NodeJS.Platform,

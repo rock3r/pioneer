@@ -1,0 +1,337 @@
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import path from "node:path";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { registerManagedTempPaths } from "../test/support/temp-dir.js";
+import {
+  type ExtensionCacheOptions,
+  extensionCacheKey,
+  prepareCachedExtensionSnapshot,
+} from "./pi-extension-cache.js";
+import {
+  assertSameExtensionSnapshot,
+  planExtensionSnapshot,
+  stageExtensionSnapshot,
+} from "./pi-extension-snapshot.js";
+import { piRuntimeStorage } from "./pi-runtime-storage.js";
+
+vi.mock("./review/work-log.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./review/work-log.js")>()),
+  currentProcessInstanceIdentities: () => ["a".repeat(64)],
+  processInstanceIdentities: () => ["a".repeat(64)],
+}));
+
+describe.skipIf(process.platform === "win32")("extension snapshot cache store", () => {
+  const { createTempDir } = registerManagedTempPaths();
+  let base: string;
+  let source: string;
+  let entry: string;
+  let cacheRoot: string;
+  let wallTime: number;
+  let bootId: string | undefined;
+  const record = vi.fn();
+  const takeLease = vi.fn(async () => async () => {});
+  const validate = vi.fn(async () => "valid" as const);
+
+  beforeEach(async () => {
+    base = await createTempDir("cache-store-");
+    source = path.join(base, "source");
+    entry = path.join(source, "extension.js");
+    cacheRoot = path.join(base, "cache", "pioneer", "extension-snapshots", "v1");
+    await mkdir(source);
+    await writeFile(entry, "export const extension = 1;\n");
+    await chmod(entry, 0o700);
+    await writeFile(path.join(source, "asset"), "asset\n");
+    await symlink("asset", path.join(source, "link"));
+    await mkdir(path.join(source, "a"));
+    await writeFile(path.join(source, "a", "nested"), "a\n");
+    await writeFile(path.join(source, "a-sibling"), "should sort after a/nested\n");
+    // Age the observations without sleeping or modifying source ctime.
+    wallTime = Date.now() + 10_000;
+    bootId = "initial-boot";
+    vi.clearAllMocks();
+  });
+
+  function resources() {
+    return [{ path: entry, enabled: true, metadata: { scope: "user" } }];
+  }
+
+  function options(overrides: ExtensionCacheOptions = {}): ExtensionCacheOptions {
+    return {
+      cacheRoot,
+      now: () => wallTime,
+      readBootId: async () => bootId,
+      record,
+      takeLease,
+      validate,
+      ...overrides,
+    };
+  }
+
+  async function prepare(name: string, overrides: ExtensionCacheOptions = {}) {
+    return prepareCachedExtensionSnapshot(
+      await planExtensionSnapshot(resources()),
+      path.join(base, name),
+      options(overrides),
+    );
+  }
+
+  it("records final modes and returns legacy-compatible snapshots on miss and hit", async () => {
+    const legacy = await stageExtensionSnapshot(
+      await planExtensionSnapshot(resources()),
+      path.join(base, "legacy"),
+    );
+    const first = await prepare("miss");
+    const second = await prepare("hit");
+    expect(record.mock.calls.map(([value]) => value.cache)).toEqual(["miss", "hit"]);
+    expect(first.snapshotHandle?.payload).toBe(second.snapshotHandle?.payload);
+    expect(second.paths).toEqual(first.paths);
+    expect(second.sourcePaths).toEqual(legacy.sourcePaths);
+    expect(second.digest).toBe(legacy.digest);
+    expect(() => assertSameExtensionSnapshot(legacy.digest, second.digest)).not.toThrow();
+    expect(second.entries).toBe(legacy.entries);
+    expect(second.bytes).toBe(legacy.bytes);
+    const payload = first.snapshotHandle?.payload as string;
+    expect(await readFile(path.join(payload, "package.json"), "utf8")).toBe('{"type":"module"}');
+    expect((await lstat(first.paths[0] as string)).mode & 0o777).toBe(0o500);
+    const manifest = await readFile(path.join(payload, "..", "manifest.jsonl"), "utf8");
+    const entryRecord = manifest
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .find((item) => item.sourcePath === first.sourcePaths[0]);
+    expect(entryRecord.stagedMetadata.mode).toBe(
+      String((await lstat(first.paths[0] as string)).mode),
+    );
+    await first.snapshotHandle?.release();
+    await second.snapshotHandle?.release();
+  });
+
+  it("stores no committed generation if an observed source entry was recently modified", async () => {
+    wallTime = Date.now();
+    const result = await prepare("racy");
+    const payload = result.snapshotHandle?.payload as string;
+    expect(record).toHaveBeenCalledWith({ cache: "racy", reason: "recent-source" });
+    expect(
+      (await readdir(path.join(cacheRoot, "entries"))).filter(
+        (name) => !name.endsWith(".creating"),
+      ),
+    ).toEqual([]);
+    expect(await readFile(result.paths[0] as string, "utf8")).toBe("export const extension = 1;\n");
+    await result.snapshotHandle?.release();
+    await result.snapshotHandle?.release();
+    await expect(lstat(payload)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rehashes once after a reboot and rejects corrupt bytes before reuse", async () => {
+    const first = await prepare("before");
+    const payload = first.snapshotHandle?.payload as string;
+    const verified = path.join(payload, "..", "verified-boot");
+    await first.snapshotHandle?.release();
+    bootId = "second-boot";
+    const verifiedHit = await prepare("after");
+    expect(verifiedHit.snapshotHandle?.payload).toBe(payload);
+    expect(await readFile(verified, "utf8")).toBe("second-boot\n");
+    await verifiedHit.snapshotHandle?.release();
+    bootId = undefined;
+    const unknownBoot = await prepare("unknown");
+    expect(unknownBoot.snapshotHandle?.payload).toBe(payload);
+    expect(await readFile(verified, "utf8")).toBe("second-boot\n");
+    await unknownBoot.snapshotHandle?.release();
+    const staged = first.paths[0] as string;
+    await chmod(staged, 0o700);
+    await writeFile(staged, "export const extension = 2;\n");
+    await chmod(staged, 0o500);
+    const rebuilt = await prepare("rebuilt");
+    expect(record.mock.calls.map(([value]) => value.cache)).toEqual(["miss", "hit", "hit", "miss"]);
+    expect(rebuilt.snapshotHandle?.payload).not.toBe(payload);
+    expect(rebuilt.digest).toBe(first.digest);
+    expect(await readFile(path.join(payload, "..", "bad"), "utf8")).toBe("");
+    await rebuilt.snapshotHandle?.release();
+  });
+
+  it.each([
+    ["manifest.jsonl", (text: string) => text.trimEnd()],
+    ["manifest.jsonl", (text: string) => text.slice(text.indexOf("\n") + 1)],
+    ["manifest.jsonl", () => '{"staged":true,"sourcePath":"/invalid"}\n'],
+    ["snapshot.json", (text: string) => text.trimEnd()],
+    ["snapshot.json", (text: string) => text.slice(0, text.length / 2)],
+    ["snapshot.json", () => '{"paths":["../outside"]}\n'],
+  ])("rejects torn or malformed %s before validation", async (name, damage) => {
+    const first = await prepare("first");
+    const directory = path.dirname(first.snapshotHandle?.payload as string);
+    await first.snapshotHandle?.release();
+    const metadata = path.join(directory, name);
+    await writeFile(metadata, damage(await readFile(metadata, "utf8")));
+    const result = await prepare("replacement");
+    expect(validate).not.toHaveBeenCalled();
+    expect(result.snapshotHandle?.payload).not.toBe(first.snapshotHandle?.payload);
+    expect(result.digest).toBe(first.digest);
+    expect(await readFile(path.join(directory, "bad"), "utf8")).toBe("");
+    await result.snapshotHandle?.release();
+  });
+
+  it("shares one generation across concurrent cold preparations", async () => {
+    const results = await Promise.all([prepare("one"), prepare("two"), prepare("three")]);
+    expect(new Set(results.map((result) => result.snapshotHandle?.payload)).size).toBe(1);
+    expect(record.mock.calls.map(([value]) => value.cache).sort()).toEqual(["hit", "hit", "miss"]);
+    await Promise.all(results.map((result) => result.snapshotHandle?.release()));
+  });
+
+  it("keeps staging private when either run-specific filter omits extension files", async () => {
+    const logs = path.join(source, "history.jsonl");
+    await writeFile(logs, '{"ordinary":"record"}\n');
+    const agentDir = path.join(base, "agent");
+    const excludes = await planExtensionSnapshot(resources(), undefined, undefined, [
+      path.join(source, "asset"),
+    ]);
+    const repository = await planExtensionSnapshot(resources(), undefined, {
+      agentDir,
+      sessionDirs: [],
+      repositorySessionDirs: [await realpath(source)],
+    });
+    for (const [index, plan] of [excludes, repository].entries()) {
+      const run = await prepareCachedExtensionSnapshot(
+        plan,
+        path.join(base, `filtered-${index}`),
+        options(),
+      );
+      expect(run.snapshotHandle?.payload).toContain(`${path.sep}staging${path.sep}`);
+      await run.snapshotHandle?.release();
+    }
+    expect(record.mock.calls.map(([value]) => value)).toEqual([
+      { cache: "bypass", reason: "run-exclusions" },
+      { cache: "bypass", reason: "run-exclusions" },
+    ]);
+    expect(await readdir(path.join(cacheRoot, "entries"))).toEqual([]);
+  });
+
+  it("changes the key and omits content when either Pi session setting changes", async () => {
+    const agentDir = path.join(base, "agent");
+    const settingsFile = path.join(agentDir, "settings.json");
+    const logs = path.join(source, "logs");
+    await mkdir(agentDir);
+    await mkdir(logs);
+    await writeFile(path.join(logs, "private"), "private non-session file");
+    const defaultStorage = await piRuntimeStorage(agentDir, settingsFile, {});
+    const defaultPlan = await planExtensionSnapshot(resources(), undefined, defaultStorage);
+    const envStorage = await piRuntimeStorage(agentDir, settingsFile, {
+      PI_CODING_AGENT_SESSION_DIR: logs,
+    });
+    const envPlan = await planExtensionSnapshot(resources(), undefined, envStorage);
+    await writeFile(settingsFile, JSON.stringify({ sessionDir: logs }));
+    const settingsStorage = await piRuntimeStorage(agentDir, settingsFile, {});
+    const settingsPlan = await planExtensionSnapshot(resources(), undefined, settingsStorage);
+    const key = (plan: typeof defaultPlan) =>
+      extensionCacheKey(plan, process.platform, process.getuid?.() ?? 0);
+    expect(key(envPlan)).not.toBe(key(defaultPlan));
+    expect(key(settingsPlan)).toBe(key(envPlan));
+    for (const [index, plan] of [envPlan, settingsPlan].entries()) {
+      const run = await prepareCachedExtensionSnapshot(
+        plan,
+        path.join(base, `storage-${index}`),
+        options(),
+      );
+      await expect(
+        lstat(path.join(path.dirname(run.paths[0] as string), "logs")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await run.snapshotHandle?.release();
+    }
+  });
+
+  it.each(["symlink", "permissive", "unsafe-parent"])("bypasses a %s cache", async (kind) => {
+    const parent = path.dirname(cacheRoot);
+    if (kind === "symlink") {
+      await mkdir(parent, { recursive: true, mode: 0o700 });
+      await symlink(source, cacheRoot);
+    } else {
+      await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
+      await chmod(kind === "permissive" ? cacheRoot : path.join(base, "cache"), 0o777);
+    }
+    const staged = await prepare("bypass");
+    expect(staged.snapshotHandle).toBeUndefined();
+    expect(record).toHaveBeenCalledWith({ cache: "bypass", reason: "unsafe-cache" });
+    expect(await readFile(staged.paths[0] as string, "utf8")).toBe("export const extension = 1;\n");
+  });
+
+  it("bypasses a dangling cache directory without allowing a lexical overlap", async () => {
+    const family = path.dirname(cacheRoot);
+    await mkdir(path.dirname(family), { recursive: true, mode: 0o700 });
+    await symlink(path.join(base, "missing-cache"), family);
+    const staged = await prepare("dangling");
+    expect(staged.snapshotHandle).toBeUndefined();
+    expect(record).toHaveBeenCalledWith({ cache: "bypass", reason: "unsafe-cache" });
+    await expect(prepare("overlap", { cacheRoot: path.join(source, "cache") })).rejects.toThrow(
+      "PI_EXTENSION_CACHE_GRANT_OVERLAP",
+    );
+  });
+
+  it("allows a stable 0755 Pioneer cache parent and keeps the snapshot hierarchy private", async () => {
+    const family = path.dirname(cacheRoot);
+    const pioneer = path.dirname(family);
+    await mkdir(pioneer, { recursive: true, mode: 0o755 });
+    await chmod(pioneer, 0o755);
+    const staged = await prepare("shared-parent");
+    expect(staged.snapshotHandle).toBeDefined();
+    expect((await lstat(pioneer)).mode & 0o777).toBe(0o755);
+    for (const directory of [family, cacheRoot, path.join(cacheRoot, "entries")]) {
+      expect((await lstat(directory)).mode & 0o777).toBe(0o700);
+    }
+    await staged.snapshotHandle?.release();
+  });
+
+  it.each([
+    { environment: { PIONEER_EXTENSION_CACHE: "0" } },
+    { platform: "win32" },
+  ] satisfies ExtensionCacheOptions[])(
+    "never creates cache state when disabled",
+    async (overrides) => {
+      const staged = await prepare("disabled", overrides);
+      expect(staged.snapshotHandle).toBeUndefined();
+      await expect(lstat(cacheRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("varies the key by policy, resource metadata, identity and ordered roots", async () => {
+    const plan = await planExtensionSnapshot(resources());
+    const original = extensionCacheKey(plan, "darwin", 1, "0.6.0");
+    expect(extensionCacheKey({ ...plan, excluded: new Set([entry]) }, "darwin", 1, "0.6.0")).toBe(
+      original,
+    );
+    expect(
+      extensionCacheKey({ ...plan, repositorySessionDirs: [source] }, "darwin", 1, "0.6.0"),
+    ).toBe(original);
+    for (const changed of [
+      extensionCacheKey(plan, "linux", 1, "0.6.0"),
+      extensionCacheKey(plan, "darwin", 2, "0.6.0"),
+      extensionCacheKey(plan, "darwin", 1, "0.6.1"),
+      extensionCacheKey({ ...plan, selectedRoots: [] }, "darwin", 1, "0.6.0"),
+      extensionCacheKey({ ...plan, agentDir: source }, "darwin", 1, "0.6.0"),
+      extensionCacheKey({ ...plan, privateDirectories: [source] }, "darwin", 1, "0.6.0"),
+      extensionCacheKey(
+        {
+          ...plan,
+          enabled: [
+            {
+              path: entry,
+              enabled: true,
+              metadata: { scope: "user", baseDir: source, origin: "package" },
+            },
+          ],
+        },
+        "darwin",
+        1,
+        "0.6.0",
+      ),
+    ])
+      expect(changed).not.toBe(original);
+  });
+});

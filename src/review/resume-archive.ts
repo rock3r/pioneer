@@ -16,7 +16,11 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { assertStableDirectoryChain, createStableDirectory } from "../stable-directory.js";
+import {
+  assertStableDirectoryChain,
+  canonicalProspectivePathForContainment,
+  createStableDirectory,
+} from "../stable-directory.js";
 import type { StoredReviewNetworkMode } from "./isolation.js";
 import {
   isActiveReviewReportReservation,
@@ -223,24 +227,6 @@ async function canonicalPathForContainment(candidate: string): Promise<string> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return path.resolve(candidate);
     throw error;
   }
-}
-
-async function canonicalProspectivePathForContainment(candidate: string): Promise<string> {
-  const absolute = path.resolve(candidate);
-  let existingAncestor = absolute;
-  for (;;) {
-    try {
-      await lstat(existingAncestor);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const parent = path.dirname(existingAncestor);
-      if (parent === existingAncestor) throw error;
-      existingAncestor = parent;
-    }
-  }
-  const canonicalAncestor = await realpath(existingAncestor);
-  return path.resolve(canonicalAncestor, path.relative(existingAncestor, absolute));
 }
 
 async function assertResumeRootDisjoint(

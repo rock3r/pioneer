@@ -53,6 +53,7 @@ The plugin contains instructions only. Agent Plugins v1, Codex, and Claude manif
 | Pi readiness | `src/pi-readiness.ts`, `src/pi-model-selection.ts` | Detect Pi, enumerate configured models, resolve exact requests |
 | Pi preparation | `src/pi-home.ts`, `src/pi-startup.ts` | Copy the Pi agent directory and apply fast, ephemeral startup flags |
 | Extension snapshot | `src/pi-extension-snapshot.ts` | Plan per-run extension roots and private exclusions, stage the selected files, validate entry points, and record a controller-only manifest |
+| Extension cache store | `src/pi-extension-cache.ts`, `src/pi-extension-cache-format.ts`, `src/pi-extension-cache-lock.ts` | Check private storage, store immutable payloads and controller metadata, coordinate generation creation, and verify the stored digest after a restart |
 | Review authentication | `src/pi-auth-broker.ts`, `src/pi-auth-runtime.ts`, `src/pi-auth-client.ts`, `src/pi-auth-worker.ts` | Broker OAuth refreshes through a separate sandboxed, model-free worker; persist only provider-scoped results under Pi's source credential lock |
 | Review orchestration | `src/review/runner.ts`, `src/review/resume-archive.ts`, `src/review/rpc-limits.ts` | Validate, prepare, sandbox, run bounded RPC, persist reports, retain/recover opaque native sessions, stream controller-owned work-log events, collect the final report, clean up |
 | Review Git inspection | `src/review/git-inspect.ts` | Validate Git readiness, parse or infer targets, and collect bounded offline Git context or raw patches in the controller |
