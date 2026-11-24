@@ -15,14 +15,23 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { PIONEER_VERSION } from "./package-metadata.js";
 import {
+  compareExtensionCacheGenerationOrder,
   EXTENSION_CACHE_FORMAT,
   EXTENSION_CACHE_ID,
   EXTENSION_CACHE_PACKAGE_JSON,
+  EXTENSION_CACHE_SEQUENCE_FILE,
+  type ExtensionCacheGenerationOrder,
   extensionCacheSnapshotMetadata,
   readCacheText,
   readExtensionCacheManifest,
+  readExtensionCacheSequence,
   writeExtensionCacheManifest,
 } from "./pi-extension-cache-format.js";
+import {
+  collectExtensionCache,
+  startExtensionCacheBackgroundDeletion,
+  takeExtensionCacheLease,
+} from "./pi-extension-cache-leases.js";
 import {
   assertExtensionCacheDisjointFromGrants,
   extensionCacheRoot,
@@ -119,6 +128,7 @@ interface ActiveCache {
   readonly signal: AbortSignal | undefined;
   readonly validate: Validate;
   readonly takeLease: (entry: ExtensionCacheEntry) => Promise<Release>;
+  readonly maintain: boolean;
 }
 
 export function extensionCacheKey(
@@ -229,7 +239,7 @@ async function newestEntry(cache: ActiveCache): Promise<ExtensionCacheEntry | un
   const parent = path.join(cache.root, "entries", cache.key);
   if (!(await exists(parent))) return undefined;
   await inspectPrivateCacheDirectory(parent);
-  let newest: { readonly entry: ExtensionCacheEntry; readonly created: bigint } | undefined;
+  let newest: (ExtensionCacheGenerationOrder & { readonly entry: ExtensionCacheEntry }) | undefined;
   for (const id of await readdir(parent)) {
     if (!EXTENSION_CACHE_ID.test(id)) continue;
     const entry = generationEntry(cache, id);
@@ -237,14 +247,46 @@ async function newestEntry(cache: ActiveCache): Promise<ExtensionCacheEntry | un
       await inspectPrivateCacheDirectory(entry.directory);
       if (await exists(path.join(entry.directory, "bad"))) continue;
       const stats = await lstat(path.join(entry.directory, "snapshot.json"), { bigint: true });
-      if (newest === undefined || stats.mtimeNs > newest.created)
-        newest = { entry, created: stats.mtimeNs };
+      const lastUsed = await lstat(path.join(entry.directory, "last-used"));
+      if (
+        !lastUsed.isFile() ||
+        lastUsed.nlink !== 1 ||
+        lastUsed.uid !== process.getuid?.() ||
+        (lastUsed.mode & 0o077) !== 0
+      ) {
+        await markBad(entry);
+        continue;
+      }
+      const candidate = {
+        entry,
+        created: stats.mtimeNs,
+        sequence: await readExtensionCacheSequence(entry.directory),
+      };
+      if (newest === undefined || compareExtensionCacheGenerationOrder(candidate, newest) > 0)
+        newest = candidate;
     } catch (error) {
       if (!isCacheError(error, "ENOENT")) continue;
       await markBad(entry);
     }
   }
   return newest?.entry;
+}
+
+/** Assign under cache.lock and publish with the generation directory's existing atomic rename. */
+async function nextGenerationSequence(parent: string): Promise<bigint> {
+  let latest = 0n;
+  for (const id of await readdir(parent)) {
+    if (!EXTENSION_CACHE_ID.test(id)) continue;
+    const directory = path.join(parent, id);
+    try {
+      await inspectPrivateCacheDirectory(directory);
+      const sequence = await readExtensionCacheSequence(directory);
+      if (sequence !== undefined && sequence > latest) latest = sequence;
+    } catch {
+      // A damaged or unsafe generation cannot prevent publication of its replacement.
+    }
+  }
+  return latest + 1n;
 }
 
 export async function readExtensionCacheGeneration(
@@ -449,13 +491,23 @@ async function stageCacheEntry(
       cache.root,
       cache.platform,
       async () => {
-        await createPrivateDirectory(path.dirname(committed.directory));
+        const parent = path.dirname(committed.directory);
+        await createPrivateDirectory(parent);
+        const sequence = await nextGenerationSequence(parent);
+        await writeFile(path.join(staging, EXTENSION_CACHE_SEQUENCE_FILE), `${sequence}\n`, {
+          mode: 0o600,
+          flag: "wx",
+        });
         await rename(staging, committed.directory);
         await unlink(path.join(committed.directory, "owner"));
         return cache.takeLease(committed);
       },
       cache.signal,
     );
+    if (cache.maintain)
+      await collectExtensionCache(cache.root, cache.platform, { now: cache.now() }).catch(
+        () => undefined,
+      );
     return {
       snapshot: {
         ...snapshot,
@@ -506,13 +558,10 @@ export async function prepareCachedExtensionSnapshot(
   );
   const uid = process.getuid?.();
   let result: CacheResult;
+  let previousDeletion: Promise<void> | undefined;
   if ((platform !== "darwin" && platform !== "linux") || uid === undefined) {
     result = { event: { cache: "bypass", reason: "unsupported-platform" } };
-  } else if (
-    environment.PIONEER_EXTENSION_CACHE === "0" ||
-    options.validate === undefined ||
-    options.takeLease === undefined
-  ) {
+  } else if (environment.PIONEER_EXTENSION_CACHE === "0" || options.validate === undefined) {
     result = { event: { cache: "bypass", reason: "disabled" } };
   } else if (plan.enabled.length === 0) {
     result = { event: { cache: "bypass", reason: "empty" } };
@@ -521,41 +570,74 @@ export async function prepareCachedExtensionSnapshot(
     if (root === undefined) {
       result = { event: { cache: "bypass", reason: "unsafe-cache" } };
     } else {
+      const now = options.now ?? Date.now;
+      const maintain = options.takeLease === undefined;
+      if (maintain) {
+        const deletion = startExtensionCacheBackgroundDeletion(root, platform, now());
+        previousDeletion = deletion.finished;
+        await deletion.started;
+      }
       const bootId = await (options.readBootId?.() ?? platformBootId(platform)).catch(
         () => undefined,
       );
-      options.signal?.throwIfAborted();
-      result = await useCache(plan, {
-        root,
-        key: extensionCacheKey(plan, platform, uid),
-        platform,
-        bootId,
-        now: options.now ?? Date.now,
-        signal: options.signal,
-        validate: options.validate,
-        takeLease: options.takeLease,
-      }).catch((error: unknown) => {
+      try {
+        options.signal?.throwIfAborted();
+        result = await useCache(plan, {
+          root,
+          key: extensionCacheKey(plan, platform, uid),
+          platform,
+          bootId,
+          now,
+          signal: options.signal,
+          validate: options.validate,
+          takeLease:
+            options.takeLease ?? ((entry) => takeExtensionCacheLease(entry, platform, now)),
+          maintain,
+        });
+      } catch (error) {
+        await previousDeletion;
         options.signal?.throwIfAborted();
         if (
           error instanceof Error &&
           (error.message.startsWith("[PI_") || error.message.startsWith("Explicit Pi extension"))
         )
           throw error;
-        return { event: { cache: "bypass", reason: "cache-unavailable" } };
-      });
+        result = { event: { cache: "bypass", reason: "cache-unavailable" } };
+      }
     }
   }
   try {
     options.record?.(result.event);
-    if (result.snapshot !== undefined) return result.snapshot;
+    if (result.snapshot !== undefined) {
+      const handle = result.snapshot.snapshotHandle;
+      if (handle === undefined || previousDeletion === undefined) return result.snapshot;
+      return {
+        ...result.snapshot,
+        snapshotHandle: ownedHandle(handle.cacheRoot, handle.payload, async () => {
+          try {
+            await handle.release();
+          } finally {
+            await previousDeletion;
+          }
+        }),
+      };
+    }
   } catch (error) {
-    await result.snapshot?.snapshotHandle?.release();
+    try {
+      await result.snapshot?.snapshotHandle?.release();
+    } finally {
+      await previousDeletion;
+    }
     throw error;
   }
-  const {
-    manifest: _manifest,
-    runSpecificFiltered: _runSpecificFiltered,
-    ...snapshot
-  } = await stageExtensionSnapshot(plan, destination, options.signal);
-  return snapshot;
+  try {
+    const {
+      manifest: _manifest,
+      runSpecificFiltered: _runSpecificFiltered,
+      ...snapshot
+    } = await stageExtensionSnapshot(plan, destination, options.signal);
+    return snapshot;
+  } finally {
+    await previousDeletion;
+  }
 }

@@ -7,6 +7,7 @@ import {
   realpath,
   rm,
   symlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -17,6 +18,7 @@ import {
   extensionCacheKey,
   prepareCachedExtensionSnapshot,
 } from "./pi-extension-cache.js";
+import { collectExtensionCache } from "./pi-extension-cache-leases.js";
 import { validateCachedExtensionSnapshot } from "./pi-extension-cache-validation.js";
 import {
   assertSameExtensionSnapshot,
@@ -209,10 +211,159 @@ describe.skipIf(process.platform === "win32")("extension snapshot cache store", 
   });
 
   it("shares one generation across concurrent cold preparations", async () => {
-    const results = await Promise.all([prepare("one"), prepare("two"), prepare("three")]);
+    const { takeLease: _override, ...defaults } = options();
+    const plan = await planExtensionSnapshot(resources());
+    const results = await Promise.all(
+      ["one", "two", "three"].map((name) =>
+        prepareCachedExtensionSnapshot(plan, path.join(base, name), defaults),
+      ),
+    );
     expect(new Set(results.map((result) => result.snapshotHandle?.payload)).size).toBe(1);
     expect(record.mock.calls.map(([value]) => value.cache).sort()).toEqual(["hit", "hit", "miss"]);
+    const payload = results[0]?.snapshotHandle?.payload as string;
+    const generationId = path.basename(path.dirname(payload));
+    expect(await readdir(path.join(cacheRoot, "leases", generationId))).toHaveLength(3);
     await Promise.all(results.map((result) => result.snapshotHandle?.release()));
+    expect(await readdir(path.join(cacheRoot, "leases", generationId))).toEqual([]);
+  });
+
+  it("leases before asynchronous validation and releases after rejecting a hit", async () => {
+    const { takeLease: _override, ...defaults } = options();
+    const plan = await planExtensionSnapshot(resources());
+    const initial = await prepareCachedExtensionSnapshot(
+      plan,
+      path.join(base, "initial"),
+      defaults,
+    );
+    await initial.snapshotHandle?.release();
+    const payload = initial.snapshotHandle?.payload as string;
+    const entered = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const preparing = prepareCachedExtensionSnapshot(plan, path.join(base, "next"), {
+      ...defaults,
+      async validate() {
+        entered.resolve();
+        await resume.promise;
+        return "copy-mismatch";
+      },
+    });
+    try {
+      await entered.promise;
+      await collectExtensionCache(cacheRoot, process.platform, { now: wallTime, maxBytes: 0 });
+      expect((await lstat(payload)).isDirectory()).toBe(true);
+    } finally {
+      resume.resolve();
+    }
+    const rebuilt = await preparing;
+    await expect(lstat(payload)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(rebuilt.digest).toBe(initial.digest);
+    await rebuilt.snapshotHandle?.release();
+  });
+
+  it("rebuilds a generation with a missing lease timestamp", async () => {
+    const { takeLease: _override, ...defaults } = options();
+    const plan = await planExtensionSnapshot(resources());
+    const initial = await prepareCachedExtensionSnapshot(
+      plan,
+      path.join(base, "initial"),
+      defaults,
+    );
+    await initial.snapshotHandle?.release();
+    const prior = path.dirname(initial.snapshotHandle?.payload as string);
+    await rm(path.join(prior, "last-used"));
+    const rebuilt = await prepareCachedExtensionSnapshot(
+      plan,
+      path.join(base, "rebuilt"),
+      defaults,
+    );
+    expect(rebuilt.snapshotHandle).toBeDefined();
+    expect(rebuilt.snapshotHandle?.payload).not.toBe(initial.snapshotHandle?.payload);
+    await expect(lstat(prior)).rejects.toMatchObject({ code: "ENOENT" });
+    await rebuilt.snapshotHandle?.release();
+  });
+
+  it.each(["backward", "equal", "legacy"])(
+    "orders new generations with %s timestamps",
+    async (clock) => {
+      const { takeLease: _override, ...defaults } = options({
+        validate: validateCachedExtensionSnapshot,
+      });
+      const plan = await planExtensionSnapshot(resources());
+      const old = await prepareCachedExtensionSnapshot(plan, path.join(base, "old"), defaults);
+      const oldDirectory = path.dirname(old.snapshotHandle?.payload as string);
+      if (clock === "legacy") await rm(path.join(oldDirectory, "sequence"), { force: true });
+
+      await writeFile(entry, "export const extension = 2;\n");
+      const replacement = await prepareCachedExtensionSnapshot(
+        plan,
+        path.join(base, "new"),
+        defaults,
+      );
+      const newDirectory = path.dirname(replacement.snapshotHandle?.payload as string);
+      expect(newDirectory).not.toBe(oldDirectory);
+      const newTime = new Date(1000);
+      const oldTime = clock === "equal" ? newTime : new Date(2000);
+      await utimes(path.join(oldDirectory, "snapshot.json"), oldTime, oldTime);
+      await utimes(path.join(newDirectory, "snapshot.json"), newTime, newTime);
+
+      await collectExtensionCache(cacheRoot, process.platform, { now: wallTime });
+      expect((await lstat(oldDirectory)).isDirectory()).toBe(true);
+      const hit = await prepareCachedExtensionSnapshot(plan, path.join(base, "hit"), defaults);
+      expect(hit.snapshotHandle?.payload).toBe(replacement.snapshotHandle?.payload);
+      await old.snapshotHandle?.release();
+      await expect(lstat(oldDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+      await replacement.snapshotHandle?.release();
+      await hit.snapshotHandle?.release();
+      expect((await lstat(newDirectory)).isDirectory()).toBe(true);
+    },
+  );
+
+  it("finds a fully published replacement if its first lease fails", async () => {
+    const { takeLease: _override, ...defaults } = options({
+      validate: validateCachedExtensionSnapshot,
+    });
+    const plan = await planExtensionSnapshot(resources());
+    const old = await prepareCachedExtensionSnapshot(plan, path.join(base, "old"), defaults);
+    const oldDirectory = path.dirname(old.snapshotHandle?.payload as string);
+    await old.snapshotHandle?.release();
+    const future = new Date(wallTime + 60_000);
+    await utimes(path.join(oldDirectory, "snapshot.json"), future, future);
+    await writeFile(entry, "export const extension = 2;\n");
+    const interrupted = await prepareCachedExtensionSnapshot(plan, path.join(base, "interrupted"), {
+      ...defaults,
+      async takeLease(entry) {
+        if (entry.directory === oldDirectory) return async () => {};
+        throw new Error("Lease write interrupted after rename");
+      },
+    });
+    expect(interrupted.snapshotHandle).toBeUndefined();
+    const hit = await prepareCachedExtensionSnapshot(plan, path.join(base, "hit"), defaults);
+    expect(record.mock.calls.at(-1)?.[0]).toEqual({ cache: "hit", reason: "validated" });
+    expect(hit.digest).toBe(interrupted.digest);
+    await hit.snapshotHandle?.release();
+  });
+
+  it("rejects a corrupt generation sequence without blocking replacement or reuse", async () => {
+    const { takeLease: _override, ...defaults } = options({
+      validate: validateCachedExtensionSnapshot,
+    });
+    const plan = await planExtensionSnapshot(resources());
+    const old = await prepareCachedExtensionSnapshot(plan, path.join(base, "old"), defaults);
+    const oldDirectory = path.dirname(old.snapshotHandle?.payload as string);
+    await old.snapshotHandle?.release();
+    await writeFile(path.join(oldDirectory, "sequence"), "torn\n");
+    const replacement = await prepareCachedExtensionSnapshot(
+      plan,
+      path.join(base, "replacement"),
+      defaults,
+    );
+    expect(replacement.snapshotHandle?.payload).toBeDefined();
+    expect(replacement.snapshotHandle?.payload).not.toBe(old.snapshotHandle?.payload);
+    const hit = await prepareCachedExtensionSnapshot(plan, path.join(base, "hit"), defaults);
+    expect(hit.snapshotHandle?.payload).toBe(replacement.snapshotHandle?.payload);
+    await expect(lstat(oldDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    await replacement.snapshotHandle?.release();
+    await hit.snapshotHandle?.release();
   });
 
   it("keeps staging private when either run-specific filter omits extension files", async () => {
