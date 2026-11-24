@@ -106,10 +106,7 @@ export function createPiCommentScorer(
           "classification",
         );
         runtime = prepared;
-        const pi =
-          prepared.extensions.runtimeRoot === undefined
-            ? prepared.extensions.command
-            : withNoForkSandbox(prepared.extensions.command);
+        const pi = withNoForkSandbox(prepared.extensions);
         const readiness = await assertPiReady({
           requestedModel: model,
           runner: async (args) =>

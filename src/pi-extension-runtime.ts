@@ -132,14 +132,16 @@ export const EXTENSION_ADAPTER_FILES: readonly (readonly [string, string])[] = [
 
 /**
  * macOS review, discovery and deep-review actors run without process creation. The flag tells
- * the adapter that a spawn `EPERM` is that sandbox denial, so it keeps Pi running. Other
- * actors may create processes, so there the error keeps Node's default handling.
+ * the staged adapter that a spawn `EPERM` is that sandbox denial, so it keeps Pi running.
+ * Direct Pi commands do not understand this flag.
  */
 export function withNoForkSandbox(
-  command: readonly [string, ...string[]],
+  { command, runtimeRoot }: Pick<PreparedExtensions, "command" | "runtimeRoot">,
   platform: NodeJS.Platform = process.platform,
-): readonly [string, ...string[]] {
-  return platform === "darwin" ? [...command, "--pioneer-no-fork-sandbox"] : command;
+): PiLaunchCommand {
+  return platform === "darwin" && runtimeRoot !== undefined
+    ? [...command, "--pioneer-no-fork-sandbox"]
+    : command;
 }
 
 export async function preparePiExtensions(

@@ -11,6 +11,8 @@ export type ScriptedPiActor =
   | { readonly kind: "classify-comment"; readonly deniedPath: string }
   /** Replies with the text a `Reply with exactly: TEXT` prompt requests. */
   | { readonly kind: "reply-verbatim" }
+  /** Accepts a review prompt over RPC and returns a fixed report. */
+  | { readonly kind: "review-rpc" }
   /** Opens exactly the files the prompt names, relative to the actor working directory. */
   | { readonly kind: "review-referenced-files" }
   /** Lists the run directory and `fixtures/` without spawning a search process. */
@@ -64,6 +66,8 @@ const fail = (message) => {
   process.exit(1);
 };
 
+if (argv.includes("--pioneer-no-fork-sandbox")) fail("Unknown option: --pioneer-no-fork-sandbox");
+
 if (argv.includes("--version")) {
   process.stdout.write(SCENARIO.version + "\n");
   process.exit(0);
@@ -112,6 +116,19 @@ if (SCENARIO.actor.kind === "classify-comment") {
     const content = JSON.stringify({excuse_skipped_ask: 0, dismissed_edge_case: 0, in_scope_todo: 1});
     console.log(JSON.stringify({type: "message_end", message: {role: "assistant", content}}));
     console.log(JSON.stringify({type: "agent_settled"}));
+  });
+  return;
+}
+
+if (SCENARIO.actor.kind === "review-rpc") {
+  if (optionValue("--mode") !== "rpc") fail("missing RPC mode");
+  process.stdin.once("data", (bytes) => {
+    const request = JSON.parse(bytes.toString("utf8"));
+    if (request.type !== "prompt") fail("missing review prompt");
+    const content = "Scripted review report.";
+    console.log(JSON.stringify({type: "message_end", message: {role: "assistant", content}}));
+    console.log(JSON.stringify({type: "agent_settled"}));
+    process.stdin.pause();
   });
   return;
 }

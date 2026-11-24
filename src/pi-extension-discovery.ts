@@ -182,9 +182,7 @@ export async function discoverPreparedExtensions(
   return await runPreparedPiCommand(
     runtime,
     [
-      ...(runtime.extensions.runtimeRoot === undefined
-        ? runtime.extensions.command
-        : withNoForkSandbox(runtime.extensions.command)),
+      ...withNoForkSandbox(runtime.extensions),
       "--offline",
       "--no-approve",
       "--no-extensions",

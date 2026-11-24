@@ -2067,7 +2067,7 @@ async function runReviewInternal(
                 ? { noSession: true }
                 : { sessionDir: resumeArchive.activeAttemptDir }),
           }),
-          withNoForkSandbox(preparedRuntime.extensions.command),
+          withNoForkSandbox(preparedRuntime.extensions),
         ),
         readiness.version,
       );

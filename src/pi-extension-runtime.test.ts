@@ -13,9 +13,12 @@ const { createTempDir } = registerManagedTempPaths();
 
 it("marks only macOS adapter commands as running without process creation", () => {
   const command = ["/node", "/staged/entry.mjs", "/pi"] as const;
-  expect(withNoForkSandbox(command, "darwin")).toEqual([...command, "--pioneer-no-fork-sandbox"]);
-  expect(withNoForkSandbox(command, "linux")).toEqual(command);
-  expect(withNoForkSandbox(command, "win32")).toEqual(command);
+  const adapter = { command, runtimeRoot: "/pi" };
+  expect(withNoForkSandbox(adapter, "darwin")).toEqual([...command, "--pioneer-no-fork-sandbox"]);
+  expect(withNoForkSandbox(adapter, "linux")).toEqual(command);
+  expect(withNoForkSandbox(adapter, "win32")).toEqual(command);
+  const direct = ["/node", "/pi/dist/cli.js"] as const;
+  expect(withNoForkSandbox({ command: direct }, "darwin")).toEqual(direct);
 });
 
 it("stages every module that the sandboxed extension adapter imports", async () => {
