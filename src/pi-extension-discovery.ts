@@ -160,7 +160,7 @@ export async function prepareReviewRuntime(
           extensionsEnabled,
           undefined,
           options.repositorySource,
-          options.cache,
+          options.cache ?? {},
         )
       : { command, paths: [], sourcePaths: [], digest: "0".repeat(64), entries: 0, bytes: 0 };
     snapshotHandle = extensions.snapshotHandle;

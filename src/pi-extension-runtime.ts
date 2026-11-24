@@ -183,7 +183,7 @@ export async function preparePiExtensions(
   enabled = true,
   excludedPaths: readonly string[] = [],
   repositorySource?: string,
-  cacheOptions: PrepareExtensionCacheOptions = {},
+  cacheOptions?: PrepareExtensionCacheOptions,
 ): Promise<PreparedExtensions> {
   signal?.throwIfAborted();
   const root = await installedPiRoot(command, environment);
@@ -222,7 +222,8 @@ export async function preparePiExtensions(
     snapshot = await prepareCachedExtensionSnapshot(plan, destination, {
       ...cacheOptions,
       ...(signal === undefined ? {} : { signal }),
-      validate: validateCachedExtensionSnapshot,
+      // Only callers that manage the payload's sandbox grant and release its lease may share it.
+      ...(cacheOptions === undefined ? {} : { validate: validateCachedExtensionSnapshot }),
     });
   } catch (error) {
     if (
