@@ -10,6 +10,8 @@ pioneer doctor
 
 The command prints JSON and exits nonzero when Pi, configured models, or the native sandbox shared by reviews and evals is unavailable.
 
+The `git` field reports whether Git supports Git-backed reviews and comment checks. Install Git 2.45 or newer when that check warns. Source-only reviews and evals can proceed independently of Git.
+
 Run the Pioneer controller outside any enclosing agent sandbox. It needs the operator's Pi configuration and provider connection. Pioneer then starts the Pi actor inside its own native sandbox.
 
 ## Pi version is unsupported
@@ -93,7 +95,9 @@ Do not disable the global user-namespace restriction. See [Linux sandbox setup](
 
 ## Provider cannot reach the network
 
-Pioneer rejects `--network none` before review launch because Pi needs access to its model provider. Start a new review with `public`. Use `full` when the review also needs LAN or loopback access. Both modes route traffic through the proxy. Ambient extension discovery stays disabled.
+Pioneer rejects `--network none` before review launch because Pi needs access to its model provider. Use `public` for public destinations, `full` for other LAN hosts, or `provider-only` for the selected provider and explicit host grants. Check `[PIONEER_NETWORK]` for the effective policy. A host block overrides a grant. For local services, evals can open one exact port at a time with `--allow-loopback 127.0.0.1:PORT`. [Network modes](sandbox-and-paths.md#network-modes)
+
+`[PI_CONTROLLER_PROVIDER_AUTH_UNSUPPORTED]` means the protected mode could not use the selected configuration. Check the qualified model, its public HTTPS endpoint, and its supported auth transport. Renew expired OAuth in Pi. [Controller-only provider authentication](sandbox-and-paths.md#controller-only-provider-authentication)
 
 On Linux, programs must honor standard HTTP(S) proxy variables. Raw TCP clients cannot escape the isolated network namespace. Enable `PIONEER_DEBUG=1` only for limited proxy diagnostics and never publish its output without inspecting it.
 

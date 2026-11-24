@@ -1,7 +1,26 @@
 import http from "node:http";
-import type https from "node:https";
+import https from "node:https";
 import { expect, it, vi } from "vitest";
 import { startProviderAuthGateway } from "./provider-auth-gateway.js";
+
+// Public loopback test credentials for configured.invalid, valid from 2020 through 2098.
+const FIXTURE_KEY = `-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIJDzB43CFaQhLLjzHN4ri8YLUW7RqbUCfFzz4cyrLaK7oAoGCCqGSM49
+AwEHoUQDQgAE8JRb7kljVQRnKemWR9C9OQGbglZHTwqpn+7uRlOsvVmihDnaLKSb
+wz1xU55kptBoQ2Q3J9J+ilADGQQ5UNRp8A==
+-----END EC PRIVATE KEY-----`;
+
+const FIXTURE_CERT = `-----BEGIN CERTIFICATE-----
+MIIBgjCCASigAwIBAgIBATAKBggqhkjOPQQDAjAdMRswGQYDVQQDDBJjb25maWd1
+cmVkLmludmFsaWQwIBcNMjAwMTAxMDAwMDAwWhgPMjA5OTAxMDEwMDAwMDBaMB0x
+GzAZBgNVBAMMEmNvbmZpZ3VyZWQuaW52YWxpZDBZMBMGByqGSM49AgEGCCqGSM49
+AwEHA0IABPCUW+5JY1UEZynplkfQvTkBm4JWR08KqZ/u7kZTrL1ZooQ52iykm8M9
+cVOeZKbQaENkNyfSfopQAxkEOVDUafCjVzBVMA8GA1UdEwEB/wQFMAMBAf8wDgYD
+VR0PAQH/BAQDAgKEMBMGA1UdJQQMMAoGCCsGAQUFBwMBMB0GA1UdEQQWMBSCEmNv
+bmZpZ3VyZWQuaW52YWxpZDAKBggqhkjOPQQDAgNIADBFAiEAsoC5aF3CBWCuOrrz
+LsakPp74lvcxjCimt2UOpXX02wsCIEv6NRrgK3iR2qXMjJdqr/YBlHcD2Vn7dmJm
+fmjQJUg2
+-----END CERTIFICATE-----`;
 
 it("limits credential injection to the configured model route and strips reflected secrets and redirects", async () => {
   const secret = "mock-oauth-access-token";
@@ -100,5 +119,79 @@ it("limits credential injection to the configured model route and strips reflect
     await gateway.close();
     fakeProvider.closeAllConnections();
     await new Promise<void>((done) => fakeProvider.close(() => done()));
+  }
+});
+
+it("delivers the upstream credential only over TLS trusted for the configured hostname", async () => {
+  const secret = "mock-tls-provider-token";
+  const received = vi.fn();
+  const server = https.createServer(
+    { key: FIXTURE_KEY, cert: FIXTURE_CERT },
+    (request, response) => {
+      received(request.headers.host, request.headers.authorization, request.url);
+      request.resume();
+      response.end('{"result":"ok"}');
+    },
+  );
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    if (address === null || typeof address === "string")
+      throw new Error("TLS fixture did not bind");
+    for (const { hostname, ca, expectedStatus } of [
+      { hostname: "configured.invalid", ca: [], expectedStatus: 502 },
+      { hostname: "other.invalid", ca: FIXTURE_CERT, expectedStatus: 502 },
+      { hostname: "configured.invalid", ca: FIXTURE_CERT, expectedStatus: 200 },
+    ]) {
+      const send = vi.fn(
+        (options: https.RequestOptions, listener: (response: http.IncomingMessage) => void) =>
+          https.request({ ...options, port: address.port, ca }, listener),
+      );
+      const gateway = await startProviderAuthGateway(
+        {
+          upstream: new URL(`https://${hostname}/v1`),
+          suffix: "/responses",
+          model: "fixture-model",
+          actorHeader: "authorization",
+          upstreamHeader: "authorization",
+          credential: async () => secret,
+        },
+        async () => ({ address: "127.0.0.1", family: 4 }),
+        send,
+      );
+      try {
+        const response = await fetch(`${gateway.baseUrl}/responses`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${gateway.placeholder}` },
+          body: JSON.stringify({ model: "fixture-model" }),
+        });
+        expect(response.status, hostname).toBe(expectedStatus);
+        const body: unknown = await response.json();
+        if (expectedStatus === 200) expect(body).toEqual({ result: "ok" });
+        else expect(received).not.toHaveBeenCalled();
+        expect(send).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            host: "127.0.0.1",
+            port: 443,
+            servername: hostname,
+            rejectUnauthorized: true,
+          }),
+          expect.any(Function),
+        );
+      } finally {
+        await gateway.close();
+      }
+    }
+    expect(received).toHaveBeenCalledExactlyOnceWith(
+      "configured.invalid",
+      `Bearer ${secret}`,
+      "/v1/responses",
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

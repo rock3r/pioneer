@@ -7,6 +7,8 @@ import type { EvalWorkspace } from "./harness.js";
  * Every variant is deterministic and offline: no provider is ever contacted.
  */
 export type ScriptedPiActor =
+  /** Returns fixed scores only from a tool-free classification in a private directory. */
+  | { readonly kind: "classify-comment"; readonly deniedPath: string }
   /** Replies with the text a `Reply with exactly: TEXT` prompt requests. */
   | { readonly kind: "reply-verbatim" }
   /** Opens exactly the files the prompt names, relative to the actor working directory. */
@@ -88,6 +90,30 @@ if (argv.includes("--list-models")) {
     ["provider  model  context  max-out  thinking  images", ...rows].join("\n") + "\n",
   );
   process.exit(0);
+}
+
+if (SCENARIO.actor.kind === "classify-comment") {
+  if (!["--no-extensions", "--no-skills", "--no-mcp", "--no-session", "--no-tools"].every(flag => argv.includes(flag))) {
+    fail("classification tools or session enabled");
+  }
+  const agent = process.env.PI_CODING_AGENT_DIR;
+  if (!agent || ["AGENTS.md", "skills/private-skill/SKILL.md"].some(file => fs.existsSync(path.join(agent, file)))) {
+    fail("private instructions visible to classifier");
+  }
+  try {
+    fs.readFileSync(SCENARIO.actor.deniedPath);
+    fail("source readable by classifier");
+  } catch (error) {
+    if (!["ENOENT", "EPERM", "EACCES"].includes(error.code)) throw error;
+  }
+  process.stdin.once("data", (bytes) => {
+    const message = JSON.parse(bytes.toString("utf8"));
+    if (message.type !== "prompt" || !message.message.includes("TODO implement retry")) fail("missing comment evidence");
+    const content = JSON.stringify({excuse_skipped_ask: 0, dismissed_edge_case: 0, in_scope_todo: 1});
+    console.log(JSON.stringify({type: "message_end", message: {role: "assistant", content}}));
+    console.log(JSON.stringify({type: "agent_settled"}));
+  });
+  return;
 }
 
 fs.writeFileSync(

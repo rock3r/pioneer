@@ -468,6 +468,7 @@ export interface RunReviewRpcOptions {
   readonly escalateProcess?: (child: ReturnType<typeof spawn>) => void;
   readonly startupFailureGraceMs?: number;
   readonly maxRpcOutputBytes?: number;
+  readonly forbidTools?: boolean;
   /** Receives each distinct controller-validated actor warning, such as a denied subprocess. */
   readonly onActorWarning?: (warning: string) => void;
   /** Staged extension packages; warnings and stderr summaries name only these. */
@@ -1087,6 +1088,30 @@ function terminateProcessTree(child: ReturnType<typeof spawn>): void {
   child.kill("SIGKILL");
 }
 
+function isToolEvent(event: Record<string, unknown>): boolean {
+  if (typeof event.type === "string" && event.type.startsWith("tool_execution_")) return true;
+  const update = event.assistantMessageEvent;
+  if (
+    typeof update === "object" &&
+    update !== null &&
+    "type" in update &&
+    typeof update.type === "string" &&
+    update.type.startsWith("toolcall_")
+  )
+    return true;
+  const message = event.message;
+  return (
+    typeof message === "object" &&
+    message !== null &&
+    "content" in message &&
+    Array.isArray(message.content) &&
+    message.content.some(
+      (part: unknown) =>
+        typeof part === "object" && part !== null && "type" in part && part.type === "toolCall",
+    )
+  );
+}
+
 export async function runReviewRpc(
   argv: readonly [string, ...string[]],
   cwd: string,
@@ -1272,6 +1297,14 @@ export async function runReviewRpc(
         deltaBatcher.accept(eventSummary);
         if (workLogFailure !== undefined) return;
         if (typeof record.type === "string") eventTypes.add(record.type);
+        if (options.forbidTools && isToolEvent(record)) {
+          terminate(
+            new Error(
+              "[REVIEW_TOOL_UNEXPECTED] Pi emitted a tool event during a tool-free request",
+            ),
+          );
+          return;
+        }
         if (
           record.type === "extension_ui_request" &&
           typeof record.method === "string" &&

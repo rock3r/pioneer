@@ -170,6 +170,7 @@ try {
     !primaryHelp.stdout.includes("pioneer eval prepare") ||
     !primaryHelp.stdout.includes("pioneer doctor") ||
     !primaryHelp.stdout.includes("pioneer deep-review") ||
+    !primaryHelp.stdout.includes("pioneer check-comments") ||
     !primaryHelp.stdout.includes("--report FILE")
   ) {
     throw new Error(`primary CLI did not advertise unified review/eval commands`);
@@ -210,7 +211,7 @@ try {
   ) {
     throw new Error(`pioneer eval did not expose eval-scoped help`);
   }
-  for (const subcommand of ["review", "models", "doctor"]) {
+  for (const subcommand of ["review", "models", "doctor", "check-comments"]) {
     const subcommandHelp = run(process.execPath, [primaryCli, subcommand, "--help"]);
     if (
       subcommandHelp.status !== 0 ||
@@ -219,6 +220,78 @@ try {
     ) {
       throw new Error(`pioneer ${subcommand} --help did not succeed on stdout`);
     }
+  }
+
+  const commentDiff = [
+    "diff --git a/view.tsx b/view.tsx",
+    "--- a/view.tsx",
+    "+++ b/view.tsx",
+    "@@ -1 +1,3 @@",
+    "+const identity = <T extends unknown>(value: T) => value;",
+    "+// TODO finish validation",
+    " start();",
+    "",
+  ].join("\n");
+  const decisionEndpoint = "https://127.0.0.1/decision";
+  const decisionKey = "mock-package-smoke-key";
+  const decisionFixture = `globalThis.fetch = async (url, request) => {
+    const payload = JSON.parse(request.body);
+    if (url !== ${JSON.stringify(decisionEndpoint)} || request.method !== "POST" ||
+        new Headers(request.headers).get("authorization") !== ${JSON.stringify(`Bearer ${decisionKey}`)} ||
+        payload.model !== "package-smoke" || JSON.parse(payload.state).comment !== "// TODO finish validation") {
+      throw new Error("Unexpected packaged decision request");
+    }
+    return Response.json({ answers: {
+      excuse_skipped_ask: { type: "noul", noul: 0 },
+      dismissed_edge_case: { type: "noul", noul: 0 },
+      in_scope_todo: { type: "noul", noul: 0.9 },
+    } });
+  };`;
+  const checkedComments = run(
+    process.execPath,
+    [
+      "--import",
+      `data:text/javascript,${encodeURIComponent(decisionFixture)}`,
+      primaryCli,
+      "check-comments",
+      "--diff-file",
+      "-",
+      "--scope",
+      "Implement validation",
+      "--provider",
+      "custom",
+      "--endpoint",
+      decisionEndpoint,
+      "--model",
+      "package-smoke",
+      "--api-key-env",
+      "PIONEER_PACKAGE_SMOKE_MOCK_KEY",
+      "--json",
+      "--fail-on-findings",
+    ],
+    {
+      cwd: consumerRoot,
+      env: { SystemRoot: process.env.SystemRoot, PIONEER_PACKAGE_SMOKE_MOCK_KEY: decisionKey },
+      input: commentDiff,
+      timeout: 5_000,
+    },
+  );
+  if (checkedComments.status !== 2 || checkedComments.stderr.length > 0) {
+    throw new Error(
+      `packaged check-comments CLI failed: ${checkedComments.stderr || checkedComments.stdout}`,
+    );
+  }
+  const commentResult = JSON.parse(checkedComments.stdout);
+  const finding = commentResult.findings?.[0];
+  if (
+    commentResult.complete !== true ||
+    commentResult.scored !== 1 ||
+    commentResult.findings?.length !== 1 ||
+    finding?.category !== "in_scope_todo" ||
+    finding.path !== "view.tsx" ||
+    finding.startLine !== 2
+  ) {
+    throw new Error(`unexpected packaged check-comments result: ${checkedComments.stdout}`);
   }
 
   const fakeRpc = path.join(root, "fake-rpc.mjs");

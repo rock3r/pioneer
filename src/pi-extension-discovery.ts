@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   assertControllerProviderAuthOutsideGrants,
@@ -35,6 +35,7 @@ import {
   createReviewScratchDirectory,
   piRuntimePaths,
   reviewProcessEnvironment,
+  runReviewRpc,
 } from "./review/runner.js";
 import {
   buildLinuxSandboxArgv,
@@ -96,6 +97,7 @@ export async function prepareReviewRuntime(
   filters?: Pick<EgressPolicy, "allowHosts" | "blockHosts">,
   requestedModel?: string,
   protectProvider = false,
+  homeMode: "review" | "classification" = "review",
 ): Promise<PreparedReviewRuntime> {
   signal?.throwIfAborted();
   const scratch = await createReviewScratchDirectory(scratchBase);
@@ -118,7 +120,7 @@ export async function prepareReviewRuntime(
     const home = await prepareIsolatedPiHome({
       sourceDir: agentDir,
       destination: path.join(scratch, "pi-home"),
-      mode: "review",
+      mode: homeMode,
       environment,
       checkAborted: () => signal?.throwIfAborted(),
       ...(includes === undefined ? {} : { piHomeIncludes: includes }),
@@ -207,6 +209,43 @@ export async function runPreparedPiCommand(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<PiProbeResult> {
+  return await withPreparedPiSandbox(
+    runtime,
+    command,
+    signal,
+    async (argv, environment) =>
+      await captureEvalProcess(argv, runtime.home.homeDir, environment, timeoutMs, signal),
+  );
+}
+
+export async function runPreparedPiRpc(
+  runtime: PreparedReviewRuntime,
+  command: PiLaunchCommand,
+  prompt: string,
+  timeoutMs: number,
+): Promise<string> {
+  // This directory is empty and belongs to the runtime's read-only grant.
+  const source = path.join(runtime.extensionRoot, "source");
+  await mkdir(source, { mode: 0o700 });
+  return await withPreparedPiSandbox(
+    runtime,
+    command,
+    undefined,
+    async (argv, environment) =>
+      await runReviewRpc(argv, source, environment, prompt, timeoutMs, {
+        maxRpcOutputBytes: 1024 * 1024,
+        forbidTools: true,
+        sensitiveValues: [prompt],
+      }),
+  );
+}
+
+async function withPreparedPiSandbox<T>(
+  runtime: PreparedReviewRuntime,
+  command: PiLaunchCommand,
+  signal: AbortSignal | undefined,
+  execute: (argv: PiLaunchCommand, environment: NodeJS.ProcessEnv) => Promise<T>,
+): Promise<T> {
   signal?.throwIfAborted();
   if (process.platform === "win32")
     throw new Error(
@@ -264,9 +303,8 @@ export async function runPreparedPiCommand(
         checkAborted: () => signal?.throwIfAborted(),
       },
       async () =>
-        await captureEvalProcess(
+        await execute(
           launch.argv,
-          runtime.home.homeDir,
           reviewProcessEnvironment(launch.environment, {
             ...runtime.home.environment,
             HOME: runtime.home.homeDir,
@@ -275,8 +313,6 @@ export async function runPreparedPiCommand(
             PI_TELEMETRY: "0",
             NO_COLOR: "1",
           }),
-          timeoutMs,
-          signal,
         ),
     );
   } finally {

@@ -5,9 +5,9 @@ Pioneer lets coding agents run independent code reviews and isolated skill evalu
 ## Start here
 
 1. [Getting started](getting-started.md) explains installation, provider setup, and the first review.
-2. [Reviewing code](reviewing-code.md) covers prompts, review scopes, reference directories, and reports.
+2. [Reviewing code](reviewing-code.md) covers review scopes, reference directories, reports, and [changed-comment checks](reviewing-code.md#check-changed-comments).
 3. [Models and thinking](models-and-thinking.md) explains model names and thinking levels.
-4. [Sandbox and path grants](sandbox-and-paths.md) covers filesystem access, scratch, networking, and Windows limits.
+4. [Sandbox and path grants](sandbox-and-paths.md) covers filesystem access, scratch, networking, controller-only authentication, and Windows limits.
 5. [Agent integrations](plugins.md) explains installation for Codex, Claude Code, and other coding agents.
 6. [Skill evals](skill-evals.md) explains how to prepare and run baseline and with-skill actors.
 7. [Troubleshooting](troubleshooting.md) covers readiness, model, sandbox, proxy, and plugin failures.

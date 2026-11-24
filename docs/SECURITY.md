@@ -270,9 +270,11 @@ Ports must be exact integers and hosts must use IPv4 loopback. The actor receive
 
 ## Decision-model comment checks
 
-The comment checker sends the operator-supplied task scope, extracted comments, and bounded new-side hunk context directly to the configured HTTPS recipient. Its credentials come from a selected environment variable and travel in the provider's authentication header. Redirects are rejected. The endpoint and credential selection are operator inputs, independent of the diff.
+The selected backend receives the operator-supplied task scope, extracted comments, and bounded new-side hunk context. Direct decision APIs send the evidence to the configured HTTPS recipient. The credential comes from a selected environment variable and travels in the provider's authentication header. Redirects are rejected. The endpoint and credential selection are operator inputs independent of the diff.
 
-Comment and context values are quoted JSON evidence. The questions are fixed, and responses are limited to numeric probabilities used in the report. This confines the model's effect to scoring. Source text can still affect model judgment. Diagnostics contain bounded local messages with HTTP status when available. Provider response text, request bodies, and credentials stay out of diagnostic output.
+The explicit Pi path uses the selected qualified model in a tool-free native sandbox on macOS or Linux. Windows supports the direct decision APIs. Model output affects only the reported classifications, and a failure keeps the requested backend and model.
+
+The questions are fixed, and validated numeric scores are the only model outputs used in the report. Source text can still affect model judgment. Diagnostics contain bounded messages and include HTTP status when available from a direct API. Provider response text, request bodies, and credentials stay out of diagnostic output.
 
 ## Platform enforcement
 

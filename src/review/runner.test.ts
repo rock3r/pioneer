@@ -902,6 +902,23 @@ describe("review RPC runner", () => {
     ).resolves.toBe("No findings.");
   });
 
+  it("rejects a tool event in tool-free RPC", async () => {
+    await expect(
+      runReviewRpc(
+        fakePiRpc([
+          { type: "tool_execution_start", toolName: "read" },
+          { type: "message_end", message: { role: "assistant", content: "{}" } },
+          { type: "agent_settled" },
+        ]),
+        process.cwd(),
+        process.env,
+        "Classify the comment",
+        5_000,
+        { forbidTools: true },
+      ),
+    ).rejects.toThrow(/^\[REVIEW_TOOL_UNEXPECTED\]/);
+  });
+
   it("streams sanitized Pi lifecycle and tool metadata to the work log", async () => {
     const { log, records } = recordingWorkLog();
     const report = await runReviewRpc(

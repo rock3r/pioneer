@@ -3,6 +3,7 @@ import {
   link,
   lstat,
   mkdir,
+  readdir,
   readFile,
   readlink,
   realpath,
@@ -76,6 +77,27 @@ async function fixture(): Promise<{ root: string; source: string; destination: s
 }
 
 describe("prepareIsolatedPiHome", () => {
+  it.each([false, true])(
+    "keeps context out of the classification snapshot with protected auth %s",
+    async (protectedAuth) => {
+      const { source, destination } = await fixture();
+      const home = await prepareIsolatedPiHome({
+        sourceDir: source,
+        destination,
+        mode: "classification",
+        ...(protectedAuth ? { controllerProviderFiles: { auth: "{}", models: "{}" } } : {}),
+      });
+      const names = (await readdir(home.agentDir)).sort();
+      expect(names).toEqual(
+        protectedAuth
+          ? ["auth.json", "models.json"]
+          : ["auth.json", "models-store.json", "models.json"],
+      );
+      if (protectedAuth)
+        expect(await readFile(path.join(home.agentDir, "auth.json"), "utf8")).toBe("{}");
+    },
+  );
+
   it("uses generated provider config without exposing other source credentials or model settings", async () => {
     const { source, destination } = await fixture();
     await writeFile(path.join(source, "models-store.json"), '{"apiKey":"secondary-secret"}');

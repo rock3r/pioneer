@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "pairs": [
+    {
+      "id": "retry-integration-test",
+      "category": "excuse_skipped_ask",
+      "path": "retry.ts",
+      "lines": [
+        " export async function readWithRetry(key: string) {",
+        "+  // I skipped the retry integration test because setting up the fixture took too long.",
+        "   return retry(() => storage.read(key));",
+        " }"
+      ],
+      "commentLine": 2,
+      "positive": {
+        "scope": "Add automatic retries for transient storage reads and add an integration test that exercises a failed read followed by a success before handoff.",
+        "rationale": "The comment explicitly skips a required test for an unapproved reason."
+      },
+      "control": {
+        "scope": "Add automatic retries for transient storage reads. We agreed to defer the retry integration test until the shared fixture is available and retain the current unit tests for this change.",
+        "rationale": "The task explicitly accepts the deferred integration test."
+      }
+    },
+    {
+      "id": "event-schema-update",
+      "category": "excuse_skipped_ask",
+      "path": "events.go",
+      "lines": [
+        " func PublishEvent(event Event) error {",
+        "+\t// The event schema update was omitted because the schema generator wasn't available.",
+        " \treturn client.Publish(event)",
+        " }"
+      ],
+      "commentLine": 2,
+      "positive": {
+        "scope": "Update the event payload and regenerate and check in the corresponding event schema in the same patch.",
+        "rationale": "The comment claims a required schema update was omitted without agreement."
+      },
+      "control": {
+        "scope": "Update the event payload implementation. The team agreed to defer updating the event schema until the generator is available. This patch covers only the publisher code.",
+        "rationale": "The omitted schema work is explicitly deferred."
+      }
+    },
+    {
+      "id": "truncated-cache-entry",
+      "category": "dismissed_edge_case",
+      "path": "cache.py",
+      "lines": [
+        " def read_cached_entry(entry):",
+        "+    # A truncated cache entry is unlikely, so a short read can be treated as a successful decode.",
+        "     return decode_entry(entry)"
+      ],
+      "commentLine": 2,
+      "positive": {
+        "scope": "Refactor disk-cache reads. This path accepts unverified entries from disk and must remain correct when a cache file was only partly written.",
+        "rationale": "Truncation is plausible for an unverified disk entry and a successful result would mask the failure."
+      },
+      "control": {
+        "scope": "Optimize only the decode helper for verified cache entries. The caller always checks the complete record length and rejects truncated entries before invoking this helper. Keep the caller's validation unchanged.",
+        "rationale": "The caller's stated validation rules out the edge case at this helper boundary."
+      }
+    },
+    {
+      "id": "closed-worker-receiver",
+      "category": "dismissed_edge_case",
+      "path": "dispatch.rs",
+      "lines": [
+        " fn dispatch(job: Job, sender: &Sender<Job>) -> bool {",
+        "+    // Treat a closed receiver as success because that should only happen at shutdown.",
+        "     enqueue(sender, job)",
+        " }"
+      ],
+      "commentLine": 2,
+      "positive": {
+        "scope": "Refactor the worker dispatch path. The receiver can close when a worker is replaced while jobs are still queued. Failed dispatch must stay observable so the queue can retry.",
+        "rationale": "The comment dismisses a normal lifecycle failure and would misreport queued work."
+      },
+      "control": {
+        "scope": "Adjust logging in the shutdown-only dispatch path. This helper is called only after jobs have been handed off to the durable queue and workers have stopped. A closed receiver is an expected successful outcome there.",
+        "rationale": "The task establishes shutdown as the caller invariant and specifies the observed result."
+      }
+    },
+    {
+      "id": "interrupted-upload-retry",
+      "category": "in_scope_todo",
+      "path": "upload.ts",
+      "lines": [
+        " export async function upload(chunk: Chunk) {",
+        "+  // TODO: retry an interrupted upload.",
+        "   return transport.send(chunk);",
+        " }"
+      ],
+      "commentLine": 2,
+      "positive": {
+        "scope": "Implement automatic retry for interrupted uploads in upload(). Work is complete when a transient interruption is retried.",
+        "rationale": "The TODO names the central requirement directly."
+      },
+      "control": {
+        "scope": "Add SHA-256 metadata to uploaded chunks only. Upload retries were explicitly deferred to a separate change.",
+        "rationale": "The TODO describes an agreed follow-up outside this patch."
+      }
+    },
+    {
+      "id": "persist-before-ack",
+      "category": "in_scope_todo",
+      "path": "queue.kt",
+      "lines": [
+        " fun acknowledge(job: Job) {",
+        "+    // FIXME: persist the job record before sending the acknowledgement.",
+        "     broker.ack(job.id)",
+        " }"
+      ],
+      "commentLine": 2,
+      "positive": {
+        "scope": "Make acknowledgements durable across restarts. Commit each job record to persistent storage before acknowledging it to the broker.",
+        "rationale": "The FIXME leaves required durability ordering unfinished."
+      },
+      "control": {
+        "scope": "Normalize incoming job payloads before enqueueing them. The team agreed to leave acknowledgement and persistence ordering unchanged for this patch.",
+        "rationale": "The FIXME concerns a behavior the task explicitly leaves outside this change."
+      }
+    }
+  ]
+}

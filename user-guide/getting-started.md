@@ -5,10 +5,11 @@
 - Node.js 22.19.0 or newer;
 - npm;
 - Pi `0.80.6` or newer (versions through `1.6.0` are tested);
+- Git 2.45 or newer for Git-backed reviews and comment checks;
 - at least one provider configured in Pi;
 - macOS or Linux for enforced review and eval isolation.
 
-Windows reviews require explicit approval for instruction-only filesystem isolation. Strict eval runs are unavailable on Windows.
+Windows reviews require explicit approval, `--allow-unsandboxed-windows`, and `--no-extensions`. Source immutability relies on instructions. Enforced network policy and strict evals require macOS or Linux.
 
 ## 1. Install and configure Pi
 
@@ -92,7 +93,7 @@ The live test checks filesystem and network access:
 
 ## 5. Run the first review
 
-From the repository root, run a Git-target review on any supported platform:
+On macOS or Linux, run the first Git-target review from the repository root.
 
 ```bash
 pioneer review \
