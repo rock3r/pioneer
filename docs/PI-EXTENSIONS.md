@@ -23,6 +23,8 @@ Before reusing a cached snapshot, the controller reads source directory membersh
 
 Each controller acquires its own lease before validating or using a committed generation. Concurrent controllers can lease the same generation while one creator stages a replacement. Collection preserves a leased generation until its owners release it or their process identities show that they exited. Unleased superseded and rejected generations, generations unused for more than 14 days, and the least recently used generations beyond the 3 GiB cache budget move to trash. Later runs drain trash and reclaim abandoned staging directories in the background.
 
+Each committed generation carries a sequence assigned under the cache lock. The sequence is published with the payload and its other metadata, so clock changes and coarse filesystem timestamps cannot change which generation is newest. Earlier entries without a sequence remain eligible for validation until a sequenced entry replaces them.
+
 Pioneer excludes Pi's private runtime storage by exact location:
 
 - the agent directory's `sessions/` and `logs/` directories;
@@ -38,7 +40,7 @@ Staged code has a separate read-only sandbox grant. Pi authentication and config
 
 When a run uses a shared snapshot, discovery, the actor and the OAuth worker can read the leased generation's `payload/` and the run's own adapter directory. Manifests, leases and other generations stay private. On Linux, Bubblewrap mounts the payload read-only inside a private directory tree that allows traversal to the payload and denies directory listings. macOS Seatbelt grants read access to the payload alone.
 
-A review source, explicit read or write grant, eval run directory, runtime path or controller scratch base that includes the extension cache or lies inside it fails with `PI_EXTENSION_CACHE_GRANT_OVERLAP`. Pass a narrower path or move `XDG_CACHE_HOME` outside the grant. This check also applies with `PIONEER_EXTENSION_CACHE=0`, because another run can hold a live snapshot there.
+A review source, explicit read or write grant, eval run directory, runtime path or controller scratch base that includes the extension cache or lies inside it fails with `PI_EXTENSION_CACHE_GRANT_OVERLAP`. Pass a narrower path or move `XDG_CACHE_HOME` outside the grant. An unreadable or broken grant also stops preparation when Pioneer cannot resolve it to verify isolation. This check applies with `PIONEER_EXTENSION_CACHE=0`, because another run can hold a live snapshot there.
 
 On macOS and Linux, Pioneer verifies bounded SHA-256 digests of immutable run-local inputs before and after each native actor, including the Pi-home snapshot, per-run extension files, and eval launch and probe files. For a leased payload, it checks the original staged metadata, generated directories, and package scope before and after discovery, review, deep review, strict eval, and OAuth execution. A file change between acquisition and launch, or during execution, invalidates the result. Private `auth.json`, `settings.json`, `models-store.json`, and new runtime files in the writable agent root can still change. A failed check produces `[PI_STAGED_INTEGRITY_FAILED]`.
 
