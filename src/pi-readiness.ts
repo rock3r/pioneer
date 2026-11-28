@@ -234,7 +234,7 @@ function lacksNoApproveOption(result: PiProbeResult): boolean {
 }
 
 function hasInvalidModelsConfig(result: PiProbeResult): boolean {
-  return /(?:errors?\s+loading|failed\s+to\s+load)\s+models\.json/i.test(
+  return /(?:(?:errors?\s+loading|failed\s+to\s+load)\s+models\.json|models\.json\s+error:)/i.test(
     `${result.stderr}\n${result.stdout}`,
   );
 }

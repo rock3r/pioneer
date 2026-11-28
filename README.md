@@ -24,7 +24,7 @@ When invoking Pi, run the Pioneer controller outside any enclosing agent sandbox
 
 ## Quick start
 
-Pioneer requires Node.js 22.19.0 or newer and npm. Reviews, skill evals, and Pi-backed comment checks require a configured Pi installation at version `0.80.6` or newer. Compatibility is tested through Pi `1.6.1`. Pioneer allows newer versions and prints a warning. Git-backed reviews and comment checks require Git 2.45 or newer.
+Pioneer requires Node.js 22.19.0 or newer and npm. Reviews, skill evals, and Pi-backed comment checks require a configured Pi installation at version `0.80.6` or newer. Compatibility is tested through Pi `1.7.0`. Pioneer allows newer versions and prints a warning. Git-backed reviews and comment checks require Git 2.45 or newer.
 
 Install the command-line interface (CLI) with npm.
 

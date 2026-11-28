@@ -4,7 +4,7 @@
 
 - Node.js 22.19.0 or newer;
 - npm;
-- Pi `0.80.6` or newer (versions through `1.6.1` are tested);
+- Pi `0.80.6` or newer (versions through `1.7.0` are tested);
 - Git 2.45 or newer for Git-backed reviews and comment checks;
 - at least one provider configured in Pi;
 - macOS or Linux for enforced review and eval isolation.
